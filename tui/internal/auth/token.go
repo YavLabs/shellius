@@ -22,6 +22,7 @@ func SaveTokens(cfg *config.Config, token TokenResponse) error {
 	}
 	cfg.OrgID = token.User.OrgID
 	cfg.OrgSlug = token.User.OrgSlug
+	cfg.Role = token.User.Role
 	return cfg.Save()
 }
 
@@ -32,8 +33,8 @@ func RefreshIfNeeded(cfg *config.Config) error {
 		return fmt.Errorf("no refresh token available")
 	}
 
-	// Only refresh when within 60 seconds of expiry.
-	if time.Now().Add(60 * time.Second).Before(cfg.TokenExpiresAt) {
+	// Refresh when the access token is missing or within 60s of expiry.
+	if cfg.AccessToken != "" && time.Now().Add(60*time.Second).Before(cfg.TokenExpiresAt) {
 		return nil
 	}
 

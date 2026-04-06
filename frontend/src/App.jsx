@@ -21,6 +21,7 @@ import AccessRequests from './pages/AccessRequests';
 import Sessions from './pages/Sessions';
 import AuditLog from './pages/AuditLog';
 import Terminal from './pages/Terminal';
+import Device from './pages/Device';
 import NotFound from './pages/NotFound';
 
 function App() {
@@ -31,6 +32,7 @@ function App() {
           <ErrorBoundary>
             <Routes>
               <Route path="/login" element={<Login />} />
+              <Route path="/device" element={<Device />} />
               <Route element={<ProtectedRoute />}>
                 {/* Full-screen terminal — no app chrome */}
                 <Route

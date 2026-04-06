@@ -129,7 +129,7 @@ func (c *Client) do(method, path string, body interface{}, result interface{}) e
 
 // serverListData is the shape returned by GET /api/servers.
 type serverListData struct {
-	Servers []struct {
+	Items []struct {
 		ID          string `json:"id"`
 		DisplayName string `json:"displayName"`
 		Hostname    string `json:"hostname"`
@@ -141,7 +141,7 @@ type serverListData struct {
 			ID   string `json:"id"`
 			Name string `json:"name"`
 		} `json:"customer"`
-	} `json:"servers"`
+	} `json:"items"`
 }
 
 // ListHosts retrieves all servers the user can see and annotates them with
@@ -153,13 +153,15 @@ func (c *Client) ListHosts() ([]Host, error) {
 		return nil, err
 	}
 
-	hosts := make([]Host, 0, len(data.Servers))
-	for _, s := range data.Servers {
+	isSuperAdmin := c.Config.Role == "super_admin"
+
+	hosts := make([]Host, 0, len(data.Items))
+	for _, s := range data.Items {
 		if !s.IsActive {
 			continue
 		}
 		accessStatus := "direct"
-		if s.Environment == "prod" {
+		if s.Environment == "prod" && !isSuperAdmin {
 			accessStatus = "requires_approval"
 		}
 		port := s.Port

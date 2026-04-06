@@ -63,3 +63,4 @@ coverage/
 recordings/
 *.cast
 tui/bin/
+.env.prod

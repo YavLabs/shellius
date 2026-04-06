@@ -63,13 +63,15 @@ func (sb *StatusBar) leftSection() string {
 }
 
 func (sb *StatusBar) rightSection() string {
-	if sb.cfg == nil || sb.cfg.AccessToken == "" {
+	if sb.cfg == nil || sb.cfg.RefreshToken == "" {
 		return ""
 	}
 
 	remaining := time.Until(sb.cfg.TokenExpiresAt)
 	if remaining <= 0 {
-		return ErrorStyle.Render("token expired")
+		// Refresh token still on disk — the API client will mint a new
+		// access token on the next call. Don't alarm the user.
+		return MutedStyle.Render("session active")
 	}
 
 	var countdown string

@@ -19,6 +19,7 @@ type Config struct {
 	RefreshToken   string    `yaml:"refreshToken"`
 	TokenExpiresAt time.Time `yaml:"tokenExpiresAt"`
 	Username       string    `yaml:"username"`
+	Role           string    `yaml:"role"`
 	OrgID          string    `yaml:"orgID"`
 	OrgSlug        string    `yaml:"orgSlug"`
 	configPath     string    `yaml:"-"`
@@ -78,6 +79,7 @@ func (c *Config) Clear() error {
 	c.RefreshToken = ""
 	c.TokenExpiresAt = time.Time{}
 	c.Username = ""
+	c.Role = ""
 	c.OrgID = ""
 	return c.Save()
 }

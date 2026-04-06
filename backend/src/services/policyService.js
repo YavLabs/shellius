@@ -146,6 +146,19 @@ export async function evaluate({ orgId, userId, serverId, requestedPrincipal }) 
   const server = await prisma.server.findFirst({ where: { id: serverId, orgId } });
   if (!server) throw new ApiError(404, 'Server not found');
 
+  // Step 1b: super_admin bypass — full direct access to every server, including prod
+  const callerUser = await prisma.user.findUnique({ where: { id: userId }, select: { role: true } });
+  if (callerUser && callerUser.role === 'super_admin') {
+    return {
+      allowed: true,
+      requiresApproval: false,
+      autoApprove: true,
+      principals: requestedPrincipal ? [requestedPrincipal] : [],
+      maxTtl: 24 * 60 * 60,
+      reason: 'super_admin bypass',
+    };
+  }
+
   // Step 2: HARD RULE — production always requires approval regardless of policy
   if (server.environment === 'prod') {
     return {

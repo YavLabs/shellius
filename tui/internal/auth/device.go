@@ -10,11 +10,11 @@ import (
 
 // DeviceAuthResponse is the payload from POST /api/auth/device/authorize.
 type DeviceAuthResponse struct {
-	DeviceCode              string `json:"deviceCode"`
-	UserCode                string `json:"userCode"`
-	VerificationUri         string `json:"verificationUri"`
-	VerificationUriComplete string `json:"verificationUriComplete"`
-	ExpiresIn               int    `json:"expiresIn"`
+	DeviceCode              string `json:"device_code"`
+	UserCode                string `json:"user_code"`
+	VerificationUri         string `json:"verification_uri"`
+	VerificationUriComplete string `json:"verification_uri_complete"`
+	ExpiresIn               int    `json:"expires_in"`
 	Interval                int    `json:"interval"`
 }
 
@@ -28,6 +28,7 @@ type TokenResponse struct {
 		Email    string `json:"email"`
 		Name     string `json:"name"`
 		Role     string `json:"role"`
+		// (kept for clarity — already used by SaveTokens)
 		OrgID    string `json:"orgId"`
 		OrgSlug  string `json:"orgSlug"`
 	} `json:"user"`
@@ -49,7 +50,7 @@ type pollRequest struct {
 type apiEnvelope struct {
 	Success bool            `json:"success"`
 	Data    json.RawMessage `json:"data"`
-	Error   string          `json:"error"`
+	Error   json.RawMessage `json:"error"`
 }
 
 // PollError is returned when the poll indicates a non-fatal pending state.
@@ -153,12 +154,30 @@ func PollForToken(serverURL, deviceCode string, interval int) (TokenResponse, er
 
 		if !envelope.Success {
 			// Map error codes to PollError so callers can inspect them.
-			var errDetail struct {
-				Code string `json:"code"`
+			// `error` may be either a plain string or an object {code, message}.
+			var code string
+			if len(envelope.Error) > 0 {
+				var asString string
+				if err := json.Unmarshal(envelope.Error, &asString); err == nil {
+					code = asString
+				} else {
+					var asObj struct {
+						Code    string `json:"code"`
+						Message string `json:"message"`
+					}
+					if err := json.Unmarshal(envelope.Error, &asObj); err == nil {
+						if asObj.Code != "" {
+							code = asObj.Code
+						} else {
+							code = asObj.Message
+						}
+					}
+				}
 			}
-			// The error field may be a plain string from the backend.
-			code := string(envelope.Error)
-			if len(envelope.Data) > 0 {
+			if code == "" && len(envelope.Data) > 0 {
+				var errDetail struct {
+					Code string `json:"code"`
+				}
 				_ = json.Unmarshal(envelope.Data, &errDetail)
 				if errDetail.Code != "" {
 					code = errDetail.Code

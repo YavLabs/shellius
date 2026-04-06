@@ -53,10 +53,12 @@ func NewApp(cfg *config.Config) AppModel {
 	}
 
 	// Decide the initial view.
+	// We treat the user as logged in whenever a refresh token is present —
+	// the API client will transparently refresh the access token on first use.
 	if cfg.ServerURL == "" {
 		m.currentView = viewServerURL
 		m.urlPrompt = NewServerURLPrompt(cfg)
-	} else if !cfg.HasValidToken() {
+	} else if cfg.RefreshToken == "" {
 		m.currentView = viewLogin
 		m.loginModel = NewLoginModel(cfg)
 	} else {
@@ -99,8 +101,9 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case tea.KeyMsg:
-		// Global quit.
-		if msg.String() == "ctrl+c" || msg.String() == "q" && m.currentView != viewServerURL && m.currentView != viewLogin {
+		// Global quit — ctrl+c always exits. We do NOT bind plain 'q'
+		// because it conflicts with typing into the host filter.
+		if msg.String() == "ctrl+c" {
 			return m, tea.Quit
 		}
 	}
