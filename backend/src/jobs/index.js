@@ -12,6 +12,10 @@ import {
   registerNotifyExpiringAccessJob,
   startNotifyExpiringAccessWorker,
 } from './notifyExpiringAccess.js';
+import {
+  registerSessionCleanupJob,
+  startSessionCleanupWorker,
+} from './sessionCleanup.js';
 import logger from '../utils/logger.js';
 
 export async function startAllJobs() {
@@ -31,6 +35,9 @@ export async function startAllJobs() {
 
   await registerNotifyExpiringAccessJob();
   startNotifyExpiringAccessWorker();
+
+  await registerSessionCleanupJob();
+  startSessionCleanupWorker();
 
   logger.info('jobs: all background jobs registered');
 }

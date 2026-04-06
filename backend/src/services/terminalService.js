@@ -12,21 +12,93 @@
  *   - Private key string is zeroed (Buffer.fill(0)) after ssh2 Client.connect() call
  *   - Session is created ACTIVE on connect, ended on any close/error
  *
- * TODO(phase-8C): Tee SSH stream output to asciinema .cast recording file
- *   - On stream.on('data', chunk) { teeChunk(recordingWriter, chunk) }
- *   - On session end, finalize and persist recordingPath to Session row
+ * Recording:
+ *   - Each SSH session is recorded in asciinema v2 format (.cast file)
+ *   - Files are stored at RECORDINGS_DIR (default: ./data/recordings)
+ *   - recordingPath is persisted on the Session row after the session ends
+ *   - RECORDINGS_DIR env var: path to recording storage directory
  */
 
 import { WebSocketServer } from 'ws';
 import { Client as SshClient } from 'ssh2';
-import { parse as parseQuery } from 'querystring';
 import { URL } from 'url';
+import fs from 'fs';
+import path from 'path';
+import { mkdir } from 'fs/promises';
 
 import { verifyAccessToken } from '../utils/jwt.js';
 import prisma from '../config/db.js';
 import logger from '../utils/logger.js';
 import * as accessRequestService from './accessRequestService.js';
 import * as sessionService from './sessionService.js';
+
+// ---------------------------------------------------------------------------
+// Recording helpers
+// ---------------------------------------------------------------------------
+
+const RECORDINGS_DIR = process.env.RECORDINGS_DIR || './data/recordings';
+
+/**
+ * Create a new asciinema v2 recording writer for a session.
+ * Returns a writer object with { write(chunk), close() } or null on failure.
+ *
+ * @param {string} sessionId
+ * @param {{ rows: number, cols: number }} dims
+ * @returns {Promise<object|null>}
+ */
+async function openRecordingWriter(sessionId, { rows, cols }) {
+  try {
+    const absDir = path.resolve(RECORDINGS_DIR);
+    await mkdir(absDir, { recursive: true });
+
+    const filePath = path.join(absDir, `session-${sessionId}.cast`);
+    const stream = fs.createWriteStream(filePath, { flags: 'w', encoding: 'utf8' });
+
+    const startTs = Date.now();
+
+    // asciinema v2 header
+    const header = JSON.stringify({
+      version: 2,
+      width: cols,
+      height: rows,
+      timestamp: Math.floor(startTs / 1000),
+      env: { SHELL: '/bin/bash', TERM: 'xterm-256color' },
+      title: `shellius-${sessionId}`,
+    });
+    stream.write(header + '\n');
+
+    let closed = false;
+
+    return {
+      filePath,
+      write(chunk) {
+        if (closed) return;
+        try {
+          const elapsed = (Date.now() - startTs) / 1000;
+          const str = Buffer.isBuffer(chunk) ? chunk.toString('utf8') : String(chunk);
+          stream.write(JSON.stringify([elapsed, 'o', str]) + '\n');
+        } catch (err) {
+          logger.warn('terminalService: recording write error', { sessionId, error: err.message });
+        }
+      },
+      close() {
+        if (closed) return;
+        closed = true;
+        try {
+          stream.end();
+        } catch (err) {
+          logger.warn('terminalService: recording close error', { sessionId, error: err.message });
+        }
+      },
+    };
+  } catch (err) {
+    logger.error('terminalService: failed to open recording writer', {
+      sessionId,
+      error: err.message,
+    });
+    return null;
+  }
+}
 
 // ---------------------------------------------------------------------------
 // In-memory map of active connections
@@ -213,11 +285,31 @@ async function handleConnection(ws, req) {
   // Track cleanup state to avoid double-ending the session
   let ended = false;
 
+  // Recording writer — opened just before shell starts
+  let recordingWriter = null;
+
   const cleanup = async (statusOverride) => {
     if (ended) return;
     ended = true;
 
     activeSessions.delete(sessionId);
+
+    // Finalize recording
+    if (recordingWriter) {
+      recordingWriter.close();
+      try {
+        await prisma.session.update({
+          where: { id: sessionId },
+          data: { recordingPath: recordingWriter.filePath },
+        });
+      } catch (err) {
+        logger.warn('terminalService: failed to persist recordingPath', {
+          sessionId,
+          error: err.message,
+        });
+      }
+      recordingWriter = null;
+    }
 
     try {
       await sessionService.end(sessionId, { status: statusOverride ?? 'ENDED' });
@@ -247,7 +339,7 @@ async function handleConnection(ws, req) {
 
     sshClient.shell(
       { term: 'xterm-256color', rows, cols },
-      (err, stream) => {
+      async (err, stream) => {
         if (err) {
           logger.error('terminalService: shell open failed', { sessionId, error: err.message });
           safeClose(ws, 1011, 'Failed to open shell');
@@ -256,12 +348,16 @@ async function handleConnection(ws, req) {
           return;
         }
 
+        // Open asciinema recording writer
+        recordingWriter = await openRecordingWriter(sessionId, { rows, cols });
+
         // Register in active map now that we have all three handles
         activeSessions.set(sessionId, { ws, sshClient, stream });
 
         // ── SSH → WebSocket ──
         stream.on('data', (chunk) => {
-          // TODO(phase-8C): tee chunk to recording writer here
+          // Tee output chunk to recording
+          if (recordingWriter) recordingWriter.write(chunk);
           if (ws.readyState === ws.constructor.OPEN) {
             ws.send(chunk);
           }

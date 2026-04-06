@@ -17,6 +17,7 @@ import policiesRouter from './routes/policies.js';
 import accessRequestsRouter from './routes/accessRequests.js';
 import notificationsRouter from './routes/notifications.js';
 import sessionsRouter from './routes/sessions.js';
+import auditRouter from './routes/audit.js';
 import errorHandler from './middleware/errorHandler.js';
 import { startAllJobs } from './jobs/index.js';
 
@@ -41,6 +42,7 @@ app.use('/api/policies', policiesRouter);
 app.use('/api/access-requests', accessRequestsRouter);
 app.use('/api/notifications', notificationsRouter);
 app.use('/api/sessions', sessionsRouter);
+app.use('/api/audit', auditRouter);
 
 app.use(errorHandler);
 
