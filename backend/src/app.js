@@ -11,7 +11,10 @@ import usersRouter from './routes/users.js';
 import groupsRouter from './routes/groups.js';
 import customersRouter from './routes/customers.js';
 import serversRouter from './routes/servers.js';
+import certificatesRouter from './routes/certificates.js';
+import caRouter from './routes/ca.js';
 import errorHandler from './middleware/errorHandler.js';
+import { startAllJobs } from './jobs/index.js';
 
 const app = express();
 
@@ -28,7 +31,14 @@ app.use('/api/users', usersRouter);
 app.use('/api/groups', groupsRouter);
 app.use('/api/customers', customersRouter);
 app.use('/api/servers', serversRouter);
+app.use('/api/certificates', certificatesRouter);
+app.use('/api/ca', caRouter);
 
 app.use(errorHandler);
+
+// Start background jobs (non-blocking; errors are logged internally)
+startAllJobs().catch((err) => {
+  console.error('[app] Failed to start background jobs:', err.message);
+});
 
 export default app;

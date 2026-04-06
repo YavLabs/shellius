@@ -27,12 +27,17 @@ const navItems = [
   { label: 'Groups', icon: UsersRound, path: '/groups' },
   { label: 'Policies', icon: Shield, path: '/policies' },
   { label: 'Access Requests', icon: KeyRound, path: '/access-requests' },
-  { label: 'Certificates', icon: FileKey, path: '/certificates' },
+  { label: 'Certificates', icon: FileKey, path: '/certificates', minRole: 'admin' },
   { label: 'Sessions', icon: Terminal, path: '/sessions' },
   { label: 'Audit Log', icon: ScrollText, path: '/audit-log' },
   { label: 'Cloud Connectors', icon: Cloud, path: '/cloud-connectors' },
   { label: 'Settings', icon: Settings, path: '/settings' },
 ];
+
+const ROLE_RANK = { super_admin: 4, admin: 3, operator: 2, viewer: 1 };
+function isAtLeast(user, role) {
+  return (ROLE_RANK[user?.role] || 0) >= (ROLE_RANK[role] || 0);
+}
 
 function Sidebar() {
   const [collapsed, setCollapsed] = useState(false);
@@ -59,7 +64,7 @@ function Sidebar() {
       {/* Navigation */}
       <nav className="flex-1 overflow-y-auto px-2 py-3">
         <ul className="space-y-0.5">
-          {navItems.map((item) => {
+          {navItems.filter((item) => !item.minRole || isAtLeast(user, item.minRole)).map((item) => {
             const Icon = item.icon;
             const isActive =
               item.path === '/'

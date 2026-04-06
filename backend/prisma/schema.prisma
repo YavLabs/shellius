@@ -287,9 +287,11 @@ model CaKeyPair {
   id                  String    @id @default(cuid())
   orgId               String    @map("org_id")
   name                String
-  algorithm           String    @default("ed25519")
+  algorithm           String    @default("Ed25519")
   publicKey           String    @db.Text @map("public_key")
   encryptedPrivateKey String    @db.Text @map("encrypted_private_key")
+  encryptionIv        String    @map("encryption_iv")
+  encryptionTag       String    @map("encryption_tag")
   fingerprint         String    @unique
   isActive            Boolean   @default(true) @map("is_active")
   createdAt           DateTime  @default(now()) @map("created_at")
@@ -307,7 +309,7 @@ model Certificate {
   id              String     @id @default(cuid())
   orgId           String     @map("org_id")
   caKeyPairId     String     @map("ca_key_pair_id")
-  serial          String     @unique
+  serial          BigInt     @unique
   type            CertType
   keyId           String     @map("key_id")
   principals      String[]
@@ -335,5 +337,6 @@ model Certificate {
   @@index([orgId, validBefore])
   @@index([issuedToId])
   @@index([issuedForId])
+  @@index([caKeyPairId])
   @@map("certificates")
 }

@@ -7,7 +7,7 @@
   "scripts": {
     "dev": "node --watch src/server.js",
     "start": "node src/server.js",
-    "test": "jest --passWithNoTests",
+    "test": "NODE_OPTIONS='--experimental-vm-modules' jest --passWithNoTests",
     "lint": "eslint src/ --ext .js",
     "db:migrate": "npx prisma migrate dev",
     "db:generate": "npx prisma generate",

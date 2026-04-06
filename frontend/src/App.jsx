@@ -12,6 +12,8 @@ import Customers from './pages/Customers';
 import CustomerDetail from './pages/CustomerDetail';
 import Servers from './pages/Servers';
 import ServerDetail from './pages/ServerDetail';
+import Certificates from './pages/Certificates';
+import Settings from './pages/Settings';
 
 function App() {
   return (
@@ -29,6 +31,8 @@ function App() {
               <Route path="/customers/:id" element={<CustomerDetail />} />
               <Route path="/servers" element={<Servers />} />
               <Route path="/servers/:id" element={<ServerDetail />} />
+              <Route path="/certificates" element={<Certificates />} />
+              <Route path="/settings" element={<Settings />} />
             </Route>
           </Route>
         </Routes>
