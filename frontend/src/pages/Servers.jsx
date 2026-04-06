@@ -9,6 +9,8 @@ import {
   ChevronLeft,
   ChevronRight,
   X,
+  Terminal as TerminalIcon,
+  Monitor,
 } from 'lucide-react';
 import DataTable from '@/components/shared/DataTable';
 import SearchInput from '@/components/shared/SearchInput';
@@ -233,14 +235,21 @@ function Servers() {
     {
       key: 'hostname',
       label: 'Hostname',
-      render: (r) => (
-        <button
-          onClick={() => navigate(`/servers/${r.id}`)}
-          className="font-medium text-foreground hover:text-primary"
-        >
-          {r.hostname}
-        </button>
-      ),
+      render: (r) => {
+        // r.protocol is the canonical field (SSH | RDP); fall back to r.type if absent
+        // TODO: confirm field name once Prisma schema is finalised — using r.protocol
+        const proto = r.protocol || r.type || 'SSH';
+        const ProtoIcon = proto === 'RDP' ? Monitor : TerminalIcon;
+        return (
+          <button
+            onClick={() => navigate(`/servers/${r.id}`)}
+            className="flex items-center gap-2 font-medium text-foreground hover:text-primary"
+          >
+            <ProtoIcon className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+            {r.hostname}
+          </button>
+        );
+      },
     },
     {
       key: 'ipAddress',

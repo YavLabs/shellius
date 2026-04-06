@@ -1,4 +1,10 @@
 services:
+  guacd:
+    image: guacamole/guacd:1.5.5
+    restart: unless-stopped
+    networks:
+      - default
+
   postgres:
     image: postgres:16-alpine
     environment:

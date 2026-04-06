@@ -1,7 +1,8 @@
 import { useEffect, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
-import { ArrowLeft, Server, User } from 'lucide-react';
+import { ArrowLeft, Monitor, Server, User } from 'lucide-react';
 import WebTerminal from '@/components/terminal/WebTerminal';
+import RdpTerminal from '@/components/terminal/RdpTerminal';
 import EnvironmentBadge from '@/components/shared/EnvironmentBadge';
 import { getAccessRequest } from '@/services/accessRequestService';
 
@@ -24,7 +25,7 @@ function Terminal() {
         setRequest(resp.data || resp);
       })
       .catch(() => {
-        // Non-fatal — still show the terminal
+        // Non-fatal — still attempt to render the terminal
       })
       .finally(() => setLoadingRequest(false));
   }, [requestId]);
@@ -49,11 +50,16 @@ function Terminal() {
     );
   }
 
+  const protocol = request?.protocol || 'SSH';
+  const isRdp = protocol === 'RDP';
+
   const serverName =
     request?.server?.hostname || request?.server?.name || request?.serverId || 'Unknown server';
   const userName =
     request?.requester?.name || request?.requester?.email || request?.requesterId || '';
   const environment = request?.server?.environment;
+
+  const ProtocolIcon = isRdp ? Monitor : Server;
 
   return (
     <div className="flex flex-col h-full p-4 gap-3">
@@ -72,9 +78,14 @@ function Terminal() {
             <div className="h-5 w-48 animate-pulse rounded bg-muted" />
           ) : (
             <div className="flex items-center gap-2">
-              <Server className="h-4 w-4 text-muted-foreground" />
+              <ProtocolIcon className="h-4 w-4 text-muted-foreground" />
               <span className="text-sm font-semibold text-foreground">{serverName}</span>
               {environment && <EnvironmentBadge environment={environment} />}
+              {isRdp && (
+                <span className="rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide bg-blue-500/10 text-blue-600 dark:text-blue-400 border border-blue-500/20">
+                  RDP
+                </span>
+              )}
               {userName && (
                 <>
                   <span className="text-border">·</span>
@@ -95,7 +106,11 @@ function Terminal() {
 
       {/* Terminal — fills remaining height */}
       <div className="flex-1 min-h-0">
-        <WebTerminal requestId={requestId} />
+        {isRdp ? (
+          <RdpTerminal requestId={requestId} />
+        ) : (
+          <WebTerminal requestId={requestId} />
+        )}
       </div>
     </div>
   );
