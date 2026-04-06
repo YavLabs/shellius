@@ -4,6 +4,7 @@ import cors from 'cors';
 import helmet from 'helmet';
 import config from './config/index.js';
 import healthRouter from './routes/health.js';
+import metricsRouter, { httpRequestCounter } from './routes/metrics.js';
 import authRouter from './routes/auth.js';
 import ssoRouter from './routes/sso.js';
 import deviceAuthRouter from './routes/deviceAuth.js';
@@ -28,7 +29,17 @@ app.use(cors({ origin: config.corsOrigin, credentials: true }));
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
+// Prometheus HTTP request counter — runs after body parsing, before routes
+app.use((req, res, next) => {
+  res.on('finish', () => {
+    const route = req.route?.path ?? req.path ?? 'unknown';
+    httpRequestCounter.labels(req.method, route, String(res.statusCode)).inc();
+  });
+  next();
+});
+
 app.use('/api', healthRouter);
+app.use('/api', metricsRouter);
 app.use('/api/auth', authRouter);
 app.use('/api/auth/sso', ssoRouter);
 app.use('/api/auth/device', deviceAuthRouter);
