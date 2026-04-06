@@ -17,6 +17,7 @@ import {
   PanelLeft,
 } from 'lucide-react';
 import { useAuth } from '@/context/AuthContext';
+import { useNotifications } from '@/context/NotificationContext';
 import { cn } from '@/lib/utils';
 
 const navItems = [
@@ -42,6 +43,7 @@ function isAtLeast(user, role) {
 function Sidebar() {
   const [collapsed, setCollapsed] = useState(false);
   const { user } = useAuth();
+  const { unreadCount } = useNotifications();
   const location = useLocation();
 
   return (
@@ -84,7 +86,16 @@ function Sidebar() {
                   title={collapsed ? item.label : undefined}
                 >
                   <Icon className="h-4 w-4 shrink-0" />
-                  {!collapsed && <span>{item.label}</span>}
+                  {!collapsed && (
+                    <span className="flex flex-1 items-center justify-between">
+                      {item.label}
+                      {item.path === '/access-requests' && unreadCount > 0 && (
+                        <span className="flex h-5 min-w-5 items-center justify-center rounded-full bg-amber-500/20 px-1 text-xs font-semibold text-amber-600 dark:text-amber-400">
+                          {unreadCount > 9 ? '9+' : unreadCount}
+                        </span>
+                      )}
+                    </span>
+                  )}
                 </NavLink>
               </li>
             );
