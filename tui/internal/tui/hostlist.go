@@ -88,8 +88,8 @@ func (m HostListModel) Update(msg tea.Msg) (HostListModel, tea.Cmd) {
 		m.state = hostListStateReady
 		m.cursor = 0
 		m.visibleStart = 0
-		m.filter.Focus()
-		return m, nil
+		focusCmd := m.filter.Focus()
+		return m, focusCmd
 
 	case hostsErrMsg:
 		m.state = hostListStateError

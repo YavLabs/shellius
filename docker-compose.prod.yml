@@ -1,83 +1,82 @@
 services:
+
+  nginx:
+    image: nginx:alpine
+    restart: unless-stopped
+    volumes:
+      - ./docker/nginx-proxy.conf:/etc/nginx/nginx.conf:ro
+    depends_on:
+      - backend
+      - frontend
+    labels:
+      # --- Traefik reverse proxy (optional — ignored when Traefik is not running) ---
+      - "traefik.enable=true"
+      - "traefik.docker.network=homelab"
+
+      # HTTP router — plain HTTP, TLS termination handled by Cloudflare upstream
+      - "traefik.http.routers.shellius.entrypoints=http"
+      - "traefik.http.routers.shellius.rule=Host(`${TRAEFIK_HOST}`)"
+      - "traefik.http.routers.shellius.service=shellius"
+      - "traefik.http.routers.shellius.priority=10"
+
+      # Service — nginx listens on port 80 inside Docker
+      - "traefik.http.services.shellius.loadbalancer.server.port=80"
+      - "traefik.http.services.shellius.loadbalancer.passHostHeader=true"
+    networks:
+      - internal
+      - homelab
+
   postgres:
     image: postgres:16-alpine
     restart: unless-stopped
+    env_file: .env.prod
     environment:
       POSTGRES_USER: ${POSTGRES_USER}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
       POSTGRES_DB: ${POSTGRES_DB}
     volumes:
-      - shellius_pg_data:/var/lib/postgresql/data
+      - postgres_data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER}"]
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
       interval: 10s
       timeout: 5s
       retries: 5
       start_period: 30s
     networks:
-      - shellius
-    deploy:
-      resources:
-        limits:
-          memory: 1g
-    logging:
-      driver: json-file
-      options:
-        max-size: "20m"
-        max-file: "5"
+      - internal
 
   redis:
     image: redis:7-alpine
     restart: unless-stopped
-    command: >
-      redis-server
-      --appendonly yes
-      --appendfsync everysec
-      --requirepass ${REDIS_PASSWORD}
+    command: redis-server --appendonly yes
     volumes:
-      - shellius_redis_data:/data
+      - redis_data:/data
     healthcheck:
-      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD}", "ping"]
+      test: ["CMD", "redis-cli", "ping"]
       interval: 10s
       timeout: 5s
       retries: 5
       start_period: 10s
     networks:
-      - shellius
-    deploy:
-      resources:
-        limits:
-          memory: 512m
-    logging:
-      driver: json-file
-      options:
-        max-size: "10m"
-        max-file: "3"
+      - internal
 
   guacd:
     image: guacamole/guacd:1.5.5
     restart: unless-stopped
     networks:
-      - shellius
-    deploy:
-      resources:
-        limits:
-          memory: 512m
-    logging:
-      driver: json-file
-      options:
-        max-size: "10m"
-        max-file: "3"
+      - internal
 
   backend:
     build:
       context: .
       dockerfile: docker/Dockerfile.backend
+    container_name: shellius-api
     restart: unless-stopped
     env_file: .env.prod
     environment:
       GUACD_HOST: guacd
       GUACD_PORT: "4822"
+      RECORDINGS_DIR: /data/recordings
     depends_on:
       postgres:
         condition: service_healthy
@@ -86,105 +85,33 @@ services:
       guacd:
         condition: service_started
     volumes:
-      - shellius_recordings:/data/recordings
-    healthcheck:
-      test: ["CMD-SHELL", "wget -q --spider http://localhost:3001/api/health || exit 1"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 20s
+      - recordings:/data/recordings
     networks:
-      - shellius
-    deploy:
-      resources:
-        limits:
-          memory: 1g
-    logging:
-      driver: json-file
-      options:
-        max-size: "50m"
-        max-file: "5"
-    labels:
-      - "traefik.enable=true"
-      - "traefik.http.routers.shellius-api.rule=Host(`${SHELLIUS_DOMAIN:-shellius.example.com}`) && PathPrefix(`/api`)"
-      - "traefik.http.routers.shellius-api.entrypoints=websecure"
-      - "traefik.http.routers.shellius-api.tls.certresolver=letsencrypt"
-      - "traefik.http.services.shellius-api.loadbalancer.server.port=3001"
-      # WebSocket upgrade for terminal routes
-      - "traefik.http.middlewares.shellius-ws.headers.customRequestHeaders.Upgrade=websocket"
-      - "traefik.http.middlewares.shellius-ws.headers.customRequestHeaders.Connection=Upgrade"
-      - "traefik.http.routers.shellius-api.middlewares=shellius-ws"
+      internal:
+        aliases:
+          - shellius-api
+      public: {}
 
   frontend:
     build:
       context: .
       dockerfile: docker/Dockerfile.frontend
+    container_name: shellius-web
     restart: unless-stopped
-    depends_on:
-      backend:
-        condition: service_healthy
-    healthcheck:
-      test: ["CMD-SHELL", "wget -q --spider http://localhost:80/ || exit 1"]
-      interval: 30s
-      timeout: 5s
-      retries: 3
-      start_period: 10s
     networks:
-      - shellius
-    deploy:
-      resources:
-        limits:
-          memory: 256m
-    logging:
-      driver: json-file
-      options:
-        max-size: "10m"
-        max-file: "3"
-    labels:
-      - "traefik.enable=true"
-      - "traefik.http.routers.shellius-frontend.rule=Host(`${SHELLIUS_DOMAIN:-shellius.example.com}`)"
-      - "traefik.http.routers.shellius-frontend.entrypoints=websecure"
-      - "traefik.http.routers.shellius-frontend.tls.certresolver=letsencrypt"
-      - "traefik.http.services.shellius-frontend.loadbalancer.server.port=80"
-      # HTTP -> HTTPS redirect
-      - "traefik.http.routers.shellius-frontend-http.rule=Host(`${SHELLIUS_DOMAIN:-shellius.example.com}`)"
-      - "traefik.http.routers.shellius-frontend-http.entrypoints=web"
-      - "traefik.http.routers.shellius-frontend-http.middlewares=shellius-https-redirect"
-      - "traefik.http.middlewares.shellius-https-redirect.redirectscheme.scheme=https"
-      - "traefik.http.middlewares.shellius-https-redirect.redirectscheme.permanent=true"
-
-  # nginx reverse proxy (default path — disable if using Traefik)
-  # To use Traefik instead: docker compose --profile traefik up -d
-  # (remove the nginx service or add profiles: [nginx] here and run accordingly)
-  #
-  # profiles: [nginx]   # Uncomment this line to make nginx opt-in when using Traefik
-  nginx:
-    image: nginx:alpine
-    restart: unless-stopped
-    ports:
-      - "80:80"
-      - "443:443"
-    volumes:
-      - ./docker/nginx.conf:/etc/nginx/nginx.conf:ro
-      - ./docker/nginx-certs:/etc/nginx/certs:ro
-    depends_on:
-      backend:
-        condition: service_healthy
-      frontend:
-        condition: service_healthy
-    networks:
-      - shellius
-    logging:
-      driver: json-file
-      options:
-        max-size: "20m"
-        max-file: "5"
+      internal:
+        aliases:
+          - shellius-web
 
 networks:
-  shellius:
+  internal:
     driver: bridge
+  public:
+    driver: bridge
+  homelab:
+    external: true
 
 volumes:
-  shellius_pg_data:
-  shellius_redis_data:
-  shellius_recordings:
+  postgres_data:
+  redis_data:
+  recordings:
