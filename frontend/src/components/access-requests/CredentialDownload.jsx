@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Terminal, Download, Copy, Check, AlertTriangle, ExternalLink } from 'lucide-react';
-import { getSshCredentials, getRdpCredentials, startConnect } from '@/services/accessRequestService';
+import { getSshCredentials, getRdpCredentials } from '@/services/accessRequestService';
 import { formatDateTime } from '@/utils/time';
 
 function useCountdown(targetDate) {
@@ -77,7 +77,6 @@ function CredentialDownload({ request }) {
 
   const [sshLoading, setSshLoading] = useState(false);
   const [rdpLoading, setRdpLoading] = useState(false);
-  const [connectLoading, setConnectLoading] = useState(false);
   const [sshCreds, setSshCreds] = useState(null);
   const [error, setError] = useState('');
 
@@ -128,20 +127,8 @@ function CredentialDownload({ request }) {
     }
   };
 
-  const handleConnect = async () => {
-    setConnectLoading(true);
-    setError('');
-    try {
-      const resp = await startConnect(request.id);
-      const url = resp.data?.url || resp.url;
-      if (url) {
-        navigate(url);
-      }
-    } catch (err) {
-      setError(err.response?.data?.error?.message || err.message || 'Failed to start web session.');
-    } finally {
-      setConnectLoading(false);
-    }
+  const handleConnect = () => {
+    navigate(`/terminal?requestId=${encodeURIComponent(request.id)}`);
   };
 
   return (
@@ -169,11 +156,10 @@ function CredentialDownload({ request }) {
         {/* Open Web Terminal */}
         <button
           onClick={handleConnect}
-          disabled={connectLoading}
-          className="flex items-center gap-2 rounded-md border border-input bg-background px-4 py-2 text-sm font-medium text-foreground hover:bg-accent disabled:opacity-50"
+          className="flex items-center gap-2 rounded-md border border-input bg-background px-4 py-2 text-sm font-medium text-foreground hover:bg-accent"
         >
           <ExternalLink className="h-4 w-4" />
-          {connectLoading ? 'Connecting...' : 'Open Web Terminal'}
+          Open Web Terminal
         </button>
 
         {/* SSH Download */}

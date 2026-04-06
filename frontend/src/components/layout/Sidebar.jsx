@@ -29,7 +29,7 @@ const navItems = [
   { label: 'Policies', icon: Shield, path: '/policies', minRole: 'admin' },
   { label: 'Access Requests', icon: KeyRound, path: '/access-requests' },
   { label: 'Certificates', icon: FileKey, path: '/certificates', minRole: 'admin' },
-  { label: 'Sessions', icon: Terminal, path: '/sessions' },
+  { label: 'Sessions', icon: Terminal, path: '/sessions', minRole: 'operator' },
   { label: 'Audit Log', icon: ScrollText, path: '/audit-log' },
   { label: 'Cloud Connectors', icon: Cloud, path: '/cloud-connectors' },
   { label: 'Settings', icon: Settings, path: '/settings' },
