@@ -47,6 +47,7 @@ model Organization {
   deviceAuthRequests DeviceAuthRequest[]
   caKeyPairs    CaKeyPair[]
   certificates  Certificate[]
+  policies      AccessPolicy[]
 
   @@map("organizations")
 }
@@ -98,6 +99,7 @@ model Customer {
 
   organization Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
   servers      Server[]
+  policies     AccessPolicy[]
 
   @@unique([orgId, slug])
   @@index([orgId])
@@ -339,4 +341,57 @@ model Certificate {
   @@index([issuedForId])
   @@index([caKeyPairId])
   @@map("certificates")
+}
+
+enum PolicyEffect {
+  ALLOW
+  DENY
+}
+
+enum SubjectType {
+  USER
+  GROUP
+}
+
+model AccessPolicy {
+  id                  String       @id @default(cuid())
+  orgId               String       @map("org_id")
+  customerId          String?      @map("customer_id")
+  name                String
+  description         String?
+  effect              PolicyEffect
+  targetEnvironments  String[]     @map("target_environments")
+  targetLabels        Json         @default("{}") @map("target_labels")
+  targetServerIds     String[]     @map("target_server_ids")
+  allowedPrincipals   String[]     @map("allowed_principals")
+  maxSessionDuration  Int          @map("max_session_duration")
+  requireApproval     Boolean      @default(false) @map("require_approval")
+  autoApprove         Boolean      @default(false) @map("auto_approve")
+  isActive            Boolean      @default(true) @map("is_active")
+  priority            Int          @default(100)
+  createdAt           DateTime     @default(now()) @map("created_at")
+  updatedAt           DateTime     @updatedAt @map("updated_at")
+
+  organization Organization   @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  customer     Customer?      @relation(fields: [customerId], references: [id], onDelete: SetNull)
+  subjects     PolicySubject[]
+
+  @@index([orgId, isActive])
+  @@index([customerId])
+  @@index([effect, priority])
+  @@map("access_policies")
+}
+
+model PolicySubject {
+  id          String      @id @default(cuid())
+  policyId    String      @map("policy_id")
+  subjectType SubjectType @map("subject_type")
+  subjectId   String      @map("subject_id")
+  createdAt   DateTime    @default(now()) @map("created_at")
+
+  policy AccessPolicy @relation(fields: [policyId], references: [id], onDelete: Cascade)
+
+  @@unique([policyId, subjectType, subjectId])
+  @@index([subjectType, subjectId])
+  @@map("policy_subjects")
 }
