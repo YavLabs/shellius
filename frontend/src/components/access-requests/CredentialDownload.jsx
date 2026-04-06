@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Terminal, Download, Copy, Check, AlertTriangle, ExternalLink } from 'lucide-react';
+import { Terminal, Download, Copy, Check, AlertTriangle, ExternalLink, Monitor, Info } from 'lucide-react';
 import { getSshCredentials, getRdpCredentials } from '@/services/accessRequestService';
 import { formatDateTime } from '@/utils/time';
 
@@ -142,7 +142,7 @@ function CredentialDownload({ request }) {
         )}
       </div>
 
-      {/* Warning banner */}
+      {/* Warning banners */}
       {protocol === 'SSH' && (
         <div className="flex items-start gap-2 rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2">
           <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-amber-600 dark:text-amber-400" />
@@ -152,15 +152,38 @@ function CredentialDownload({ request }) {
         </div>
       )}
 
+      {protocol === 'RDP' && (
+        <div className="flex items-start gap-2 rounded-md border border-blue-500/30 bg-blue-500/10 px-3 py-2">
+          <Info className="mt-0.5 h-4 w-4 shrink-0 text-blue-600 dark:text-blue-400" />
+          <p className="text-xs text-blue-700 dark:text-blue-300">
+            The browser session uses server-injected credentials. The .rdp file connects directly to the
+            host without credentials — your local RDP client will prompt you if the host is reachable.
+          </p>
+        </div>
+      )}
+
       <div className="flex flex-wrap gap-2">
-        {/* Open Web Terminal */}
-        <button
-          onClick={handleConnect}
-          className="flex items-center gap-2 rounded-md border border-input bg-background px-4 py-2 text-sm font-medium text-foreground hover:bg-accent"
-        >
-          <ExternalLink className="h-4 w-4" />
-          Open Web Terminal
-        </button>
+        {/* SSH: Open Web Terminal */}
+        {protocol === 'SSH' && (
+          <button
+            onClick={handleConnect}
+            className="flex items-center gap-2 rounded-md border border-input bg-background px-4 py-2 text-sm font-medium text-foreground hover:bg-accent"
+          >
+            <ExternalLink className="h-4 w-4" />
+            Open Web Terminal
+          </button>
+        )}
+
+        {/* RDP: Open in Browser */}
+        {protocol === 'RDP' && (
+          <button
+            onClick={handleConnect}
+            className="flex items-center gap-2 rounded-md border border-input bg-background px-4 py-2 text-sm font-medium text-foreground hover:bg-accent"
+          >
+            <Monitor className="h-4 w-4" />
+            Open in Browser (RDP)
+          </button>
+        )}
 
         {/* SSH Download */}
         {protocol === 'SSH' && (
@@ -174,7 +197,7 @@ function CredentialDownload({ request }) {
           </button>
         )}
 
-        {/* RDP Download */}
+        {/* RDP: Download .rdp file */}
         {protocol === 'RDP' && (
           <button
             onClick={handleRdpDownload}

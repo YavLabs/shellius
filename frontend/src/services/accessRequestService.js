@@ -23,3 +23,6 @@ export const getRdpCredentials = (id) =>
 
 export const startConnect = (id) =>
   api.post(`/access-requests/${id}/connect`).then((r) => r.data);
+
+export const getRdpGatewayToken = (id) =>
+  api.post(`/access-requests/${id}/rdp-token`).then((r) => r.data);

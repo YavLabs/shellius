@@ -7,6 +7,7 @@ import tenant from '../middleware/tenant.js';
 import requireRole from '../middleware/rbac.js';
 import audit from '../middleware/audit.js';
 import * as accessRequestService from '../services/accessRequestService.js';
+import * as rdpService from '../services/rdpService.js';
 
 const router = express.Router();
 
@@ -210,6 +211,39 @@ router.post(
       callerId: req.user.userId,
     });
     res.json({ success: true, data: rdpFile });
+  })
+);
+
+// ---------------------------------------------------------------------------
+// POST /api/access-requests/:id/rdp-token — requester only
+//
+// Returns a short-lived gateway JWT (5 min) that the frontend passes as
+// ?token= on the WebSocket RDP connection.
+// ---------------------------------------------------------------------------
+
+router.post(
+  '/:id/rdp-token',
+  audit('access_request.rdp_token', 'AccessRequest'),
+  asyncHandler(async (req, res) => {
+    const id = req.params.id;
+
+    // Verify caller is the requester and request is accessible
+    const accessRequest = await accessRequestService.getById({
+      requestId: id,
+      callerId: req.user.userId,
+      callerRole: req.user.role,
+    });
+
+    if (accessRequest.requesterId !== req.user.userId) {
+      throw new ApiError(403, 'Only the requester may obtain an RDP gateway token');
+    }
+
+    const { gatewayToken } = await rdpService.createConnectionForRequest(id);
+
+    // Gateway token TTL is 5 minutes; compute an approximate expiresAt
+    const expiresAt = new Date(Date.now() + 5 * 60 * 1000).toISOString();
+
+    res.json({ success: true, data: { token: gatewayToken, expiresAt } });
   })
 );
 
