@@ -1,0 +1,49 @@
+// Reference-only additions for Task 2B (SSO + Device Auth).
+// These models are appended to the main schema.prisma.
+
+enum DeviceAuthStatus {
+  pending
+  approved
+  denied
+  expired
+}
+
+model SsoConfig {
+  id                    String   @id @default(cuid())
+  orgId                 String   @unique @map("org_id")
+  provider              String
+  clientId              String   @map("client_id")
+  clientSecretEncrypted String   @map("client_secret_encrypted") @db.Text
+  issuerUrl             String   @map("issuer_url")
+  redirectUri           String   @map("redirect_uri")
+  scopes                String   @default("openid profile email")
+  isActive              Boolean  @default(true) @map("is_active")
+  createdAt             DateTime @default(now()) @map("created_at")
+  updatedAt             DateTime @updatedAt @map("updated_at")
+
+  organization Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+
+  @@map("sso_configs")
+}
+
+model DeviceAuthRequest {
+  id         String           @id @default(cuid())
+  deviceCode String           @unique @map("device_code")
+  userCode   String           @unique @map("user_code")
+  clientId   String           @map("client_id")
+  scope      String           @default("")
+  orgId      String           @map("org_id")
+  userId     String?          @map("user_id")
+  status     DeviceAuthStatus @default(pending)
+  interval   Int              @default(5)
+  expiresAt  DateTime         @map("expires_at")
+  createdAt  DateTime         @default(now()) @map("created_at")
+  lastPollAt DateTime?        @map("last_poll_at")
+
+  organization Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  user         User?        @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([userCode])
+  @@index([status, expiresAt])
+  @@map("device_auth_requests")
+}

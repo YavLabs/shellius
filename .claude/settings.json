@@ -1,0 +1,36 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npm *)",
+      "Bash(npx *)",
+      "Bash(node *)",
+      "Bash(docker *)",
+      "Bash(docker compose*)",
+      "Bash(docker-compose *)",
+      "Bash(git *)",
+      "Bash(go *)",
+      "Bash(ssh-keygen *)",
+      "Bash(openssl *)",
+      "Bash(pg_dump *)",
+      "Bash(pg_restore *)",
+      "Bash(pg_isready *)",
+      "Bash(mkdir *)",
+      "Bash(cp *)",
+      "Bash(mv *)",
+      "Bash(chmod *)",
+      "Bash(ls *)",
+      "Bash(cat *)",
+      "Bash(wc *)",
+      "Bash(curl *)",
+      "Bash(cd backend*)",
+      "Bash(cd frontend*)",
+      "Bash(cd tui*)",
+      "Bash(cd docker*)",
+      "Bash(make *)"
+    ],
+    "deny": [
+      "Bash(rm -rf /)",
+      "Bash(sudo *)"
+    ]
+  }
+}

@@ -1,0 +1,119 @@
+import { useState } from 'react';
+import { NavLink, useLocation } from 'react-router-dom';
+import {
+  LayoutDashboard,
+  Building2,
+  Server,
+  Users,
+  UsersRound,
+  Shield,
+  KeyRound,
+  FileKey,
+  Terminal,
+  ScrollText,
+  Cloud,
+  Settings,
+  PanelLeftClose,
+  PanelLeft,
+} from 'lucide-react';
+import { useAuth } from '@/context/AuthContext';
+import { cn } from '@/lib/utils';
+
+const navItems = [
+  { label: 'Dashboard', icon: LayoutDashboard, path: '/' },
+  { label: 'Customers', icon: Building2, path: '/customers' },
+  { label: 'Servers', icon: Server, path: '/servers' },
+  { label: 'Users', icon: Users, path: '/users' },
+  { label: 'Groups', icon: UsersRound, path: '/groups' },
+  { label: 'Policies', icon: Shield, path: '/policies' },
+  { label: 'Access Requests', icon: KeyRound, path: '/access-requests' },
+  { label: 'Certificates', icon: FileKey, path: '/certificates' },
+  { label: 'Sessions', icon: Terminal, path: '/sessions' },
+  { label: 'Audit Log', icon: ScrollText, path: '/audit-log' },
+  { label: 'Cloud Connectors', icon: Cloud, path: '/cloud-connectors' },
+  { label: 'Settings', icon: Settings, path: '/settings' },
+];
+
+function Sidebar() {
+  const [collapsed, setCollapsed] = useState(false);
+  const { user } = useAuth();
+  const location = useLocation();
+
+  return (
+    <aside
+      className={cn(
+        'flex h-screen flex-col border-r border-border bg-card transition-all duration-200',
+        collapsed ? 'w-16' : 'w-60'
+      )}
+    >
+      {/* Logo */}
+      <div className="flex h-14 items-center border-b border-border px-4">
+        <Terminal className="h-5 w-5 shrink-0 text-foreground" />
+        {!collapsed && (
+          <span className="ml-2 text-sm font-semibold tracking-tight text-foreground">
+            Shellius
+          </span>
+        )}
+      </div>
+
+      {/* Navigation */}
+      <nav className="flex-1 overflow-y-auto px-2 py-3">
+        <ul className="space-y-0.5">
+          {navItems.map((item) => {
+            const Icon = item.icon;
+            const isActive =
+              item.path === '/'
+                ? location.pathname === '/'
+                : location.pathname.startsWith(item.path);
+
+            return (
+              <li key={item.path}>
+                <NavLink
+                  to={item.path}
+                  className={cn(
+                    'flex items-center gap-3 rounded-md px-3 py-2 text-sm font-medium transition-colors',
+                    isActive
+                      ? 'bg-accent text-accent-foreground'
+                      : 'text-muted-foreground hover:bg-accent/50 hover:text-foreground'
+                  )}
+                  title={collapsed ? item.label : undefined}
+                >
+                  <Icon className="h-4 w-4 shrink-0" />
+                  {!collapsed && <span>{item.label}</span>}
+                </NavLink>
+              </li>
+            );
+          })}
+        </ul>
+      </nav>
+
+      {/* User + Collapse */}
+      <div className="border-t border-border p-3">
+        {!collapsed && user && (
+          <div className="mb-2 flex items-center gap-2 px-1">
+            <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-primary text-xs font-medium text-primary-foreground">
+              {user.name?.[0]?.toUpperCase() || 'U'}
+            </div>
+            <div className="min-w-0">
+              <p className="truncate text-sm font-medium text-foreground">{user.name}</p>
+              <p className="truncate text-xs text-muted-foreground">{user.role}</p>
+            </div>
+          </div>
+        )}
+        <button
+          onClick={() => setCollapsed((prev) => !prev)}
+          className="flex w-full items-center justify-center rounded-md p-2 text-muted-foreground hover:bg-accent/50 hover:text-foreground transition-colors"
+          title={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+        >
+          {collapsed ? (
+            <PanelLeft className="h-4 w-4" />
+          ) : (
+            <PanelLeftClose className="h-4 w-4" />
+          )}
+        </button>
+      </div>
+    </aside>
+  );
+}
+
+export default Sidebar;
