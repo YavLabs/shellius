@@ -1,11 +1,16 @@
+import http from 'http';
 import app from './app.js';
 import config from './config/index.js';
 import logger from './utils/logger.js';
 import prisma from './config/db.js';
 import redis from './config/redis.js';
 import { registerHealthCheckJob, startHealthCheckWorker } from './jobs/healthCheck.js';
+import { attachWebSocketServer } from './services/terminalService.js';
 
-const server = app.listen(config.port, async () => {
+const httpServer = http.createServer(app);
+attachWebSocketServer(httpServer);
+
+const server = httpServer.listen(config.port, async () => {
   logger.info(`Server running on port ${config.port} [${config.nodeEnv}]`);
   try {
     await registerHealthCheckJob();

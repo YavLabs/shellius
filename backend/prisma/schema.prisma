@@ -50,6 +50,7 @@ model Organization {
   policies        AccessPolicy[]
   accessRequests  AccessRequest[]
   notifications   Notification[]
+  sessions        Session[]
 
   @@map("organizations")
 }
@@ -84,6 +85,7 @@ model User {
   accessRequestsRequested AccessRequest[] @relation("AccessRequestsRequested")
   accessRequestsToReview  AccessRequest[] @relation("AccessRequestsToReview")
   notifications           Notification[]
+  sessions                Session[]
 
   @@unique([orgId, email])
   @@index([orgId])
@@ -165,6 +167,7 @@ model Server {
   customer       Customer        @relation(fields: [customerId], references: [id], onDelete: Cascade)
   certificates   Certificate[]
   accessRequests AccessRequest[]
+  sessions       Session[]
 
   @@index([orgId, customerId])
   @@index([orgId, environment])
@@ -341,6 +344,7 @@ model Certificate {
   issuedFor      Server?         @relation(fields: [issuedForId], references: [id], onDelete: SetNull)
   revokedBy      User?           @relation("CertificatesRevokedBy", fields: [revokedById], references: [id], onDelete: SetNull)
   accessRequests AccessRequest[]
+  sessions       Session[]
 
   @@index([orgId, status])
   @@index([orgId, validBefore])
@@ -452,6 +456,7 @@ model AccessRequest {
   reviewer     User?        @relation("AccessRequestsToReview", fields: [reviewerId], references: [id], onDelete: SetNull)
   server       Server       @relation(fields: [serverId], references: [id], onDelete: Cascade)
   certificate  Certificate? @relation(fields: [certificateId], references: [id], onDelete: SetNull)
+  sessions     Session[]
 
   @@index([requesterId])
   @@index([reviewerId, status])
@@ -459,6 +464,47 @@ model AccessRequest {
   @@index([status, expiresAt])
   @@index([orgId])
   @@map("access_requests")
+}
+
+enum SessionType {
+  SSH
+  RDP
+}
+
+enum SessionStatus {
+  ACTIVE
+  ENDED
+  TERMINATED
+}
+
+model Session {
+  id               String        @id @default(cuid())
+  orgId            String        @map("org_id")
+  userId           String        @map("user_id")
+  serverId         String        @map("server_id")
+  certificateId    String?       @map("certificate_id")
+  accessRequestId  String?       @map("access_request_id")
+  sessionType      SessionType   @map("session_type")
+  status           SessionStatus @default(ACTIVE)
+  clientIp         String?       @map("client_ip")
+  userAgent        String?       @map("user_agent")
+  startedAt        DateTime      @default(now()) @map("started_at")
+  endedAt          DateTime?     @map("ended_at")
+  durationSeconds  Int?          @map("duration_seconds")
+  recordingPath    String?       @map("recording_path")
+  metadata         Json?
+
+  organization   Organization  @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  user           User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  server         Server        @relation(fields: [serverId], references: [id], onDelete: Cascade)
+  certificate    Certificate?  @relation(fields: [certificateId], references: [id], onDelete: SetNull)
+  accessRequest  AccessRequest? @relation(fields: [accessRequestId], references: [id], onDelete: SetNull)
+
+  @@index([orgId, status])
+  @@index([userId])
+  @@index([serverId])
+  @@index([accessRequestId])
+  @@map("sessions")
 }
 
 model Notification {

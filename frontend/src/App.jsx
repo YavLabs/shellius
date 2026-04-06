@@ -17,6 +17,8 @@ import Certificates from './pages/Certificates';
 import Policies from './pages/Policies';
 import Settings from './pages/Settings';
 import AccessRequests from './pages/AccessRequests';
+import Sessions from './pages/Sessions';
+import Terminal from './pages/Terminal';
 
 function App() {
   return (
@@ -26,6 +28,15 @@ function App() {
           <Routes>
             <Route path="/login" element={<Login />} />
             <Route element={<ProtectedRoute />}>
+              {/* Full-screen terminal — no app chrome */}
+              <Route
+                path="/terminal"
+                element={
+                  <div className="flex h-screen flex-col bg-background">
+                    <Terminal />
+                  </div>
+                }
+              />
               <Route element={<AppLayout />}>
                 <Route index element={<Dashboard />} />
                 <Route path="/users" element={<Users />} />
@@ -39,6 +50,7 @@ function App() {
                 <Route path="/policies" element={<Policies />} />
                 <Route path="/settings" element={<Settings />} />
                 <Route path="/access-requests" element={<AccessRequests />} />
+                <Route path="/sessions" element={<Sessions />} />
               </Route>
             </Route>
           </Routes>

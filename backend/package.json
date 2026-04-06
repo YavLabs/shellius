@@ -29,7 +29,9 @@
     "ioredis": "^5.4.0",
     "joi": "^17.13.0",
     "jsonwebtoken": "^9.0.2",
-    "winston": "^3.14.0"
+    "ssh2": "^1.17.0",
+    "winston": "^3.14.0",
+    "ws": "^8.20.0"
   },
   "devDependencies": {
     "eslint": "^9.0.0",
