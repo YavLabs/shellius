@@ -62,3 +62,4 @@ coverage/
 # Session recordings
 recordings/
 *.cast
+tui/bin/
