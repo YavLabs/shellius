@@ -920,6 +920,77 @@ export async function markPendingExpired() {
   return count;
 }
 
+// ---------------------------------------------------------------------------
+// Public API — notifyExpiringAccess (job helper)
+// ---------------------------------------------------------------------------
+
+/**
+ * Send ACCESS_REQUEST_EXPIRING notifications for APPROVED requests whose
+ * expiresAt falls within the next 10 minutes, deduplicated by checking
+ * whether a notification of that type already exists for each request.
+ *
+ * @returns {Promise<number>} Count of notifications created
+ */
+export async function notifyExpiringAccess() {
+  const now = new Date();
+  const windowEnd = new Date(now.getTime() + 10 * 60 * 1000);
+
+  const expiring = await prisma.accessRequest.findMany({
+    where: {
+      status: 'APPROVED',
+      expiresAt: { gt: now, lte: windowEnd },
+    },
+    include: {
+      server: { select: { hostname: true } },
+    },
+  });
+
+  if (expiring.length === 0) return 0;
+
+  let count = 0;
+  for (const req of expiring) {
+    try {
+      // Deduplication: check for an existing ACCESS_REQUEST_EXPIRING notification
+      // for this requester + requestId combination. O(n) per batch is acceptable
+      // for the expected volume of concurrent expiring requests.
+      const existing = await prisma.notification.findFirst({
+        where: {
+          userId: req.requesterId,
+          type: 'ACCESS_REQUEST_EXPIRING',
+          metadata: {
+            path: ['requestId'],
+            equals: req.id,
+          },
+        },
+      });
+
+      if (existing) continue;
+
+      await notificationService.create({
+        orgId: req.orgId,
+        userId: req.requesterId,
+        type: 'ACCESS_REQUEST_EXPIRING',
+        title: 'Your access is expiring soon',
+        body: `Your access to ${req.server.hostname} expires at ${req.expiresAt.toISOString()}. Download credentials now if you still need them.`,
+        metadata: { requestId: req.id, expiresAt: req.expiresAt },
+      });
+
+      count++;
+    } catch (err) {
+      logger.error('accessRequestService.notifyExpiringAccess: failed to notify', {
+        requestId: req.id,
+        error: err.message,
+      });
+    }
+  }
+
+  if (count > 0) {
+    logger.info('accessRequestService.notifyExpiringAccess: sent expiry warning notifications', { count });
+  }
+
+  return count;
+}
+
 export default {
   submit,
   review,
@@ -930,4 +1001,5 @@ export default {
   getById,
   markExpired,
   markPendingExpired,
+  notifyExpiringAccess,
 };
