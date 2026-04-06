@@ -1,10 +1,10 @@
 import api from './api';
 
-export const getCaPublicKey = () =>
+export const getPublicKey = () =>
   api.get('/ca/public-key').then((r) => r.data.data);
-export const generateCa = () =>
-  api.post('/ca/generate').then((r) => r.data.data);
-export const rotateCa = () =>
+
+export const getStatus = () =>
+  api.get('/ca/status').then((r) => r.data.data);
+
+export const rotate = () =>
   api.post('/ca/rotate').then((r) => r.data.data);
-export const getCaFingerprint = () =>
-  api.get('/ca/fingerprint').then((r) => r.data.data);
