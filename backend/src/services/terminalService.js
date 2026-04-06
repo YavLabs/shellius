@@ -31,6 +31,7 @@ import prisma from '../config/db.js';
 import logger from '../utils/logger.js';
 import * as accessRequestService from './accessRequestService.js';
 import * as sessionService from './sessionService.js';
+import * as rdpService from './rdpService.js';
 
 // ---------------------------------------------------------------------------
 // Recording helpers
@@ -111,16 +112,18 @@ const activeSessions = new Map();
 // ---------------------------------------------------------------------------
 
 /**
- * Attach a WebSocket server to an existing http.Server.
- * Handles upgrades only for the path /api/terminal/ssh.
+ * Attach WebSocket servers to an existing http.Server.
+ * Handles upgrades for:
+ *   /api/terminal/ssh  — SSH proxy
+ *   /api/terminal/rdp  — RDP Guacamole proxy
  *
  * @param {import('http').Server} httpServer
  */
 export function attachWebSocketServer(httpServer) {
-  const wss = new WebSocketServer({ noServer: true });
+  const wssSsh = new WebSocketServer({ noServer: true });
+  const wssRdp = new WebSocketServer({ noServer: true });
 
   httpServer.on('upgrade', (req, socket, head) => {
-    // Only handle our terminal path
     let pathname;
     try {
       pathname = new URL(req.url, 'http://localhost').pathname;
@@ -129,20 +132,31 @@ export function attachWebSocketServer(httpServer) {
       return;
     }
 
-    if (pathname !== '/api/terminal/ssh') {
-      // Let other upgrade handlers (if any) deal with it
+    if (pathname === '/api/terminal/ssh') {
+      wssSsh.handleUpgrade(req, socket, head, (ws) => {
+        wssSsh.emit('connection', ws, req);
+      });
+    } else if (pathname === '/api/terminal/rdp') {
+      wssRdp.handleUpgrade(req, socket, head, (ws) => {
+        wssRdp.emit('connection', ws, req);
+      });
+    } else {
       socket.destroy();
-      return;
     }
+  });
 
-    wss.handleUpgrade(req, socket, head, (ws) => {
-      wss.emit('connection', ws, req);
+  wssSsh.on('connection', (ws, req) => {
+    handleConnection(ws, req).catch((err) => {
+      logger.error('terminalService: unhandled error in handleConnection (SSH)', {
+        error: err.message,
+      });
+      safeClose(ws, 1011, 'Internal server error');
     });
   });
 
-  wss.on('connection', (ws, req) => {
-    handleConnection(ws, req).catch((err) => {
-      logger.error('terminalService: unhandled error in handleConnection', {
+  wssRdp.on('connection', (ws, req) => {
+    handleRdpConnection(ws, req).catch((err) => {
+      logger.error('terminalService: unhandled error in handleRdpConnection', {
         error: err.message,
       });
       safeClose(ws, 1011, 'Internal server error');
@@ -150,6 +164,7 @@ export function attachWebSocketServer(httpServer) {
   });
 
   logger.info('terminalService: WebSocket SSH proxy attached on /api/terminal/ssh');
+  logger.info('terminalService: WebSocket RDP proxy attached on /api/terminal/rdp');
 }
 
 // ---------------------------------------------------------------------------
@@ -431,6 +446,188 @@ async function handleConnection(ws, req) {
 }
 
 // ---------------------------------------------------------------------------
+// handleRdpConnection — Guacamole WebSocket proxy lifecycle
+// ---------------------------------------------------------------------------
+
+/**
+ * Handle a single WebSocket upgrade for the RDP proxy path.
+ *
+ * Authentication: token query param is a short-lived RDP gateway JWT issued
+ * by rdpService.createConnectionForRequest / rdpService.verifyGatewayToken.
+ *
+ * Tunnel: raw chunks are piped bidirectionally between the WebSocket client
+ * and the guacd TCP socket.  Both sides speak the Guacamole text protocol so
+ * no binary framing is needed.
+ *
+ * @param {import('ws').WebSocket} ws
+ * @param {import('http').IncomingMessage} req
+ */
+async function handleRdpConnection(ws, req) {
+  // ── 1. Parse query parameters ──────────────────────────────────────────
+  let query;
+  try {
+    query = Object.fromEntries(new URL(req.url, 'http://localhost').searchParams);
+  } catch {
+    safeClose(ws, 1008, 'Malformed request URL');
+    return;
+  }
+
+  const { token } = query;
+  if (!token) {
+    safeClose(ws, 1008, 'Missing token');
+    return;
+  }
+
+  // ── 2. Verify gateway token ────────────────────────────────────────────
+  let claims;
+  try {
+    claims = rdpService.verifyGatewayToken(token);
+  } catch {
+    safeClose(ws, 1008, 'Invalid or expired gateway token');
+    return;
+  }
+
+  const { accessRequestId, userId } = claims;
+
+  // ── 3. Load access request + server ───────────────────────────────────
+  let accessRequest;
+  try {
+    accessRequest = await accessRequestService.getById({
+      requestId: accessRequestId,
+      callerId: userId,
+      callerRole: 'viewer', // gateway token holder is always the requester
+    });
+  } catch (err) {
+    safeClose(ws, 1008, err.message || 'Access request not found');
+    return;
+  }
+
+  if (accessRequest.status !== 'APPROVED') {
+    safeClose(ws, 1008, `Access request is not approved (status: ${accessRequest.status})`);
+    return;
+  }
+  if (!accessRequest.expiresAt || accessRequest.expiresAt <= new Date()) {
+    safeClose(ws, 1008, 'Access request has expired');
+    return;
+  }
+
+  // Load the full server row (includes rdpPassword* fields not in REQUEST_INCLUDE)
+  const server = await prisma.server.findUnique({ where: { id: accessRequest.serverId } });
+  if (!server) {
+    safeClose(ws, 1008, 'Server not found');
+    return;
+  }
+
+  // ── 4. Open guacd connection (completes Guacamole handshake) ──────────
+  let guacdSocket;
+  try {
+    guacdSocket = await rdpService.createGuacdConnection({ server });
+  } catch (err) {
+    logger.error('terminalService: guacd connection failed', {
+      accessRequestId,
+      userId,
+      serverId: server.id,
+      error: err.message,
+    });
+    safeClose(ws, 1011, 'Failed to connect to RDP backend');
+    return;
+  }
+
+  // ── 5. Create Session row ─────────────────────────────────────────────
+  const clientIp =
+    req.headers['x-forwarded-for']?.split(',')[0]?.trim() ||
+    req.socket?.remoteAddress ||
+    null;
+  const userAgent = req.headers['user-agent'] || null;
+
+  let session;
+  try {
+    session = await sessionService.create({
+      orgId: accessRequest.orgId,
+      userId,
+      serverId: server.id,
+      certificateId: null,
+      accessRequestId,
+      sessionType: 'RDP',
+      clientIp,
+      userAgent,
+      metadata: { guacdHost: process.env.GUACD_HOST || '127.0.0.1', hostname: server.hostname },
+    });
+  } catch (err) {
+    logger.error('terminalService: failed to create RDP session row', { error: err.message });
+    rdpService.revokeConnection(guacdSocket);
+    safeClose(ws, 1011, 'Failed to create session');
+    return;
+  }
+
+  const sessionId = session.id;
+  logger.info('terminalService: RDP session starting', {
+    sessionId,
+    userId,
+    orgId: accessRequest.orgId,
+    hostname: server.hostname,
+  });
+
+  // ── 6. Register in active map ─────────────────────────────────────────
+  activeSessions.set(sessionId, { ws, guacdSocket });
+
+  let ended = false;
+
+  const cleanup = async (statusOverride) => {
+    if (ended) return;
+    ended = true;
+    activeSessions.delete(sessionId);
+    try {
+      await sessionService.end(sessionId, { status: statusOverride ?? 'ENDED' });
+    } catch (err) {
+      logger.warn('terminalService: RDP session end write failed', {
+        sessionId,
+        error: err.message,
+      });
+    }
+  };
+
+  // ── 7. Bidirectional pipe: guacd ↔ WebSocket ──────────────────────────
+  guacdSocket.setEncoding('utf8');
+
+  guacdSocket.on('data', (chunk) => {
+    if (ws.readyState === ws.constructor.OPEN) {
+      ws.send(chunk);
+    }
+  });
+
+  guacdSocket.on('end', () => {
+    safeClose(ws, 1000, 'RDP session ended');
+    cleanup('ENDED');
+  });
+
+  guacdSocket.on('error', (err) => {
+    logger.error('terminalService: guacd socket error', { sessionId, error: err.message });
+    safeClose(ws, 1011, 'RDP backend error');
+    cleanup('TERMINATED');
+  });
+
+  ws.on('message', (msg) => {
+    try {
+      guacdSocket.write(typeof msg === 'string' ? msg : msg);
+    } catch (err) {
+      logger.warn('terminalService: guacd write error', { sessionId, error: err.message });
+    }
+  });
+
+  ws.on('close', () => {
+    rdpService.revokeConnection(guacdSocket);
+    cleanup('ENDED');
+  });
+
+  ws.on('error', (err) => {
+    logger.warn('terminalService: RDP WebSocket error', { sessionId, error: err.message });
+    rdpService.revokeConnection(guacdSocket);
+    cleanup('TERMINATED');
+  });
+}
+
+// ---------------------------------------------------------------------------
 // terminateSession — admin force-close
 // ---------------------------------------------------------------------------
 
@@ -446,15 +643,20 @@ export async function terminateSession(sessionId, byUserId) {
   // Update DB first — will throw if not ACTIVE
   const updated = await sessionService.terminate(sessionId, byUserId);
 
-  // Force-close in-memory handles
+  // Force-close in-memory handles (SSH or RDP)
   const entry = activeSessions.get(sessionId);
   if (entry) {
     activeSessions.delete(sessionId);
+    // SSH handles
     try {
       entry.stream?.end();
     } catch { /* ignore */ }
     try {
       entry.sshClient?.end();
+    } catch { /* ignore */ }
+    // RDP handle
+    try {
+      if (entry.guacdSocket) rdpService.revokeConnection(entry.guacdSocket);
     } catch { /* ignore */ }
     safeClose(entry.ws, 1001, 'Session terminated by administrator');
   }

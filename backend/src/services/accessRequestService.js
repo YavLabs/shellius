@@ -11,6 +11,7 @@ import logger from '../utils/logger.js';
 import * as caService from './caService.js';
 import * as policyService from './policyService.js';
 import * as notificationService from './notificationService.js';
+import * as rdpService from './rdpService.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -513,10 +514,24 @@ export async function generateSshCredentials({ requestId, callerId }) {
 // ---------------------------------------------------------------------------
 
 /**
- * Generate a stub .rdp download file for an approved RDP access request.
+ * Generate a downloadable .rdp file for an approved RDP access request.
  *
- * TODO(phase-11): Replace placeholder gateway token with real Guacamole
- * connection creation and auth token generation.
+ * The file targets the RDP server directly (MSTSC format). The RDP password
+ * is NEVER included in the file — it is injected by Guacamole at the
+ * browser-terminal layer only.
+ *
+ * Security note: Windows MSTSC .rdp files connect directly to the target
+ * host when network-reachable. For true RD Gateway support (which wraps the
+ * RDP connection in HTTPS), a separate Windows RD Gateway component is
+ * required. The gatewayToken field is embedded as a comment line for
+ * Shellius-aware tooling; standard MSTSC ignores comment lines.
+ *
+ * TODO(rdp-gateway): When a real RD Gateway is deployed, replace
+ *   `full address` with the gateway's public hostname and set
+ *   `gatewayhostname` + `gatewaycredentialssource:i:5` (token-based auth).
+ *   The gatewayToken JWT can be presented as the gateway access token.
+ *   Until then, the .rdp file connects directly and the browser terminal
+ *   (WebSocket → guacd path) should be preferred for credential injection.
  *
  * @param {object} params
  * @param {string} params.requestId
@@ -545,50 +560,72 @@ export async function generateRdpFile({ requestId, callerId }) {
     throw new ApiError(410, 'Access request has expired');
   }
 
-  const server = accessRequest.server;
-  const rdpPort = server.port ?? 3389;
-  // TODO(phase-11): Replace PLACEHOLDER_PHASE_11 with real Guacamole gateway token
-  const gatewayToken = 'PLACEHOLDER_PHASE_11';
+  // Issue gateway token for Guacamole / Shellius-aware tooling
+  const { server, gatewayToken } = await rdpService.createConnectionForRequest(requestId);
 
-  const rdpContent = [
-    'full address:s:' + server.hostname,
-    'server port:i:' + rdpPort,
-    'username:s:' + accessRequest.requestedPrincipal,
+  const rdpPort = server.port ?? 3389;
+  const publicGatewayHost = process.env.PUBLIC_GATEWAY_HOST || 'localhost';
+  const rdpUsername = server.rdpUsername || accessRequest.requestedPrincipal;
+
+  // .rdp file in Windows MSTSC format (key:type:value, CRLF line endings).
+  // Comment lines begin with a bare text prefix before the first colon — MSTSC
+  // ignores lines it does not recognise, so custom metadata is safe to include.
+  const lines = [
+    // shellius metadata (treated as unknown keys by MSTSC — safely ignored)
+    `shellius-request-id:s:${requestId}`,
+    `shellius-expires-at:s:${accessRequest.expiresAt.toISOString()}`,
+    // NOTE: gatewayToken is NOT the RDP password — it is a short-lived JWT
+    // for the Shellius WebSocket RDP proxy. The RDP password is never exposed.
+    `shellius-gateway-token:s:${gatewayToken}`,
+    '',
+    // Display
+    'screen mode id:i:2',
+    'use multimon:i:0',
+    'desktopwidth:i:1920',
+    'desktopheight:i:1080',
+    'session bpp:i:32',
+    'smart sizing:i:0',
+    'displayconnectionbar:i:1',
+    '',
+    // Connection — direct to server (see TODO above re: RD Gateway)
+    `full address:s:${server.hostname}:${rdpPort}`,
+    `username:s:${rdpUsername}`,
+    '',
+    // Gateway fields — currently pointing at target server directly.
+    // Replace with real RD Gateway hostname when available.
+    `gatewayhostname:s:${publicGatewayHost}`,
+    'gatewayusagemethod:i:1',
+    'gatewaycredentialssource:i:4',
+    'gatewayprofileusagemethod:i:1',
+    '',
+    // Security
     'authentication level:i:2',
     'prompt for credentials:i:0',
     'negotiate security layer:i:1',
-    'remoteapplicationmode:i:0',
-    'alternate shell:s:',
-    'shell working directory:s:',
-    'gatewayhostname:s:' + server.hostname,
-    'gatewayusagemethod:i:1',
-    'gatewayprofileusagemethod:i:1',
-    'gatewaycredentialssource:i:0',
-    'gatewayaccesstoken:s:' + gatewayToken,
-    'gatewaybrokeringtype:i:0',
-    'use multimon:i:0',
-    'session bpp:i:32',
-    'winposstr:s:0,1,0,0,800,600',
-    'compression:i:1',
-    'keyboardhook:i:2',
-    'audiocapturemode:i:0',
-    'videoplaybackmode:i:1',
+    'enablecredsspsupport:i:1',
+    '',
+    // Performance
     'connection type:i:7',
     'networkautodetect:i:1',
     'bandwidthautodetect:i:1',
-    'displayconnectionbar:i:1',
-    'enableworkspacereconnect:i:0',
+    'compression:i:1',
     'disable wallpaper:i:0',
-    'allow font smoothing:i:0',
-    'allow desktop composition:i:0',
+    'allow font smoothing:i:1',
+    'allow desktop composition:i:1',
     'disable full window drag:i:1',
     'disable menu anims:i:1',
     'disable themes:i:0',
-    'disable cursor setting:i:0',
     'bitmapcachepersistenable:i:1',
-    'shellius-request-id:s:' + requestId,
-    'shellius-expires-at:s:' + accessRequest.expiresAt.toISOString(),
-  ].join('\r\n');
+    '',
+    // Audio / input
+    'audiocapturemode:i:0',
+    'videoplaybackmode:i:1',
+    'keyboardhook:i:2',
+    'redirectclipboard:i:1',
+    'remoteapplicationmode:i:0',
+  ];
+
+  const rdpContent = lines.join('\r\n');
 
   await writeAudit(
     accessRequest.orgId,
