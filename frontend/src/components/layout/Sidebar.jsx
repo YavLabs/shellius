@@ -30,7 +30,7 @@ const navItems = [
   { label: 'Access Requests', icon: KeyRound, path: '/access-requests' },
   { label: 'Certificates', icon: FileKey, path: '/certificates', minRole: 'admin' },
   { label: 'Sessions', icon: Terminal, path: '/sessions', minRole: 'operator' },
-  { label: 'Audit Log', icon: ScrollText, path: '/audit-log' },
+  { label: 'Audit Log', icon: ScrollText, path: '/audit-log', minRole: 'admin' },
   { label: 'Cloud Connectors', icon: Cloud, path: '/cloud-connectors' },
   { label: 'Settings', icon: Settings, path: '/settings' },
 ];
