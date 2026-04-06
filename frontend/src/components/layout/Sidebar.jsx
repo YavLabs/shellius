@@ -25,7 +25,7 @@ const navItems = [
   { label: 'Servers', icon: Server, path: '/servers' },
   { label: 'Users', icon: Users, path: '/users' },
   { label: 'Groups', icon: UsersRound, path: '/groups' },
-  { label: 'Policies', icon: Shield, path: '/policies' },
+  { label: 'Policies', icon: Shield, path: '/policies', minRole: 'admin' },
   { label: 'Access Requests', icon: KeyRound, path: '/access-requests' },
   { label: 'Certificates', icon: FileKey, path: '/certificates', minRole: 'admin' },
   { label: 'Sessions', icon: Terminal, path: '/sessions' },

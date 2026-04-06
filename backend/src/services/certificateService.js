@@ -2,6 +2,7 @@ import prisma from '../config/db.js';
 import ApiError from '../utils/ApiError.js';
 import logger from '../utils/logger.js';
 import * as caService from './caService.js';
+import * as policyService from './policyService.js';
 
 // ---------------------------------------------------------------------------
 // Internal helpers
@@ -82,18 +83,48 @@ export async function issue({
     if (!server) throw new ApiError(404, 'Server not found in organization');
   }
 
-  // HARD INVARIANT: production servers require an approved access request.
-  // This block will be wired to the approval workflow in phase 7.
-  if (server && server.environment === 'prod') {
-    throw new ApiError(
-      403,
-      'Production access requires an approved access request (phase 7)'
-    );
-  }
+  // Policy evaluation (phase 6): deny-before-allow engine with prod hard-block
+  if (server) {
+    const policyResult = await policyService.evaluate({
+      orgId,
+      userId,
+      serverId,
+      requestedPrincipal: principals[0],
+    });
 
-  // TODO (phase 6): call policyService.evaluate(userId, serverId) here.
-  // If policy returns { allow: false }, throw ApiError(403, ...).
-  // Currently we allow all non-prod access.
+    if (policyResult.requiresApproval) {
+      // Belt-and-braces: prod guard is now inside evaluate(), but we keep this
+      // explicit secondary check to ensure prod never slips through even if the
+      // policy engine has a regression.
+      if (server.environment === 'prod' && !policyResult.allowed) {
+        throw new ApiError(
+          403,
+          'Production access requires an approved access request (phase 7 approval flow)'
+        );
+      }
+      throw new ApiError(
+        403,
+        'Access requires approval (phase 7 approval flow)'
+      );
+    }
+
+    if (!policyResult.allowed) {
+      throw new ApiError(403, `Access denied by policy: ${policyResult.reason}`);
+    }
+
+    // Clamp validitySeconds to the policy's maxTtl
+    if (policyResult.maxTtl > 0 && validitySeconds > policyResult.maxTtl) {
+      logger.info('certificateService.issue: clamping validitySeconds to policy maxTtl', {
+        orgId,
+        userId,
+        serverId,
+        requestedTtl: validitySeconds,
+        clampedTtl: policyResult.maxTtl,
+        policyId: policyResult.policyId,
+      });
+      validitySeconds = policyResult.maxTtl;
+    }
+  }
 
   const effectiveKeyId = keyId || user.email || userId;
 

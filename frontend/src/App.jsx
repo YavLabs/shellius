@@ -13,6 +13,7 @@ import CustomerDetail from './pages/CustomerDetail';
 import Servers from './pages/Servers';
 import ServerDetail from './pages/ServerDetail';
 import Certificates from './pages/Certificates';
+import Policies from './pages/Policies';
 import Settings from './pages/Settings';
 
 function App() {
@@ -32,6 +33,7 @@ function App() {
               <Route path="/servers" element={<Servers />} />
               <Route path="/servers/:id" element={<ServerDetail />} />
               <Route path="/certificates" element={<Certificates />} />
+              <Route path="/policies" element={<Policies />} />
               <Route path="/settings" element={<Settings />} />
             </Route>
           </Route>

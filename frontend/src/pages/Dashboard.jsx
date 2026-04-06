@@ -1,4 +1,5 @@
 import { Server, Terminal, KeyRound, FileKey } from 'lucide-react';
+import MyAccessWidget from '@/components/dashboard/MyAccessWidget';
 
 const stats = [
   {
@@ -54,6 +55,10 @@ function Dashboard() {
             </div>
           );
         })}
+      </div>
+
+      <div className="mt-6 grid grid-cols-1 gap-4 lg:grid-cols-2">
+        <MyAccessWidget />
       </div>
     </div>
   );
