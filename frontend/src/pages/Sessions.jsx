@@ -4,12 +4,14 @@ import {
   ChevronLeft,
   ChevronRight,
   X,
+  Film,
 } from 'lucide-react';
 import DataTable from '@/components/shared/DataTable';
 import Badge from '@/components/shared/Badge';
 import EnvironmentBadge from '@/components/shared/EnvironmentBadge';
 import Modal from '@/components/shared/Modal';
 import ConfirmDialog from '@/components/shared/ConfirmDialog';
+import SessionPlayer from '@/components/sessions/SessionPlayer';
 import { listSessions, listActiveSessions, getSession, terminateSession } from '@/services/sessionService';
 import { useAuth } from '@/context/AuthContext';
 import { relativeTime, formatDateTime } from '@/utils/time';
@@ -135,6 +137,15 @@ function SessionDetailDrawer({ sessionId, open, onClose }) {
           )}
         </dl>
       )}
+      {!loading && session && session.recordingPath && (
+        <div className="mt-4">
+          <div className="mb-2 flex items-center gap-1.5 text-xs font-medium uppercase tracking-wide text-muted-foreground">
+            <Film className="h-3.5 w-3.5" />
+            Recording
+          </div>
+          <SessionPlayer sessionId={session.id} />
+        </div>
+      )}
     </Modal>
   );
 }
@@ -230,6 +241,12 @@ function Sessions() {
             {r.server?.hostname || r.server?.name || r.serverId}
           </span>
           {r.server?.environment && <EnvironmentBadge environment={r.server.environment} />}
+          {r.recordingPath && (
+            <Film
+              className="h-3.5 w-3.5 shrink-0 text-muted-foreground"
+              title="Recording available"
+            />
+          )}
         </div>
       ),
     },

@@ -18,6 +18,7 @@ import Policies from './pages/Policies';
 import Settings from './pages/Settings';
 import AccessRequests from './pages/AccessRequests';
 import Sessions from './pages/Sessions';
+import AuditLog from './pages/AuditLog';
 import Terminal from './pages/Terminal';
 
 function App() {
@@ -51,6 +52,7 @@ function App() {
                 <Route path="/settings" element={<Settings />} />
                 <Route path="/access-requests" element={<AccessRequests />} />
                 <Route path="/sessions" element={<Sessions />} />
+                <Route path="/audit-log" element={<AuditLog />} />
               </Route>
             </Route>
           </Routes>
