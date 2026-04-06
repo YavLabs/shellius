@@ -1,6 +1,7 @@
 import { Routes, Route } from 'react-router-dom';
 import { AuthProvider } from './context/AuthContext';
 import { ThemeProvider } from './context/ThemeContext';
+import { NotificationProvider } from './context/NotificationContext';
 import ProtectedRoute from './components/ProtectedRoute';
 import AppLayout from './components/layout/AppLayout';
 import Login from './pages/Login';
@@ -15,29 +16,33 @@ import ServerDetail from './pages/ServerDetail';
 import Certificates from './pages/Certificates';
 import Policies from './pages/Policies';
 import Settings from './pages/Settings';
+import AccessRequests from './pages/AccessRequests';
 
 function App() {
   return (
     <AuthProvider>
       <ThemeProvider>
-        <Routes>
-          <Route path="/login" element={<Login />} />
-          <Route element={<ProtectedRoute />}>
-            <Route element={<AppLayout />}>
-              <Route index element={<Dashboard />} />
-              <Route path="/users" element={<Users />} />
-              <Route path="/groups" element={<Groups />} />
-              <Route path="/groups/:id" element={<GroupDetail />} />
-              <Route path="/customers" element={<Customers />} />
-              <Route path="/customers/:id" element={<CustomerDetail />} />
-              <Route path="/servers" element={<Servers />} />
-              <Route path="/servers/:id" element={<ServerDetail />} />
-              <Route path="/certificates" element={<Certificates />} />
-              <Route path="/policies" element={<Policies />} />
-              <Route path="/settings" element={<Settings />} />
+        <NotificationProvider>
+          <Routes>
+            <Route path="/login" element={<Login />} />
+            <Route element={<ProtectedRoute />}>
+              <Route element={<AppLayout />}>
+                <Route index element={<Dashboard />} />
+                <Route path="/users" element={<Users />} />
+                <Route path="/groups" element={<Groups />} />
+                <Route path="/groups/:id" element={<GroupDetail />} />
+                <Route path="/customers" element={<Customers />} />
+                <Route path="/customers/:id" element={<CustomerDetail />} />
+                <Route path="/servers" element={<Servers />} />
+                <Route path="/servers/:id" element={<ServerDetail />} />
+                <Route path="/certificates" element={<Certificates />} />
+                <Route path="/policies" element={<Policies />} />
+                <Route path="/settings" element={<Settings />} />
+                <Route path="/access-requests" element={<AccessRequests />} />
+              </Route>
             </Route>
-          </Route>
-        </Routes>
+          </Routes>
+        </NotificationProvider>
       </ThemeProvider>
     </AuthProvider>
   );

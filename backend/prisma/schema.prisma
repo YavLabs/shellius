@@ -38,16 +38,18 @@ model Organization {
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
 
-  users         User[]
-  customers     Customer[]
-  servers       Server[]
-  auditLogs     AuditLog[]
-  groups        Group[]
-  ssoConfig     SsoConfig?
+  users           User[]
+  customers       Customer[]
+  servers         Server[]
+  auditLogs       AuditLog[]
+  groups          Group[]
+  ssoConfig       SsoConfig?
   deviceAuthRequests DeviceAuthRequest[]
-  caKeyPairs    CaKeyPair[]
-  certificates  Certificate[]
-  policies      AccessPolicy[]
+  caKeyPairs      CaKeyPair[]
+  certificates    Certificate[]
+  policies        AccessPolicy[]
+  accessRequests  AccessRequest[]
+  notifications   Notification[]
 
   @@map("organizations")
 }
@@ -79,6 +81,9 @@ model User {
   deviceAuthRequests DeviceAuthRequest[]
   certificatesIssued  Certificate[] @relation("CertificatesIssuedTo")
   certificatesRevoked Certificate[] @relation("CertificatesRevokedBy")
+  accessRequestsRequested AccessRequest[] @relation("AccessRequestsRequested")
+  accessRequestsToReview  AccessRequest[] @relation("AccessRequestsToReview")
+  notifications           Notification[]
 
   @@unique([orgId, email])
   @@index([orgId])
@@ -156,9 +161,10 @@ model Server {
   createdAt       DateTime       @default(now()) @map("created_at")
   updatedAt       DateTime       @updatedAt @map("updated_at")
 
-  organization Organization  @relation(fields: [orgId], references: [id], onDelete: Cascade)
-  customer     Customer      @relation(fields: [customerId], references: [id], onDelete: Cascade)
-  certificates Certificate[]
+  organization   Organization    @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  customer       Customer        @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  certificates   Certificate[]
+  accessRequests AccessRequest[]
 
   @@index([orgId, customerId])
   @@index([orgId, environment])
@@ -329,11 +335,12 @@ model Certificate {
   issuedVia       String     @default("web") @map("issued_via")
   createdAt       DateTime   @default(now()) @map("created_at")
 
-  organization Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
-  caKeyPair    CaKeyPair    @relation(fields: [caKeyPairId], references: [id], onDelete: Cascade)
-  issuedTo     User?        @relation("CertificatesIssuedTo", fields: [issuedToId], references: [id], onDelete: SetNull)
-  issuedFor    Server?      @relation(fields: [issuedForId], references: [id], onDelete: SetNull)
-  revokedBy    User?        @relation("CertificatesRevokedBy", fields: [revokedById], references: [id], onDelete: SetNull)
+  organization   Organization    @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  caKeyPair      CaKeyPair       @relation(fields: [caKeyPairId], references: [id], onDelete: Cascade)
+  issuedTo       User?           @relation("CertificatesIssuedTo", fields: [issuedToId], references: [id], onDelete: SetNull)
+  issuedFor      Server?         @relation(fields: [issuedForId], references: [id], onDelete: SetNull)
+  revokedBy      User?           @relation("CertificatesRevokedBy", fields: [revokedById], references: [id], onDelete: SetNull)
+  accessRequests AccessRequest[]
 
   @@index([orgId, status])
   @@index([orgId, validBefore])
@@ -341,6 +348,28 @@ model Certificate {
   @@index([issuedForId])
   @@index([caKeyPairId])
   @@map("certificates")
+}
+
+enum AccessRequestStatus {
+  PENDING
+  APPROVED
+  DENIED
+  EXPIRED
+  REVOKED
+}
+
+enum Protocol {
+  SSH
+  RDP
+}
+
+enum NotificationType {
+  ACCESS_REQUEST_SUBMITTED
+  ACCESS_REQUEST_APPROVED
+  ACCESS_REQUEST_DENIED
+  ACCESS_REQUEST_EXPIRING
+  ACCESS_REQUEST_EXPIRED
+  ACCESS_REQUEST_REVOKED
 }
 
 enum PolicyEffect {
@@ -394,4 +423,61 @@ model PolicySubject {
   @@unique([policyId, subjectType, subjectId])
   @@index([subjectType, subjectId])
   @@map("policy_subjects")
+}
+
+model AccessRequest {
+  id                  String              @id @default(cuid())
+  orgId               String              @map("org_id")
+  requesterId         String              @map("requester_id")
+  reviewerId          String?             @map("reviewer_id")
+  serverId            String              @map("server_id")
+  status              AccessRequestStatus @default(PENDING) @map("status")
+  reason              String
+  requestedPrincipal  String              @map("requested_principal")
+  requestedDuration   Int                 @map("requested_duration")
+  protocol            Protocol            @default(SSH)
+  approvedDuration    Int?                @map("approved_duration")
+  approvedAt          DateTime?           @map("approved_at")
+  deniedAt            DateTime?           @map("denied_at")
+  deniedReason        String?             @map("denied_reason")
+  expiresAt           DateTime?           @map("expires_at")
+  revokedAt           DateTime?           @map("revoked_at")
+  revokedReason       String?             @map("revoked_reason")
+  certificateId       String?             @map("certificate_id")
+  createdAt           DateTime            @default(now()) @map("created_at")
+  updatedAt           DateTime            @updatedAt @map("updated_at")
+
+  organization Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  requester    User         @relation("AccessRequestsRequested", fields: [requesterId], references: [id], onDelete: Cascade)
+  reviewer     User?        @relation("AccessRequestsToReview", fields: [reviewerId], references: [id], onDelete: SetNull)
+  server       Server       @relation(fields: [serverId], references: [id], onDelete: Cascade)
+  certificate  Certificate? @relation(fields: [certificateId], references: [id], onDelete: SetNull)
+
+  @@index([requesterId])
+  @@index([reviewerId, status])
+  @@index([serverId])
+  @@index([status, expiresAt])
+  @@index([orgId])
+  @@map("access_requests")
+}
+
+model Notification {
+  id        String           @id @default(cuid())
+  orgId     String           @map("org_id")
+  userId    String           @map("user_id")
+  type      NotificationType
+  title     String
+  body      String
+  metadata  Json             @default("{}") @map("metadata")
+  isRead    Boolean          @default(false) @map("is_read")
+  readAt    DateTime?        @map("read_at")
+  createdAt DateTime         @default(now()) @map("created_at")
+
+  organization Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  user         User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, isRead])
+  @@index([userId, createdAt])
+  @@index([orgId])
+  @@map("notifications")
 }

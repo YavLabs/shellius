@@ -14,6 +14,8 @@ import serversRouter from './routes/servers.js';
 import certificatesRouter from './routes/certificates.js';
 import caRouter from './routes/ca.js';
 import policiesRouter from './routes/policies.js';
+import accessRequestsRouter from './routes/accessRequests.js';
+import notificationsRouter from './routes/notifications.js';
 import errorHandler from './middleware/errorHandler.js';
 import { startAllJobs } from './jobs/index.js';
 
@@ -35,6 +37,8 @@ app.use('/api/servers', serversRouter);
 app.use('/api/certificates', certificatesRouter);
 app.use('/api/ca', caRouter);
 app.use('/api/policies', policiesRouter);
+app.use('/api/access-requests', accessRequestsRouter);
+app.use('/api/notifications', notificationsRouter);
 
 app.use(errorHandler);
 

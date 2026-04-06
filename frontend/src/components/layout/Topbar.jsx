@@ -1,8 +1,9 @@
 import { useLocation } from 'react-router-dom';
-import { Sun, Moon, Monitor, Bell, ChevronDown, LogOut } from 'lucide-react';
+import { Sun, Moon, Monitor, ChevronDown, LogOut } from 'lucide-react';
 import { useState } from 'react';
 import { useTheme } from '@/context/ThemeContext';
 import { useAuth } from '@/context/AuthContext';
+import NotificationBell from '@/components/layout/NotificationBell';
 import { cn } from '@/lib/utils';
 
 const routeNames = {
@@ -51,10 +52,7 @@ function Topbar() {
         </button>
 
         {/* Notifications */}
-        <button className="relative flex h-8 w-8 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground transition-colors">
-          <Bell className="h-4 w-4" />
-          <span className="absolute right-1.5 top-1.5 h-1.5 w-1.5 rounded-full bg-destructive" />
-        </button>
+        <NotificationBell />
 
         {/* User dropdown */}
         <div className="relative">
