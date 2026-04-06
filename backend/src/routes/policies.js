@@ -1,0 +1,203 @@
+import express from 'express';
+import Joi from 'joi';
+import asyncHandler from '../utils/asyncHandler.js';
+import ApiError from '../utils/ApiError.js';
+import authenticate from '../middleware/auth.js';
+import tenant from '../middleware/tenant.js';
+import requireRole from '../middleware/rbac.js';
+import audit from '../middleware/audit.js';
+import * as policyService from '../services/policyService.js';
+
+const router = express.Router();
+
+// ---------------------------------------------------------------------------
+// Validation helpers
+// ---------------------------------------------------------------------------
+
+const validate = (schema) => (req, res, next) => {
+  const { error, value } = schema.validate(req.body, { abortEarly: false, stripUnknown: true });
+  if (error) return next(new ApiError(400, error.details.map((d) => d.message).join(', ')));
+  req.body = value;
+  next();
+};
+
+const validateQuery = (schema) => (req, res, next) => {
+  const { error, value } = schema.validate(req.query, { abortEarly: false, stripUnknown: true });
+  if (error) return next(new ApiError(400, error.details.map((d) => d.message).join(', ')));
+  req.query = value;
+  next();
+};
+
+// ---------------------------------------------------------------------------
+// Shared Joi schemas
+// ---------------------------------------------------------------------------
+
+const ENVIRONMENTS = ['demo', 'dev', 'staging', 'prod'];
+const EFFECTS = ['ALLOW', 'DENY'];
+const SUBJECT_TYPES = ['USER', 'GROUP'];
+
+const subjectSchema = Joi.object({
+  subjectType: Joi.string().valid(...SUBJECT_TYPES).required(),
+  subjectId: Joi.string().required(),
+});
+
+const policyBodySchema = Joi.object({
+  name: Joi.string().min(1).max(255).required(),
+  description: Joi.string().allow('', null).max(1000),
+  effect: Joi.string().valid(...EFFECTS).required(),
+  customerId: Joi.string().allow(null),
+  targetEnvironments: Joi.array().items(Joi.string().valid(...ENVIRONMENTS)).default([]),
+  targetLabels: Joi.object().default({}),
+  targetServerIds: Joi.array().items(Joi.string()).default([]),
+  allowedPrincipals: Joi.array().items(Joi.string()).default([]),
+  maxSessionDuration: Joi.number().integer().min(60).max(604800).required(),
+  requireApproval: Joi.boolean().default(false),
+  autoApprove: Joi.boolean().default(false),
+  isActive: Joi.boolean().default(true),
+  priority: Joi.number().integer().min(1).max(9999).default(100),
+  subjects: Joi.array().items(subjectSchema).default([]),
+});
+
+const policyUpdateSchema = Joi.object({
+  name: Joi.string().min(1).max(255),
+  description: Joi.string().allow('', null).max(1000),
+  effect: Joi.string().valid(...EFFECTS),
+  customerId: Joi.string().allow(null),
+  targetEnvironments: Joi.array().items(Joi.string().valid(...ENVIRONMENTS)),
+  targetLabels: Joi.object(),
+  targetServerIds: Joi.array().items(Joi.string()),
+  allowedPrincipals: Joi.array().items(Joi.string()),
+  maxSessionDuration: Joi.number().integer().min(60).max(604800),
+  requireApproval: Joi.boolean(),
+  autoApprove: Joi.boolean(),
+  isActive: Joi.boolean(),
+  priority: Joi.number().integer().min(1).max(9999),
+  subjects: Joi.array().items(subjectSchema),
+}).min(1);
+
+const listQuerySchema = Joi.object({
+  customerId: Joi.string(),
+  effect: Joi.string().valid(...EFFECTS),
+  isActive: Joi.boolean(),
+  page: Joi.number().integer().min(1).default(1),
+  pageSize: Joi.number().integer().min(1).max(100).default(25),
+});
+
+const evaluateBodySchema = Joi.object({
+  userId: Joi.string().required(),
+  serverId: Joi.string().required(),
+  requestedPrincipal: Joi.string(),
+});
+
+// ---------------------------------------------------------------------------
+// All routes require JWT auth + tenant extraction
+// ---------------------------------------------------------------------------
+
+router.use(authenticate, tenant);
+
+// ---------------------------------------------------------------------------
+// GET /api/policies/my-access — any authenticated user
+// Must be registered before /:id to avoid matching "my-access" as an id param
+// ---------------------------------------------------------------------------
+
+router.get(
+  '/my-access',
+  asyncHandler(async (req, res) => {
+    const results = await policyService.getAccessibleServers(req.orgId, req.user.userId);
+    res.json({ success: true, data: { accessibleServers: results } });
+  })
+);
+
+// ---------------------------------------------------------------------------
+// POST /api/policies/evaluate — admin+ — debugging/admin tool
+// Must be registered before /:id for the same reason
+// ---------------------------------------------------------------------------
+
+router.post(
+  '/evaluate',
+  requireRole('super_admin', 'admin'),
+  validate(evaluateBodySchema),
+  asyncHandler(async (req, res) => {
+    const { userId, serverId, requestedPrincipal } = req.body;
+    const result = await policyService.evaluate({
+      orgId: req.orgId,
+      userId,
+      serverId,
+      requestedPrincipal,
+    });
+    res.json({ success: true, data: result });
+  })
+);
+
+// ---------------------------------------------------------------------------
+// GET /api/policies — admin+
+// ---------------------------------------------------------------------------
+
+router.get(
+  '/',
+  requireRole('super_admin', 'admin'),
+  validateQuery(listQuerySchema),
+  asyncHandler(async (req, res) => {
+    const result = await policyService.list(req.orgId, req.query);
+    res.json({ success: true, data: result });
+  })
+);
+
+// ---------------------------------------------------------------------------
+// POST /api/policies — admin+
+// ---------------------------------------------------------------------------
+
+router.post(
+  '/',
+  requireRole('super_admin', 'admin'),
+  audit('policy.create', 'AccessPolicy'),
+  validate(policyBodySchema),
+  asyncHandler(async (req, res) => {
+    const policy = await policyService.create(req.orgId, req.body);
+    res.status(201).json({ success: true, data: { policy } });
+  })
+);
+
+// ---------------------------------------------------------------------------
+// GET /api/policies/:id — admin+
+// ---------------------------------------------------------------------------
+
+router.get(
+  '/:id',
+  requireRole('super_admin', 'admin'),
+  asyncHandler(async (req, res) => {
+    const policy = await policyService.getById(req.orgId, req.params.id);
+    res.json({ success: true, data: { policy } });
+  })
+);
+
+// ---------------------------------------------------------------------------
+// PUT /api/policies/:id — admin+
+// ---------------------------------------------------------------------------
+
+router.put(
+  '/:id',
+  requireRole('super_admin', 'admin'),
+  audit('policy.update', 'AccessPolicy'),
+  validate(policyUpdateSchema),
+  asyncHandler(async (req, res) => {
+    const policy = await policyService.update(req.orgId, req.params.id, req.body);
+    res.json({ success: true, data: { policy } });
+  })
+);
+
+// ---------------------------------------------------------------------------
+// DELETE /api/policies/:id — admin+
+// ---------------------------------------------------------------------------
+
+router.delete(
+  '/:id',
+  requireRole('super_admin', 'admin'),
+  audit('policy.delete', 'AccessPolicy'),
+  asyncHandler(async (req, res) => {
+    await policyService.del(req.orgId, req.params.id);
+    res.json({ success: true, data: { success: true } });
+  })
+);
+
+export default router;
