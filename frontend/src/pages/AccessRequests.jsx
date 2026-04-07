@@ -1,13 +1,14 @@
 import { useState, useEffect, useCallback } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import {
   Plus,
-  ChevronLeft,
-  ChevronRight,
   Clock,
   CheckCircle,
   XCircle,
   Ban,
   AlertCircle,
+  KeyRound,
+  Eye,
 } from 'lucide-react';
 import DataTable from '@/components/shared/DataTable';
 import Badge from '@/components/shared/Badge';
@@ -16,6 +17,15 @@ import Modal from '@/components/shared/Modal';
 import RequestForm from '@/components/access-requests/RequestForm';
 import ApprovalCard from '@/components/access-requests/ApprovalCard';
 import CredentialDownload from '@/components/access-requests/CredentialDownload';
+import PageHeader from '@/components/common/PageHeader';
+import { Button } from '@/components/ui/button';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
 import {
   listAccessRequests,
   getAccessRequest,
@@ -75,8 +85,8 @@ function RequestDetailModal({ requestId, open, onClose, onRefresh, currentUser }
     setLoading(true);
     setError('');
     try {
-      const resp = await getAccessRequest(requestId);
-      setRequest(resp.data || resp);
+      const ar = await getAccessRequest(requestId);
+      setRequest(ar);
     } catch (err) {
       setError(err.response?.data?.error?.message || 'Failed to load request details.');
     } finally {
@@ -84,9 +94,7 @@ function RequestDetailModal({ requestId, open, onClose, onRefresh, currentUser }
     }
   }, [requestId, open]);
 
-  useEffect(() => {
-    fetchDetail();
-  }, [fetchDetail]);
+  useEffect(() => { fetchDetail(); }, [fetchDetail]);
 
   const handleRefresh = () => {
     fetchDetail();
@@ -125,13 +133,11 @@ function RequestDetailModal({ requestId, open, onClose, onRefresh, currentUser }
           ))}
         </div>
       )}
-
       {!loading && error && (
         <div className="rounded-md border border-destructive/50 bg-destructive/10 px-3 py-2 text-sm text-destructive">
           {error}
         </div>
       )}
-
       {!loading && request && (
         <div>
           <dl>
@@ -145,16 +151,11 @@ function RequestDetailModal({ requestId, open, onClose, onRefresh, currentUser }
                       <EnvironmentBadge environment={request.server.environment} />
                     )}
                   </span>
-                ) : (
-                  request.serverId
-                )
+                ) : request.serverId
               }
             />
             <DetailRow label="Protocol" value={request.protocol} />
-            <DetailRow
-              label="Status"
-              value={<StatusBadge status={request.status} />}
-            />
+            <DetailRow label="Status" value={<StatusBadge status={request.status} />} />
             <DetailRow
               label="Requester"
               value={request.requester?.name || request.requester?.email || request.requesterId}
@@ -164,14 +165,8 @@ function RequestDetailModal({ requestId, open, onClose, onRefresh, currentUser }
               value={request.reviewer?.name || request.reviewer?.email || request.reviewerId || '-'}
             />
             <DetailRow label="Reason" value={request.reason} />
-            <DetailRow
-              label="Requested Duration"
-              value={formatDuration(request.requestedDuration)}
-            />
-            <DetailRow
-              label="Approved Duration"
-              value={formatDuration(request.approvedDuration)}
-            />
+            <DetailRow label="Requested Duration" value={formatDuration(request.requestedDuration)} />
+            <DetailRow label="Approved Duration" value={formatDuration(request.approvedDuration)} />
             <DetailRow label="Principal" value={request.requestedPrincipal} />
             <DetailRow label="Denied Reason" value={request.deniedReason} />
             <DetailRow label="Expires At" value={formatDateTime(request.expiresAt)} />
@@ -179,27 +174,24 @@ function RequestDetailModal({ requestId, open, onClose, onRefresh, currentUser }
             <DetailRow label="Reviewed At" value={formatDateTime(request.reviewedAt)} />
           </dl>
 
-          {/* Reviewer approval panel */}
           {isReviewer && request.status === 'PENDING' && (
             <ApprovalCard request={request} onRefresh={handleRefresh} />
           )}
-
-          {/* Requester credential download */}
           {isRequester && request.status === 'APPROVED' && (
             <CredentialDownload request={request} />
           )}
 
-          {/* Revoke */}
           {canRevoke && (
             <div className="mt-4">
               {!showRevokeForm ? (
-                <button
+                <Button
+                  variant="outline"
                   onClick={() => setShowRevokeForm(true)}
-                  className="flex items-center gap-2 rounded-md border border-destructive/50 px-3 py-2 text-sm text-destructive hover:bg-destructive/10"
+                  className="border-destructive/50 text-destructive hover:bg-destructive/10"
                 >
-                  <Ban className="h-4 w-4" />
+                  <Ban className="mr-2 h-4 w-4" />
                   Revoke Access
-                </button>
+                </Button>
               ) : (
                 <div className="rounded-md border border-destructive/30 p-3 space-y-2">
                   <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
@@ -213,22 +205,12 @@ function RequestDetailModal({ requestId, open, onClose, onRefresh, currentUser }
                     placeholder="Reason for revocation..."
                   />
                   <div className="flex gap-2">
-                    <button
-                      onClick={handleRevoke}
-                      disabled={revoking || !revokeReason.trim()}
-                      className="rounded-md bg-destructive px-3 py-1.5 text-sm font-medium text-destructive-foreground hover:bg-destructive/90 disabled:opacity-50"
-                    >
+                    <Button variant="destructive" size="sm" onClick={handleRevoke} disabled={revoking || !revokeReason.trim()}>
                       {revoking ? 'Revoking...' : 'Confirm Revoke'}
-                    </button>
-                    <button
-                      onClick={() => {
-                        setShowRevokeForm(false);
-                        setRevokeReason('');
-                      }}
-                      className="rounded-md border border-input bg-background px-3 py-1.5 text-sm text-foreground hover:bg-accent"
-                    >
+                    </Button>
+                    <Button variant="outline" size="sm" onClick={() => { setShowRevokeForm(false); setRevokeReason(''); }}>
                       Cancel
-                    </button>
+                    </Button>
                   </div>
                 </div>
               )}
@@ -250,7 +232,6 @@ const STATUSES = ['PENDING', 'APPROVED', 'DENIED', 'EXPIRED', 'REVOKED'];
 function AccessRequests() {
   const { user } = useAuth();
   const isAdmin = isAtLeast(user, 'admin');
-
   const tabs = isAdmin ? [...TABS, { key: 'all', label: 'All' }] : TABS;
 
   const [activeTab, setActiveTab] = useState('mine');
@@ -266,6 +247,19 @@ function AccessRequests() {
   const [selectedId, setSelectedId] = useState(null);
   const [detailOpen, setDetailOpen] = useState(false);
   const [formOpen, setFormOpen] = useState(false);
+  const [initialServerId, setInitialServerId] = useState('');
+  const [searchParams, setSearchParams] = useSearchParams();
+
+  useEffect(() => {
+    if (searchParams.get('new') === '1') {
+      setInitialServerId(searchParams.get('serverId') || '');
+      setFormOpen(true);
+      const next = new URLSearchParams(searchParams);
+      next.delete('new');
+      next.delete('serverId');
+      setSearchParams(next, { replace: true });
+    }
+  }, [searchParams, setSearchParams]);
 
   const fetchRequests = useCallback(async () => {
     setLoading(true);
@@ -290,18 +284,11 @@ function AccessRequests() {
       const resp = await listAccessRequests({ tab: 'to-review', status: 'PENDING', limit: 1 });
       const count = resp.meta?.total ?? 0;
       setPendingReviewCount(count);
-    } catch {
-      // ignore
-    }
+    } catch { /* ignore */ }
   }, []);
 
-  useEffect(() => {
-    fetchRequests();
-  }, [fetchRequests]);
-
-  useEffect(() => {
-    fetchPendingReviewCount();
-  }, [fetchPendingReviewCount]);
+  useEffect(() => { fetchRequests(); }, [fetchRequests]);
+  useEffect(() => { fetchPendingReviewCount(); }, [fetchPendingReviewCount]);
 
   const handleTabChange = (key) => {
     setActiveTab(key);
@@ -319,10 +306,25 @@ function AccessRequests() {
     fetchPendingReviewCount();
   };
 
+  const filterSlot = (
+    <Select
+      value={statusFilter || '_all'}
+      onValueChange={(v) => { setStatusFilter(v === '_all' ? '' : v); setPage(1); }}
+    >
+      <SelectTrigger className="w-[160px]"><SelectValue placeholder="All statuses" /></SelectTrigger>
+      <SelectContent>
+        <SelectItem value="_all">All statuses</SelectItem>
+        {STATUSES.map((s) => <SelectItem key={s} value={s}>{s}</SelectItem>)}
+      </SelectContent>
+    </Select>
+  );
+
   const columns = [
     {
       key: 'server',
       label: 'Server',
+      sortable: true,
+      searchAccessor: (r) => `${r.server?.hostname || r.server?.name || ''} ${r.server?.environment || ''}`,
       render: (r) => (
         <div className="flex items-center gap-2">
           <span className="text-sm font-medium text-foreground">
@@ -333,41 +335,35 @@ function AccessRequests() {
       ),
     },
     ...(activeTab !== 'mine'
-      ? [
-          {
-            key: 'requester',
-            label: 'Requester',
-            render: (r) => (
-              <div>
-                <p className="text-sm text-foreground">
-                  {r.requester?.name || r.requester?.email || r.requesterId}
-                </p>
-              </div>
-            ),
-          },
-        ]
+      ? [{
+          key: 'requester',
+          label: 'Requester',
+          sortable: true,
+          searchAccessor: (r) => r.requester?.name || r.requester?.email || '',
+          render: (r) => (
+            <span className="text-sm text-foreground">
+              {r.requester?.name || r.requester?.email || r.requesterId}
+            </span>
+          ),
+        }]
       : []),
     ...(activeTab === 'mine'
-      ? [
-          {
-            key: 'reviewer',
-            label: 'Reviewer',
-            render: (r) => (
-              <span className="text-sm text-muted-foreground">
-                {r.reviewer?.name || r.reviewer?.email || '-'}
-              </span>
-            ),
-          },
-        ]
+      ? [{
+          key: 'reviewer',
+          label: 'Reviewer',
+          render: (r) => (
+            <span className="text-sm text-muted-foreground">
+              {r.reviewer?.name || r.reviewer?.email || '-'}
+            </span>
+          ),
+        }]
       : []),
     {
       key: 'reason',
       label: 'Reason',
+      hideBelow: 'md',
       render: (r) => (
-        <span
-          className="block max-w-xs truncate text-sm text-muted-foreground"
-          title={r.reason}
-        >
+        <span className="block max-w-xs truncate text-sm text-muted-foreground" title={r.reason}>
           {r.reason}
         </span>
       ),
@@ -376,19 +372,21 @@ function AccessRequests() {
       key: 'duration',
       label: 'Duration',
       render: (r) => (
-        <span className="text-sm text-muted-foreground">
-          {formatDuration(r.requestedDuration)}
-        </span>
+        <span className="text-sm text-muted-foreground">{formatDuration(r.requestedDuration)}</span>
       ),
     },
     {
       key: 'status',
       label: 'Status',
+      sortable: true,
+      searchAccessor: (r) => r.status || '',
       render: (r) => <StatusBadge status={r.status} />,
     },
     {
       key: 'createdAt',
       label: 'Created',
+      sortable: true,
+      hideBelow: 'lg',
       render: (r) => (
         <span className="text-xs text-muted-foreground">{relativeTime(r.createdAt)}</span>
       ),
@@ -396,41 +394,37 @@ function AccessRequests() {
     {
       key: 'actions',
       label: '',
-      className: 'w-16',
-      render: (r) => (
-        <button
-          onClick={() => openDetail(r.id)}
-          className="rounded-md px-2 py-1 text-xs text-muted-foreground hover:bg-accent hover:text-foreground transition-colors"
-        >
-          View
-        </button>
-      ),
+      className: 'w-10',
+      actions: [
+        {
+          label: 'View Details',
+          icon: Eye,
+          onClick: (r) => openDetail(r.id),
+        },
+        ...(isAdmin
+          ? [{
+              label: 'Revoke',
+              icon: Ban,
+              variant: 'destructive',
+              onClick: (r) => openDetail(r.id),
+            }]
+          : []),
+      ],
     },
   ];
 
-  const totalPages = Math.max(1, Math.ceil(total / pageSize));
-
-  const selectCls =
-    'h-9 rounded-md border border-input bg-background px-3 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-ring';
-
   return (
-    <div className="space-y-5 p-6">
-      {/* Header */}
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-2xl font-bold tracking-tight text-foreground">Access Requests</h1>
-          <p className="text-sm text-muted-foreground">
-            Request temporary access to servers or review pending requests.
-          </p>
-        </div>
-        <button
-          onClick={() => setFormOpen(true)}
-          className="flex h-9 items-center gap-2 rounded-md bg-primary px-4 text-sm font-medium text-primary-foreground hover:bg-primary/90"
-        >
-          <Plus className="h-4 w-4" />
+    <div className="space-y-6 p-6">
+      <PageHeader
+        icon={KeyRound}
+        title="Access Requests"
+        subtitle="Request temporary access to servers or review pending requests."
+      >
+        <Button onClick={() => setFormOpen(true)}>
+          <Plus className="mr-2 h-4 w-4" />
           New Request
-        </button>
-      </div>
+        </Button>
+      </PageHeader>
 
       {/* Tabs */}
       <div className="flex items-center gap-1 border-b border-border">
@@ -455,25 +449,6 @@ function AccessRequests() {
         ))}
       </div>
 
-      {/* Filters */}
-      <div className="flex flex-wrap items-center gap-3">
-        <select
-          className={selectCls}
-          value={statusFilter}
-          onChange={(e) => {
-            setStatusFilter(e.target.value);
-            setPage(1);
-          }}
-        >
-          <option value="">All statuses</option>
-          {STATUSES.map((s) => (
-            <option key={s} value={s}>
-              {s}
-            </option>
-          ))}
-        </select>
-      </div>
-
       {error && (
         <div className="rounded-md border border-destructive/50 bg-destructive/10 px-3 py-2 text-sm text-destructive">
           {error}
@@ -491,50 +466,24 @@ function AccessRequests() {
             ? 'No pending requests to review.'
             : 'No access requests found.'
         }
+        searchPlaceholder="Search servers or requesters..."
+        filters={filterSlot}
+        serverPagination={{ page, total, onPageChange: setPage }}
       />
-
-
-      {/* Pagination */}
-      <div className="flex items-center justify-between">
-        <p className="text-sm text-muted-foreground">
-          {total} request{total === 1 ? '' : 's'}
-        </p>
-        <div className="flex items-center gap-2">
-          <button
-            onClick={() => setPage((p) => Math.max(1, p - 1))}
-            disabled={page <= 1}
-            className="flex h-8 items-center gap-1 rounded-md border border-input bg-background px-3 text-sm text-foreground hover:bg-accent disabled:opacity-50"
-          >
-            <ChevronLeft className="h-4 w-4" /> Previous
-          </button>
-          <span className="text-sm text-muted-foreground">
-            Page {page} of {totalPages}
-          </span>
-          <button
-            onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
-            disabled={page >= totalPages}
-            className="flex h-8 items-center gap-1 rounded-md border border-input bg-background px-3 text-sm text-foreground hover:bg-accent disabled:opacity-50"
-          >
-            Next <ChevronRight className="h-4 w-4" />
-          </button>
-        </div>
-      </div>
 
       <RequestDetailModal
         requestId={selectedId}
         open={detailOpen}
-        onClose={() => {
-          setDetailOpen(false);
-          setSelectedId(null);
-        }}
+        onClose={() => { setDetailOpen(false); setSelectedId(null); }}
         onRefresh={handleRefresh}
         currentUser={user}
       />
 
       <RequestForm
         open={formOpen}
-        onClose={() => setFormOpen(false)}
+        onClose={() => { setFormOpen(false); setInitialServerId(''); }}
         onSuccess={handleRefresh}
+        initialServerId={initialServerId}
       />
     </div>
   );

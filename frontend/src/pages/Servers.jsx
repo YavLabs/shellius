@@ -1,24 +1,34 @@
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   Plus,
-  MoreVertical,
   Pencil,
   Trash2,
   Activity,
-  ChevronLeft,
-  ChevronRight,
   X,
+  Server as ServerIcon,
   Terminal as TerminalIcon,
   Monitor,
+  Download,
+  Eye,
 } from 'lucide-react';
 import DataTable from '@/components/shared/DataTable';
-import SearchInput from '@/components/shared/SearchInput';
 import Modal from '@/components/shared/Modal';
 import ConfirmDialog from '@/components/shared/ConfirmDialog';
 import EnvironmentBadge from '@/components/shared/EnvironmentBadge';
 import HealthStatusDot from '@/components/shared/HealthStatusDot';
 import ServerForm from '@/components/servers/ServerForm';
+import BootstrapModal from '@/components/servers/BootstrapModal';
+import QuickConnectButton from '@/components/servers/QuickConnectButton';
+import PageHeader from '@/components/common/PageHeader';
+import { Button } from '@/components/ui/button';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
 import {
   listServers,
   createServer,
@@ -28,74 +38,16 @@ import {
   triggerHealthCheck,
 } from '@/services/serverService';
 import { listCustomers } from '@/services/customerService';
+import { useAuth } from '@/context/AuthContext';
 import { relativeTime } from '@/utils/time';
 
 const ENVIRONMENTS = ['demo', 'dev', 'staging', 'prod'];
 const HEALTH_STATUSES = ['healthy', 'unhealthy', 'unknown', 'maintenance'];
 
-function RowMenu({ onEdit, onHealthCheck, onDelete }) {
-  const [open, setOpen] = useState(false);
-  const ref = useRef(null);
-  useEffect(() => {
-    if (!open) return;
-    const fn = (e) => {
-      if (ref.current && !ref.current.contains(e.target)) setOpen(false);
-    };
-    window.addEventListener('mousedown', fn);
-    return () => window.removeEventListener('mousedown', fn);
-  }, [open]);
-
-  return (
-    <div className="relative" ref={ref}>
-      <button
-        onClick={(e) => {
-          e.stopPropagation();
-          setOpen((p) => !p);
-        }}
-        className="rounded-md p-1 text-muted-foreground hover:bg-accent hover:text-foreground"
-      >
-        <MoreVertical className="h-4 w-4" />
-      </button>
-      {open && (
-        <div className="absolute right-0 z-20 mt-1 w-48 overflow-hidden rounded-md border border-border bg-card shadow-lg">
-          <button
-            onClick={(e) => {
-              e.stopPropagation();
-              setOpen(false);
-              onEdit();
-            }}
-            className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-foreground hover:bg-accent"
-          >
-            <Pencil className="h-3.5 w-3.5" /> Edit
-          </button>
-          <button
-            onClick={(e) => {
-              e.stopPropagation();
-              setOpen(false);
-              onHealthCheck();
-            }}
-            className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-foreground hover:bg-accent"
-          >
-            <Activity className="h-3.5 w-3.5" /> Run Health Check
-          </button>
-          <button
-            onClick={(e) => {
-              e.stopPropagation();
-              setOpen(false);
-              onDelete();
-            }}
-            className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-destructive hover:bg-accent"
-          >
-            <Trash2 className="h-3.5 w-3.5" /> Delete
-          </button>
-        </div>
-      )}
-    </div>
-  );
-}
-
 function Servers() {
   const navigate = useNavigate();
+  const { user } = useAuth();
+
   const [servers, setServers] = useState([]);
   const [total, setTotal] = useState(0);
   const [page, setPage] = useState(1);
@@ -103,7 +55,6 @@ function Servers() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
 
-  const [search, setSearch] = useState('');
   const [environment, setEnvironment] = useState('');
   const [healthStatus, setHealthStatus] = useState('');
   const [customerFilter, setCustomerFilter] = useState('');
@@ -116,6 +67,7 @@ function Servers() {
   const [formOpen, setFormOpen] = useState(false);
   const [editing, setEditing] = useState(null);
   const [confirm, setConfirm] = useState(null);
+  const [bootstrapServer, setBootstrapServer] = useState(null);
 
   const fetchCustomers = useCallback(async () => {
     try {
@@ -131,7 +83,6 @@ function Servers() {
     setError('');
     try {
       const params = { page, pageSize };
-      if (search) params.search = search;
       if (environment) params.environment = environment;
       if (healthStatus) params.healthStatus = healthStatus;
       if (customerFilter) params.customerId = customerFilter;
@@ -143,7 +94,7 @@ function Servers() {
     } finally {
       setLoading(false);
     }
-  }, [page, pageSize, search, environment, healthStatus, customerFilter]);
+  }, [page, pageSize, environment, healthStatus, customerFilter]);
 
   useEffect(() => {
     fetchCustomers();
@@ -153,29 +104,20 @@ function Servers() {
     fetch();
   }, [fetch]);
 
-  const toggleSelect = (id) => {
-    setSelected((prev) =>
-      prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]
-    );
-  };
-
-  const toggleSelectAll = () => {
-    if (selected.length === servers.length) {
-      setSelected([]);
-    } else {
-      setSelected(servers.map((s) => s.id));
-    }
-  };
-
   const handleSubmit = async (payload) => {
+    let created = null;
     if (editing) {
       await updateServer(editing.id, payload);
     } else {
-      await createServer(payload);
+      const resp = await createServer(payload);
+      created = resp?.server || resp;
     }
     setFormOpen(false);
     setEditing(null);
     fetch();
+    if (created?.id) {
+      setBootstrapServer(created);
+    }
   };
 
   const handleDelete = (server) => {
@@ -209,35 +151,102 @@ function Servers() {
     fetch();
   };
 
+  const filterSlot = (
+    <>
+      <Select
+        value={environment || '_all'}
+        onValueChange={(v) => {
+          setEnvironment(v === '_all' ? '' : v);
+          setPage(1);
+        }}
+      >
+        <SelectTrigger className="w-[160px]">
+          <SelectValue placeholder="All environments" />
+        </SelectTrigger>
+        <SelectContent>
+          <SelectItem value="_all">All environments</SelectItem>
+          {ENVIRONMENTS.map((e) => (
+            <SelectItem key={e} value={e}>
+              {e}
+            </SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
+      <Select
+        value={healthStatus || '_all'}
+        onValueChange={(v) => {
+          setHealthStatus(v === '_all' ? '' : v);
+          setPage(1);
+        }}
+      >
+        <SelectTrigger className="w-[150px]">
+          <SelectValue placeholder="All health" />
+        </SelectTrigger>
+        <SelectContent>
+          <SelectItem value="_all">All health</SelectItem>
+          {HEALTH_STATUSES.map((h) => (
+            <SelectItem key={h} value={h}>
+              {h}
+            </SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
+      <Select
+        value={customerFilter || '_all'}
+        onValueChange={(v) => {
+          setCustomerFilter(v === '_all' ? '' : v);
+          setPage(1);
+        }}
+      >
+        <SelectTrigger className="w-[180px]">
+          <SelectValue placeholder="All customers" />
+        </SelectTrigger>
+        <SelectContent>
+          <SelectItem value="_all">All customers</SelectItem>
+          {customers.map((c) => (
+            <SelectItem key={c.id} value={c.id}>
+              {c.name}
+            </SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
+    </>
+  );
+
+  const bulkActionsSlot =
+    selected.length > 0 ? (
+      <div className="flex flex-col gap-2 rounded-lg border border-border bg-accent/30 px-4 py-2.5 sm:flex-row sm:items-center sm:justify-between">
+        <span className="text-sm text-foreground">{selected.length} selected</span>
+        <div className="flex items-center gap-2">
+          <Select value={bulkEnv} onValueChange={setBulkEnv}>
+            <SelectTrigger className="w-[180px]">
+              <SelectValue placeholder="Change environment..." />
+            </SelectTrigger>
+            <SelectContent>
+              {ENVIRONMENTS.map((e) => (
+                <SelectItem key={e} value={e}>
+                  {e}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          <Button size="sm" onClick={() => bulkEnv && setBulkConfirm(true)} disabled={!bulkEnv}>
+            Apply
+          </Button>
+          <Button variant="outline" size="sm" onClick={() => setSelected([])}>
+            <X className="mr-1 h-4 w-4" /> Clear
+          </Button>
+        </div>
+      </div>
+    ) : null;
+
   const columns = [
-    {
-      key: 'select',
-      label: (
-        <input
-          type="checkbox"
-          checked={servers.length > 0 && selected.length === servers.length}
-          onChange={toggleSelectAll}
-        />
-      ),
-      className: 'w-10',
-      render: (r) => (
-        <input
-          type="checkbox"
-          checked={selected.includes(r.id)}
-          onChange={(e) => {
-            e.stopPropagation();
-            toggleSelect(r.id);
-          }}
-          onClick={(e) => e.stopPropagation()}
-        />
-      ),
-    },
     {
       key: 'hostname',
       label: 'Hostname',
+      sortable: true,
+      searchAccessor: (r) => `${r.hostname} ${r.ipAddress || ''}`,
       render: (r) => {
-        // r.protocol is the canonical field (SSH | RDP); fall back to r.type if absent
-        // TODO: confirm field name once Prisma schema is finalised — using r.protocol
         const proto = r.protocol || r.type || 'SSH';
         const ProtoIcon = proto === 'RDP' ? Monitor : TerminalIcon;
         return (
@@ -254,11 +263,14 @@ function Servers() {
     {
       key: 'ipAddress',
       label: 'IP',
+      sortable: true,
       render: (r) => <span className="font-mono text-xs text-muted-foreground">{r.ipAddress}</span>,
     },
     {
       key: 'customer',
       label: 'Customer',
+      sortable: true,
+      searchAccessor: (r) => r.customer?.name || '',
       render: (r) =>
         r.customer ? (
           <button
@@ -274,11 +286,14 @@ function Servers() {
     {
       key: 'environment',
       label: 'Env',
+      sortable: true,
+      searchAccessor: (r) => r.environment || '',
       render: (r) => <EnvironmentBadge environment={r.environment} />,
     },
     {
       key: 'protocol',
       label: 'Protocol',
+      sortable: true,
       render: (r) => (
         <span className="text-xs uppercase text-muted-foreground">{r.protocol}</span>
       ),
@@ -286,16 +301,19 @@ function Servers() {
     {
       key: 'health',
       label: 'Health',
+      searchAccessor: (r) => r.healthStatus || '',
       render: (r) => <HealthStatusDot status={r.healthStatus} showLabel />,
     },
     {
       key: 'os',
       label: 'OS',
+      hideBelow: 'lg',
       render: (r) => <span className="text-muted-foreground">{r.osType || '-'}</span>,
     },
     {
       key: 'lastCheck',
       label: 'Last Check',
+      hideBelow: 'md',
       render: (r) => (
         <span className="text-xs text-muted-foreground">
           {relativeTime(r.lastHealthCheckAt)}
@@ -303,138 +321,66 @@ function Servers() {
       ),
     },
     {
+      key: 'quickConnect',
+      label: '',
+      className: 'w-36',
+      render: (r) => <QuickConnectButton server={r} currentUser={user} />,
+    },
+    {
       key: 'actions',
       label: '',
       className: 'w-10',
-      render: (r) => (
-        <RowMenu
-          onEdit={() => {
+      actions: [
+        {
+          label: 'View Details',
+          icon: Eye,
+          onClick: (r) => navigate(`/servers/${r.id}`),
+        },
+        {
+          label: 'Edit',
+          icon: Pencil,
+          onClick: (r) => {
             setEditing(r);
             setFormOpen(true);
-          }}
-          onHealthCheck={() => handleHealthCheck(r)}
-          onDelete={() => handleDelete(r)}
-        />
-      ),
+          },
+        },
+        {
+          label: 'Bootstrap Host',
+          icon: Download,
+          onClick: (r) => setBootstrapServer(r),
+        },
+        {
+          label: 'Run Health Check',
+          icon: Activity,
+          onClick: (r) => handleHealthCheck(r),
+        },
+        { separator: true },
+        {
+          label: 'Delete',
+          icon: Trash2,
+          variant: 'destructive',
+          onClick: (r) => handleDelete(r),
+        },
+      ],
     },
   ];
 
-  const totalPages = Math.max(1, Math.ceil(total / pageSize));
-  const selectCls =
-    'h-9 rounded-md border border-input bg-background px-3 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-ring';
-
   return (
-    <div className="space-y-5 p-6">
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-2xl font-bold tracking-tight text-foreground">Servers</h1>
-          <p className="text-sm text-muted-foreground">
-            Manage target servers across customers.
-          </p>
-        </div>
-        <button
+    <div className="space-y-6 p-6">
+      <PageHeader
+        icon={ServerIcon}
+        title="Servers"
+        subtitle="Manage target servers across customers."
+      >
+        <Button
           onClick={() => {
             setEditing(null);
             setFormOpen(true);
           }}
-          className="flex h-9 items-center gap-2 rounded-md bg-primary px-4 text-sm font-medium text-primary-foreground hover:bg-primary/90"
         >
-          <Plus className="h-4 w-4" /> Add Server
-        </button>
-      </div>
-
-      <div className="flex flex-wrap items-center gap-3">
-        <div className="min-w-64 flex-1">
-          <SearchInput
-            value={search}
-            onChange={(v) => {
-              setSearch(v);
-              setPage(1);
-            }}
-            placeholder="Search hostname or IP..."
-          />
-        </div>
-        <select
-          className={selectCls}
-          value={environment}
-          onChange={(e) => {
-            setEnvironment(e.target.value);
-            setPage(1);
-          }}
-        >
-          <option value="">All environments</option>
-          {ENVIRONMENTS.map((e) => (
-            <option key={e} value={e}>
-              {e}
-            </option>
-          ))}
-        </select>
-        <select
-          className={selectCls}
-          value={healthStatus}
-          onChange={(e) => {
-            setHealthStatus(e.target.value);
-            setPage(1);
-          }}
-        >
-          <option value="">All health</option>
-          {HEALTH_STATUSES.map((h) => (
-            <option key={h} value={h}>
-              {h}
-            </option>
-          ))}
-        </select>
-        <select
-          className={selectCls}
-          value={customerFilter}
-          onChange={(e) => {
-            setCustomerFilter(e.target.value);
-            setPage(1);
-          }}
-        >
-          <option value="">All customers</option>
-          {customers.map((c) => (
-            <option key={c.id} value={c.id}>
-              {c.name}
-            </option>
-          ))}
-        </select>
-      </div>
-
-      {selected.length > 0 && (
-        <div className="flex items-center justify-between rounded-lg border border-border bg-accent/30 px-4 py-2.5">
-          <span className="text-sm text-foreground">
-            {selected.length} selected
-          </span>
-          <div className="flex items-center gap-2">
-            <select
-              className={selectCls}
-              value={bulkEnv}
-              onChange={(e) => setBulkEnv(e.target.value)}
-            >
-              <option value="">Change environment...</option>
-              {ENVIRONMENTS.map((e) => (
-                <option key={e} value={e}>
-                  {e}
-                </option>
-              ))}
-            </select>
-            <button
-              onClick={() => bulkEnv && setBulkConfirm(true)}
-              disabled={!bulkEnv}
-              className="h-9 rounded-md bg-primary px-3 text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
-            >
-              Apply
-            </button>
-            <button
-              onClick={() => setSelected([])}
-              className="flex h-9 items-center gap-1 rounded-md border border-input bg-background px-3 text-sm font-medium text-foreground hover:bg-accent"
-            >
-              <X className="h-4 w-4" /> Clear
-            </button>
-          </div>
-        </div>
-      )}
+          <Plus className="mr-2 h-4 w-4" /> Add Server
+        </Button>
+      </PageHeader>
 
       {error && (
         <div className="rounded-md border border-destructive/50 bg-destructive/10 px-3 py-2 text-sm text-destructive">
@@ -442,32 +388,20 @@ function Servers() {
         </div>
       )}
 
-      <DataTable columns={columns} data={servers} loading={loading} emptyMessage="No servers found" />
-
-      <div className="flex items-center justify-between">
-        <p className="text-sm text-muted-foreground">
-          {total} server{total === 1 ? '' : 's'}
-        </p>
-        <div className="flex items-center gap-2">
-          <button
-            onClick={() => setPage((p) => Math.max(1, p - 1))}
-            disabled={page <= 1}
-            className="flex h-8 items-center gap-1 rounded-md border border-input bg-background px-3 text-sm text-foreground hover:bg-accent disabled:opacity-50"
-          >
-            <ChevronLeft className="h-4 w-4" /> Previous
-          </button>
-          <span className="text-sm text-muted-foreground">
-            Page {page} of {totalPages}
-          </span>
-          <button
-            onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
-            disabled={page >= totalPages}
-            className="flex h-8 items-center gap-1 rounded-md border border-input bg-background px-3 text-sm text-foreground hover:bg-accent disabled:opacity-50"
-          >
-            Next <ChevronRight className="h-4 w-4" />
-          </button>
-        </div>
-      </div>
+      <DataTable
+        columns={columns}
+        data={servers}
+        loading={loading}
+        emptyMessage="No servers found"
+        searchPlaceholder="Search hostname or IP..."
+        filters={filterSlot}
+        selectable
+        selectedIds={selected}
+        onSelectionChange={setSelected}
+        bulkActions={bulkActionsSlot}
+        onRowClick={(r) => navigate(`/servers/${r.id}`)}
+        serverPagination={{ page, total, onPageChange: setPage }}
+      />
 
       <Modal
         open={formOpen}
@@ -487,6 +421,12 @@ function Servers() {
           }}
         />
       </Modal>
+
+      <BootstrapModal
+        open={!!bootstrapServer}
+        server={bootstrapServer}
+        onClose={() => setBootstrapServer(null)}
+      />
 
       <ConfirmDialog
         open={bulkConfirm}

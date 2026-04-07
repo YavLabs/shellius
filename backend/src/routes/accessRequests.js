@@ -37,7 +37,15 @@ const submitSchema = Joi.object({
   serverId: Joi.string().required(),
   reason: Joi.string().min(10).required(),
   requestedDuration: Joi.number().integer().min(60).max(86400 * 7).required(),
-  requestedPrincipal: Joi.string().min(1).required(),
+  // POSIX-ish Linux username — must match an actual local account on the
+  // target host or sshd cert auth will refuse the connection.
+  requestedPrincipal: Joi.string()
+    .pattern(/^[a-z_][a-z0-9_-]{0,31}$/)
+    .required()
+    .messages({
+      'string.pattern.base':
+        'requestedPrincipal must be a valid Linux username: lowercase letters, digits, underscore, or hyphen (1-32 chars, must start with a letter or underscore).',
+    }),
   protocol: Joi.string().valid('SSH', 'RDP').default('SSH'),
 });
 
@@ -113,6 +121,29 @@ router.get(
       limit: req.query.limit,
     });
     res.json({ success: true, data: result, meta: { page: result.page, limit: result.limit, total: result.total } });
+  })
+);
+
+// ---------------------------------------------------------------------------
+// GET /api/access-requests/by-server/:serverId/active — any authenticated user
+//
+// Returns the most recent APPROVED, non-expired access request for the
+// calling user on a given server. Returns { accessRequest: null } when none
+// exists. Used by the Quick Connect button on the Servers list page.
+//
+// MUST be registered before /:id to prevent Express matching 'by-server'
+// as an :id parameter.
+// ---------------------------------------------------------------------------
+
+router.get(
+  '/by-server/:serverId/active',
+  asyncHandler(async (req, res) => {
+    const ar = await accessRequestService.getActiveByServerForUser(
+      req.orgId, // tenant scope — Task 15R-D fix
+      req.user.userId,
+      req.params.serverId,
+    );
+    res.json({ success: true, data: { accessRequest: ar } });
   })
 );
 
