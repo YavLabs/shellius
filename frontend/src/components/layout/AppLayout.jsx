@@ -16,7 +16,9 @@ function AppLayout() {
       <div className="flex flex-1 flex-col overflow-hidden min-w-0">
         <Topbar />
         <main className="flex-1 overflow-y-auto overflow-x-hidden bg-muted/30">
-          <Outlet />
+          <div className="min-h-[calc(100%-3rem)]">
+            <Outlet />
+          </div>
           <Footer />
         </main>
       </div>
