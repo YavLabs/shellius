@@ -1,7 +1,7 @@
 # Task 16F: SSO Preset Field Client-Side Regex
 
 **Agent:** frontend + backend
-**Status:** [ ] Pending
+**Status:** [x] Done
 **Blocks:** 16Q-F, 16R-F
 **Blocked By:** None
 **Model:** sonnet

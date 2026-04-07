@@ -9,6 +9,7 @@ import audit from '../middleware/audit.js';
 import * as userService from '../services/userService.js';
 import * as inviteService from '../services/inviteService.js';
 import { sendMail } from '../services/mailer.js';
+import { renderTemplate } from '../email/index.js';
 import { log as auditLog } from '../services/auditService.js';
 
 const router = express.Router();
@@ -146,14 +147,18 @@ router.post(
 
       const orgName = organization?.name ?? 'Shellius';
 
-      const html = buildInviteHtml({ name: user.name, orgName, inviteUrl });
-      const text = buildInviteText({ name: user.name, orgName, inviteUrl });
-
+      const tpl = renderTemplate('invite', {
+        recipientName: user.name,
+        orgName,
+        inviteUrl,
+        expiresInHours: 168,
+      });
       mailResult = await sendMail({
+        orgId: req.orgId,
         to: user.email,
-        subject: `You have been invited to ${orgName}`,
-        html,
-        text,
+        subject: tpl.subject,
+        html: tpl.html,
+        text: tpl.text,
       });
 
       await auditLog({
@@ -273,11 +278,18 @@ router.post(
     );
     const orgName = orgRecord?.name ?? 'Shellius';
 
+    const inviteTpl = renderTemplate('invite', {
+      recipientName: user.name,
+      orgName,
+      inviteUrl,
+      expiresInHours: 168,
+    });
     const mailResult = await sendMail({
+      orgId: req.orgId,
       to: user.email,
-      subject: `Your invite to ${orgName} has been resent`,
-      html: buildInviteHtml({ name: user.name, orgName, inviteUrl }),
-      text: buildInviteText({ name: user.name, orgName, inviteUrl }),
+      subject: inviteTpl.subject,
+      html: inviteTpl.html,
+      text: inviteTpl.text,
     });
 
     await auditLog({
@@ -315,11 +327,17 @@ router.post(
     );
     const orgName = orgRecord?.name ?? 'Shellius';
 
+    const resetTpl = renderTemplate('passwordReset', {
+      recipientName: user.name,
+      resetUrl,
+      expiresInHours: 1,
+    });
     const mailResult = await sendMail({
+      orgId: req.orgId,
       to: user.email,
-      subject: `Reset your ${orgName} password`,
-      html: buildResetHtml({ name: user.name, orgName, resetUrl }),
-      text: buildResetText({ name: user.name, orgName, resetUrl }),
+      subject: resetTpl.subject,
+      html: resetTpl.html,
+      text: resetTpl.text,
     });
 
     await auditLog({
@@ -338,82 +356,8 @@ router.post(
   })
 );
 
-// ---------------------------------------------------------------------------
-// Email template helpers
-// ---------------------------------------------------------------------------
-
-function buildInviteHtml({ name, orgName, inviteUrl }) {
-  return `
-<!DOCTYPE html>
-<html>
-<head><meta charset="utf-8"></head>
-<body style="font-family:sans-serif;max-width:600px;margin:0 auto;padding:24px">
-  <h2>You've been invited to ${orgName}</h2>
-  <p>Hi ${name},</p>
-  <p>An administrator has invited you to access <strong>${orgName}</strong> on Shellius.</p>
-  <p>Click the link below to set your password and activate your account.
-     This link expires in 7 days and can only be used once.</p>
-  <p style="margin:24px 0">
-    <a href="${inviteUrl}" style="background:#0f172a;color:#fff;padding:12px 24px;border-radius:6px;text-decoration:none;display:inline-block">
-      Accept invitation
-    </a>
-  </p>
-  <p style="color:#6b7280;font-size:13px">Or copy this URL into your browser:<br>${inviteUrl}</p>
-</body>
-</html>
-  `.trim();
-}
-
-function buildInviteText({ name, orgName, inviteUrl }) {
-  return [
-    `You've been invited to ${orgName}`,
-    '',
-    `Hi ${name},`,
-    '',
-    `An administrator has invited you to access ${orgName} on Shellius.`,
-    'Click the link below to set your password and activate your account.',
-    'This link expires in 7 days and can only be used once.',
-    '',
-    inviteUrl,
-  ].join('\n');
-}
-
-function buildResetHtml({ name, orgName, resetUrl }) {
-  return `
-<!DOCTYPE html>
-<html>
-<head><meta charset="utf-8"></head>
-<body style="font-family:sans-serif;max-width:600px;margin:0 auto;padding:24px">
-  <h2>Reset your ${orgName} password</h2>
-  <p>Hi ${name},</p>
-  <p>A password reset was requested for your <strong>${orgName}</strong> account on Shellius.</p>
-  <p>Click the link below to set a new password.
-     This link expires in 1 hour and can only be used once.</p>
-  <p style="margin:24px 0">
-    <a href="${resetUrl}" style="background:#0f172a;color:#fff;padding:12px 24px;border-radius:6px;text-decoration:none;display:inline-block">
-      Reset password
-    </a>
-  </p>
-  <p style="color:#6b7280;font-size:13px">Or copy this URL into your browser:<br>${resetUrl}</p>
-  <p style="color:#6b7280;font-size:13px">If you did not request this, you can safely ignore this email.</p>
-</body>
-</html>
-  `.trim();
-}
-
-function buildResetText({ name, orgName, resetUrl }) {
-  return [
-    `Reset your ${orgName} password`,
-    '',
-    `Hi ${name},`,
-    '',
-    `A password reset was requested for your ${orgName} account on Shellius.`,
-    'Click the link below to set a new password. This link expires in 1 hour.',
-    '',
-    resetUrl,
-    '',
-    'If you did not request this, you can safely ignore this email.',
-  ].join('\n');
-}
+// Legacy email template helpers were replaced by the shared registry under
+// backend/src/email/. See renderTemplate('invite', vars) /
+// renderTemplate('passwordReset', vars). Phase 16D rewrite.
 
 export default router;

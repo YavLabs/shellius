@@ -1,7 +1,7 @@
 # Task 16D: Rewrite sendMail Callsites to Use Templates
 
 **Agent:** backend
-**Status:** [ ] Pending
+**Status:** [x] Done
 **Blocks:** 16Q-D, 16R-D
 **Blocked By:** 16A, 16C
 **Model:** sonnet

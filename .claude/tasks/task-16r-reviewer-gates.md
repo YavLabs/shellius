@@ -1,7 +1,7 @@
 # Task 16R-*: Reviewer Gates for Phase 16
 
 **Agent:** reviewer
-**Status:** [ ] Pending
+**Status:** [x] Done
 **Blocked By:** matching implementation + QA gate
 **Model:** sonnet
 

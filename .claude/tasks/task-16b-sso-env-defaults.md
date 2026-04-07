@@ -1,7 +1,7 @@
 # Task 16B: SSO Env Defaults + "Overridden" Badges
 
 **Agent:** backend + frontend
-**Status:** [ ] Pending
+**Status:** [x] Done
 **Blocks:** 16Q-B, 16R-B
 **Blocked By:** None
 **Model:** sonnet

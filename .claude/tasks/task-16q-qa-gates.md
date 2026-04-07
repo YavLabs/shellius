@@ -1,7 +1,7 @@
 # Task 16Q-*: QA Gates for Phase 16
 
 **Agent:** qa
-**Status:** [ ] Pending
+**Status:** [x] Done
 **Blocked By:** matching implementation task
 **Model:** sonnet
 
