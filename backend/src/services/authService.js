@@ -27,6 +27,11 @@ export async function login(email, password, ipAddress, userAgent) {
     throw new ApiError(401, 'Invalid email or password');
   }
 
+  // Soft-deleted accounts surface as "not found" to prevent enumeration
+  if (user.status === 'deleted') {
+    throw new ApiError(401, 'Account not found');
+  }
+
   if (!user.passwordHash) {
     throw new ApiError(401, 'Invalid email or password');
   }

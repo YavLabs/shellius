@@ -26,6 +26,8 @@ import AuditLog from './pages/AuditLog';
 import Notifications from './pages/Notifications';
 import Terminal from './pages/Terminal';
 import Device from './pages/Device';
+import Profile from './pages/Profile';
+import Register from './pages/Register';
 import NotFound from './pages/NotFound';
 
 function App() {
@@ -40,6 +42,7 @@ function App() {
               <Route path="/password-reset/:token" element={<ResetPassword />} />
               <Route path="/forgot-password" element={<ForgotPassword />} />
               <Route path="/device" element={<Device />} />
+              <Route path="/register" element={<Register />} />
               <Route element={<ProtectedRoute />}>
                 {/* Full-screen terminal — no app chrome */}
                 <Route
@@ -67,6 +70,7 @@ function App() {
                   <Route path="/sessions" element={<Sessions />} />
                   <Route path="/audit-log" element={<AuditLog />} />
                   <Route path="/notifications" element={<Notifications />} />
+                  <Route path="/profile" element={<Profile />} />
                 </Route>
               </Route>
               {/* 404 catch-all */}

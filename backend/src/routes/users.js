@@ -6,6 +6,7 @@ import authenticate from '../middleware/auth.js';
 import tenant from '../middleware/tenant.js';
 import requireRole from '../middleware/rbac.js';
 import audit from '../middleware/audit.js';
+import { tokenActionLimiter } from '../middleware/rateLimiter.js';
 import * as userService from '../services/userService.js';
 import * as inviteService from '../services/inviteService.js';
 import { sendMail } from '../services/mailer.js';
@@ -23,6 +24,23 @@ const validate = (schema) => (req, res, next) => {
 
 const ROLES = ['super_admin', 'admin', 'operator', 'viewer'];
 const STATUSES = ['active', 'invited', 'suspended', 'deactivated'];
+
+const profileUpdateSchema = Joi.object({
+  name: Joi.string().min(1).max(255).required(),
+});
+
+const passwordChangeSchema = Joi.object({
+  currentPassword: Joi.string().required(),
+  newPassword: Joi.string()
+    .min(12)
+    .pattern(/[a-zA-Z]/, 'letter')
+    .pattern(/[0-9]/, 'digit')
+    .required()
+    .messages({
+      'string.min': 'New password must be at least 12 characters',
+      'string.pattern.name': 'New password must contain at least one {#name}',
+    }),
+});
 
 // Password is now optional on create — when omitted the user is created with
 // status 'invited' and receives an invite email with a one-time link.
@@ -86,6 +104,155 @@ router.put(
   asyncHandler(async (req, res) => {
     const preferences = await userService.updatePreferences(req.user.userId, req.body);
     res.json({ success: true, data: { preferences } });
+  })
+);
+
+// ---------------------------------------------------------------------------
+// GET /me — return the calling user's full profile
+// ---------------------------------------------------------------------------
+
+router.get(
+  '/me',
+  asyncHandler(async (req, res) => {
+    const user = await userService.getUser(req.orgId, req.user.userId);
+    res.json({ success: true, data: { user } });
+  })
+);
+
+// ---------------------------------------------------------------------------
+// PUT /me — update name only (NOT email, role, or other fields)
+// ---------------------------------------------------------------------------
+
+router.put(
+  '/me',
+  validate(profileUpdateSchema),
+  audit('user.profile.updated', 'User'),
+  asyncHandler(async (req, res) => {
+    const user = await userService.updateProfile(req.user.userId, req.body.name);
+    res.json({ success: true, data: { user } });
+  })
+);
+
+// ---------------------------------------------------------------------------
+// PUT /me/password — change password (LOCAL users only)
+// ---------------------------------------------------------------------------
+
+router.put(
+  '/me/password',
+  tokenActionLimiter,
+  validate(passwordChangeSchema),
+  asyncHandler(async (req, res) => {
+    const { currentPassword, newPassword } = req.body;
+
+    // changePassword throws ApiError on mismatch or SSO account
+    await userService.changePassword(req.user.userId, currentPassword, newPassword);
+
+    // Send security notification email (fire-and-forget; never block the response)
+    setImmediate(async () => {
+      try {
+        const user = await userService.getUser(req.orgId, req.user.userId);
+        const tpl = renderTemplate('passwordChanged', {
+          recipientName: user.name,
+          ipAddress: req.ip,
+          userAgent: req.headers['user-agent'] || 'unknown',
+          when: new Date().toISOString(),
+        });
+        await sendMail({
+          orgId: req.orgId,
+          to: user.email,
+          subject: tpl.subject,
+          html: tpl.html,
+          text: tpl.text,
+        });
+      } catch (err) {
+        const logger = (await import('../utils/logger.js')).default;
+        logger.error('PUT /me/password: failed to send notification email', { error: err.message });
+      }
+    });
+
+    await auditLog({
+      orgId: req.orgId,
+      actorId: req.user.userId,
+      action: 'user.password.changed',
+      resourceType: 'User',
+      resourceId: req.user.userId,
+      ipAddress: req.ip,
+      userAgent: req.headers['user-agent'],
+    });
+
+    res.json({ success: true });
+  })
+);
+
+// ---------------------------------------------------------------------------
+// GET /me/export — GDPR data export
+// ---------------------------------------------------------------------------
+
+router.get(
+  '/me/export',
+  audit('user.data.exported', 'User'),
+  asyncHandler(async (req, res) => {
+    const exportData = await userService.exportUserData(req.orgId, req.user.userId);
+    const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+    const filename = `shellius-export-${req.user.userId}-${timestamp}.json`;
+
+    res.setHeader('Content-Type', 'application/json');
+    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+    res.end(JSON.stringify(exportData, null, 2));
+  })
+);
+
+// ---------------------------------------------------------------------------
+// DELETE /me — soft-delete account
+// ---------------------------------------------------------------------------
+
+router.delete(
+  '/me',
+  asyncHandler(async (req, res) => {
+    // softDeleteSelf handles guards: already-deleted, only super_admin
+    await userService.softDeleteSelf(req.orgId, req.user.userId);
+
+    // Send confirmation email (fire-and-forget)
+    setImmediate(async () => {
+      try {
+        // We must fetch user info BEFORE soft-delete, but softDeleteSelf doesn't
+        // return it — re-fetch using raw prisma to bypass the strip/not-deleted filter
+        const { default: prisma } = await import('../config/db.js');
+        const deletedUser = await prisma.user.findUnique({
+          where: { id: req.user.userId },
+          select: { email: true, name: true, orgId: true },
+        });
+        if (deletedUser) {
+          const tpl = renderTemplate('accountDeleted', {
+            recipientName: deletedUser.name,
+            when: new Date().toISOString(),
+            gracePeriodDays: 30,
+          });
+          await sendMail({
+            orgId: deletedUser.orgId,
+            to: deletedUser.email,
+            subject: tpl.subject,
+            html: tpl.html,
+            text: tpl.text,
+          });
+        }
+      } catch (err) {
+        const logger = (await import('../utils/logger.js')).default;
+        logger.error('DELETE /me: failed to send account-deleted email', { error: err.message });
+      }
+    });
+
+    await auditLog({
+      orgId: req.orgId,
+      actorId: req.user.userId,
+      action: 'user.account.deleted',
+      resourceType: 'User',
+      resourceId: req.user.userId,
+      ipAddress: req.ip,
+      userAgent: req.headers['user-agent'],
+    });
+
+    res.json({ success: true });
   })
 );
 

@@ -19,6 +19,8 @@ enum UserStatus {
   invited
   suspended
   deactivated
+  pending_verification
+  deleted
 }
 
 enum DeviceAuthStatus {
@@ -52,6 +54,7 @@ model Organization {
   accessRequests  AccessRequest[]
   notifications   Notification[]
   sessions        Session[]
+  selfServiceRegistrationEnabled Boolean @default(false) @map("self_service_registration_enabled")
 
   @@map("organizations")
 }
@@ -66,13 +69,15 @@ model User {
   status        UserStatus @default(active)
   managerId     String?    @map("manager_id")
   sshPublicKey  String?    @map("ssh_public_key") @db.Text
-  ssoProvider   String?    @map("sso_provider")
-  ssoSub        String?    @map("sso_sub")
-  avatarUrl     String?    @map("avatar_url")
-  preferences   Json       @default("{}") @map("preferences")
-  lastLoginAt   DateTime?  @map("last_login_at")
-  createdAt     DateTime   @default(now()) @map("created_at")
-  updatedAt     DateTime   @updatedAt @map("updated_at")
+  ssoProvider         String?    @map("sso_provider")
+  ssoSub              String?    @map("sso_sub")
+  avatarUrl           String?    @map("avatar_url")
+  preferences         Json       @default("{}") @map("preferences")
+  lastLoginAt         DateTime?  @map("last_login_at")
+  passwordChangedAt   DateTime?  @map("password_changed_at")
+  deletedAt           DateTime?  @map("deleted_at")
+  createdAt           DateTime   @default(now()) @map("created_at")
+  updatedAt           DateTime   @updatedAt @map("updated_at")
 
   organization  Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
   manager       User?        @relation("ManagerReports", fields: [managerId], references: [id], onDelete: SetNull)

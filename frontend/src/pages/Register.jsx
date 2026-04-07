@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
-import { useParams, useNavigate, Link } from 'react-router-dom';
-import { Lock, Eye, EyeOff, Loader2, Terminal, User } from 'lucide-react';
-import { getInvite, acceptInvite } from '@/services/userTokenService';
+import { Link } from 'react-router-dom';
+import { Mail, User, Lock, Eye, EyeOff, Loader2, Terminal } from 'lucide-react';
+import { getRegistrationStatus, register } from '@/services/registrationService';
 
 function validatePassword(password) {
   if (password.length < 12) return 'Password must be at least 12 characters.';
@@ -10,42 +10,34 @@ function validatePassword(password) {
   return null;
 }
 
-function AcceptInvite() {
-  const { token } = useParams();
-  const navigate = useNavigate();
+function Register() {
+  const [registrationEnabled, setRegistrationEnabled] = useState(null);
+  const [statusLoading, setStatusLoading] = useState(true);
 
-  const [inviteData, setInviteData] = useState(null);
-  const [loadError, setLoadError] = useState('');
-  const [loadingInvite, setLoadingInvite] = useState(true);
-
+  const [email, setEmail] = useState('');
   const [name, setName] = useState('');
   const [password, setPassword] = useState('');
   const [confirm, setConfirm] = useState('');
   const [termsAccepted, setTermsAccepted] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
   const [showConfirm, setShowConfirm] = useState(false);
+
   const [error, setError] = useState('');
   const [submitting, setSubmitting] = useState(false);
+  const [success, setSuccess] = useState(false);
 
   useEffect(() => {
-    setLoadingInvite(true);
-    getInvite(token)
-      .then((data) => {
-        setInviteData(data);
-        if (data?.user?.name) setName(data.user.name);
-      })
-      .catch(() => setLoadError('Invite link is invalid or expired.'))
-      .finally(() => setLoadingInvite(false));
-  }, [token]);
+    setStatusLoading(true);
+    getRegistrationStatus()
+      .then((enabled) => setRegistrationEnabled(enabled))
+      .catch(() => setRegistrationEnabled(false))
+      .finally(() => setStatusLoading(false));
+  }, []);
 
   const handleSubmit = async (e) => {
     e.preventDefault();
     setError('');
 
-    if (!name.trim()) {
-      setError('Please enter your name.');
-      return;
-    }
     const validationError = validatePassword(password);
     if (validationError) {
       setError(validationError);
@@ -62,16 +54,12 @@ function AcceptInvite() {
 
     setSubmitting(true);
     try {
-      const data = await acceptInvite(token, password, name.trim());
-      if (data?.accessToken) localStorage.setItem('accessToken', data.accessToken);
-      if (data?.refreshToken) localStorage.setItem('refreshToken', data.refreshToken);
-      navigate('/', { replace: true });
+      await register({ email, name, password });
+      setSuccess(true);
     } catch (err) {
-      const msg =
-        err.response?.status === 400 || err.response?.status === 404
-          ? 'Invite link is invalid or expired.'
-          : err.response?.data?.error?.message || err.message || 'Failed to set up account.';
-      setError(msg);
+      setError(
+        err.response?.data?.error?.message || err.message || 'Registration failed. Please try again.'
+      );
     } finally {
       setSubmitting(false);
     }
@@ -85,64 +73,74 @@ function AcceptInvite() {
             <Terminal className="h-6 w-6 text-primary-foreground" />
           </div>
           <h1 className="text-2xl font-bold tracking-tight text-foreground">Shellius</h1>
-          <p className="mt-1 text-sm text-muted-foreground">Set up your account</p>
+          <p className="mt-1 text-sm text-muted-foreground">Create your account</p>
         </div>
 
         <div className="rounded-lg border border-border bg-card p-6 shadow-sm">
-          {loadingInvite && (
+          {statusLoading ? (
             <div className="flex items-center justify-center py-8">
               <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
             </div>
-          )}
-
-          {!loadingInvite && loadError && (
+          ) : !registrationEnabled ? (
             <div className="space-y-4">
-              <div className="rounded-md border border-destructive/50 bg-destructive/10 px-3 py-2 text-sm text-destructive">
-                {loadError}
+              <div className="rounded-md border border-border bg-muted/30 px-4 py-4 text-sm text-muted-foreground">
+                Self-service registration is not available for this organization. Ask your
+                administrator to invite you.
               </div>
               <p className="text-center text-sm text-muted-foreground">
+                Already have an account?{' '}
                 <Link to="/login" className="text-primary underline-offset-4 hover:underline">
-                  Back to sign in
+                  Sign in
                 </Link>
               </p>
             </div>
-          )}
-
-          {!loadingInvite && !loadError && inviteData && (
-            <form onSubmit={handleSubmit} className="space-y-4">
-              <div className="rounded-md border border-border bg-muted/30 px-4 py-3 text-sm">
-                <p className="text-muted-foreground">
-                  You have been invited to{' '}
-                  <span className="font-medium text-foreground">
-                    {inviteData.org?.name || 'Shellius'}
-                  </span>
-                  .
-                </p>
+          ) : success ? (
+            <div className="space-y-4">
+              <div className="rounded-md border border-green-500/30 bg-green-500/10 px-4 py-4 text-sm text-green-700 dark:text-green-400">
+                Check your email — we've sent you a verification link.
               </div>
+              <Link
+                to="/login"
+                className="flex h-9 w-full items-center justify-center rounded-md border border-input bg-background text-sm font-medium text-foreground transition-colors hover:bg-accent"
+              >
+                Back to login
+              </Link>
+            </div>
+          ) : (
+            <form onSubmit={handleSubmit} className="space-y-4">
+              {error && (
+                <div className="rounded-md border border-destructive/50 bg-destructive/10 px-3 py-2 text-sm text-destructive">
+                  {error}
+                </div>
+              )}
 
-              {/* Email — read-only */}
               <div>
-                <label htmlFor="invite-email" className="mb-1.5 block text-sm font-medium text-foreground">
+                <label htmlFor="reg-email" className="mb-1.5 block text-sm font-medium text-foreground">
                   Email
                 </label>
-                <input
-                  id="invite-email"
-                  type="email"
-                  value={inviteData.user?.email || ''}
-                  readOnly
-                  className="h-9 w-full rounded-md border border-input bg-muted/40 px-3 text-sm text-muted-foreground cursor-default focus:outline-none"
-                />
+                <div className="relative">
+                  <Mail className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+                  <input
+                    id="reg-email"
+                    type="email"
+                    autoComplete="email"
+                    value={email}
+                    onChange={(e) => setEmail(e.target.value)}
+                    placeholder="you@company.com"
+                    required
+                    className="h-9 w-full rounded-md border border-input bg-background pl-9 pr-3 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring"
+                  />
+                </div>
               </div>
 
-              {/* Name — editable, pre-filled from invite if present */}
               <div>
-                <label htmlFor="invite-name" className="mb-1.5 block text-sm font-medium text-foreground">
+                <label htmlFor="reg-name" className="mb-1.5 block text-sm font-medium text-foreground">
                   Full name
                 </label>
                 <div className="relative">
                   <User className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
                   <input
-                    id="invite-name"
+                    id="reg-name"
                     type="text"
                     autoComplete="name"
                     value={name}
@@ -154,26 +152,20 @@ function AcceptInvite() {
                 </div>
               </div>
 
-              {error && (
-                <div className="rounded-md border border-destructive/50 bg-destructive/10 px-3 py-2 text-sm text-destructive">
-                  {error}
-                </div>
-              )}
-
               <div>
-                <label htmlFor="invite-password" className="mb-1.5 block text-sm font-medium text-foreground">
-                  Set password
+                <label htmlFor="reg-password" className="mb-1.5 block text-sm font-medium text-foreground">
+                  Password
                 </label>
                 <div className="relative">
                   <Lock className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
                   <input
-                    id="invite-password"
+                    id="reg-password"
                     type={showPassword ? 'text' : 'password'}
+                    autoComplete="new-password"
                     value={password}
                     onChange={(e) => setPassword(e.target.value)}
                     placeholder="At least 12 characters"
                     required
-                    autoComplete="new-password"
                     className="h-9 w-full rounded-md border border-input bg-background pl-9 pr-9 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring"
                   />
                   <button
@@ -191,19 +183,19 @@ function AcceptInvite() {
               </div>
 
               <div>
-                <label htmlFor="invite-confirm" className="mb-1.5 block text-sm font-medium text-foreground">
+                <label htmlFor="reg-confirm" className="mb-1.5 block text-sm font-medium text-foreground">
                   Confirm password
                 </label>
                 <div className="relative">
                   <Lock className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
                   <input
-                    id="invite-confirm"
+                    id="reg-confirm"
                     type={showConfirm ? 'text' : 'password'}
+                    autoComplete="new-password"
                     value={confirm}
                     onChange={(e) => setConfirm(e.target.value)}
                     placeholder="Repeat your password"
                     required
-                    autoComplete="new-password"
                     className="h-9 w-full rounded-md border border-input bg-background pl-9 pr-9 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring"
                   />
                   <button
@@ -219,13 +211,13 @@ function AcceptInvite() {
 
               <div className="flex items-start gap-2 pt-1">
                 <input
-                  id="invite-terms"
+                  id="reg-terms"
                   type="checkbox"
                   checked={termsAccepted}
                   onChange={(e) => setTermsAccepted(e.target.checked)}
                   className="mt-0.5 h-4 w-4 shrink-0 rounded border-input accent-primary"
                 />
-                <label htmlFor="invite-terms" className="text-sm text-muted-foreground leading-snug">
+                <label htmlFor="reg-terms" className="text-sm text-muted-foreground leading-snug">
                   I agree to the{' '}
                   <a href="#" className="text-primary underline-offset-4 hover:underline">
                     Terms of Service
@@ -245,10 +237,10 @@ function AcceptInvite() {
                 {submitting ? (
                   <>
                     <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                    Setting up account...
+                    Creating account...
                   </>
                 ) : (
-                  'Set up my account'
+                  'Create account'
                 )}
               </button>
 
@@ -266,4 +258,4 @@ function AcceptInvite() {
   );
 }
 
-export default AcceptInvite;
+export default Register;

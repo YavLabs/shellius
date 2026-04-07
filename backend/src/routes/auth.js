@@ -8,6 +8,7 @@ import authenticate from '../middleware/auth.js';
 import { authLimiter, tokenActionLimiter } from '../middleware/rateLimiter.js';
 import * as authService from '../services/authService.js';
 import * as inviteService from '../services/inviteService.js';
+import * as userService from '../services/userService.js';
 import { sendMail } from '../services/mailer.js';
 import { renderTemplate } from '../email/index.js';
 import { log as auditLog } from '../services/auditService.js';
@@ -78,6 +79,12 @@ const passwordResetSchema = Joi.object({
 
 const selfServiceResetSchema = Joi.object({
   email: Joi.string().email({ tlds: { allow: false } }).required(),
+});
+
+const registerSchema = Joi.object({
+  email: Joi.string().email({ tlds: { allow: false } }).required(),
+  name: Joi.string().min(1).max(120).required(),
+  password: strongPasswordSchema,
 });
 
 // ---------------------------------------------------------------------------
@@ -384,6 +391,170 @@ router.post(
         });
       }
     });
+  })
+);
+
+// ---------------------------------------------------------------------------
+// Helper: resolve org for unauthenticated public routes
+// ---------------------------------------------------------------------------
+
+/**
+ * Resolve the tenant org for public (unauthenticated) endpoints.
+ *
+ * Resolution priority:
+ *   1. Hostname-based: find org whose `domain` matches req.hostname
+ *   2. Single-tenant fallback: return the first org (ordered by createdAt ASC)
+ *
+ * Returns null when no org exists at all (fresh install before seed).
+ *
+ * @param {import('express').Request} req
+ * @returns {Promise<object|null>}
+ */
+async function resolvePublicOrg(req) {
+  const hostname = req.hostname || req.get('host') || '';
+
+  // Attempt hostname-based resolution for multi-tenant deploys
+  if (hostname) {
+    const byDomain = await prisma.organization.findFirst({
+      where: { domain: hostname },
+    });
+    if (byDomain) return byDomain;
+  }
+
+  // Single-tenant fallback: first org
+  return prisma.organization.findFirst({ orderBy: { createdAt: 'asc' } });
+}
+
+// ---------------------------------------------------------------------------
+// GET /registration-status — public; returns { enabled: bool }
+// ---------------------------------------------------------------------------
+
+router.get(
+  '/registration-status',
+  asyncHandler(async (req, res) => {
+    const org = await resolvePublicOrg(req);
+    const enabled = org ? org.selfServiceRegistrationEnabled : false;
+    res.json({ success: true, data: { enabled } });
+  })
+);
+
+// ---------------------------------------------------------------------------
+// POST /register — public self-service registration
+// ---------------------------------------------------------------------------
+
+router.post(
+  '/register',
+  tokenActionLimiter,
+  validate(registerSchema),
+  asyncHandler(async (req, res) => {
+    const { email, name, password } = req.body;
+
+    const org = await resolvePublicOrg(req);
+
+    if (!org || !org.selfServiceRegistrationEnabled) {
+      // Generic response — same message whether disabled or no org found
+      return res.json({
+        success: true,
+        data: { message: 'If your email is eligible, a verification link has been sent' },
+      });
+    }
+
+    // Check for existing user — use the generic response to prevent enumeration
+    const existing = await prisma.user.findFirst({
+      where: { orgId: org.id, email },
+    });
+    if (existing) {
+      return res.json({
+        success: true,
+        data: { message: 'If your email is eligible, a verification link has been sent' },
+      });
+    }
+
+    const passwordHash = await bcrypt.hash(password, config.bcryptRounds);
+    const user = await userService.createPendingUser(org.id, { email, name, passwordHash });
+
+    // Mint an EMAIL_VERIFY token (24 h TTL)
+    const { rawToken } = await inviteService.createInvite(
+      user.id,
+      inviteService.TOKEN_TYPES.EMAIL_VERIFY,
+      24
+    );
+    const verifyUrl = inviteService.buildTokenUrl(
+      inviteService.TOKEN_TYPES.EMAIL_VERIFY,
+      rawToken,
+      req
+    );
+
+    // Send verification email (fire-and-forget after response is queued)
+    const tpl = renderTemplate('verifyEmail', {
+      recipientName: name,
+      verifyUrl,
+      expiresInHours: 24,
+    });
+
+    // Audit-log with actorId=null (unauthenticated); store email in metadata
+    await auditLog({
+      orgId: org.id,
+      actorId: null,
+      action: 'auth.register',
+      resourceType: 'User',
+      resourceId: user.id,
+      metadata: { email },
+      ipAddress: req.ip,
+      userAgent: req.headers['user-agent'],
+    });
+
+    // Send after audit to keep the response fast; errors are swallowed
+    sendMail({
+      orgId: org.id,
+      to: email,
+      subject: tpl.subject,
+      html: tpl.html,
+      text: tpl.text,
+    }).catch(async (err) => {
+      const logger = (await import('../utils/logger.js')).default;
+      logger.error('auth.register: failed to send verification email', {
+        userId: user.id,
+        error: err.message,
+      });
+    });
+
+    res.json({
+      success: true,
+      data: { message: 'If your email is eligible, a verification link has been sent' },
+    });
+  })
+);
+
+// ---------------------------------------------------------------------------
+// POST /verify-email/:token — public; consume token, flip status to active
+// ---------------------------------------------------------------------------
+
+router.post(
+  '/verify-email/:token',
+  tokenActionLimiter,
+  asyncHandler(async (req, res) => {
+    const { error } = tokenParamSchema.validate(req.params.token);
+    if (error) throw new ApiError(400, 'Invalid token format');
+
+    const user = await inviteService.verifyAndConsume(
+      req.params.token,
+      inviteService.TOKEN_TYPES.EMAIL_VERIFY
+    );
+
+    await userService.markEmailVerified(user.id);
+
+    await auditLog({
+      orgId: user.orgId,
+      actorId: user.id,
+      action: 'auth.email_verified',
+      resourceType: 'User',
+      resourceId: user.id,
+      ipAddress: req.ip,
+      userAgent: req.headers['user-agent'],
+    });
+
+    res.json({ success: true, data: { message: 'Email verified' } });
   })
 );
 

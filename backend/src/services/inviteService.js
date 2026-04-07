@@ -23,6 +23,7 @@ import ApiError from '../utils/ApiError.js';
 export const TOKEN_TYPES = {
   INVITE: 'invite',
   PASSWORD_RESET: 'password_reset',
+  EMAIL_VERIFY: 'email_verify',
 };
 
 // ---------------------------------------------------------------------------
@@ -67,7 +68,14 @@ export function getPublicBaseUrl(req = null) {
  */
 export function buildTokenUrl(type, rawToken, req = null) {
   const base = getPublicBaseUrl(req);
-  const path = type === TOKEN_TYPES.INVITE ? 'invite' : 'password-reset';
+  let path;
+  if (type === TOKEN_TYPES.INVITE) {
+    path = 'invite';
+  } else if (type === TOKEN_TYPES.EMAIL_VERIFY) {
+    path = 'verify-email';
+  } else {
+    path = 'password-reset';
+  }
   return `${base}/${path}/${rawToken}`;
 }
 

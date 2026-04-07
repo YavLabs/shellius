@@ -3,8 +3,10 @@ import api from './api';
 export const getInvite = (token) =>
   api.get(`/auth/invite/${token}`).then((r) => r.data?.data ?? r.data);
 
-export const acceptInvite = (token, password) =>
-  api.post(`/auth/invite/${token}/accept`, { password }).then((r) => r.data?.data ?? r.data);
+export const acceptInvite = (token, password, name) =>
+  api
+    .post(`/auth/invite/${token}/accept`, { password, ...(name ? { name } : {}) })
+    .then((r) => r.data?.data ?? r.data);
 
 export const getResetToken = (token) =>
   api.get(`/auth/password-reset/${token}`).then((r) => r.data?.data ?? r.data);

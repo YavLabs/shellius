@@ -17,6 +17,8 @@ const SAMPLES = {
   accessRequestApproved: { recipientName: 'A', serverHostname: 'h', environment: 'prod', expiresAt: '2026-04-07T02:00:00Z', connectUrl: 'https://x.test/c' },
   accessRequestDenied: { recipientName: 'A', serverHostname: 'h', deniedReason: 'no' },
   certificateExpiring: { recipientName: 'A', serverHostname: 'h', expiresAt: '2026-04-07T02:00:00Z', renewUrl: 'https://x.test/n' },
+  verifyEmail: { recipientName: 'A', verifyUrl: 'https://x.test/v/1', expiresInHours: 24 },
+  accountDeleted: { recipientName: 'A', when: '2026-04-07T01:00:00Z', gracePeriodDays: 30 },
 };
 
 describe('email templates — registry', () => {

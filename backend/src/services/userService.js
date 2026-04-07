@@ -2,6 +2,7 @@ import bcrypt from 'bcryptjs';
 import prisma from '../config/db.js';
 import ApiError from '../utils/ApiError.js';
 import config from '../config/index.js';
+import logger from '../utils/logger.js';
 
 const ROLE_RANK = { super_admin: 4, admin: 3, operator: 2, viewer: 1 };
 
@@ -15,9 +16,9 @@ export async function listUsers(orgId, { page = 1, pageSize = 25, role, status, 
   page = parseInt(page, 10) || 1;
   pageSize = Math.min(parseInt(pageSize, 10) || 25, 100);
 
-  const where = { orgId };
+  const where = { orgId, status: { not: 'deleted' } };
   if (role) where.role = role;
-  if (status) where.status = status;
+  if (status) where.status = status; // caller-supplied status overrides the default filter
   if (managerId) where.managerId = managerId;
   if (search) {
     where.OR = [
@@ -205,6 +206,271 @@ export async function getDirectReports(orgId, managerId) {
     orderBy: { name: 'asc' },
   });
   return users.map(strip);
+}
+
+// ---------------------------------------------------------------------------
+// Profile: update name only
+// ---------------------------------------------------------------------------
+
+/**
+ * Update the calling user's name. Only 'name' is allowed via this function
+ * (email and role changes go through updateUser with admin privileges).
+ *
+ * @param {string} userId
+ * @param {string} name
+ * @returns {Promise<object>} stripped user
+ */
+export async function updateProfile(userId, name) {
+  const existing = await prisma.user.findUnique({ where: { id: userId } });
+  if (!existing) throw new ApiError(404, 'User not found');
+  const updated = await prisma.user.update({
+    where: { id: userId },
+    data: { name },
+  });
+  return strip(updated);
+}
+
+// ---------------------------------------------------------------------------
+// Password change (local accounts only)
+// ---------------------------------------------------------------------------
+
+/**
+ * Change a local user's password after verifying the current one.
+ * Throws 400 if this is an SSO account or the current password is wrong.
+ *
+ * @param {string} userId
+ * @param {string} currentPassword
+ * @param {string} newPassword
+ * @returns {Promise<void>}
+ */
+export async function changePassword(userId, currentPassword, newPassword) {
+  const user = await prisma.user.findUnique({ where: { id: userId } });
+  if (!user) throw new ApiError(404, 'User not found');
+
+  if (!user.passwordHash || user.ssoProvider) {
+    throw new ApiError(400, 'Password change is not available for SSO accounts');
+  }
+
+  const ok = await bcrypt.compare(currentPassword, user.passwordHash);
+  if (!ok) throw new ApiError(400, 'Current password is incorrect');
+
+  const newHash = await bcrypt.hash(newPassword, config.bcryptRounds);
+  await prisma.user.update({
+    where: { id: userId },
+    data: {
+      passwordHash: newHash,
+      passwordChangedAt: new Date(),
+    },
+  });
+}
+
+// ---------------------------------------------------------------------------
+// GDPR data export
+// ---------------------------------------------------------------------------
+
+/**
+ * Assemble a GDPR-compliant export for a user.
+ * Strips secrets (passwordHash, ssoSub, signedCert).
+ *
+ * @param {string} orgId
+ * @param {string} userId
+ * @returns {Promise<object>}
+ */
+export async function exportUserData(orgId, userId) {
+  const user = await prisma.user.findFirst({ where: { id: userId, orgId } });
+  if (!user) throw new ApiError(404, 'User not found');
+
+  const [accessRequests, certificates, sessions, auditLogs] = await Promise.all([
+    prisma.accessRequest.findMany({
+      where: { requesterId: userId, orgId },
+      orderBy: { createdAt: 'desc' },
+    }),
+    prisma.certificate.findMany({
+      where: { issuedToId: userId, orgId },
+      orderBy: { createdAt: 'desc' },
+      select: {
+        id: true,
+        serial: true,
+        type: true,
+        keyId: true,
+        principals: true,
+        publicKey: true,
+        // signedCert intentionally omitted — never export cert contents
+        validAfter: true,
+        validBefore: true,
+        status: true,
+        revokedAt: true,
+        createdAt: true,
+      },
+    }),
+    prisma.session.findMany({
+      where: { userId, orgId },
+      orderBy: { startedAt: 'desc' },
+      select: {
+        id: true,
+        serverId: true,
+        sessionType: true,
+        status: true,
+        clientIp: true,
+        startedAt: true,
+        endedAt: true,
+        durationSeconds: true,
+        // recordingPath excluded — internal server path
+      },
+    }),
+    prisma.auditLog.findMany({
+      where: { actorId: userId, orgId },
+      orderBy: { createdAt: 'desc' },
+    }),
+  ]);
+
+  // Strip sensitive fields from the user object
+  const { passwordHash, ssoSub, ...safeUser } = user;
+
+  // Convert BigInt serials to string to allow JSON serialisation
+  const safeCertificates = certificates.map((c) => ({
+    ...c,
+    serial: c.serial != null ? String(c.serial) : null,
+  }));
+
+  return {
+    exportedAt: new Date().toISOString(),
+    user: safeUser,
+    accessRequests,
+    certificates: safeCertificates,
+    sessions,
+    auditLogs,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Soft-delete (self-service)
+// ---------------------------------------------------------------------------
+
+/**
+ * Soft-delete the calling user's account.
+ * - Rejects if already deleted (409)
+ * - Rejects if the only super_admin in the org (409)
+ * - Sets status='deleted', deletedAt=now
+ * - Revokes PENDING+APPROVED access requests
+ * - Revokes ACTIVE certificates
+ * - Deletes all refresh tokens
+ *
+ * @param {string} orgId
+ * @param {string} userId
+ * @returns {Promise<void>}
+ */
+export async function softDeleteSelf(orgId, userId) {
+  const user = await prisma.user.findFirst({ where: { id: userId, orgId } });
+  if (!user) throw new ApiError(404, 'User not found');
+
+  if (user.status === 'deleted') {
+    throw new ApiError(409, 'Account is already deleted');
+  }
+
+  // Guard: must not be the only super_admin
+  if (user.role === 'super_admin') {
+    const superAdminCount = await prisma.user.count({
+      where: { orgId, role: 'super_admin', status: { not: 'deleted' } },
+    });
+    if (superAdminCount <= 1) {
+      throw new ApiError(409, 'Cannot delete the only super_admin in the organization');
+    }
+  }
+
+  const now = new Date();
+
+  // Revoke PENDING and APPROVED access requests
+  await prisma.accessRequest.updateMany({
+    where: {
+      requesterId: userId,
+      orgId,
+      status: { in: ['PENDING', 'APPROVED'] },
+    },
+    data: {
+      status: 'REVOKED',
+      revokedAt: now,
+      revokedReason: 'User deleted account',
+    },
+  });
+
+  // Revoke ACTIVE certificates
+  await prisma.certificate.updateMany({
+    where: {
+      issuedToId: userId,
+      orgId,
+      status: 'ACTIVE',
+    },
+    data: {
+      status: 'REVOKED',
+      revokedAt: now,
+      revokedById: userId,
+    },
+  });
+
+  // Delete all refresh tokens
+  await prisma.refreshToken.deleteMany({ where: { userId } });
+
+  // Mark user as deleted
+  await prisma.user.update({
+    where: { id: userId },
+    data: { status: 'deleted', deletedAt: now },
+  });
+
+  logger.info('userService.softDeleteSelf: user soft-deleted', { userId, orgId });
+}
+
+// ---------------------------------------------------------------------------
+// Self-service registration helpers
+// ---------------------------------------------------------------------------
+
+/**
+ * Create a user in the pending_verification state for the self-registration flow.
+ * The caller is responsible for validating that self-registration is enabled on
+ * the org and that no duplicate email exists before calling this function.
+ *
+ * @param {string} orgId
+ * @param {{ email: string, name: string, passwordHash: string }} data
+ * @returns {Promise<object>} stripped user row
+ */
+export async function createPendingUser(orgId, { email, name, passwordHash }) {
+  try {
+    const user = await prisma.user.create({
+      data: {
+        orgId,
+        email,
+        name,
+        passwordHash,
+        role: 'viewer',
+        status: 'pending_verification',
+        passwordChangedAt: new Date(),
+      },
+    });
+    return strip(user);
+  } catch (err) {
+    if (err.code === 'P2002') throw new ApiError(409, 'Email already exists in organization');
+    throw err;
+  }
+}
+
+/**
+ * Flip a user's status from pending_verification to active.
+ * Used by the verify-email flow after the one-time token is consumed.
+ *
+ * @param {string} userId
+ * @returns {Promise<object>} stripped user row
+ */
+export async function markEmailVerified(userId) {
+  const user = await prisma.user.findUnique({ where: { id: userId } });
+  if (!user) throw new ApiError(404, 'User not found');
+  if (user.status !== 'pending_verification') {
+    throw new ApiError(400, 'Account is not pending verification');
+  }
+  const updated = await prisma.user.update({
+    where: { id: userId },
+    data: { status: 'active' },
+  });
+  return strip(updated);
 }
 
 // ---------------------------------------------------------------------------

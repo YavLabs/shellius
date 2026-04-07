@@ -1,7 +1,8 @@
-import { useState } from 'react';
-import { useNavigate, Link } from 'react-router-dom';
+import { useState, useEffect } from 'react';
+import { useNavigate, Link, useSearchParams } from 'react-router-dom';
 import { Mail, Lock, Eye, EyeOff, KeyRound, Loader2, Terminal } from 'lucide-react';
 import { useAuth } from '@/context/AuthContext';
+import { getRegistrationStatus } from '@/services/registrationService';
 
 function Login() {
   const [email, setEmail] = useState('');
@@ -9,8 +10,17 @@ function Login() {
   const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState('');
   const [submitting, setSubmitting] = useState(false);
+  const [registrationEnabled, setRegistrationEnabled] = useState(false);
   const { login } = useAuth();
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
+  const isDeleted = searchParams.get('deleted') === '1';
+
+  useEffect(() => {
+    getRegistrationStatus()
+      .then((enabled) => setRegistrationEnabled(enabled))
+      .catch(() => setRegistrationEnabled(false));
+  }, []);
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -29,6 +39,13 @@ function Login() {
   return (
     <div className="flex min-h-screen items-center justify-center bg-background px-4">
       <div className="w-full max-w-sm">
+        {isDeleted && (
+          <div className="mb-4 rounded-md border border-amber-500/40 bg-amber-500/10 px-4 py-3 text-sm text-amber-700 dark:text-amber-400">
+            Your account has been deleted. If this was a mistake, contact your administrator within
+            30 days.
+          </div>
+        )}
+
         <div className="mb-8 text-center">
           <div className="mx-auto mb-4 flex h-11 w-11 items-center justify-center rounded-lg bg-primary">
             <Terminal className="h-6 w-6 text-primary-foreground" />
@@ -130,6 +147,15 @@ function Login() {
               <KeyRound className="mr-2 h-4 w-4" />
               Sign in with SSO
             </button>
+
+            {registrationEnabled && (
+              <p className="text-center text-sm text-muted-foreground">
+                Don&apos;t have an account?{' '}
+                <Link to="/register" className="text-primary underline-offset-4 hover:underline">
+                  Sign up
+                </Link>
+              </p>
+            )}
           </form>
         </div>
       </div>

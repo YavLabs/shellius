@@ -18,6 +18,8 @@ import * as accessRequestSubmitted from './templates/accessRequestSubmitted.js';
 import * as accessRequestApproved from './templates/accessRequestApproved.js';
 import * as accessRequestDenied from './templates/accessRequestDenied.js';
 import * as certificateExpiring from './templates/certificateExpiring.js';
+import * as accountDeleted from './templates/accountDeleted.js';
+import * as verifyEmail from './templates/verifyEmail.js';
 
 const TEMPLATES = {
   invite,
@@ -27,6 +29,8 @@ const TEMPLATES = {
   accessRequestApproved,
   accessRequestDenied,
   certificateExpiring,
+  accountDeleted,
+  verifyEmail,
 };
 
 export function renderTemplate(name, vars) {
