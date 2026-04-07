@@ -1,10 +1,12 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
-import { ArrowLeft, Pencil, Trash2, Plus, X, UsersRound } from 'lucide-react';
+import { ArrowLeft, Pencil, Trash2, Plus, X, UsersRound, Search } from 'lucide-react';
 import Modal from '@/components/shared/Modal';
 import ConfirmDialog from '@/components/shared/ConfirmDialog';
 import Badge from '@/components/shared/Badge';
-import SearchInput from '@/components/shared/SearchInput';
+import PageHeader from '@/components/common/PageHeader';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
 import {
   getGroup,
   updateGroup,
@@ -63,12 +65,9 @@ function GroupDetail() {
   if (error || !group) {
     return (
       <div className="p-6">
-        <button
-          onClick={() => navigate('/groups')}
-          className="flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground"
-        >
+        <Button variant="ghost" onClick={() => navigate('/groups')} className="gap-1 px-0 text-muted-foreground">
           <ArrowLeft className="h-4 w-4" /> Back to groups
-        </button>
+        </Button>
         <div className="mt-4 rounded-md border border-destructive/50 bg-destructive/10 px-3 py-2 text-sm text-destructive">
           {error || 'Group not found'}
         </div>
@@ -76,56 +75,37 @@ function GroupDetail() {
     );
   }
 
-  const members = group.members || [];
+  // Backend returns the relation as `memberships` (each entry has a `user`).
+  // Some older code paths used `members`; accept either shape for safety.
+  const members = group.memberships || group.members || [];
 
   return (
-    <div className="space-y-5 p-6">
-      <button
-        onClick={() => navigate('/groups')}
-        className="flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground"
-      >
+    <div className="space-y-6 p-6">
+      <Button variant="ghost" onClick={() => navigate('/groups')} className="gap-1 px-0 text-muted-foreground">
         <ArrowLeft className="h-4 w-4" /> Back to groups
-      </button>
+      </Button>
 
-      <div className="flex items-start justify-between">
-        <div className="flex items-start gap-4">
-          <div className="flex h-12 w-12 items-center justify-center rounded-lg bg-primary/10 text-primary">
-            <UsersRound className="h-6 w-6" />
-          </div>
-          <div>
-            <h1 className="text-2xl font-bold tracking-tight text-foreground">{group.name}</h1>
-            {group.description && (
-              <p className="mt-1 text-sm text-muted-foreground">{group.description}</p>
-            )}
-          </div>
-        </div>
-        <div className="flex gap-2">
-          <button
-            onClick={() => setEditOpen(true)}
-            className="flex h-9 items-center gap-1.5 rounded-md border border-input bg-background px-3 text-sm font-medium text-foreground hover:bg-accent"
-          >
-            <Pencil className="h-4 w-4" /> Edit
-          </button>
-          <button
-            onClick={() => setConfirmDelete(true)}
-            className="flex h-9 items-center gap-1.5 rounded-md border border-destructive/50 bg-background px-3 text-sm font-medium text-destructive hover:bg-destructive/10"
-          >
-            <Trash2 className="h-4 w-4" /> Delete
-          </button>
-        </div>
-      </div>
+      <PageHeader
+        icon={UsersRound}
+        title={group.name}
+        subtitle={group.description}
+      >
+        <Button variant="outline" onClick={() => setEditOpen(true)}>
+          <Pencil className="mr-2 h-4 w-4" /> Edit
+        </Button>
+        <Button variant="destructive" onClick={() => setConfirmDelete(true)}>
+          <Trash2 className="mr-2 h-4 w-4" /> Delete
+        </Button>
+      </PageHeader>
 
       <div className="rounded-lg border border-border bg-card">
         <div className="flex items-center justify-between border-b border-border px-5 py-3">
           <h2 className="text-sm font-semibold text-foreground">
             Members ({members.length})
           </h2>
-          <button
-            onClick={() => setAddOpen(true)}
-            className="flex h-8 items-center gap-1.5 rounded-md bg-primary px-3 text-sm font-medium text-primary-foreground hover:bg-primary/90"
-          >
-            <Plus className="h-3.5 w-3.5" /> Add Member
-          </button>
+          <Button size="sm" onClick={() => setAddOpen(true)}>
+            <Plus className="mr-1.5 h-3.5 w-3.5" /> Add Member
+          </Button>
         </div>
         {members.length === 0 ? (
           <div className="p-8 text-center text-sm text-muted-foreground">No members yet</div>
@@ -146,13 +126,15 @@ function GroupDetail() {
                   </div>
                   <div className="flex items-center gap-3">
                     {u.role && <Badge variant="info">{u.role}</Badge>}
-                    <button
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="h-8 w-8 text-muted-foreground hover:text-destructive"
                       onClick={() => setConfirmRemove(u)}
-                      className="rounded-md p-1.5 text-muted-foreground hover:bg-accent hover:text-destructive"
                       title="Remove member"
                     >
                       <X className="h-4 w-4" />
-                    </button>
+                    </Button>
                   </div>
                 </li>
               );
@@ -226,9 +208,6 @@ function EditGroupModal({ open, group, onClose, onSaved }) {
     }
   };
 
-  const inputCls =
-    'h-9 w-full rounded-md border border-input bg-background px-3 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring';
-
   return (
     <Modal open={open} onClose={onClose} title="Edit Group">
       <form onSubmit={submit} className="space-y-4">
@@ -239,7 +218,7 @@ function EditGroupModal({ open, group, onClose, onSaved }) {
         )}
         <div>
           <label className="mb-1.5 block text-sm font-medium text-foreground">Name</label>
-          <input className={inputCls} value={name} onChange={(e) => setName(e.target.value)} required />
+          <Input value={name} onChange={(e) => setName(e.target.value)} required />
         </div>
         <div>
           <label className="mb-1.5 block text-sm font-medium text-foreground">Description</label>
@@ -251,20 +230,12 @@ function EditGroupModal({ open, group, onClose, onSaved }) {
           />
         </div>
         <div className="flex justify-end gap-2 pt-2">
-          <button
-            type="button"
-            onClick={onClose}
-            className="h-9 rounded-md border border-input bg-background px-4 text-sm font-medium text-foreground hover:bg-accent"
-          >
+          <Button type="button" variant="outline" onClick={onClose}>
             Cancel
-          </button>
-          <button
-            type="submit"
-            disabled={submitting}
-            className="h-9 rounded-md bg-primary px-4 text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
-          >
+          </Button>
+          <Button type="submit" disabled={submitting}>
             {submitting ? 'Saving...' : 'Save changes'}
-          </button>
+          </Button>
         </div>
       </form>
     </Modal>
@@ -321,7 +292,15 @@ function AddMemberModal({ open, groupId, existingIds, onClose, onAdded }) {
             {error}
           </div>
         )}
-        <SearchInput value={search} onChange={setSearch} placeholder="Search users..." />
+        <div className="relative">
+          <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+          <Input
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder="Search users..."
+            className="pl-9"
+          />
+        </div>
         <div className="max-h-80 overflow-y-auto rounded-md border border-border">
           {loading ? (
             <div className="p-4 text-center text-sm text-muted-foreground">Loading...</div>
@@ -337,13 +316,13 @@ function AddMemberModal({ open, groupId, existingIds, onClose, onAdded }) {
                       <p className="text-sm font-medium text-foreground">{u.name}</p>
                       <p className="text-xs text-muted-foreground">{u.email}</p>
                     </div>
-                    <button
+                    <Button
+                      size="sm"
                       onClick={() => handleAdd(u)}
                       disabled={isMember || addingId === u.id}
-                      className="h-8 rounded-md bg-primary px-3 text-xs font-medium text-primary-foreground hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-40"
                     >
                       {isMember ? 'Member' : addingId === u.id ? 'Adding...' : 'Add'}
-                    </button>
+                    </Button>
                   </li>
                 );
               })}

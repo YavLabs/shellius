@@ -1,18 +1,26 @@
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import {
   Plus,
-  MoreVertical,
   Pencil,
   Trash2,
-  ChevronLeft,
-  ChevronRight,
+  Shield,
+  FlaskConical,
 } from 'lucide-react';
 import DataTable from '@/components/shared/DataTable';
-import SearchInput from '@/components/shared/SearchInput';
 import ConfirmDialog from '@/components/shared/ConfirmDialog';
 import EnvironmentBadge from '@/components/shared/EnvironmentBadge';
 import Badge from '@/components/shared/Badge';
 import PolicyForm from '@/components/policies/PolicyForm';
+import PolicyEvaluator from '@/components/policies/PolicyEvaluator';
+import PageHeader from '@/components/common/PageHeader';
+import { Button } from '@/components/ui/button';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
 import { listPolicies, createPolicy, updatePolicy, deletePolicy } from '@/services/policyService';
 import { listCustomers } from '@/services/customerService';
 import { useAuth } from '@/context/AuthContext';
@@ -24,62 +32,8 @@ function isAtLeast(user, role) {
 }
 
 function EffectBadge({ effect }) {
-  if (effect === 'ALLOW') {
-    return <Badge variant="success">ALLOW</Badge>;
-  }
+  if (effect === 'ALLOW') return <Badge variant="success">ALLOW</Badge>;
   return <Badge variant="danger">DENY</Badge>;
-}
-
-function RowMenu({ onEdit, onDelete }) {
-  const [open, setOpen] = useState(false);
-  const ref = useRef(null);
-
-  useEffect(() => {
-    if (!open) return;
-    const fn = (e) => {
-      if (ref.current && !ref.current.contains(e.target)) setOpen(false);
-    };
-    window.addEventListener('mousedown', fn);
-    return () => window.removeEventListener('mousedown', fn);
-  }, [open]);
-
-  return (
-    <div className="relative" ref={ref}>
-      <button
-        onClick={(e) => {
-          e.stopPropagation();
-          setOpen((p) => !p);
-        }}
-        className="rounded-md p-1 text-muted-foreground hover:bg-accent hover:text-foreground"
-      >
-        <MoreVertical className="h-4 w-4" />
-      </button>
-      {open && (
-        <div className="absolute right-0 z-20 mt-1 w-44 overflow-hidden rounded-md border border-border bg-card shadow-lg">
-          <button
-            onClick={(e) => {
-              e.stopPropagation();
-              setOpen(false);
-              onEdit();
-            }}
-            className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-foreground hover:bg-accent"
-          >
-            <Pencil className="h-3.5 w-3.5" /> Edit
-          </button>
-          <button
-            onClick={(e) => {
-              e.stopPropagation();
-              setOpen(false);
-              onDelete();
-            }}
-            className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-destructive hover:bg-accent"
-          >
-            <Trash2 className="h-3.5 w-3.5" /> Delete
-          </button>
-        </div>
-      )}
-    </div>
-  );
 }
 
 function Policies() {
@@ -93,7 +47,6 @@ function Policies() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
 
-  const [search, setSearch] = useState('');
   const [effectFilter, setEffectFilter] = useState('');
   const [customerFilter, setCustomerFilter] = useState('');
   const [activeFilter, setActiveFilter] = useState('');
@@ -102,14 +55,13 @@ function Policies() {
   const [formOpen, setFormOpen] = useState(false);
   const [editing, setEditing] = useState(null);
   const [confirm, setConfirm] = useState(null);
+  const [evaluatorPolicy, setEvaluatorPolicy] = useState(null);
 
   const fetchCustomers = useCallback(async () => {
     try {
       const d = await listCustomers({ page: 1, pageSize: 200 });
       setCustomers(d.items || []);
-    } catch {
-      /* ignore */
-    }
+    } catch { /* ignore */ }
   }, []);
 
   const fetchPolicies = useCallback(async () => {
@@ -123,27 +75,17 @@ function Policies() {
       const resp = await listPolicies(params);
       const items = resp.data?.items || resp.data || [];
       const metaTotal = resp.meta?.total ?? resp.data?.total ?? items.length;
-      const filtered = search
-        ? items.filter((p) =>
-            (p.name || '').toLowerCase().includes(search.toLowerCase())
-          )
-        : items;
-      setPolicies(filtered);
+      setPolicies(items);
       setTotal(metaTotal);
     } catch (err) {
       setError(err.response?.data?.error?.message || err.message || 'Failed to load policies');
     } finally {
       setLoading(false);
     }
-  }, [page, pageSize, effectFilter, customerFilter, activeFilter, search]);
+  }, [page, pageSize, effectFilter, customerFilter, activeFilter]);
 
-  useEffect(() => {
-    fetchCustomers();
-  }, [fetchCustomers]);
-
-  useEffect(() => {
-    fetchPolicies();
-  }, [fetchPolicies]);
+  useEffect(() => { fetchCustomers(); }, [fetchCustomers]);
+  useEffect(() => { fetchPolicies(); }, [fetchPolicies]);
 
   const handleSubmit = async (payload) => {
     if (editing) {
@@ -176,10 +118,48 @@ function Policies() {
 
   const customerMap = Object.fromEntries(customers.map((c) => [c.id, c.name]));
 
+  const filterSlot = (
+    <>
+      <Select
+        value={effectFilter || '_all'}
+        onValueChange={(v) => { setEffectFilter(v === '_all' ? '' : v); setPage(1); }}
+      >
+        <SelectTrigger className="w-[140px]"><SelectValue placeholder="All effects" /></SelectTrigger>
+        <SelectContent>
+          <SelectItem value="_all">All effects</SelectItem>
+          <SelectItem value="ALLOW">ALLOW</SelectItem>
+          <SelectItem value="DENY">DENY</SelectItem>
+        </SelectContent>
+      </Select>
+      <Select
+        value={customerFilter || '_all'}
+        onValueChange={(v) => { setCustomerFilter(v === '_all' ? '' : v); setPage(1); }}
+      >
+        <SelectTrigger className="w-[160px]"><SelectValue placeholder="All customers" /></SelectTrigger>
+        <SelectContent>
+          <SelectItem value="_all">All customers</SelectItem>
+          {customers.map((c) => <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>)}
+        </SelectContent>
+      </Select>
+      <Select
+        value={activeFilter || '_all'}
+        onValueChange={(v) => { setActiveFilter(v === '_all' ? '' : v); setPage(1); }}
+      >
+        <SelectTrigger className="w-[140px]"><SelectValue placeholder="All statuses" /></SelectTrigger>
+        <SelectContent>
+          <SelectItem value="_all">All statuses</SelectItem>
+          <SelectItem value="true">Active</SelectItem>
+          <SelectItem value="false">Inactive</SelectItem>
+        </SelectContent>
+      </Select>
+    </>
+  );
+
   const columns = [
     {
       key: 'name',
       label: 'Name',
+      sortable: true,
       render: (r) => (
         <div>
           <p className="text-sm font-medium text-foreground">{r.name}</p>
@@ -192,6 +172,8 @@ function Policies() {
     {
       key: 'effect',
       label: 'Effect',
+      sortable: true,
+      searchAccessor: (r) => r.effect || '',
       render: (r) => <EffectBadge effect={r.effect} />,
     },
     {
@@ -206,15 +188,13 @@ function Policies() {
     {
       key: 'environments',
       label: 'Environments',
+      hideBelow: 'md',
       render: (r) => {
         const envs = r.targetEnvironments || [];
-        if (envs.length === 0)
-          return <span className="text-xs text-muted-foreground">All</span>;
+        if (envs.length === 0) return <span className="text-xs text-muted-foreground">All</span>;
         return (
           <div className="flex flex-wrap gap-1">
-            {envs.map((e) => (
-              <EnvironmentBadge key={e} environment={e} />
-            ))}
+            {envs.map((e) => <EnvironmentBadge key={e} environment={e} />)}
           </div>
         );
       },
@@ -222,6 +202,7 @@ function Policies() {
     {
       key: 'subjects',
       label: 'Subjects',
+      hideBelow: 'lg',
       render: (r) => {
         const count = (r.subjects || []).length;
         return (
@@ -234,6 +215,7 @@ function Policies() {
     {
       key: 'priority',
       label: 'Priority',
+      sortable: true,
       render: (r) => (
         <span className="font-mono text-xs text-muted-foreground">{r.priority ?? 0}</span>
       ),
@@ -241,117 +223,47 @@ function Policies() {
     {
       key: 'isActive',
       label: 'Status',
+      searchAccessor: (r) => (r.isActive ? 'active' : 'inactive'),
       render: (r) =>
-        r.isActive ? (
-          <Badge variant="success">Active</Badge>
-        ) : (
-          <Badge variant="default">Inactive</Badge>
-        ),
+        r.isActive ? <Badge variant="success">Active</Badge> : <Badge variant="default">Inactive</Badge>,
     },
     {
       key: 'updatedAt',
       label: 'Updated',
+      sortable: true,
+      hideBelow: 'lg',
       render: (r) => (
         <span className="text-xs text-muted-foreground">{relativeTime(r.updatedAt)}</span>
       ),
     },
     ...(canAdmin
-      ? [
-          {
-            key: 'actions',
-            label: '',
-            className: 'w-10',
-            render: (r) => (
-              <RowMenu
-                onEdit={() => {
-                  setEditing(r);
-                  setFormOpen(true);
-                }}
-                onDelete={() => handleDelete(r)}
-              />
-            ),
-          },
-        ]
+      ? [{
+          key: 'actions',
+          label: '',
+          className: 'w-10',
+          actions: [
+            { label: 'Edit', icon: Pencil, onClick: (r) => { setEditing(r); setFormOpen(true); } },
+            { label: 'Test', icon: FlaskConical, onClick: (r) => setEvaluatorPolicy(r) },
+            { separator: true },
+            { label: 'Delete', icon: Trash2, variant: 'destructive', onClick: (r) => handleDelete(r) },
+          ],
+        }]
       : []),
   ];
 
-  const totalPages = Math.max(1, Math.ceil(total / pageSize));
-  const selectCls =
-    'h-9 rounded-md border border-input bg-background px-3 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-ring';
-
   return (
-    <div className="space-y-5 p-6">
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-2xl font-bold tracking-tight text-foreground">Policies</h1>
-          <p className="text-sm text-muted-foreground">
-            Access control policies governing who can reach which servers.
-          </p>
-        </div>
+    <div className="space-y-6 p-6">
+      <PageHeader
+        icon={Shield}
+        title="Policies"
+        subtitle="Access control policies governing who can reach which servers."
+      >
         {canAdmin && (
-          <button
-            onClick={() => {
-              setEditing(null);
-              setFormOpen(true);
-            }}
-            className="flex h-9 items-center gap-2 rounded-md bg-primary px-4 text-sm font-medium text-primary-foreground hover:bg-primary/90"
-          >
-            <Plus className="h-4 w-4" /> New Policy
-          </button>
+          <Button onClick={() => { setEditing(null); setFormOpen(true); }}>
+            <Plus className="mr-2 h-4 w-4" /> New Policy
+          </Button>
         )}
-      </div>
-
-      <div className="flex flex-wrap items-center gap-3">
-        <div className="min-w-56 flex-1">
-          <SearchInput
-            value={search}
-            onChange={(v) => {
-              setSearch(v);
-              setPage(1);
-            }}
-            placeholder="Search by policy name..."
-          />
-        </div>
-        <select
-          className={selectCls}
-          value={effectFilter}
-          onChange={(e) => {
-            setEffectFilter(e.target.value);
-            setPage(1);
-          }}
-        >
-          <option value="">All effects</option>
-          <option value="ALLOW">ALLOW</option>
-          <option value="DENY">DENY</option>
-        </select>
-        <select
-          className={selectCls}
-          value={customerFilter}
-          onChange={(e) => {
-            setCustomerFilter(e.target.value);
-            setPage(1);
-          }}
-        >
-          <option value="">All customers</option>
-          {customers.map((c) => (
-            <option key={c.id} value={c.id}>
-              {c.name}
-            </option>
-          ))}
-        </select>
-        <select
-          className={selectCls}
-          value={activeFilter}
-          onChange={(e) => {
-            setActiveFilter(e.target.value);
-            setPage(1);
-          }}
-        >
-          <option value="">All statuses</option>
-          <option value="true">Active</option>
-          <option value="false">Inactive</option>
-        </select>
-      </div>
+      </PageHeader>
 
       {error && (
         <div className="rounded-md border border-destructive/50 bg-destructive/10 px-3 py-2 text-sm text-destructive">
@@ -364,39 +276,14 @@ function Policies() {
         data={policies}
         loading={loading}
         emptyMessage="No policies found. Create one to control server access."
+        searchPlaceholder="Search by policy name..."
+        filters={filterSlot}
+        serverPagination={{ page, total, onPageChange: setPage }}
       />
-
-      <div className="flex items-center justify-between">
-        <p className="text-sm text-muted-foreground">
-          {total} polic{total === 1 ? 'y' : 'ies'}
-        </p>
-        <div className="flex items-center gap-2">
-          <button
-            onClick={() => setPage((p) => Math.max(1, p - 1))}
-            disabled={page <= 1}
-            className="flex h-8 items-center gap-1 rounded-md border border-input bg-background px-3 text-sm text-foreground hover:bg-accent disabled:opacity-50"
-          >
-            <ChevronLeft className="h-4 w-4" /> Previous
-          </button>
-          <span className="text-sm text-muted-foreground">
-            Page {page} of {totalPages}
-          </span>
-          <button
-            onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
-            disabled={page >= totalPages}
-            className="flex h-8 items-center gap-1 rounded-md border border-input bg-background px-3 text-sm text-foreground hover:bg-accent disabled:opacity-50"
-          >
-            Next <ChevronRight className="h-4 w-4" />
-          </button>
-        </div>
-      </div>
 
       <PolicyForm
         open={formOpen}
-        onClose={() => {
-          setFormOpen(false);
-          setEditing(null);
-        }}
+        onClose={() => { setFormOpen(false); setEditing(null); }}
         onSubmit={handleSubmit}
         policy={editing}
       />
@@ -409,6 +296,12 @@ function Policies() {
         variant={confirm?.variant}
         onConfirm={confirm?.onConfirm}
         onCancel={() => setConfirm(null)}
+      />
+
+      <PolicyEvaluator
+        open={!!evaluatorPolicy}
+        onClose={() => setEvaluatorPolicy(null)}
+        policy={evaluatorPolicy}
       />
     </div>
   );

@@ -1,10 +1,9 @@
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import {
-  MonitorOff,
-  ChevronLeft,
-  ChevronRight,
-  X,
   Film,
+  Terminal as TerminalIcon,
+  Eye,
+  Square,
 } from 'lucide-react';
 import DataTable from '@/components/shared/DataTable';
 import Badge from '@/components/shared/Badge';
@@ -12,6 +11,14 @@ import EnvironmentBadge from '@/components/shared/EnvironmentBadge';
 import Modal from '@/components/shared/Modal';
 import ConfirmDialog from '@/components/shared/ConfirmDialog';
 import SessionPlayer from '@/components/sessions/SessionPlayer';
+import PageHeader from '@/components/common/PageHeader';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
 import { listSessions, listActiveSessions, getSession, terminateSession } from '@/services/sessionService';
 import { useAuth } from '@/context/AuthContext';
 import { relativeTime, formatDateTime } from '@/utils/time';
@@ -90,10 +97,7 @@ function SessionDetailDrawer({ sessionId, open, onClose }) {
       {!loading && session && (
         <dl>
           <DetailRow label="ID" value={<span className="font-mono text-xs">{session.id}</span>} />
-          <DetailRow
-            label="Status"
-            value={<SessionStatusBadge status={session.status} />}
-          />
+          <DetailRow label="Status" value={<SessionStatusBadge status={session.status} />} />
           <DetailRow
             label="Server"
             value={
@@ -104,15 +108,10 @@ function SessionDetailDrawer({ sessionId, open, onClose }) {
                     <EnvironmentBadge environment={session.server.environment} />
                   )}
                 </span>
-              ) : (
-                session.serverId
-              )
+              ) : session.serverId
             }
           />
-          <DetailRow
-            label="User"
-            value={session.user?.name || session.user?.email || session.userId}
-          />
+          <DetailRow label="User" value={session.user?.name || session.user?.email || session.userId} />
           <DetailRow label="Protocol" value={session.protocol} />
           <DetailRow label="Client IP" value={session.clientIp} />
           <DetailRow label="Principal" value={session.principal} />
@@ -120,15 +119,9 @@ function SessionDetailDrawer({ sessionId, open, onClose }) {
           <DetailRow label="Ended At" value={formatDateTime(session.endedAt)} />
           <DetailRow
             label="Duration"
-            value={
-              session.status === 'ACTIVE'
-                ? 'Active'
-                : durationLabel(session.startedAt, session.endedAt)
-            }
+            value={session.status === 'ACTIVE' ? 'Active' : durationLabel(session.startedAt, session.endedAt)}
           />
-          <DetailRow label="Access Request ID" value={
-            <span className="font-mono text-xs">{session.accessRequestId || '-'}</span>
-          } />
+          <DetailRow label="Access Request ID" value={<span className="font-mono text-xs">{session.accessRequestId || '-'}</span>} />
           {session.terminatedBy && (
             <DetailRow
               label="Terminated By"
@@ -201,9 +194,7 @@ function Sessions() {
     }
   }, [activeTab, page, pageSize, statusFilter]);
 
-  useEffect(() => {
-    fetchSessions();
-  }, [fetchSessions]);
+  useEffect(() => { fetchSessions(); }, [fetchSessions]);
 
   const handleTabChange = (key) => {
     setActiveTab(key);
@@ -211,10 +202,7 @@ function Sessions() {
     setStatusFilter('');
   };
 
-  const openDetail = (id) => {
-    setDetailId(id);
-    setDetailOpen(true);
-  };
+  const openDetail = (id) => { setDetailId(id); setDetailOpen(true); };
 
   const handleTerminate = async () => {
     if (!terminateTarget) return;
@@ -231,10 +219,25 @@ function Sessions() {
     }
   };
 
+  const filterSlot = activeTab === 'all' ? (
+    <Select
+      value={statusFilter || '_all'}
+      onValueChange={(v) => { setStatusFilter(v === '_all' ? '' : v); setPage(1); }}
+    >
+      <SelectTrigger className="w-[160px]"><SelectValue placeholder="All statuses" /></SelectTrigger>
+      <SelectContent>
+        <SelectItem value="_all">All statuses</SelectItem>
+        {SESSION_STATUSES.map((s) => <SelectItem key={s} value={s}>{s}</SelectItem>)}
+      </SelectContent>
+    </Select>
+  ) : null;
+
   const columns = [
     {
       key: 'server',
       label: 'Server',
+      sortable: true,
+      searchAccessor: (r) => `${r.server?.hostname || r.server?.name || ''} ${r.server?.environment || ''}`,
       render: (r) => (
         <div className="flex items-center gap-2">
           <span className="text-sm font-medium text-foreground">
@@ -242,10 +245,7 @@ function Sessions() {
           </span>
           {r.server?.environment && <EnvironmentBadge environment={r.server.environment} />}
           {r.recordingPath && (
-            <Film
-              className="h-3.5 w-3.5 shrink-0 text-muted-foreground"
-              title="Recording available"
-            />
+            <Film className="h-3.5 w-3.5 shrink-0 text-muted-foreground" title="Recording available" />
           )}
         </div>
       ),
@@ -253,6 +253,8 @@ function Sessions() {
     {
       key: 'user',
       label: 'User',
+      sortable: true,
+      searchAccessor: (r) => r.user?.name || r.user?.email || '',
       render: (r) => (
         <span className="text-sm text-foreground">
           {r.user?.name || r.user?.email || r.userId || '-'}
@@ -262,6 +264,7 @@ function Sessions() {
     {
       key: 'startedAt',
       label: 'Started',
+      sortable: true,
       render: (r) => (
         <span className="text-xs text-muted-foreground">{relativeTime(r.startedAt)}</span>
       ),
@@ -281,11 +284,14 @@ function Sessions() {
     {
       key: 'status',
       label: 'Status',
+      sortable: true,
+      searchAccessor: (r) => r.status || '',
       render: (r) => <SessionStatusBadge status={r.status} />,
     },
     {
       key: 'clientIp',
       label: 'Client IP',
+      hideBelow: 'lg',
       render: (r) => (
         <span className="font-mono text-xs text-muted-foreground">{r.clientIp || '-'}</span>
       ),
@@ -293,46 +299,28 @@ function Sessions() {
     {
       key: 'actions',
       label: '',
-      className: 'w-24',
-      render: (r) => (
-        <div className="flex items-center gap-1">
-          <button
-            onClick={() => openDetail(r.id)}
-            className="rounded-md px-2 py-1 text-xs text-muted-foreground hover:bg-accent hover:text-foreground transition-colors"
-          >
-            View
-          </button>
-          {canTerminate && r.status === 'ACTIVE' && (
-            <button
-              onClick={(e) => {
-                e.stopPropagation();
-                setTerminateTarget(r);
-              }}
-              className="flex items-center gap-1 rounded-md px-2 py-1 text-xs text-destructive hover:bg-destructive/10 transition-colors"
-            >
-              <MonitorOff className="h-3.5 w-3.5" />
-              Terminate
-            </button>
-          )}
-        </div>
-      ),
+      className: 'w-10',
+      actions: [
+        { label: 'View Details', icon: Eye, onClick: (r) => openDetail(r.id) },
+        ...(canTerminate
+          ? [{
+              label: 'Terminate',
+              icon: Square,
+              variant: 'destructive',
+              onClick: (r) => r.status === 'ACTIVE' && setTerminateTarget(r),
+            }]
+          : []),
+      ],
     },
   ];
 
-  const totalPages = Math.max(1, Math.ceil(total / pageSize));
-  const selectCls =
-    'h-9 rounded-md border border-input bg-background px-3 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-ring';
-
   return (
-    <div className="space-y-5 p-6">
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-2xl font-bold tracking-tight text-foreground">Sessions</h1>
-          <p className="text-sm text-muted-foreground">
-            Active and historical SSH/RDP sessions.
-          </p>
-        </div>
-      </div>
+    <div className="space-y-6 p-6">
+      <PageHeader
+        icon={TerminalIcon}
+        title="Sessions"
+        subtitle="Active and historical SSH/RDP sessions."
+      />
 
       {/* Tabs */}
       <div className="flex items-center gap-1 border-b border-border">
@@ -352,27 +340,6 @@ function Sessions() {
         ))}
       </div>
 
-      {/* Filters — only shown in all tab */}
-      {activeTab === 'all' && (
-        <div className="flex flex-wrap items-center gap-3">
-          <select
-            className={selectCls}
-            value={statusFilter}
-            onChange={(e) => {
-              setStatusFilter(e.target.value);
-              setPage(1);
-            }}
-          >
-            <option value="">All statuses</option>
-            {SESSION_STATUSES.map((s) => (
-              <option key={s} value={s}>
-                {s}
-              </option>
-            ))}
-          </select>
-        </div>
-      )}
-
       {error && (
         <div className="rounded-md border border-destructive/50 bg-destructive/10 px-3 py-2 text-sm text-destructive">
           {error}
@@ -383,60 +350,24 @@ function Sessions() {
         columns={columns}
         data={sessions}
         loading={loading}
-        emptyMessage={
-          activeTab === 'active'
-            ? 'No active sessions.'
-            : 'No sessions found.'
-        }
+        emptyMessage={activeTab === 'active' ? 'No active sessions.' : 'No sessions found.'}
+        searchPlaceholder="Search server or user..."
+        filters={filterSlot}
+        serverPagination={{ page, total, onPageChange: setPage }}
       />
-
-      {/* Pagination */}
-      <div className="flex items-center justify-between">
-        <p className="text-sm text-muted-foreground">
-          {total} session{total === 1 ? '' : 's'}
-        </p>
-        <div className="flex items-center gap-2">
-          <button
-            onClick={() => setPage((p) => Math.max(1, p - 1))}
-            disabled={page <= 1}
-            className="flex h-8 items-center gap-1 rounded-md border border-input bg-background px-3 text-sm text-foreground hover:bg-accent disabled:opacity-50"
-          >
-            <ChevronLeft className="h-4 w-4" /> Previous
-          </button>
-          <span className="text-sm text-muted-foreground">
-            Page {page} of {totalPages}
-          </span>
-          <button
-            onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
-            disabled={page >= totalPages}
-            className="flex h-8 items-center gap-1 rounded-md border border-input bg-background px-3 text-sm text-foreground hover:bg-accent disabled:opacity-50"
-          >
-            Next <ChevronRight className="h-4 w-4" />
-          </button>
-        </div>
-      </div>
 
       <SessionDetailDrawer
         sessionId={detailId}
         open={detailOpen}
-        onClose={() => {
-          setDetailOpen(false);
-          setDetailId(null);
-        }}
+        onClose={() => { setDetailOpen(false); setDetailId(null); }}
       />
 
       <ConfirmDialog
         open={!!terminateTarget}
         title="Terminate Session"
         message={`Terminate the active session for ${
-          terminateTarget?.user?.name ||
-          terminateTarget?.user?.email ||
-          'this user'
-        } on ${
-          terminateTarget?.server?.hostname ||
-          terminateTarget?.server?.name ||
-          'this server'
-        }? The connection will be immediately closed.`}
+          terminateTarget?.user?.name || terminateTarget?.user?.email || 'this user'
+        } on ${terminateTarget?.server?.hostname || terminateTarget?.server?.name || 'this server'}? The connection will be immediately closed.`}
         confirmLabel={terminating ? 'Terminating...' : 'Terminate'}
         variant="destructive"
         onConfirm={handleTerminate}

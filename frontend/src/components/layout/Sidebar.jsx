@@ -1,5 +1,5 @@
-import { useState, useEffect } from 'react';
-import { NavLink, useLocation } from 'react-router-dom';
+import { useState, useEffect, useCallback } from 'react';
+import { Link, NavLink, useLocation } from 'react-router-dom';
 import {
   LayoutDashboard,
   Building2,
@@ -11,118 +11,312 @@ import {
   FileKey,
   Terminal,
   ScrollText,
+  Bell,
   Cloud,
   Settings,
-  PanelLeftClose,
   PanelLeft,
+  PanelLeftClose,
   Menu,
   X,
 } from 'lucide-react';
 import { useAuth } from '@/context/AuthContext';
 import { useNotifications } from '@/context/NotificationContext';
 import { cn } from '@/lib/utils';
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from '@/components/ui/tooltip';
 
-const navItems = [
-  { label: 'Dashboard', icon: LayoutDashboard, path: '/' },
-  { label: 'Customers', icon: Building2, path: '/customers' },
-  { label: 'Servers', icon: Server, path: '/servers' },
-  { label: 'Users', icon: Users, path: '/users' },
-  { label: 'Groups', icon: UsersRound, path: '/groups' },
-  { label: 'Policies', icon: Shield, path: '/policies', minRole: 'admin' },
-  { label: 'Access Requests', icon: KeyRound, path: '/access-requests' },
-  { label: 'Certificates', icon: FileKey, path: '/certificates', minRole: 'admin' },
-  { label: 'Sessions', icon: Terminal, path: '/sessions', minRole: 'operator' },
-  { label: 'Audit Log', icon: ScrollText, path: '/audit-log', minRole: 'admin' },
-  { label: 'Cloud Connectors', icon: Cloud, path: '/cloud-connectors' },
-  { label: 'Settings', icon: Settings, path: '/settings' },
-];
+// ---------------------------------------------------------------------------
+// Constants
+// ---------------------------------------------------------------------------
+
+const COLLAPSED_KEY = 'shellius_sidebar_collapsed';
+const EXPANDED_WIDTH = 'w-60';
+const COLLAPSED_WIDTH = 'w-14';
 
 const ROLE_RANK = { super_admin: 4, admin: 3, operator: 2, viewer: 1 };
 function isAtLeast(user, role) {
   return (ROLE_RANK[user?.role] || 0) >= (ROLE_RANK[role] || 0);
 }
 
-function SidebarContent({ collapsed, onClose }) {
+// ---------------------------------------------------------------------------
+// Grouped navigation config
+// ---------------------------------------------------------------------------
+
+const NAV_SECTIONS = [
+  {
+    label: 'Overview',
+    items: [{ id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard, to: '/' }],
+  },
+  {
+    label: 'Inventory',
+    items: [
+      { id: 'customers', label: 'Customers', icon: Building2, to: '/customers' },
+      { id: 'servers', label: 'Servers', icon: Server, to: '/servers' },
+    ],
+  },
+  {
+    label: 'Access',
+    items: [
+      { id: 'access-requests', label: 'Access Requests', icon: KeyRound, to: '/access-requests' },
+      { id: 'policies', label: 'Policies', icon: Shield, to: '/policies', minRole: 'admin' },
+      {
+        id: 'certificates',
+        label: 'Certificates',
+        icon: FileKey,
+        to: '/certificates',
+        minRole: 'admin',
+      },
+    ],
+  },
+  {
+    label: 'Audit',
+    items: [
+      { id: 'sessions', label: 'Sessions', icon: Terminal, to: '/sessions', minRole: 'operator' },
+      { id: 'audit-log', label: 'Audit Log', icon: ScrollText, to: '/audit-log', minRole: 'admin' },
+      { id: 'notifications', label: 'Notifications', icon: Bell, to: '/notifications' },
+    ],
+  },
+  {
+    label: 'Administration',
+    items: [
+      { id: 'users', label: 'Users', icon: Users, to: '/users' },
+      { id: 'groups', label: 'Groups', icon: UsersRound, to: '/groups' },
+    ],
+  },
+];
+
+const BOTTOM_NAV = [{ id: 'settings', label: 'Settings', icon: Settings, to: '/settings' }];
+
+// ---------------------------------------------------------------------------
+// SectionHeader
+// ---------------------------------------------------------------------------
+
+function SectionHeader({ label, collapsed }) {
+  if (collapsed) return <div className="mt-4" />;
+  return (
+    <p className="mt-6 mb-1 px-3 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground/70 select-none">
+      {label}
+    </p>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// NavItem
+// ---------------------------------------------------------------------------
+
+function NavItem({ to, icon: Icon, label, badge, collapsed, exact = false, onNavigate }) {
+  const item = (
+    <NavLink
+      to={to}
+      end={exact}
+      onClick={onNavigate}
+      className={({ isActive }) =>
+        cn(
+          'group flex items-center gap-3 py-1.5 text-sm transition-colors duration-150',
+          collapsed ? 'justify-center rounded-md px-2' : 'rounded-md px-3',
+          isActive
+            ? 'bg-accent/60 text-primary font-medium'
+            : 'text-muted-foreground hover:bg-accent/50 hover:text-foreground'
+        )
+      }
+    >
+      {({ isActive }) => (
+        <>
+          <span
+            className={cn(
+              'shrink-0 transition-colors duration-150',
+              isActive
+                ? 'text-primary'
+                : 'text-muted-foreground group-hover:text-foreground'
+            )}
+          >
+            <Icon className="h-4 w-4" aria-hidden="true" />
+          </span>
+          {!collapsed && (
+            <span className="flex flex-1 items-center justify-between truncate">
+              <span className="truncate">{label}</span>
+              {badge ? badge : null}
+            </span>
+          )}
+        </>
+      )}
+    </NavLink>
+  );
+
+  if (collapsed) {
+    return (
+      <Tooltip>
+        <TooltipTrigger asChild>{item}</TooltipTrigger>
+        <TooltipContent side="right">{label}</TooltipContent>
+      </Tooltip>
+    );
+  }
+
+  return item;
+}
+
+// ---------------------------------------------------------------------------
+// Sidebar
+// ---------------------------------------------------------------------------
+
+function SidebarBody({ collapsed, onToggle, onNavigate }) {
   const { user } = useAuth();
   const { unreadCount } = useNotifications();
-  const location = useLocation();
+
+  const canSee = (item) => !item.minRole || isAtLeast(user, item.minRole);
+
+  const renderItem = (item) => {
+    if (!canSee(item)) return null;
+    let badge = null;
+    if (item.id === 'access-requests' && unreadCount > 0 && !collapsed) {
+      badge = (
+        <span className="ml-2 flex h-5 min-w-5 items-center justify-center rounded-full bg-amber-500/20 px-1 text-[10px] font-semibold text-amber-600 dark:text-amber-400">
+          {unreadCount > 9 ? '9+' : unreadCount}
+        </span>
+      );
+    }
+    return (
+      <NavItem
+        key={item.id}
+        to={item.to}
+        icon={item.icon}
+        label={item.label}
+        badge={badge}
+        collapsed={collapsed}
+        exact={item.to === '/'}
+        onNavigate={onNavigate}
+      />
+    );
+  };
 
   return (
-    <>
-      {/* Navigation */}
-      <nav className="flex-1 overflow-y-auto px-2 py-3">
-        <ul className="space-y-0.5">
-          {navItems
-            .filter((item) => !item.minRole || isAtLeast(user, item.minRole))
-            .map((item) => {
-              const Icon = item.icon;
-              const isActive =
-                item.path === '/'
-                  ? location.pathname === '/' || location.pathname === '/dashboard'
-                  : location.pathname.startsWith(item.path);
+    <div
+      className={cn(
+        'flex h-full flex-col border-r border-border bg-card transition-all duration-200',
+        collapsed ? COLLAPSED_WIDTH : EXPANDED_WIDTH
+      )}
+    >
+      {/* Logo + collapse toggle */}
+      <div
+        className={cn(
+          'flex h-14 shrink-0 items-center border-b border-border px-3',
+          collapsed ? 'justify-center' : 'justify-between'
+        )}
+      >
+        {collapsed ? (
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <button
+                type="button"
+                onClick={onToggle}
+                className="flex items-center justify-center rounded-md p-1 text-foreground hover:bg-accent/50 transition-colors"
+                aria-label="Expand sidebar"
+              >
+                <Terminal className="h-5 w-5" />
+              </button>
+            </TooltipTrigger>
+            <TooltipContent side="right">Expand</TooltipContent>
+          </Tooltip>
+        ) : (
+          <>
+            <Link to="/" className="flex items-center gap-2">
+              <Terminal className="h-5 w-5 shrink-0 text-foreground" />
+              <span className="text-sm font-semibold tracking-tight text-foreground">
+                Shellius
+              </span>
+            </Link>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <button
+                  type="button"
+                  onClick={onToggle}
+                  className="flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground hover:bg-accent/50 hover:text-foreground transition-colors"
+                  aria-label="Collapse sidebar"
+                >
+                  <PanelLeftClose className="h-4 w-4" />
+                </button>
+              </TooltipTrigger>
+              <TooltipContent side="bottom">Collapse</TooltipContent>
+            </Tooltip>
+          </>
+        )}
+      </div>
 
-              return (
-                <li key={item.path}>
-                  <NavLink
-                    to={item.path}
-                    onClick={onClose}
-                    className={cn(
-                      'flex items-center gap-3 rounded-md px-3 py-2 text-sm font-medium transition-colors',
-                      isActive
-                        ? 'bg-accent text-accent-foreground'
-                        : 'text-muted-foreground hover:bg-accent/50 hover:text-foreground'
-                    )}
-                    title={collapsed ? item.label : undefined}
-                  >
-                    <Icon className="h-4 w-4 shrink-0" />
-                    {!collapsed && (
-                      <span className="flex flex-1 items-center justify-between">
-                        {item.label}
-                        {item.path === '/access-requests' && unreadCount > 0 && (
-                          <span className="flex h-5 min-w-5 items-center justify-center rounded-full bg-amber-500/20 px-1 text-xs font-semibold text-amber-600 dark:text-amber-400">
-                            {unreadCount > 9 ? '9+' : unreadCount}
-                          </span>
-                        )}
-                      </span>
-                    )}
-                  </NavLink>
-                </li>
-              );
-            })}
-        </ul>
+      {/* Sections */}
+      <nav
+        aria-label="Main navigation"
+        className="flex-1 overflow-y-auto px-2 pb-3 space-y-0.5"
+      >
+        {NAV_SECTIONS.map((section, idx) => {
+          const visible = section.items.filter(canSee);
+          if (visible.length === 0) return null;
+          return (
+            <div key={section.label}>
+              {idx > 0 && <SectionHeader label={section.label} collapsed={collapsed} />}
+              {idx === 0 && !collapsed && (
+                <p className="mt-3 mb-1 px-3 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground/70 select-none">
+                  {section.label}
+                </p>
+              )}
+              {visible.map(renderItem)}
+            </div>
+          );
+        })}
       </nav>
 
-      {/* User + Collapse (desktop only) */}
-      <div className="border-t border-border p-3">
+      {/* Bottom: settings + user */}
+      <div className="shrink-0 border-t border-border px-2 py-3 space-y-0.5">
+        {BOTTOM_NAV.map(renderItem)}
         {!collapsed && user && (
-          <div className="mb-2 flex items-center gap-2 px-1">
+          <div className="mt-2 flex items-center gap-2 rounded-md px-3 py-2">
             <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-primary text-xs font-medium text-primary-foreground">
               {user.name?.[0]?.toUpperCase() || 'U'}
             </div>
-            <div className="min-w-0">
-              <p className="truncate text-sm font-medium text-foreground">{user.name}</p>
-              <p className="truncate text-xs text-muted-foreground">{user.role}</p>
+            <div className="min-w-0 flex-1">
+              <p className="truncate text-xs font-medium text-foreground">{user.name}</p>
+              <p className="truncate text-[10px] text-muted-foreground">{user.role}</p>
             </div>
           </div>
         )}
       </div>
-    </>
+    </div>
   );
 }
 
 function Sidebar() {
-  const [collapsed, setCollapsed] = useState(false);
+  const [collapsed, setCollapsed] = useState(() => {
+    try {
+      return localStorage.getItem(COLLAPSED_KEY) === 'true';
+    } catch {
+      return false;
+    }
+  });
   const [mobileOpen, setMobileOpen] = useState(false);
   const location = useLocation();
 
-  // Close mobile drawer on route change
   useEffect(() => {
     setMobileOpen(false);
   }, [location.pathname]);
 
+  const toggleCollapsed = useCallback(() => {
+    setCollapsed((prev) => {
+      const next = !prev;
+      try {
+        localStorage.setItem(COLLAPSED_KEY, String(next));
+      } catch {
+        /* ignore */
+      }
+      return next;
+    });
+  }, []);
+
   return (
-    <>
-      {/* Mobile hamburger button — visible only below md */}
+    <TooltipProvider delayDuration={200}>
+      {/* Mobile hamburger */}
       <button
         onClick={() => setMobileOpen(true)}
         className="fixed left-4 top-4 z-40 flex items-center justify-center rounded-md border border-border bg-card p-2 text-muted-foreground shadow-sm md:hidden"
@@ -142,62 +336,32 @@ function Sidebar() {
       {/* Mobile drawer */}
       <aside
         className={cn(
-          'fixed inset-y-0 left-0 z-50 flex w-64 flex-col border-r border-border bg-card transition-transform duration-200 md:hidden',
+          'fixed inset-y-0 left-0 z-50 flex flex-col transition-transform duration-200 md:hidden',
           mobileOpen ? 'translate-x-0' : '-translate-x-full'
         )}
+        aria-label="Navigation"
       >
-        {/* Logo + close */}
-        <div className="flex h-14 items-center justify-between border-b border-border px-4">
-          <div className="flex items-center gap-2">
-            <Terminal className="h-5 w-5 shrink-0 text-foreground" />
-            <span className="text-sm font-semibold tracking-tight text-foreground">Shellius</span>
-          </div>
+        <div className="relative">
           <button
             onClick={() => setMobileOpen(false)}
-            className="rounded-md p-1 text-muted-foreground hover:bg-accent transition-colors"
+            className="absolute right-2 top-3 z-10 rounded-md p-1 text-muted-foreground hover:bg-accent transition-colors md:hidden"
             aria-label="Close navigation"
           >
             <X className="h-4 w-4" />
           </button>
         </div>
-        <SidebarContent collapsed={false} onClose={() => setMobileOpen(false)} />
+        <SidebarBody
+          collapsed={false}
+          onToggle={() => {}}
+          onNavigate={() => setMobileOpen(false)}
+        />
       </aside>
 
-      {/* Desktop sidebar */}
-      <aside
-        className={cn(
-          'hidden md:flex h-screen flex-col border-r border-border bg-card transition-all duration-200',
-          collapsed ? 'w-16' : 'w-60'
-        )}
-      >
-        {/* Logo */}
-        <div className="flex h-14 items-center border-b border-border px-4">
-          <Terminal className="h-5 w-5 shrink-0 text-foreground" />
-          {!collapsed && (
-            <span className="ml-2 text-sm font-semibold tracking-tight text-foreground">
-              Shellius
-            </span>
-          )}
-        </div>
-
-        <SidebarContent collapsed={collapsed} onClose={() => {}} />
-
-        {/* Collapse toggle */}
-        <div className="border-t border-border p-3">
-          <button
-            onClick={() => setCollapsed((prev) => !prev)}
-            className="flex w-full items-center justify-center rounded-md p-2 text-muted-foreground hover:bg-accent/50 hover:text-foreground transition-colors"
-            title={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
-          >
-            {collapsed ? (
-              <PanelLeft className="h-4 w-4" />
-            ) : (
-              <PanelLeftClose className="h-4 w-4" />
-            )}
-          </button>
-        </div>
+      {/* Desktop */}
+      <aside className="hidden h-screen md:flex md:shrink-0" aria-label="Navigation">
+        <SidebarBody collapsed={collapsed} onToggle={toggleCollapsed} />
       </aside>
-    </>
+    </TooltipProvider>
   );
 }
 

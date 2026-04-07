@@ -1,11 +1,13 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
-import { ArrowLeft, Pencil, Trash2, Activity } from 'lucide-react';
+import { ArrowLeft, Pencil, Trash2, Activity, Download, Terminal as TerminalIcon } from 'lucide-react';
 import Modal from '@/components/shared/Modal';
 import ConfirmDialog from '@/components/shared/ConfirmDialog';
 import EnvironmentBadge from '@/components/shared/EnvironmentBadge';
 import HealthStatusDot from '@/components/shared/HealthStatusDot';
 import ServerForm from '@/components/servers/ServerForm';
+import BootstrapModal from '@/components/servers/BootstrapModal';
+import { Button } from '@/components/ui/button';
 import {
   getServer,
   updateServer,
@@ -47,6 +49,7 @@ function ServerDetail() {
   const [editOpen, setEditOpen] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [checking, setChecking] = useState(false);
+  const [bootstrapOpen, setBootstrapOpen] = useState(false);
 
   const fetch = useCallback(async () => {
     setLoading(true);
@@ -137,27 +140,29 @@ function ServerDetail() {
             <p className="mt-1 max-w-2xl text-sm text-muted-foreground">{server.description}</p>
           )}
         </div>
-        <div className="flex gap-2">
-          <button
-            onClick={handleHealthCheck}
-            disabled={checking}
-            className="flex h-9 items-center gap-1.5 rounded-md border border-input bg-background px-3 text-sm font-medium text-foreground hover:bg-accent disabled:opacity-50"
+        <div className="flex flex-wrap gap-2">
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() =>
+              navigate(`/access-requests?new=1&serverId=${encodeURIComponent(server.id)}`)
+            }
           >
-            <Activity className={`h-4 w-4 ${checking ? 'animate-pulse' : ''}`} />
+            <TerminalIcon className="mr-2 h-4 w-4" /> Request Access
+          </Button>
+          <Button variant="outline" size="sm" onClick={() => setBootstrapOpen(true)}>
+            <Download className="mr-2 h-4 w-4" /> Bootstrap Host
+          </Button>
+          <Button variant="outline" size="sm" onClick={handleHealthCheck} disabled={checking}>
+            <Activity className={`mr-2 h-4 w-4 ${checking ? 'animate-pulse' : ''}`} />
             {checking ? 'Checking...' : 'Run Health Check'}
-          </button>
-          <button
-            onClick={() => setEditOpen(true)}
-            className="flex h-9 items-center gap-1.5 rounded-md border border-input bg-background px-3 text-sm font-medium text-foreground hover:bg-accent"
-          >
-            <Pencil className="h-4 w-4" /> Edit
-          </button>
-          <button
-            onClick={() => setConfirmDelete(true)}
-            className="flex h-9 items-center gap-1.5 rounded-md border border-destructive/50 bg-background px-3 text-sm font-medium text-destructive hover:bg-destructive/10"
-          >
-            <Trash2 className="h-4 w-4" /> Delete
-          </button>
+          </Button>
+          <Button variant="outline" size="sm" onClick={() => setEditOpen(true)}>
+            <Pencil className="mr-2 h-4 w-4" /> Edit
+          </Button>
+          <Button variant="destructive" size="sm" onClick={() => setConfirmDelete(true)}>
+            <Trash2 className="mr-2 h-4 w-4" /> Delete
+          </Button>
         </div>
       </div>
 
@@ -232,6 +237,12 @@ function ServerDetail() {
           onCancel={() => setEditOpen(false)}
         />
       </Modal>
+
+      <BootstrapModal
+        open={bootstrapOpen}
+        server={server}
+        onClose={() => setBootstrapOpen(false)}
+      />
 
       <ConfirmDialog
         open={confirmDelete}

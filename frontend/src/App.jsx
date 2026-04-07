@@ -6,6 +6,9 @@ import ProtectedRoute from './components/ProtectedRoute';
 import AppLayout from './components/layout/AppLayout';
 import ErrorBoundary from './components/ErrorBoundary';
 import Login from './pages/Login';
+import AcceptInvite from './pages/AcceptInvite';
+import ResetPassword from './pages/ResetPassword';
+import ForgotPassword from './pages/ForgotPassword';
 import Dashboard from './pages/Dashboard';
 import Users from './pages/Users';
 import Groups from './pages/Groups';
@@ -20,6 +23,7 @@ import Settings from './pages/Settings';
 import AccessRequests from './pages/AccessRequests';
 import Sessions from './pages/Sessions';
 import AuditLog from './pages/AuditLog';
+import Notifications from './pages/Notifications';
 import Terminal from './pages/Terminal';
 import Device from './pages/Device';
 import NotFound from './pages/NotFound';
@@ -32,6 +36,9 @@ function App() {
           <ErrorBoundary>
             <Routes>
               <Route path="/login" element={<Login />} />
+              <Route path="/invite/:token" element={<AcceptInvite />} />
+              <Route path="/password-reset/:token" element={<ResetPassword />} />
+              <Route path="/forgot-password" element={<ForgotPassword />} />
               <Route path="/device" element={<Device />} />
               <Route element={<ProtectedRoute />}>
                 {/* Full-screen terminal — no app chrome */}
@@ -59,6 +66,7 @@ function App() {
                   <Route path="/access-requests" element={<AccessRequests />} />
                   <Route path="/sessions" element={<Sessions />} />
                   <Route path="/audit-log" element={<AuditLog />} />
+                  <Route path="/notifications" element={<Notifications />} />
                 </Route>
               </Route>
               {/* 404 catch-all */}

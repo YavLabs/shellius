@@ -53,9 +53,10 @@ export async function getUser(orgId, userId) {
 }
 
 export async function createUser(orgId, data, actorRole) {
-  const { email, name, password, role = 'viewer', managerId } = data;
-  if (!email || !name || !password) {
-    throw new ApiError(400, 'email, name, and password are required');
+  const { email, name, password, role = 'viewer', managerId, status } = data;
+  // password is optional when the invite flow is used
+  if (!email || !name) {
+    throw new ApiError(400, 'email and name are required');
   }
 
   if (!ROLE_RANK[actorRole] || ROLE_RANK[actorRole] < ROLE_RANK.admin) {
@@ -76,7 +77,8 @@ export async function createUser(orgId, data, actorRole) {
     if (!mgr) throw new ApiError(400, 'Manager not found in organization');
   }
 
-  const passwordHash = await bcrypt.hash(password, config.bcryptRounds);
+  const passwordHash = password ? await bcrypt.hash(password, config.bcryptRounds) : null;
+  const userStatus = status || (password ? 'active' : 'invited');
 
   try {
     const user = await prisma.user.create({
@@ -86,7 +88,7 @@ export async function createUser(orgId, data, actorRole) {
         name,
         passwordHash,
         role,
-        status: 'active',
+        status: userStatus,
         managerId: managerId || null,
       },
     });
@@ -203,4 +205,59 @@ export async function getDirectReports(orgId, managerId) {
     orderBy: { name: 'asc' },
   });
   return users.map(strip);
+}
+
+// ---------------------------------------------------------------------------
+// User preferences
+// ---------------------------------------------------------------------------
+
+const ALLOWED_PREF_KEYS = ['emailNotifications', 'expiringSoonAlerts'];
+
+/**
+ * Return the preferences object for a user.
+ *
+ * @param {string} userId
+ * @returns {Promise<object>}
+ */
+export async function getPreferences(userId) {
+  const user = await prisma.user.findUnique({
+    where: { id: userId },
+    select: { preferences: true },
+  });
+  if (!user) throw new ApiError(404, 'User not found');
+  return (user.preferences && typeof user.preferences === 'object') ? user.preferences : {};
+}
+
+/**
+ * Merge validated preference updates into the existing preferences object.
+ * Only allow-listed keys are accepted.
+ *
+ * @param {string} userId
+ * @param {object} data - only keys in ALLOWED_PREF_KEYS are applied
+ * @returns {Promise<object>} the new merged preferences
+ */
+export async function updatePreferences(userId, data) {
+  const existing = await prisma.user.findUnique({
+    where: { id: userId },
+    select: { preferences: true },
+  });
+  if (!existing) throw new ApiError(404, 'User not found');
+
+  const current = (existing.preferences && typeof existing.preferences === 'object')
+    ? existing.preferences
+    : {};
+
+  const patch = {};
+  for (const key of ALLOWED_PREF_KEYS) {
+    if (data[key] !== undefined) patch[key] = data[key];
+  }
+
+  const merged = { ...current, ...patch };
+
+  await prisma.user.update({
+    where: { id: userId },
+    data: { preferences: merged },
+  });
+
+  return merged;
 }

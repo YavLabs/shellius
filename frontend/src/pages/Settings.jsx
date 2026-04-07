@@ -10,12 +10,32 @@ import {
   Bell,
   Wifi,
   WifiOff,
+  CheckCircle,
+  XCircle,
+  Settings as SettingsIcon,
+  Key,
+  Globe,
+  FileKey,
+  ChevronLeft,
 } from 'lucide-react';
+import { SSO_PROVIDERS, getProvider } from '@/config/ssoProviders';
 import ConfirmDialog from '@/components/shared/ConfirmDialog';
+import PageHeader from '@/components/common/PageHeader';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
 import { getPublicKey, getStatus, rotate } from '@/services/caService';
+import { getOrg, updateOrg } from '@/services/orgService';
+import { getSsoConfig, saveSsoConfig, testSsoConnection } from '@/services/ssoConfigService';
+import { getMyPreferences, updateMyPreferences } from '@/services/userPreferencesService';
 import { useAuth } from '@/context/AuthContext';
 import { formatDateTime } from '@/utils/time';
-import api from '@/services/api';
 
 const ROLE_RANK = { super_admin: 4, admin: 3, operator: 2, viewer: 1 };
 function isAtLeast(user, role) {
@@ -73,31 +93,43 @@ function MetaRow({ label, children }) {
   );
 }
 
-const inputCls =
-  'h-9 w-full rounded-md border border-input bg-background px-3 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring disabled:opacity-60';
-
 // ---------------------------------------------------------------------------
 // Tab 1 — Organization
 // ---------------------------------------------------------------------------
 
 function OrgTab() {
   const { user } = useAuth();
-  // TODO: Load from /api/org once the backend endpoint is implemented.
-  // For now, org name comes from the auth context; other fields are stubs.
-  const [name, setName] = useState(user?.orgName || user?.org?.name || '');
+  const [name, setName] = useState('');
   const [domain, setDomain] = useState('');
   const [logoUrl, setLogoUrl] = useState('');
+  const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
   const [error, setError] = useState('');
+
+  useEffect(() => {
+    setLoading(true);
+    getOrg()
+      .then((org) => {
+        if (org) {
+          setName(org.name || user?.orgName || user?.org?.name || '');
+          setDomain(org.domain || '');
+          setLogoUrl(org.logoUrl || '');
+        }
+      })
+      .catch(() => {
+        // Fall back to auth context values
+        setName(user?.orgName || user?.org?.name || '');
+      })
+      .finally(() => setLoading(false));
+  }, [user]);
 
   const handleSave = async (e) => {
     e.preventDefault();
     setSaving(true);
     setError('');
     try {
-      // TODO: implement PUT /api/org — backend endpoint pending
-      await new Promise((r) => setTimeout(r, 600)); // stub delay
+      await updateOrg({ name: name.trim(), domain: domain.trim() || undefined, logoUrl: logoUrl.trim() || undefined });
       setSaved(true);
       setTimeout(() => setSaved(false), 3000);
     } catch (err) {
@@ -112,74 +144,72 @@ function OrgTab() {
       title="Organization"
       description="General organization settings. Name and domain are shown across the platform."
     >
-      <div className="mb-4 rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-700 dark:text-amber-300">
-        TODO: /api/org endpoint not yet implemented. Edits are not persisted.
-      </div>
-      <form onSubmit={handleSave} className="space-y-4">
-        {error && (
-          <div className="rounded-md border border-destructive/50 bg-destructive/10 px-3 py-2 text-sm text-destructive">
-            {error}
+      {loading ? (
+        <div className="space-y-3 py-2">
+          {[1, 2, 3].map((i) => (
+            <div key={i} className="h-9 animate-pulse rounded bg-muted" />
+          ))}
+        </div>
+      ) : (
+        <form onSubmit={handleSave} className="space-y-4">
+          {error && (
+            <div className="rounded-md border border-destructive/50 bg-destructive/10 px-3 py-2 text-sm text-destructive">
+              {error}
+            </div>
+          )}
+          {saved && (
+            <div className="rounded-md border border-emerald-500/40 bg-emerald-500/10 px-3 py-2 text-sm text-emerald-700 dark:text-emerald-300">
+              Saved successfully.
+            </div>
+          )}
+          <div>
+            <label className="mb-1.5 block text-sm font-medium text-foreground">
+              Organization Name
+            </label>
+            <Input
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              placeholder="Acme Corp"
+            />
           </div>
-        )}
-        {saved && (
-          <div className="rounded-md border border-emerald-500/40 bg-emerald-500/10 px-3 py-2 text-sm text-emerald-700 dark:text-emerald-300">
-            Saved successfully.
+          <div>
+            <label className="mb-1.5 block text-sm font-medium text-foreground">
+              Domain
+            </label>
+            <Input
+              value={domain}
+              onChange={(e) => setDomain(e.target.value)}
+              placeholder="acme.example.com"
+              type="text"
+            />
+            <p className="mt-1 text-xs text-muted-foreground">
+              Used for SSO redirect URIs and email verification.
+            </p>
           </div>
-        )}
-        <div>
-          <label className="mb-1.5 block text-sm font-medium text-foreground">
-            Organization Name
-          </label>
-          <input
-            className={inputCls}
-            value={name}
-            onChange={(e) => setName(e.target.value)}
-            placeholder="Acme Corp"
-          />
-        </div>
-        <div>
-          <label className="mb-1.5 block text-sm font-medium text-foreground">
-            Domain
-          </label>
-          <input
-            className={inputCls}
-            value={domain}
-            onChange={(e) => setDomain(e.target.value)}
-            placeholder="acme.example.com"
-            type="text"
-          />
-          <p className="mt-1 text-xs text-muted-foreground">
-            Used for SSO redirect URIs and email verification.
-          </p>
-        </div>
-        <div>
-          <label className="mb-1.5 block text-sm font-medium text-foreground">
-            Logo URL
-          </label>
-          <input
-            className={inputCls}
-            value={logoUrl}
-            onChange={(e) => setLogoUrl(e.target.value)}
-            placeholder="https://cdn.example.com/logo.png"
-            type="url"
-          />
-        </div>
-        <div className="pt-1">
-          <button
-            type="submit"
-            disabled={saving}
-            className="flex h-9 items-center gap-2 rounded-md bg-primary px-4 text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-50 transition-colors"
-          >
-            {saving ? 'Saving...' : 'Save changes'}
-          </button>
-        </div>
-      </form>
+          <div>
+            <label className="mb-1.5 block text-sm font-medium text-foreground">
+              Logo URL
+            </label>
+            <Input
+              value={logoUrl}
+              onChange={(e) => setLogoUrl(e.target.value)}
+              placeholder="https://cdn.example.com/logo.png"
+              type="url"
+            />
+          </div>
+          <div className="pt-1">
+            <Button type="submit" disabled={saving}>
+              {saving ? 'Saving...' : 'Save changes'}
+            </Button>
+          </div>
+        </form>
+      )}
     </SectionCard>
   );
 }
 
 // ---------------------------------------------------------------------------
-// Tab 2 — CA Management (from phase 5D)
+// Tab 2 — CA Management
 // ---------------------------------------------------------------------------
 
 function CaTab() {
@@ -306,14 +336,14 @@ function CaTab() {
                 </div>
               </div>
               <div className="mt-4">
-                <button
+                <Button
+                  variant="destructive"
                   onClick={() => setRotateConfirm(true)}
                   disabled={rotating}
-                  className="flex h-9 items-center gap-2 rounded-md bg-destructive px-4 text-sm font-medium text-destructive-foreground hover:bg-destructive/90 disabled:opacity-50"
                 >
-                  <RefreshCw className="h-4 w-4" />
+                  <RefreshCw className="mr-2 h-4 w-4" />
                   {rotating ? 'Rotating...' : 'Rotate CA'}
-                </button>
+                </Button>
               </div>
             </div>
           )}
@@ -334,118 +364,474 @@ function CaTab() {
 }
 
 // ---------------------------------------------------------------------------
-// Tab 3 — SSO
+// Tab 3 — SSO (two-step wizard)
 // ---------------------------------------------------------------------------
 
-const SSO_PROVIDERS = ['oidc', 'saml'];
+/** Map provider id to a Lucide icon component */
+function ProviderIcon({ providerId, className }) {
+  const icons = {
+    google: Cloud,
+    entra: Building2,
+    okta: Shield,
+    auth0: Key,
+    'generic-oidc': Globe,
+    saml: FileKey,
+  };
+  const Icon = icons[providerId] || Globe;
+  return <Icon className={className} />;
+}
+
+/** Field label display names */
+const FIELD_LABELS = {
+  clientId: 'Client ID',
+  clientSecret: 'Client Secret',
+  tenantId: 'Directory (Tenant) ID',
+  oktaDomain: 'Okta Domain',
+  auth0Domain: 'Auth0 Domain',
+  issuerUrl: 'Issuer URL',
+  scopes: 'Scopes',
+  metadataUrl: 'Metadata URL',
+};
+
+/** Field placeholders */
+const FIELD_PLACEHOLDERS = {
+  clientId: 'your-client-id',
+  clientSecret: 'your-client-secret',
+  tenantId: 'xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx',
+  oktaDomain: 'acme.okta.com',
+  auth0Domain: 'acme.auth0.com',
+  issuerUrl: 'https://your-idp.example.com',
+  scopes: 'openid email profile',
+  metadataUrl: 'https://your-idp.example.com/saml/metadata',
+};
 
 function SsoTab() {
-  const [provider, setProvider] = useState('oidc');
-  const [clientId, setClientId] = useState('');
-  const [issuerUrl, setIssuerUrl] = useState('');
+  // Step 1: provider picker (null = not chosen yet)
+  const [selectedProvider, setSelectedProvider] = useState(null);
+
+  // Step 2: form data (keyed by field name)
+  const [formData, setFormData] = useState({});
+  const [hasStoredSecret, setHasStoredSecret] = useState(false);
+  const [isActive, setIsActive] = useState(true);
+
+  // Loading / saving / testing state
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [saved, setSaved] = useState(false);
+  const [saveError, setSaveError] = useState('');
   const [testing, setTesting] = useState(false);
-  const [testResult, setTestResult] = useState(null); // null | 'ok' | 'fail'
-  const [error, setError] = useState('');
+  const [testResult, setTestResult] = useState(null);
+
+  // Derive the redirect URI for display
+  const redirectUri = `${window.location.origin}/api/auth/sso/callback`;
+
+  // On mount, load existing config and jump to step 2 if a presetId is saved
+  useEffect(() => {
+    setLoading(true);
+    getSsoConfig()
+      .then((cfg) => {
+        if (cfg) {
+          const preset = cfg.presetId ? getProvider(cfg.presetId) : null;
+          if (preset) {
+            setSelectedProvider(preset);
+          }
+          // Pre-fill form fields from saved config
+          const initial = {};
+          if (cfg.clientId) initial.clientId = cfg.clientId;
+          if (cfg.issuerUrl) {
+            // For generic-oidc, the issuerUrl is a direct field
+            if (!preset || preset.id === 'generic-oidc') {
+              initial.issuerUrl = cfg.issuerUrl;
+            }
+          }
+          if (cfg.scopes) initial.scopes = cfg.scopes;
+          setFormData(initial);
+          setHasStoredSecret(!!cfg.hasSecret);
+          setIsActive(cfg.isActive ?? true);
+        }
+      })
+      .catch(() => {
+        // No existing config, start fresh
+      })
+      .finally(() => setLoading(false));
+  }, []);
+
+  /** Compute the effective issuer URL for the currently selected provider */
+  function getEffectiveIssuerUrl() {
+    if (!selectedProvider) return '';
+    if (selectedProvider.deriveIssuerUrl) {
+      return selectedProvider.deriveIssuerUrl(formData) || '';
+    }
+    if (selectedProvider.issuerUrl) {
+      return selectedProvider.issuerUrl;
+    }
+    return formData.issuerUrl || '';
+  }
+
+  const handleProviderSelect = (provider) => {
+    if (provider.disabled) return;
+    setSelectedProvider(provider);
+    // Pre-fill scopes from the provider default
+    setFormData((prev) => ({
+      ...prev,
+      scopes: provider.defaultScopes || prev.scopes || '',
+    }));
+    setTestResult(null);
+    setSaved(false);
+    setSaveError('');
+  };
+
+  const handleBack = () => {
+    setSelectedProvider(null);
+    setTestResult(null);
+    setSaved(false);
+    setSaveError('');
+  };
+
+  const handleFieldChange = (field, value) => {
+    setFormData((prev) => ({ ...prev, [field]: value }));
+    // Clear test result on any field change so stale results don't mislead
+    setTestResult(null);
+  };
 
   const handleTest = async () => {
+    const issuerUrl = getEffectiveIssuerUrl();
+    if (!issuerUrl) return;
     setTesting(true);
     setTestResult(null);
-    setError('');
     try {
-      // TODO: /api/sso/test endpoint pending backend implementation
-      await api.post('/sso/test', { provider, clientId, issuerUrl });
-      setTestResult('ok');
+      const result = await testSsoConnection({ provider: 'oidc', issuerUrl });
+      setTestResult({ ok: true, ...result });
     } catch (err) {
-      setTestResult('fail');
-      setError(err.response?.data?.error?.message || 'Connection test failed. Backend endpoint may not be implemented yet.');
+      setTestResult({
+        ok: false,
+        error:
+          err.response?.data?.error?.message ||
+          err.message ||
+          'Connection test failed',
+      });
     } finally {
       setTesting(false);
     }
   };
 
-  const selectCls =
-    'h-9 w-full rounded-md border border-input bg-background px-3 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-ring';
+  const handleSave = async () => {
+    setSaving(true);
+    setSaveError('');
+    setSaved(false);
+    try {
+      const issuerUrl = getEffectiveIssuerUrl();
+      const body = {
+        provider: selectedProvider.protocol === 'saml' ? 'saml' : 'oidc',
+        presetId: selectedProvider.id,
+        clientId: (formData.clientId || '').trim(),
+        issuerUrl: issuerUrl.trim(),
+        isActive,
+      };
+      // Scopes — use form field or provider default
+      const scopes = (formData.scopes || selectedProvider.defaultScopes || '').trim();
+      if (scopes) body.scopes = scopes;
+      // Only send client secret if the user typed something new
+      const secret = (formData.clientSecret || '').trim();
+      if (secret) body.clientSecret = secret;
+      await saveSsoConfig(body);
+      setSaved(true);
+      setHasStoredSecret(true);
+      setFormData((prev) => ({ ...prev, clientSecret: '' }));
+      setTimeout(() => setSaved(false), 4000);
+    } catch (err) {
+      setSaveError(
+        err.response?.data?.error?.message ||
+          err.message ||
+          'Failed to save SSO configuration'
+      );
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  // Validate that required visible fields are filled
+  const canSave = (() => {
+    if (!selectedProvider || selectedProvider.disabled) return false;
+    const effectiveIssuer = getEffectiveIssuerUrl();
+    if (!effectiveIssuer) return false;
+    const clientId = (formData.clientId || '').trim();
+    if (!clientId) return false;
+    if (!hasStoredSecret && !(formData.clientSecret || '').trim()) return false;
+    return true;
+  })();
+
+  const canTest = (() => {
+    if (!selectedProvider || selectedProvider.disabled) return false;
+    if (selectedProvider.protocol === 'saml') return false;
+    return !!getEffectiveIssuerUrl();
+  })();
+
+  // ---- RENDER ----
+
+  if (loading) {
+    return (
+      <SectionCard title="SSO Configuration" description="Configure Single Sign-On for your organization.">
+        <div className="space-y-3 py-2">
+          {[1, 2, 3, 4].map((i) => (
+            <div key={i} className="h-9 animate-pulse rounded bg-muted" />
+          ))}
+        </div>
+      </SectionCard>
+    );
+  }
+
+  // Step 1: provider picker grid
+  if (!selectedProvider) {
+    return (
+      <SectionCard
+        title="SSO Configuration"
+        description="Select your identity provider to begin configuration."
+      >
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
+          {SSO_PROVIDERS.map((provider) => (
+            <button
+              key={provider.id}
+              type="button"
+              disabled={provider.disabled}
+              onClick={() => handleProviderSelect(provider)}
+              className={[
+                'group relative flex flex-col items-start gap-3 rounded-lg border p-4 text-left transition-colors',
+                provider.disabled
+                  ? 'cursor-not-allowed border-border bg-muted/30 opacity-60'
+                  : 'cursor-pointer border-border bg-card hover:border-primary/50 hover:bg-accent',
+              ].join(' ')}
+            >
+              {provider.disabled && (
+                <span className="absolute right-3 top-3 rounded-full bg-muted px-2 py-0.5 text-xs font-medium text-muted-foreground">
+                  Coming in Phase 16
+                </span>
+              )}
+              <ProviderIcon
+                providerId={provider.id}
+                className={[
+                  'h-6 w-6',
+                  provider.disabled
+                    ? 'text-muted-foreground'
+                    : 'text-foreground group-hover:text-primary',
+                ].join(' ')}
+              />
+              <div>
+                <p className="text-sm font-semibold text-foreground">{provider.label}</p>
+                <p className="mt-0.5 text-xs text-muted-foreground leading-snug">
+                  {provider.description}
+                </p>
+              </div>
+            </button>
+          ))}
+        </div>
+      </SectionCard>
+    );
+  }
+
+  // Step 2: configure form
+  const effectiveIssuerUrl = getEffectiveIssuerUrl();
 
   return (
     <SectionCard
-      title="SSO Configuration"
-      description="Configure Single Sign-On via OIDC or SAML for your organization."
+      title={`SSO — ${selectedProvider.label}`}
+      description={selectedProvider.description}
     >
-      <div className="mb-4 rounded-md border border-muted px-3 py-2 text-xs text-muted-foreground">
-        Configure SSO — backend endpoint pending. Values entered here are not persisted
-        until /api/sso is implemented.
-      </div>
+      {/* Back link */}
+      <button
+        type="button"
+        onClick={handleBack}
+        className="mb-5 inline-flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground transition-colors"
+      >
+        <ChevronLeft className="h-4 w-4" />
+        Choose a different provider
+      </button>
 
-      <div className="space-y-4">
-        {error && (
-          <div className="rounded-md border border-destructive/50 bg-destructive/10 px-3 py-2 text-sm text-destructive">
-            {error}
+      <div className="flex flex-col gap-8 lg:flex-row">
+        {/* Left: setup steps */}
+        {selectedProvider.setupSteps && selectedProvider.setupSteps.length > 0 && (
+          <div className="lg:w-72 shrink-0">
+            <h3 className="mb-3 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+              Setup guide
+            </h3>
+            <ol className="space-y-4">
+              {selectedProvider.setupSteps.map((step, idx) => (
+                <li key={idx} className="flex gap-3">
+                  <span className="mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-muted text-xs font-semibold text-muted-foreground">
+                    {idx + 1}
+                  </span>
+                  <div>
+                    <p className="text-sm font-medium text-foreground">{step.title}</p>
+                    <p className="mt-0.5 text-xs text-muted-foreground leading-relaxed">
+                      {step.body}
+                    </p>
+                  </div>
+                </li>
+              ))}
+            </ol>
           </div>
         )}
-        {testResult === 'ok' && (
-          <div className="flex items-center gap-2 rounded-md border border-emerald-500/40 bg-emerald-500/10 px-3 py-2 text-sm text-emerald-700 dark:text-emerald-300">
-            <Wifi className="h-4 w-4" />
-            Connection successful.
+
+        {/* Right: form */}
+        <div className="min-w-0 flex-1 space-y-4">
+          {/* Redirect URI (read-only, copyable) */}
+          <div>
+            <label className="mb-1.5 block text-sm font-medium text-foreground">
+              Redirect URI
+            </label>
+            <div className="flex items-center gap-2">
+              <Input
+                value={redirectUri}
+                readOnly
+                className="font-mono text-xs bg-muted/40"
+              />
+              <CopyButton text={redirectUri} />
+            </div>
+            <p className="mt-1 text-xs text-muted-foreground">
+              Paste this URI into your identity provider's allowed redirect URIs list.
+            </p>
           </div>
-        )}
 
-        <div>
-          <label className="mb-1.5 block text-sm font-medium text-foreground">Provider</label>
-          <select
-            className={selectCls}
-            value={provider}
-            onChange={(e) => setProvider(e.target.value)}
-          >
-            {SSO_PROVIDERS.map((p) => (
-              <option key={p} value={p}>
-                {p.toUpperCase()}
-              </option>
-            ))}
-          </select>
-        </div>
+          {/* Effective Issuer URL preview (read-only for non-generic-oidc) */}
+          {selectedProvider.id !== 'generic-oidc' && effectiveIssuerUrl && (
+            <div>
+              <label className="mb-1.5 block text-sm font-medium text-foreground">
+                Issuer URL (computed)
+              </label>
+              <Input
+                value={effectiveIssuerUrl}
+                readOnly
+                className="font-mono text-xs bg-muted/40 text-muted-foreground"
+              />
+            </div>
+          )}
 
-        <div>
-          <label className="mb-1.5 block text-sm font-medium text-foreground">Client ID</label>
-          <input
-            className={inputCls}
-            value={clientId}
-            onChange={(e) => setClientId(e.target.value)}
-            placeholder="your-client-id"
-          />
-        </div>
+          {/* Dynamic form fields from provider.fields */}
+          {selectedProvider.fields.map((field) => {
+            const isSecret = field === 'clientSecret';
+            const label = FIELD_LABELS[field] || field;
+            const placeholder = isSecret && hasStoredSecret
+              ? 'Stored — leave blank to keep'
+              : (FIELD_PLACEHOLDERS[field] || '');
 
-        <div>
-          <label className="mb-1.5 block text-sm font-medium text-foreground">Issuer URL</label>
-          <input
-            className={inputCls}
-            value={issuerUrl}
-            onChange={(e) => setIssuerUrl(e.target.value)}
-            placeholder="https://accounts.google.com"
-            type="url"
-          />
-        </div>
+            return (
+              <div key={field}>
+                <label className="mb-1.5 block text-sm font-medium text-foreground">
+                  {label}
+                </label>
+                <Input
+                  value={formData[field] || ''}
+                  onChange={(e) => handleFieldChange(field, e.target.value)}
+                  type={isSecret ? 'password' : 'text'}
+                  autoComplete={isSecret ? 'new-password' : undefined}
+                  placeholder={placeholder}
+                  className={isSecret ? 'font-mono' : undefined}
+                />
+              </div>
+            );
+          })}
 
-        <div className="flex items-center gap-3 pt-1">
-          <button
-            type="button"
-            disabled={testing}
-            onClick={handleTest}
-            className="flex h-9 items-center gap-2 rounded-md border border-input bg-background px-4 text-sm font-medium text-foreground hover:bg-accent disabled:opacity-50 transition-colors"
-          >
-            {testing ? (
-              <WifiOff className="h-4 w-4 animate-pulse" />
-            ) : (
-              <Wifi className="h-4 w-4" />
-            )}
-            {testing ? 'Testing...' : 'Test Connection'}
-          </button>
-          <button
-            type="button"
-            disabled
-            className="flex h-9 items-center gap-2 rounded-md bg-primary px-4 text-sm font-medium text-primary-foreground opacity-50 cursor-not-allowed"
-          >
-            Save SSO Config
-          </button>
+          {/* SSO Active toggle */}
+          <div className="flex items-center gap-2 pt-1">
+            <button
+              role="switch"
+              aria-checked={isActive}
+              type="button"
+              onClick={() => setIsActive((v) => !v)}
+              className={[
+                'relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none focus:ring-2 focus:ring-ring',
+                isActive ? 'bg-primary' : 'bg-muted-foreground/30',
+              ].join(' ')}
+            >
+              <span
+                className={[
+                  'pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out',
+                  isActive ? 'translate-x-5' : 'translate-x-0',
+                ].join(' ')}
+              />
+            </button>
+            <span className="text-sm text-foreground">SSO Active</span>
+          </div>
+
+          {/* Feedback banners */}
+          {saveError && (
+            <div className="rounded-md border border-destructive/50 bg-destructive/10 px-3 py-2 text-sm text-destructive">
+              {saveError}
+            </div>
+          )}
+          {saved && (
+            <div className="rounded-md border border-emerald-500/40 bg-emerald-500/10 px-3 py-2 text-sm text-emerald-700 dark:text-emerald-300">
+              SSO configuration saved.
+            </div>
+          )}
+
+          {/* Test result */}
+          {testResult && (
+            <div
+              className={[
+                'rounded-md border px-4 py-3',
+                testResult.ok
+                  ? 'border-emerald-500/40 bg-emerald-500/10'
+                  : 'border-destructive/50 bg-destructive/10',
+              ].join(' ')}
+            >
+              <div className="flex items-center gap-2">
+                {testResult.ok ? (
+                  <CheckCircle className="h-4 w-4 text-emerald-600 dark:text-emerald-400" />
+                ) : (
+                  <XCircle className="h-4 w-4 text-destructive" />
+                )}
+                <span
+                  className={[
+                    'text-sm font-medium',
+                    testResult.ok
+                      ? 'text-emerald-700 dark:text-emerald-300'
+                      : 'text-destructive',
+                  ].join(' ')}
+                >
+                  {testResult.ok ? 'Connection successful' : 'Connection failed'}
+                </span>
+              </div>
+              {testResult.ok && testResult.providerName && (
+                <div className="mt-2 space-y-1 text-xs text-emerald-700 dark:text-emerald-300">
+                  <p>Provider: {testResult.providerName}</p>
+                  {testResult.authorizationEndpoint && (
+                    <p className="truncate">Auth endpoint: {testResult.authorizationEndpoint}</p>
+                  )}
+                  {testResult.scopesSupported && testResult.scopesSupported.length > 0 && (
+                    <p>Scopes: {testResult.scopesSupported.slice(0, 8).join(', ')}</p>
+                  )}
+                </div>
+              )}
+              {!testResult.ok && testResult.error && (
+                <p className="mt-1 text-xs text-destructive">{testResult.error}</p>
+              )}
+            </div>
+          )}
+
+          {/* Action buttons */}
+          <div className="flex flex-wrap items-center gap-3 pt-1">
+            <Button
+              type="button"
+              variant="outline"
+              disabled={testing || !canTest}
+              onClick={handleTest}
+            >
+              {testing ? (
+                <WifiOff className="mr-2 h-4 w-4 animate-pulse" />
+              ) : (
+                <Wifi className="mr-2 h-4 w-4" />
+              )}
+              {testing ? 'Testing...' : 'Test Connection'}
+            </Button>
+            <Button
+              type="button"
+              disabled={saving || !canSave}
+              onClick={handleSave}
+            >
+              {saving ? 'Saving...' : 'Save Configuration'}
+            </Button>
+          </div>
         </div>
       </div>
     </SectionCard>
@@ -465,7 +851,7 @@ function CloudConnectorsTab() {
       <div className="rounded-lg border border-dashed border-border bg-muted/20 px-6 py-10 text-center">
         <Cloud className="mx-auto h-10 w-10 text-muted-foreground/40" />
         <p className="mt-3 text-sm font-medium text-muted-foreground">
-          Coming soon (Phase 4)
+          Coming soon
         </p>
         <p className="mt-1 text-xs text-muted-foreground">
           Cloud connector management is scheduled for a future release.
@@ -479,24 +865,43 @@ function CloudConnectorsTab() {
 // Tab 5 — Notifications
 // ---------------------------------------------------------------------------
 
-const EMAIL_NOTIF_KEY = 'shellius:email_notifications';
-
 function NotificationsTab() {
-  const [emailEnabled, setEmailEnabled] = useState(() => {
-    try {
-      return localStorage.getItem(EMAIL_NOTIF_KEY) !== 'false';
-    } catch {
-      return true;
-    }
-  });
+  const [emailEnabled, setEmailEnabled] = useState(true);
+  const [expiringSoonAlerts, setExpiringSoonAlerts] = useState(true);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [saved, setSaved] = useState(false);
+  const [error, setError] = useState('');
 
-  const handleToggle = () => {
-    const next = !emailEnabled;
-    setEmailEnabled(next);
+  useEffect(() => {
+    setLoading(true);
+    getMyPreferences()
+      .then((prefs) => {
+        if (prefs) {
+          setEmailEnabled(prefs.emailNotifications ?? true);
+          setExpiringSoonAlerts(prefs.expiringSoonAlerts ?? true);
+        }
+      })
+      .catch(() => {
+        // Silently fall back to defaults
+      })
+      .finally(() => setLoading(false));
+  }, []);
+
+  const handleSave = async () => {
+    setSaving(true);
+    setError('');
     try {
-      localStorage.setItem(EMAIL_NOTIF_KEY, String(next));
-    } catch {
-      /* ignore */
+      await updateMyPreferences({
+        emailNotifications: emailEnabled,
+        expiringSoonAlerts,
+      });
+      setSaved(true);
+      setTimeout(() => setSaved(false), 3000);
+    } catch (err) {
+      setError(err.response?.data?.error?.message || err.message || 'Failed to save preferences');
+    } finally {
+      setSaving(false);
     }
   };
 
@@ -505,36 +910,83 @@ function NotificationsTab() {
       title="Notification Preferences"
       description="Control how you receive alerts from Shellius."
     >
-      <div className="mb-4 rounded-md border border-muted px-3 py-2 text-xs text-muted-foreground">
-        TODO: Persist notification preferences to user profile once /api/users/:id/preferences
-        is implemented. Currently stored in localStorage only.
-      </div>
-
-      <div className="flex items-center justify-between rounded-lg border border-border p-4">
-        <div>
-          <p className="text-sm font-medium text-foreground">Email notifications</p>
-          <p className="text-xs text-muted-foreground">
-            Receive email alerts for access request approvals, certificate expiry, and
-            session activity.
-          </p>
+      {loading ? (
+        <div className="space-y-3 py-2">
+          {[1, 2].map((i) => (
+            <div key={i} className="h-16 animate-pulse rounded bg-muted" />
+          ))}
         </div>
-        <button
-          onClick={handleToggle}
-          role="switch"
-          aria-checked={emailEnabled}
-          className={[
-            'relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none focus:ring-2 focus:ring-ring',
-            emailEnabled ? 'bg-primary' : 'bg-muted-foreground/30',
-          ].join(' ')}
-        >
-          <span
-            className={[
-              'pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out',
-              emailEnabled ? 'translate-x-5' : 'translate-x-0',
-            ].join(' ')}
-          />
-        </button>
-      </div>
+      ) : (
+        <div className="space-y-4">
+          {error && (
+            <div className="rounded-md border border-destructive/50 bg-destructive/10 px-3 py-2 text-sm text-destructive">
+              {error}
+            </div>
+          )}
+          {saved && (
+            <div className="rounded-md border border-emerald-500/40 bg-emerald-500/10 px-3 py-2 text-sm text-emerald-700 dark:text-emerald-300">
+              Preferences saved.
+            </div>
+          )}
+
+          <div className="flex items-center justify-between rounded-lg border border-border p-4">
+            <div>
+              <p className="text-sm font-medium text-foreground">Email notifications</p>
+              <p className="text-xs text-muted-foreground">
+                Receive email alerts for access request approvals, certificate expiry, and
+                session activity.
+              </p>
+            </div>
+            <button
+              onClick={() => setEmailEnabled((v) => !v)}
+              role="switch"
+              aria-checked={emailEnabled}
+              className={[
+                'relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none focus:ring-2 focus:ring-ring',
+                emailEnabled ? 'bg-primary' : 'bg-muted-foreground/30',
+              ].join(' ')}
+            >
+              <span
+                className={[
+                  'pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out',
+                  emailEnabled ? 'translate-x-5' : 'translate-x-0',
+                ].join(' ')}
+              />
+            </button>
+          </div>
+
+          <div className="flex items-center justify-between rounded-lg border border-border p-4">
+            <div>
+              <p className="text-sm font-medium text-foreground">Expiring soon alerts</p>
+              <p className="text-xs text-muted-foreground">
+                Get notified when certificates and access requests are approaching expiry.
+              </p>
+            </div>
+            <button
+              onClick={() => setExpiringSoonAlerts((v) => !v)}
+              role="switch"
+              aria-checked={expiringSoonAlerts}
+              className={[
+                'relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none focus:ring-2 focus:ring-ring',
+                expiringSoonAlerts ? 'bg-primary' : 'bg-muted-foreground/30',
+              ].join(' ')}
+            >
+              <span
+                className={[
+                  'pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out',
+                  expiringSoonAlerts ? 'translate-x-5' : 'translate-x-0',
+                ].join(' ')}
+              />
+            </button>
+          </div>
+
+          <div className="pt-1">
+            <Button onClick={handleSave} disabled={saving}>
+              {saving ? 'Saving...' : 'Save preferences'}
+            </Button>
+          </div>
+        </div>
+      )}
     </SectionCard>
   );
 }
@@ -547,7 +999,6 @@ const TABS = [
   { key: 'org', label: 'Organization', icon: Building2 },
   { key: 'ca', label: 'CA Management', icon: Shield },
   { key: 'sso', label: 'SSO', icon: Wifi },
-  { key: 'connectors', label: 'Cloud Connectors', icon: Cloud },
   { key: 'notifications', label: 'Notifications', icon: Bell },
 ];
 
@@ -560,12 +1011,11 @@ function Settings() {
 
   return (
     <div className="space-y-6 p-6">
-      <div>
-        <h1 className="text-2xl font-bold tracking-tight text-foreground">Settings</h1>
-        <p className="text-sm text-muted-foreground">
-          Organization and infrastructure configuration.
-        </p>
-      </div>
+      <PageHeader
+        icon={SettingsIcon}
+        title="Settings"
+        subtitle="Organization and infrastructure configuration."
+      />
 
       {/* Tab bar */}
       <div className="flex flex-wrap items-center gap-1 border-b border-border">
@@ -593,7 +1043,6 @@ function Settings() {
       {activeTab === 'org' && <OrgTab />}
       {activeTab === 'ca' && <CaTab />}
       {activeTab === 'sso' && <SsoTab />}
-      {activeTab === 'connectors' && <CloudConnectorsTab />}
       {activeTab === 'notifications' && <NotificationsTab />}
     </div>
   );

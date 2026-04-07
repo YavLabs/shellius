@@ -1,13 +1,15 @@
 import api from './api';
 
+const unwrapServer = (r) => r.data.data?.server ?? r.data.data;
+
 export const listServers = (params) =>
   api.get('/servers', { params }).then((r) => r.data.data);
 export const getServer = (id) =>
-  api.get(`/servers/${id}`).then((r) => r.data.data);
+  api.get(`/servers/${id}`).then(unwrapServer);
 export const createServer = (data) =>
-  api.post('/servers', data).then((r) => r.data.data);
+  api.post('/servers', data).then(unwrapServer);
 export const updateServer = (id, data) =>
-  api.put(`/servers/${id}`, data).then((r) => r.data.data);
+  api.put(`/servers/${id}`, data).then(unwrapServer);
 export const deleteServer = (id) =>
   api.delete(`/servers/${id}`).then((r) => r.data.data);
 export const bulkUpdateEnvironment = (serverIds, environment) =>
@@ -15,7 +17,7 @@ export const bulkUpdateEnvironment = (serverIds, environment) =>
     .post('/servers/bulk/environment', { serverIds, environment })
     .then((r) => r.data.data);
 export const triggerHealthCheck = (id) =>
-  api.post(`/servers/${id}/health-check`).then((r) => r.data.data);
+  api.post(`/servers/${id}/health-check`).then(unwrapServer);
 
 /**
  * getServerStats — returns total count and per-environment breakdown.

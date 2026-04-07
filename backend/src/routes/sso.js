@@ -1,11 +1,17 @@
 import express from 'express';
 import crypto from 'crypto';
+import Joi from 'joi';
 import asyncHandler from '../utils/asyncHandler.js';
 import ApiError from '../utils/ApiError.js';
 import prisma from '../config/db.js';
 import * as ssoService from '../services/ssoService.js';
+import * as ssoConfigService from '../services/ssoConfigService.js';
 import { generateAccessToken, generateRefreshToken, hashToken } from '../utils/jwt.js';
 import logger from '../utils/logger.js';
+import authenticate from '../middleware/auth.js';
+import tenant from '../middleware/tenant.js';
+import requireRole from '../middleware/rbac.js';
+import audit from '../middleware/audit.js';
 
 const router = express.Router();
 
@@ -17,11 +23,100 @@ const stateStore = new Map();
 // Discovery cache (TODO: persist w/ TTL in Redis)
 const discoveryCache = new Map();
 
+// ---------------------------------------------------------------------------
+// Validation helper
+// ---------------------------------------------------------------------------
+
+const validate = (schema) => (req, res, next) => {
+  const { error, value } = schema.validate(req.body, { abortEarly: false, stripUnknown: true });
+  if (error) return next(new ApiError(400, error.details.map((d) => d.message).join(', ')));
+  req.body = value;
+  next();
+};
+
+// ---------------------------------------------------------------------------
+// Joi schemas for SSO config endpoints
+// ---------------------------------------------------------------------------
+
+const ssoConfigSchema = Joi.object({
+  provider: Joi.string().valid('oidc', 'saml').required(),
+  presetId: Joi.string().valid('google', 'entra', 'okta', 'auth0', 'generic-oidc', 'saml').optional(),
+  clientId: Joi.string().min(1).max(500).required(),
+  clientSecret: Joi.string().min(1).max(2000),
+  issuerUrl: Joi.string().uri().required(),
+  redirectUri: Joi.string().uri(),
+  scopes: Joi.string().max(500),
+  isActive: Joi.boolean(),
+});
+
+const ssoTestSchema = Joi.object({
+  provider: Joi.string().valid('oidc', 'saml'),
+  issuerUrl: Joi.string().uri(),
+});
+
+// ---------------------------------------------------------------------------
+// Admin SSO config endpoints — must be registered BEFORE /:orgSlug routes
+// ---------------------------------------------------------------------------
+
+// GET /api/auth/sso/config
+router.get(
+  '/config',
+  authenticate,
+  tenant,
+  requireRole('admin'),
+  asyncHandler(async (req, res) => {
+    const config = await ssoConfigService.get(req.orgId);
+    res.json({ success: true, data: { config } });
+  })
+);
+
+// PUT /api/auth/sso/config
+router.put(
+  '/config',
+  authenticate,
+  tenant,
+  requireRole('admin'),
+  audit('sso.config.update', 'SsoConfig'),
+  validate(ssoConfigSchema),
+  asyncHandler(async (req, res) => {
+    const config = await ssoConfigService.upsert(req.orgId, req.body);
+    res.json({ success: true, data: { config } });
+  })
+);
+
+// POST /api/auth/sso/config/test
+router.post(
+  '/config/test',
+  authenticate,
+  tenant,
+  requireRole('admin'),
+  audit('sso.config.test', 'SsoConfig'),
+  validate(ssoTestSchema),
+  asyncHandler(async (req, res) => {
+    const result = await ssoConfigService.test(req.orgId, req.body);
+    res.json({ success: true, data: result });
+  })
+);
+
 async function discover(issuerUrl) {
   const cached = discoveryCache.get(issuerUrl);
   if (cached && cached.expires > Date.now()) return cached.doc;
+
+  // SSRF guard — same defense as ssoConfigService.test() so a tampered or
+  // legacy DB row can't be used to scan internal services.
+  await ssoConfigService.guardSsrf(issuerUrl);
+
   const url = issuerUrl.replace(/\/$/, '') + '/.well-known/openid-configuration';
-  const res = await fetch(url);
+
+  // Bounded fetch — never let an unresponsive issuer hang an SSO login.
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 5000);
+  let res;
+  try {
+    res = await fetch(url, { signal: controller.signal });
+  } finally {
+    clearTimeout(timeout);
+  }
   if (!res.ok) throw new ApiError(502, 'OIDC discovery failed');
   const doc = await res.json();
   discoveryCache.set(issuerUrl, { doc, expires: Date.now() + 60 * 60 * 1000 });

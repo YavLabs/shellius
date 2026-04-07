@@ -5,7 +5,11 @@ import ApiError from '../utils/ApiError.js';
 import authenticate from '../middleware/auth.js';
 import tenant from '../middleware/tenant.js';
 import requireRole from '../middleware/rbac.js';
+import audit from '../middleware/audit.js';
 import * as userService from '../services/userService.js';
+import * as inviteService from '../services/inviteService.js';
+import { sendMail } from '../services/mailer.js';
+import { log as auditLog } from '../services/auditService.js';
 
 const router = express.Router();
 
@@ -19,12 +23,15 @@ const validate = (schema) => (req, res, next) => {
 const ROLES = ['super_admin', 'admin', 'operator', 'viewer'];
 const STATUSES = ['active', 'invited', 'suspended', 'deactivated'];
 
+// Password is now optional on create — when omitted the user is created with
+// status 'invited' and receives an invite email with a one-time link.
 const createSchema = Joi.object({
   email: Joi.string().email({ tlds: { allow: false } }).required(),
   name: Joi.string().min(1).max(200).required(),
-  password: Joi.string().min(8).max(200).required(),
+  password: Joi.string().min(8).max(200).optional(),
   role: Joi.string().valid(...ROLES).default('viewer'),
   managerId: Joi.string().allow(null),
+  sendInvite: Joi.boolean().default(true),
 });
 
 const updateSchema = Joi.object({
@@ -41,6 +48,11 @@ const sshKeySchema = Joi.object({
   publicKey: Joi.string().required(),
 });
 
+const preferencesSchema = Joi.object({
+  emailNotifications: Joi.boolean(),
+  expiringSoonAlerts: Joi.boolean(),
+}).min(1);
+
 router.use(authenticate, tenant);
 
 router.get(
@@ -51,6 +63,34 @@ router.get(
     res.json({ success: true, data: result });
   })
 );
+
+// ---------------------------------------------------------------------------
+// GET /me/preferences — any authenticated user
+// Must be before /:id to prevent Express matching 'me' as an id param
+// ---------------------------------------------------------------------------
+
+router.get(
+  '/me/preferences',
+  asyncHandler(async (req, res) => {
+    const preferences = await userService.getPreferences(req.user.userId);
+    res.json({ success: true, data: { preferences } });
+  })
+);
+
+// PUT /me/preferences — any authenticated user
+router.put(
+  '/me/preferences',
+  validate(preferencesSchema),
+  audit('user.preferences.update', 'User'),
+  asyncHandler(async (req, res) => {
+    const preferences = await userService.updatePreferences(req.user.userId, req.body);
+    res.json({ success: true, data: { preferences } });
+  })
+);
+
+// ---------------------------------------------------------------------------
+// GET /:id
+// ---------------------------------------------------------------------------
 
 router.get(
   '/:id',
@@ -64,15 +104,83 @@ router.get(
   })
 );
 
+// ---------------------------------------------------------------------------
+// POST / — create user; optionally send invite when no password supplied
+// ---------------------------------------------------------------------------
+
 router.post(
   '/',
   requireRole('super_admin', 'admin'),
   validate(createSchema),
   asyncHandler(async (req, res) => {
-    const user = await userService.createUser(req.orgId, req.body, req.user.role);
-    res.status(201).json({ success: true, data: { user } });
+    const { sendInvite: doSendInvite, ...userData } = req.body;
+    const isInviteFlow = !userData.password;
+
+    // createUser expects a password; pass a sentinel if this is an invite
+    const createData = isInviteFlow
+      ? { ...userData, password: null, status: 'invited' }
+      : { ...userData, status: 'active' };
+
+    const user = await userService.createUser(req.orgId, createData, req.user.role);
+
+    await auditLog({
+      orgId: req.orgId,
+      actorId: req.user.userId,
+      action: 'user.create',
+      resourceType: 'User',
+      resourceId: user.id,
+      ipAddress: req.ip,
+      userAgent: req.headers['user-agent'],
+    });
+
+    let inviteUrl = null;
+    let mailResult = null;
+
+    if (isInviteFlow && doSendInvite) {
+      const { rawToken } = await inviteService.createInvite(user.id, inviteService.TOKEN_TYPES.INVITE, 168);
+      inviteUrl = inviteService.buildTokenUrl(inviteService.TOKEN_TYPES.INVITE, rawToken, req);
+
+      const { organization } = await import('../config/db.js').then(({ default: prisma }) =>
+        prisma.organization.findUnique({ where: { id: req.orgId } })
+      ).then((org) => ({ organization: org }));
+
+      const orgName = organization?.name ?? 'Shellius';
+
+      const html = buildInviteHtml({ name: user.name, orgName, inviteUrl });
+      const text = buildInviteText({ name: user.name, orgName, inviteUrl });
+
+      mailResult = await sendMail({
+        to: user.email,
+        subject: `You have been invited to ${orgName}`,
+        html,
+        text,
+      });
+
+      await auditLog({
+        orgId: req.orgId,
+        actorId: req.user.userId,
+        action: 'user.invite.sent',
+        resourceType: 'User',
+        resourceId: user.id,
+        ipAddress: req.ip,
+        userAgent: req.headers['user-agent'],
+      });
+    }
+
+    const responseData = { user };
+    // Surface the invite URL when email was not delivered (log-only mode) so the
+    // admin can copy-paste it manually.
+    if (inviteUrl && mailResult && !mailResult.delivered) {
+      responseData.inviteUrl = inviteUrl;
+    }
+
+    res.status(201).json({ success: true, data: responseData });
   })
 );
+
+// ---------------------------------------------------------------------------
+// PUT /:id
+// ---------------------------------------------------------------------------
 
 router.put(
   '/:id',
@@ -145,5 +253,167 @@ router.get(
     res.json({ success: true, data: { reports } });
   })
 );
+
+// ---------------------------------------------------------------------------
+// POST /:id/resend-invite — admin+; revoke previous invite and re-issue
+// ---------------------------------------------------------------------------
+
+router.post(
+  '/:id/resend-invite',
+  requireRole('super_admin', 'admin'),
+  asyncHandler(async (req, res) => {
+    const user = await userService.getUser(req.orgId, req.params.id);
+    if (!user) throw new ApiError(404, 'User not found');
+
+    const { rawToken } = await inviteService.createInvite(user.id, inviteService.TOKEN_TYPES.INVITE, 168);
+    const inviteUrl = inviteService.buildTokenUrl(inviteService.TOKEN_TYPES.INVITE, rawToken, req);
+
+    const orgRecord = await import('../config/db.js').then(({ default: prisma }) =>
+      prisma.organization.findUnique({ where: { id: req.orgId } })
+    );
+    const orgName = orgRecord?.name ?? 'Shellius';
+
+    const mailResult = await sendMail({
+      to: user.email,
+      subject: `Your invite to ${orgName} has been resent`,
+      html: buildInviteHtml({ name: user.name, orgName, inviteUrl }),
+      text: buildInviteText({ name: user.name, orgName, inviteUrl }),
+    });
+
+    await auditLog({
+      orgId: req.orgId,
+      actorId: req.user.userId,
+      action: 'user.invite.resent',
+      resourceType: 'User',
+      resourceId: user.id,
+      ipAddress: req.ip,
+      userAgent: req.headers['user-agent'],
+    });
+
+    const data = { success: true };
+    if (!mailResult.delivered) data.inviteUrl = inviteUrl;
+    res.json({ success: true, data });
+  })
+);
+
+// ---------------------------------------------------------------------------
+// POST /:id/password-reset — admin+; issue a 1-hour reset token for a user
+// ---------------------------------------------------------------------------
+
+router.post(
+  '/:id/password-reset',
+  requireRole('super_admin', 'admin'),
+  asyncHandler(async (req, res) => {
+    const user = await userService.getUser(req.orgId, req.params.id);
+    if (!user) throw new ApiError(404, 'User not found');
+
+    const { rawToken } = await inviteService.createInvite(user.id, inviteService.TOKEN_TYPES.PASSWORD_RESET, 1);
+    const resetUrl = inviteService.buildTokenUrl(inviteService.TOKEN_TYPES.PASSWORD_RESET, rawToken, req);
+
+    const orgRecord = await import('../config/db.js').then(({ default: prisma }) =>
+      prisma.organization.findUnique({ where: { id: req.orgId } })
+    );
+    const orgName = orgRecord?.name ?? 'Shellius';
+
+    const mailResult = await sendMail({
+      to: user.email,
+      subject: `Reset your ${orgName} password`,
+      html: buildResetHtml({ name: user.name, orgName, resetUrl }),
+      text: buildResetText({ name: user.name, orgName, resetUrl }),
+    });
+
+    await auditLog({
+      orgId: req.orgId,
+      actorId: req.user.userId,
+      action: 'user.password.reset_requested',
+      resourceType: 'User',
+      resourceId: user.id,
+      ipAddress: req.ip,
+      userAgent: req.headers['user-agent'],
+    });
+
+    const data = { success: true };
+    if (!mailResult.delivered) data.resetUrl = resetUrl;
+    res.json({ success: true, data });
+  })
+);
+
+// ---------------------------------------------------------------------------
+// Email template helpers
+// ---------------------------------------------------------------------------
+
+function buildInviteHtml({ name, orgName, inviteUrl }) {
+  return `
+<!DOCTYPE html>
+<html>
+<head><meta charset="utf-8"></head>
+<body style="font-family:sans-serif;max-width:600px;margin:0 auto;padding:24px">
+  <h2>You've been invited to ${orgName}</h2>
+  <p>Hi ${name},</p>
+  <p>An administrator has invited you to access <strong>${orgName}</strong> on Shellius.</p>
+  <p>Click the link below to set your password and activate your account.
+     This link expires in 7 days and can only be used once.</p>
+  <p style="margin:24px 0">
+    <a href="${inviteUrl}" style="background:#0f172a;color:#fff;padding:12px 24px;border-radius:6px;text-decoration:none;display:inline-block">
+      Accept invitation
+    </a>
+  </p>
+  <p style="color:#6b7280;font-size:13px">Or copy this URL into your browser:<br>${inviteUrl}</p>
+</body>
+</html>
+  `.trim();
+}
+
+function buildInviteText({ name, orgName, inviteUrl }) {
+  return [
+    `You've been invited to ${orgName}`,
+    '',
+    `Hi ${name},`,
+    '',
+    `An administrator has invited you to access ${orgName} on Shellius.`,
+    'Click the link below to set your password and activate your account.',
+    'This link expires in 7 days and can only be used once.',
+    '',
+    inviteUrl,
+  ].join('\n');
+}
+
+function buildResetHtml({ name, orgName, resetUrl }) {
+  return `
+<!DOCTYPE html>
+<html>
+<head><meta charset="utf-8"></head>
+<body style="font-family:sans-serif;max-width:600px;margin:0 auto;padding:24px">
+  <h2>Reset your ${orgName} password</h2>
+  <p>Hi ${name},</p>
+  <p>A password reset was requested for your <strong>${orgName}</strong> account on Shellius.</p>
+  <p>Click the link below to set a new password.
+     This link expires in 1 hour and can only be used once.</p>
+  <p style="margin:24px 0">
+    <a href="${resetUrl}" style="background:#0f172a;color:#fff;padding:12px 24px;border-radius:6px;text-decoration:none;display:inline-block">
+      Reset password
+    </a>
+  </p>
+  <p style="color:#6b7280;font-size:13px">Or copy this URL into your browser:<br>${resetUrl}</p>
+  <p style="color:#6b7280;font-size:13px">If you did not request this, you can safely ignore this email.</p>
+</body>
+</html>
+  `.trim();
+}
+
+function buildResetText({ name, orgName, resetUrl }) {
+  return [
+    `Reset your ${orgName} password`,
+    '',
+    `Hi ${name},`,
+    '',
+    `A password reset was requested for your ${orgName} account on Shellius.`,
+    'Click the link below to set a new password. This link expires in 1 hour.',
+    '',
+    resetUrl,
+    '',
+    'If you did not request this, you can safely ignore this email.',
+  ].join('\n');
+}
 
 export default router;
