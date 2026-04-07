@@ -1,10 +1,11 @@
 import { useState } from 'react';
+import { Lock, Unlock } from 'lucide-react';
 import Modal from '@/components/shared/Modal';
 import EnvironmentBadge from '@/components/shared/EnvironmentBadge';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { createAccessRequest } from '@/services/accessRequestService';
-import { LINUX_USER_RE, defaultPrincipal } from '@/utils/principal';
+import { LINUX_USER_RE, principalForServer } from '@/utils/principal';
 
 const DURATION_OPTIONS = [
   { label: '15 minutes', seconds: 15 * 60 },
@@ -32,9 +33,13 @@ const selectCls =
 function QuickConnectModal({ open, onClose, server, currentUser, activeRequest }) {
   const isConnectMode = !!activeRequest;
 
-  const [principal, setPrincipal] = useState(
-    () => activeRequest?.requestedPrincipal || defaultPrincipal(currentUser)
-  );
+  // Default precedence: activeRequest.principal → server.sshUser → email-local
+  const defaultUser = principalForServer(activeRequest, server, currentUser);
+  const [principal, setPrincipal] = useState(() => defaultUser);
+  // Override toggle: when OFF (default), the input is read-only and locked
+  // to the saved value. When ON, the input becomes editable.
+  const [overrideOn, setOverrideOn] = useState(false);
+
   const [reason, setReason] = useState('');
   const [durationSeconds, setDurationSeconds] = useState(DURATION_OPTIONS[1].seconds);
 
@@ -127,15 +132,41 @@ function QuickConnectModal({ open, onClose, server, currentUser, activeRequest }
 
         {/* Connect as */}
         <div>
-          <label className={labelCls}>Connect as</label>
+          <div className="mb-1 flex items-center justify-between">
+            <label className={labelCls}>Connect as</label>
+            {/* Override toggle — only relevant in request mode (in connect
+                mode the principal is already burned into the cert) */}
+            {!isConnectMode && (
+              <button
+                type="button"
+                onClick={() => setOverrideOn((v) => !v)}
+                className="flex items-center gap-1 text-[11px] text-muted-foreground hover:text-foreground transition-colors"
+                title={overrideOn ? 'Lock to saved username' : 'Override saved username'}
+              >
+                {overrideOn ? <Unlock className="h-3 w-3" /> : <Lock className="h-3 w-3" />}
+                {overrideOn ? 'Editable' : 'Use saved username'}
+              </button>
+            )}
+          </div>
           <Input
             value={principal}
             onChange={(e) => setPrincipal(e.target.value)}
             placeholder="ubuntu"
             autoComplete="off"
             spellCheck={false}
-            className={principalInvalid ? 'border-destructive focus-visible:ring-destructive' : ''}
+            readOnly={!isConnectMode && !overrideOn}
+            className={[
+              principalInvalid ? 'border-destructive focus-visible:ring-destructive' : '',
+              !isConnectMode && !overrideOn ? 'bg-muted/40 text-muted-foreground cursor-default' : '',
+            ]
+              .filter(Boolean)
+              .join(' ')}
           />
+          {!isConnectMode && !overrideOn && server?.sshUser && (
+            <p className="mt-1 text-[11px] text-muted-foreground">
+              Using the SSH user saved on this server. Click <strong>Use saved username</strong> to override.
+            </p>
+          )}
           {principalInvalid && (
             <p className="mt-1 text-[11px] text-destructive">
               Must be a valid Linux username: lowercase letters, digits, _ or -, starts with letter or _.

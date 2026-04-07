@@ -1,13 +1,15 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
-import { ArrowLeft, Pencil, Trash2, Activity, Download, Terminal as TerminalIcon } from 'lucide-react';
+import { ArrowLeft, Pencil, Trash2, Activity, Download } from 'lucide-react';
 import Modal from '@/components/shared/Modal';
 import ConfirmDialog from '@/components/shared/ConfirmDialog';
 import EnvironmentBadge from '@/components/shared/EnvironmentBadge';
 import HealthStatusDot from '@/components/shared/HealthStatusDot';
 import ServerForm from '@/components/servers/ServerForm';
 import BootstrapModal from '@/components/servers/BootstrapModal';
+import QuickConnectButton from '@/components/servers/QuickConnectButton';
 import { Button } from '@/components/ui/button';
+import { useAuth } from '@/context/AuthContext';
 import {
   getServer,
   updateServer,
@@ -43,6 +45,7 @@ function Field({ label, value, mono }) {
 function ServerDetail() {
   const { id } = useParams();
   const navigate = useNavigate();
+  const { user: currentUser } = useAuth();
   const [server, setServer] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -140,16 +143,11 @@ function ServerDetail() {
             <p className="mt-1 max-w-2xl text-sm text-muted-foreground">{server.description}</p>
           )}
         </div>
-        <div className="flex flex-wrap gap-2">
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() =>
-              navigate(`/access-requests?new=1&serverId=${encodeURIComponent(server.id)}`)
-            }
-          >
-            <TerminalIcon className="mr-2 h-4 w-4" /> Request Access
-          </Button>
+        <div className="flex flex-wrap items-center gap-2">
+          {/* QuickConnectButton renders Connect (when an active AR exists)
+              or Request Access (when one doesn't) — same source of truth as
+              the Servers list row, so the two views can never disagree. */}
+          <QuickConnectButton server={server} currentUser={currentUser} />
           <Button variant="outline" size="sm" onClick={() => setBootstrapOpen(true)}>
             <Download className="mr-2 h-4 w-4" /> Bootstrap Host
           </Button>
