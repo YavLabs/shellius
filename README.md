@@ -4,7 +4,7 @@
 
 <p align="center">
   <a href="#license"><img src="https://img.shields.io/badge/license-AGPL--3.0-blue.svg" alt="License" /></a>
-  <img src="https://img.shields.io/badge/version-0.1.0-green.svg" alt="Version" />
+  <img src="https://img.shields.io/badge/version-0.2.0-green.svg" alt="Version" />
   <img src="https://img.shields.io/badge/docker-compose-blue.svg" alt="Docker" />
   <img src="https://img.shields.io/badge/go-1.22+-00ADD8.svg" alt="Go" />
   <img src="https://img.shields.io/badge/node-20+-339933.svg" alt="Node" />
@@ -28,6 +28,10 @@ Shellius replaces static SSH keys and shared RDP passwords with **short-lived, s
 - **Multi-tenant** -- every record scoped by `org_id`, enforced at the query layer
 - **Multi-cloud discovery** -- AWS, Azure, GCP connector framework (parked behind a flag — see roadmap)
 - **Cloudflare/Linear/Vercel-style UI** -- React 18 + shadcn/ui + Tailwind, dark mode out of the box
+- **User profile + GDPR** -- self-service profile editing, password change, JSON data export, soft-delete with 30-day grace window
+- **Self-service registration** -- per-org toggle for email-verified signup, viewer role pinning, enumeration-safe responses
+- **Templated transactional email** -- HTML layout shared across invite, password reset, password changed, access request, certificate expiry, account deleted, email verification, and SMTP test messages
+- **Private-network awareness** -- UI flags hosts with RFC1918 / CGNAT / link-local addresses so users connect to VPN before requesting access
 - **Docker Compose deployment** -- Traefik labels included, optional bundled Nginx
 
 ## Tech Stack

@@ -9,6 +9,7 @@ import requireRole from '../middleware/rbac.js';
 import audit from '../middleware/audit.js';
 import * as smtpConfigService from '../services/smtpConfigService.js';
 import prisma from '../config/db.js';
+import { renderTemplate } from '../email/index.js';
 
 const router = express.Router();
 router.use(authenticate, tenant);
@@ -83,12 +84,17 @@ router.post(
       throw new ApiError(400, 'No SMTP configuration — set host in env or UI');
     }
 
-    // Pull caller's email; never send test mail to an arbitrary address
+    // Pull caller's email + name; never send test mail to an arbitrary address
     const user = await prisma.user.findUnique({
       where: { id: req.user.userId },
-      select: { email: true },
+      select: { email: true, name: true },
     });
     if (!user?.email) throw new ApiError(400, 'Caller has no email on record');
+
+    const org = await prisma.organization.findUnique({
+      where: { id: req.orgId },
+      select: { name: true },
+    });
 
     const transport = nodemailer.createTransport({
       host: effective.host,
@@ -101,11 +107,20 @@ router.post(
 
     try {
       await transport.verify();
+      const tpl = renderTemplate('smtpTest', {
+        recipientName: user.name,
+        orgName: org?.name,
+        host: effective.host,
+        port: effective.port,
+        useTls: effective.useTls,
+        when: new Date().toISOString(),
+      });
       await transport.sendMail({
         from: effective.fromAddress || effective.username || 'noreply@shellius.local',
         to: user.email,
-        subject: '[Shellius] SMTP test message',
-        text: 'This is a test message from Shellius. Your SMTP configuration is working.',
+        subject: tpl.subject,
+        html: tpl.html,
+        text: tpl.text,
       });
       res.json({ success: true, data: { ok: true, sentTo: user.email } });
     } catch (err) {

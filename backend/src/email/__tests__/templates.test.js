@@ -19,6 +19,7 @@ const SAMPLES = {
   certificateExpiring: { recipientName: 'A', serverHostname: 'h', expiresAt: '2026-04-07T02:00:00Z', renewUrl: 'https://x.test/n' },
   verifyEmail: { recipientName: 'A', verifyUrl: 'https://x.test/v/1', expiresInHours: 24 },
   accountDeleted: { recipientName: 'A', when: '2026-04-07T01:00:00Z', gracePeriodDays: 30 },
+  smtpTest: { recipientName: 'A', orgName: 'Acme', host: 'smtp.gmail.com', port: 587, useTls: true, when: '2026-04-07T01:00:00Z' },
 };
 
 describe('email templates — registry', () => {

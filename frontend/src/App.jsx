@@ -28,6 +28,7 @@ import Terminal from './pages/Terminal';
 import Device from './pages/Device';
 import Profile from './pages/Profile';
 import Register from './pages/Register';
+import Legal from './pages/Legal';
 import NotFound from './pages/NotFound';
 
 function App() {
@@ -43,6 +44,7 @@ function App() {
               <Route path="/forgot-password" element={<ForgotPassword />} />
               <Route path="/device" element={<Device />} />
               <Route path="/register" element={<Register />} />
+              <Route path="/legal/:doc" element={<Legal />} />
               <Route element={<ProtectedRoute />}>
                 {/* Full-screen terminal — no app chrome */}
                 <Route

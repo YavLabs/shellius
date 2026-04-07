@@ -4,6 +4,31 @@ All notable changes to Shellius will be documented in this file. The format is
 based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the
 project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.0] - 2026-04-07
+
+### Added
+
+- **Phase 17F — Profile, GDPR, self-service registration**
+  - New `/profile` page: edit display name, change password (LOCAL accounts only), download a GDPR JSON export of every record about you, and delete your account with a type-to-confirm danger zone (soft-delete + 30-day grace before hard purge)
+  - `/register` page gated by per-org `selfServiceRegistrationEnabled` flag: email-verified signup pinned to the `viewer` role, enumeration-safe responses, rate-limited
+  - Email verification flow with new `verifyEmail` template and `EMAIL_VERIFY` token type in `inviteService`
+  - `accountDeleted` and `smtpTest` email templates added to the registry
+  - `passwordChangedAt`, `deletedAt` columns on `User`; `pending_verification` and `deleted` states added to `UserStatus` enum; `selfServiceRegistrationEnabled` added to `Organization`
+  - `authService.login` now blocks accounts in `deleted` state
+  - Login page `?deleted=1` confirmation banner; AcceptInvite page rebranded as "Set up your account" with name + Terms checkbox
+- **Phase 18 — UX polish & defensive guards**
+  - DataTable v2 rows-per-page selector (10/25/50/100) wired through every consuming page
+  - Sidebar collapse mode tightens icon-only nav, adds tooltips, and surfaces a Profile shortcut alongside Settings
+  - QuickConnect button polls active access every 60s and defensively re-validates `{status, expiresAt}` so an expired AR cannot show "Connect"
+  - Policy evaluator API derives a canonical `outcome` field (`allow` / `deny` / `requires_approval`) so the UI has a single source of truth
+  - New `PrivateIPWarning` component (banner / pill / note variants) wired into QuickConnectModal, RequestForm, ServerForm, and ServerDetail to flag RFC1918 / CGNAT / link-local hosts that need a VPN
+- App-wide footer with version badge and Privacy / Terms / EULA / GitHub links, plus in-app legal pages at `/legal/:doc`
+- 84 new Jest tests across registration, profile, access-request audit, policy outcome, and email templates (full suite: 174/174 passing)
+
+### Changed
+
+- Templated SMTP test email (`smtpTest`) replaces the plaintext one-liner — admins now see the shared HTML layout and full host/port/TLS context
+
 ## [Unreleased]
 
 ### Added

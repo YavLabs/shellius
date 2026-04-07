@@ -20,6 +20,7 @@ import * as accessRequestDenied from './templates/accessRequestDenied.js';
 import * as certificateExpiring from './templates/certificateExpiring.js';
 import * as accountDeleted from './templates/accountDeleted.js';
 import * as verifyEmail from './templates/verifyEmail.js';
+import * as smtpTest from './templates/smtpTest.js';
 
 const TEMPLATES = {
   invite,
@@ -31,6 +32,7 @@ const TEMPLATES = {
   certificateExpiring,
   accountDeleted,
   verifyEmail,
+  smtpTest,
 };
 
 export function renderTemplate(name, vars) {
