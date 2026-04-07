@@ -1,7 +1,7 @@
 # Task 17C: Bootstrap Uninstaller (script + UI + safety)
 
 **Agent:** backend + frontend
-**Status:** [ ] Pending
+**Status:** [x] Done
 **Blocks:** 17Q-C, 17R-C
 **Blocked By:** None
 **Model:** sonnet

@@ -219,6 +219,95 @@ router.get(
 );
 
 // ---------------------------------------------------------------------------
+// POST /api/bootstrap/uninstall-token — authenticated; mirrors /token
+// Returns a JWT bound to (serverId, orgId, kind:'uninstall') and the
+// copy/paste one-liners for each platform.
+// ---------------------------------------------------------------------------
+
+const UNINSTALL_TTL_SECONDS = 30 * 60;
+
+function signUninstallToken({ serverId, orgId }) {
+  return jwt.sign(
+    { kind: 'uninstall', serverId, orgId },
+    config.jwt.secret,
+    { expiresIn: UNINSTALL_TTL_SECONDS }
+  );
+}
+
+function verifyUninstallToken(token) {
+  const payload = jwt.verify(token, config.jwt.secret);
+  if (payload.kind !== 'uninstall') throw new Error('Invalid token kind');
+  return payload;
+}
+
+router.post(
+  '/uninstall-token',
+  authenticate,
+  tenant,
+  requireRole('admin'),
+  asyncHandler(async (req, res) => {
+    const { error, value } = tokenSchema.validate(req.body);
+    if (error) throw new ApiError(400, error.message);
+
+    const server = await prisma.server.findFirst({
+      where: { id: value.serverId, orgId: req.orgId },
+      select: { id: true, hostname: true, protocol: true },
+    });
+    if (!server) throw new ApiError(404, 'Server not found');
+
+    const token = signUninstallToken({ serverId: server.id, orgId: req.orgId });
+    const base = getPublicBaseUrl(req);
+    const shUrl = `${base}/api/bootstrap/uninstall.sh?token=${token}`;
+
+    const commands = {
+      linux: `curl -fsSL "${shUrl}" | sudo bash`,
+      macos: `curl -fsSL "${shUrl}" | sudo bash`,
+    };
+
+    res.json({
+      success: true,
+      data: {
+        server: { id: server.id, hostname: server.hostname, protocol: server.protocol },
+        expiresInSeconds: UNINSTALL_TTL_SECONDS,
+        commands,
+        urls: { sh: shUrl },
+      },
+    });
+  })
+);
+
+// ---------------------------------------------------------------------------
+// GET /api/bootstrap/uninstall.sh — public, token-gated
+// ---------------------------------------------------------------------------
+
+router.get(
+  '/uninstall.sh',
+  asyncHandler(async (req, res) => {
+    const token = req.query.token;
+    if (!token) throw new ApiError(400, 'Missing token');
+
+    let payload;
+    try {
+      payload = verifyUninstallToken(token);
+    } catch {
+      throw new ApiError(401, 'Invalid or expired uninstall token');
+    }
+
+    const server = await prisma.server.findFirst({
+      where: { id: payload.serverId, orgId: payload.orgId },
+      select: { hostname: true },
+    });
+    if (!server) throw new ApiError(404, 'Server not found');
+
+    const script = buildUnixUninstallScript({ hostname: server.hostname });
+
+    res.setHeader('Content-Type', 'text/x-shellscript; charset=utf-8');
+    res.setHeader('Cache-Control', 'no-store');
+    res.send(script);
+  })
+);
+
+// ---------------------------------------------------------------------------
 // Script generators
 // ---------------------------------------------------------------------------
 
@@ -525,6 +614,183 @@ echo "[shellius]   CA trust:     $CA_PUB_PATH"
 echo "[shellius]   Check script: $CHECK_PRINCIPALS_PATH"
 echo "[shellius]   Login user:   ${sshUser}"
 echo "[shellius]   You can now Open Web Terminal in the Shellius UI."
+`;
+}
+
+// ---------------------------------------------------------------------------
+// buildUnixUninstallScript — reverses what buildUnixInstallScript did
+// ---------------------------------------------------------------------------
+//
+// SAFETY RULES (Task 17C — these are non-negotiable):
+//   - NEVER touch /etc/ssh/ssh_host_*
+//   - NEVER touch /etc/ssh/ssh_known_hosts
+//   - NEVER touch any user's authorized_keys (any path)
+//   - NEVER touch /root/.ssh/ or any user's ~/.ssh/
+//   - NEVER touch any Include directive or unrelated drop-in
+//   - ALWAYS back up sshd_config before any sed edit
+//   - ALWAYS run 'sshd -t' BEFORE the systemd reload
+//   - REFUSE to reload sshd if validation fails — restore the backup
+//
+// What it removes (and ONLY these):
+//   /etc/ssh/shellius_ca.pub
+//   /etc/ssh/sshd_config.d/99-shellius.conf      (if present)
+//   /etc/shellius/agent-token
+//   /etc/shellius/                              (if empty after token removal)
+//   /usr/local/sbin/shellius-check-principals
+//   The exact "# >>> shellius >>> ... # <<< shellius <<<" block in
+//     /etc/ssh/sshd_config — and ONLY between those markers
+//
+function buildUnixUninstallScript({ hostname }) {
+  return `#!/usr/bin/env bash
+# Shellius host UNINSTALL — reverses what install.sh did, safely.
+# Target host: ${hostname}
+#
+# Safety: this script never touches authorized_keys, host keys, known_hosts,
+# Include directives, or any unrelated drop-in. It backs up sshd_config
+# before any edit and refuses to reload sshd if 'sshd -t' fails on the
+# resulting config (it restores the backup in that case).
+set -euo pipefail
+
+if [ "$(id -u)" -ne 0 ]; then
+  echo "ERROR: this script must run as root (use sudo)." >&2
+  exit 1
+fi
+
+UNAME_S="$(uname -s)"
+case "$UNAME_S" in
+  Linux)  PLATFORM=linux ;;
+  Darwin) PLATFORM=macos ;;
+  *) echo "ERROR: unsupported platform: $UNAME_S" >&2; exit 1 ;;
+esac
+echo "[shellius] Detected platform: $PLATFORM"
+
+CA_PUB=/etc/ssh/shellius_ca.pub
+AGENT_DIR=/etc/shellius
+AGENT_TOKEN=$AGENT_DIR/agent-token
+CHECK_SCRIPT=/usr/local/sbin/shellius-check-principals
+SSHD_CONFIG=/etc/ssh/sshd_config
+SSHD_DROPIN=/etc/ssh/sshd_config.d/99-shellius.conf
+SSHD_BACKUP=/etc/ssh/sshd_config.shellius.bak
+
+REMOVED=()
+TOUCHED_SSHD=0
+
+# ---------------------------------------------------------------------------
+# 1. Remove the drop-in (entirely Shellius-owned, safe to delete outright)
+# ---------------------------------------------------------------------------
+echo "[shellius] [1/6] Removing drop-in"
+if [ -f "$SSHD_DROPIN" ]; then
+  rm -f "$SSHD_DROPIN"
+  REMOVED+=("$SSHD_DROPIN")
+fi
+
+# ---------------------------------------------------------------------------
+# 2. Strip the inline shellius block from sshd_config (between markers ONLY)
+#    Backup first, edit second, validate third, reload fourth.
+# ---------------------------------------------------------------------------
+echo "[shellius] [2/6] Stripping inline block from sshd_config (if any)"
+if grep -q '^# >>> shellius >>>' "$SSHD_CONFIG" 2>/dev/null; then
+  cp -a "$SSHD_CONFIG" "$SSHD_BACKUP"
+  chmod 600 "$SSHD_BACKUP"
+  sed -i '/^# >>> shellius >>>/,/^# <<< shellius <<</d' "$SSHD_CONFIG"
+  TOUCHED_SSHD=1
+  REMOVED+=("$SSHD_CONFIG: shellius marker block (backup at $SSHD_BACKUP)")
+fi
+
+# ---------------------------------------------------------------------------
+# 3. Remove CA public key
+# ---------------------------------------------------------------------------
+echo "[shellius] [3/6] Removing CA public key"
+if [ -f "$CA_PUB" ]; then
+  rm -f "$CA_PUB"
+  REMOVED+=("$CA_PUB")
+fi
+
+# ---------------------------------------------------------------------------
+# 4. Remove agent token + directory (only if directory is empty)
+# ---------------------------------------------------------------------------
+echo "[shellius] [4/6] Removing agent token"
+if [ -f "$AGENT_TOKEN" ]; then
+  rm -f "$AGENT_TOKEN"
+  REMOVED+=("$AGENT_TOKEN")
+fi
+if [ -d "$AGENT_DIR" ]; then
+  if rmdir "$AGENT_DIR" 2>/dev/null; then
+    REMOVED+=("$AGENT_DIR")
+  else
+    echo "[shellius]   $AGENT_DIR is not empty — leaving it in place"
+  fi
+fi
+
+# ---------------------------------------------------------------------------
+# 5. Remove check-principals script
+# ---------------------------------------------------------------------------
+echo "[shellius] [5/6] Removing check-principals script"
+if [ -f "$CHECK_SCRIPT" ]; then
+  rm -f "$CHECK_SCRIPT"
+  REMOVED+=("$CHECK_SCRIPT")
+fi
+
+# ---------------------------------------------------------------------------
+# 6. Validate sshd config and reload — refuses if validation fails
+# ---------------------------------------------------------------------------
+echo "[shellius] [6/6] Validating sshd config"
+if command -v sshd >/dev/null 2>&1; then
+  if ! sshd -t 2>/dev/null; then
+    echo "[shellius] ✗ sshd -t FAILED after uninstall."
+    if [ "$TOUCHED_SSHD" = "1" ] && [ -f "$SSHD_BACKUP" ]; then
+      echo "[shellius]   Restoring sshd_config backup from $SSHD_BACKUP"
+      cp -a "$SSHD_BACKUP" "$SSHD_CONFIG"
+      sshd -t 2>/dev/null && echo "[shellius]   Restored config validates."
+    fi
+    echo "[shellius]   Aborting reload to keep sshd alive. Inspect:"
+    echo "[shellius]     sudo sshd -t"
+    echo "[shellius]     sudo grep -nE 'Trusted|Authorized|Match' $SSHD_CONFIG"
+    exit 1
+  fi
+  echo "[shellius]   ✓ sshd -t passes"
+fi
+
+echo "[shellius] Reloading sshd"
+if [ "$PLATFORM" = "macos" ]; then
+  launchctl kickstart -k system/com.openssh.sshd 2>/dev/null || true
+else
+  if command -v systemctl >/dev/null 2>&1; then
+    systemctl reload ssh 2>/dev/null \\
+      || systemctl reload sshd 2>/dev/null \\
+      || systemctl restart ssh 2>/dev/null \\
+      || systemctl restart sshd 2>/dev/null || true
+  else
+    service ssh reload 2>/dev/null || service sshd reload 2>/dev/null || true
+  fi
+fi
+
+# ---------------------------------------------------------------------------
+# Self-test: confirm sshd no longer trusts the Shellius CA
+# ---------------------------------------------------------------------------
+if command -v sshd >/dev/null 2>&1 && sshd -T >/dev/null 2>&1; then
+  if sshd -T 2>/dev/null | grep -qi "^trustedusercakeys $CA_PUB"; then
+    echo "[shellius] ! sshd -T still references $CA_PUB — manual cleanup needed."
+  else
+    echo "[shellius] ✓ sshd no longer trusts the Shellius CA"
+  fi
+fi
+
+echo
+echo "[shellius] ✓ Uninstall complete."
+if [ \${#REMOVED[@]} -eq 0 ]; then
+  echo "[shellius]   Nothing to remove — Shellius was not installed on this host."
+else
+  echo "[shellius]   Removed:"
+  for f in "\${REMOVED[@]}"; do echo "[shellius]     - $f"; done
+fi
+echo
+echo "[shellius]   Untouched (by design):"
+echo "[shellius]     - /etc/ssh/ssh_host_*           (host keys)"
+echo "[shellius]     - /etc/ssh/ssh_known_hosts      (known hosts)"
+echo "[shellius]     - ~/.ssh/authorized_keys        (every user's authorized_keys)"
+echo "[shellius]     - any other Include directive or drop-in"
+[ "$TOUCHED_SSHD" = "1" ] && echo "[shellius]   sshd_config backup: $SSHD_BACKUP (delete when satisfied)"
 `;
 }
 
