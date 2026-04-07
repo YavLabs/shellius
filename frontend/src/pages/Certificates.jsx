@@ -1,17 +1,25 @@
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import {
-  MoreVertical,
-  ShieldX,
   Eye,
-  ChevronLeft,
-  ChevronRight,
+  Download,
+  FileKey,
+  AlertTriangle,
+  Ban,
 } from 'lucide-react';
 import DataTable from '@/components/shared/DataTable';
-import SearchInput from '@/components/shared/SearchInput';
 import Modal from '@/components/shared/Modal';
 import ConfirmDialog from '@/components/shared/ConfirmDialog';
 import CertStatusBadge from '@/components/shared/CertStatusBadge';
 import EnvironmentBadge from '@/components/shared/EnvironmentBadge';
+import PageHeader from '@/components/common/PageHeader';
+import { Button } from '@/components/ui/button';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
 import { listCertificates, revokeCertificate } from '@/services/certificateService';
 import { useAuth } from '@/context/AuthContext';
 import { formatDateTime } from '@/utils/time';
@@ -19,6 +27,47 @@ import { formatDateTime } from '@/utils/time';
 const ROLE_RANK = { super_admin: 4, admin: 3, operator: 2, viewer: 1 };
 function isAtLeast(user, role) {
   return (ROLE_RANK[user?.role] || 0) >= (ROLE_RANK[role] || 0);
+}
+
+function downloadBlob(filename, content) {
+  const blob = new Blob([content], { type: 'application/octet-stream' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+
+function msUntil(validBefore) {
+  if (!validBefore) return null;
+  const d = new Date(validBefore);
+  if (Number.isNaN(d.getTime())) return null;
+  return d.getTime() - Date.now();
+}
+
+const ONE_DAY_MS = 24 * 60 * 60 * 1000;
+
+function ExpiryPill({ validBefore }) {
+  const ms = msUntil(validBefore);
+  if (ms === null) return null;
+  if (ms <= 0) {
+    return (
+      <span className="ml-1 inline-flex items-center rounded-full bg-destructive/10 px-2 py-0.5 text-[10px] font-semibold text-destructive border border-destructive/30">
+        Expired
+      </span>
+    );
+  }
+  if (ms < ONE_DAY_MS) {
+    return (
+      <span className="ml-1 inline-flex items-center rounded-full bg-amber-500/15 px-2 py-0.5 text-[10px] font-semibold text-amber-700 dark:text-amber-300 border border-amber-500/30">
+        Expiring soon
+      </span>
+    );
+  }
+  return null;
 }
 
 function validUntilLabel(validBefore) {
@@ -37,60 +86,6 @@ function validUntilLabel(validBefore) {
   return `in ${days}d`;
 }
 
-function RowMenu({ onView, onRevoke, canRevoke }) {
-  const [open, setOpen] = useState(false);
-  const ref = useRef(null);
-
-  useEffect(() => {
-    if (!open) return;
-    const fn = (e) => {
-      if (ref.current && !ref.current.contains(e.target)) setOpen(false);
-    };
-    window.addEventListener('mousedown', fn);
-    return () => window.removeEventListener('mousedown', fn);
-  }, [open]);
-
-  return (
-    <div className="relative" ref={ref}>
-      <button
-        onClick={(e) => {
-          e.stopPropagation();
-          setOpen((p) => !p);
-        }}
-        className="rounded-md p-1 text-muted-foreground hover:bg-accent hover:text-foreground"
-      >
-        <MoreVertical className="h-4 w-4" />
-      </button>
-      {open && (
-        <div className="absolute right-0 z-20 mt-1 w-44 overflow-hidden rounded-md border border-border bg-card shadow-lg">
-          <button
-            onClick={(e) => {
-              e.stopPropagation();
-              setOpen(false);
-              onView();
-            }}
-            className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-foreground hover:bg-accent"
-          >
-            <Eye className="h-3.5 w-3.5" /> View Details
-          </button>
-          {canRevoke && (
-            <button
-              onClick={(e) => {
-                e.stopPropagation();
-                setOpen(false);
-                onRevoke();
-              }}
-              className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-destructive hover:bg-accent"
-            >
-              <ShieldX className="h-3.5 w-3.5" /> Revoke
-            </button>
-          )}
-        </div>
-      )}
-    </div>
-  );
-}
-
 function DetailRow({ label, value }) {
   return (
     <div className="grid grid-cols-3 gap-2 border-b border-border py-2.5 last:border-0">
@@ -102,17 +97,14 @@ function DetailRow({ label, value }) {
   );
 }
 
-function CertDetailModal({ cert, open, onClose }) {
+function CertDetailModal({ cert, open, onClose, onDownload }) {
   if (!cert) return null;
   return (
     <Modal open={open} onClose={onClose} title="Certificate Details" size="lg">
       <dl>
         <DetailRow label="Serial" value={cert.serial} />
         <DetailRow label="Status" value={<CertStatusBadge status={cert.status} />} />
-        <DetailRow
-          label="Issued To"
-          value={cert.issuedTo?.name || cert.issuedTo?.email || cert.userId}
-        />
+        <DetailRow label="Issued To" value={cert.issuedTo?.name || cert.issuedTo?.email || cert.userId} />
         <DetailRow
           label="Issued For"
           value={
@@ -123,16 +115,12 @@ function CertDetailModal({ cert, open, onClose }) {
                   <EnvironmentBadge environment={cert.issuedFor.environment} />
                 )}
               </span>
-            ) : (
-              cert.serverId
-            )
+            ) : cert.serverId
           }
         />
         <DetailRow
           label="Principals"
-          value={
-            Array.isArray(cert.principals) ? cert.principals.join(', ') : cert.principals
-          }
+          value={Array.isArray(cert.principals) ? cert.principals.join(', ') : cert.principals}
         />
         <DetailRow label="Key ID" value={cert.keyId} />
         <DetailRow label="Cert Type" value={cert.certType} />
@@ -148,24 +136,17 @@ function CertDetailModal({ cert, open, onClose }) {
         {cert.extensions && Object.keys(cert.extensions).length > 0 && (
           <DetailRow
             label="Extensions"
-            value={
-              <pre className="text-xs text-muted-foreground whitespace-pre-wrap">
-                {JSON.stringify(cert.extensions, null, 2)}
-              </pre>
-            }
-          />
-        )}
-        {cert.criticalOptions && Object.keys(cert.criticalOptions).length > 0 && (
-          <DetailRow
-            label="Critical Options"
-            value={
-              <pre className="text-xs text-muted-foreground whitespace-pre-wrap">
-                {JSON.stringify(cert.criticalOptions, null, 2)}
-              </pre>
-            }
+            value={<pre className="text-xs text-muted-foreground whitespace-pre-wrap">{JSON.stringify(cert.extensions, null, 2)}</pre>}
           />
         )}
       </dl>
+      {cert.signedCert && (
+        <div className="mt-4 border-t border-border pt-4">
+          <Button variant="outline" size="sm" onClick={() => onDownload(cert)}>
+            <Download className="mr-2 h-4 w-4" /> Download .pub
+          </Button>
+        </div>
+      )}
     </Modal>
   );
 }
@@ -183,14 +164,13 @@ function Certificates() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
 
-  const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState('');
 
   const [detailCert, setDetailCert] = useState(null);
   const [revokeTarget, setRevokeTarget] = useState(null);
   const [revoking, setRevoking] = useState(false);
 
-  const fetch = useCallback(async () => {
+  const fetchCerts = useCallback(async () => {
     setLoading(true);
     setError('');
     try {
@@ -198,32 +178,30 @@ function Certificates() {
       if (statusFilter) params.status = statusFilter;
       const resp = await listCertificates(params);
       const items = resp.data?.items || resp.data || [];
-      const metaTotal =
-        resp.meta?.total ?? resp.data?.total ?? items.length;
+      const metaTotal = resp.meta?.total ?? resp.data?.total ?? items.length;
       setCerts(items);
       setTotal(metaTotal);
     } catch (err) {
-      setError(
-        err.response?.data?.error?.message || err.message || 'Failed to load certificates'
-      );
+      setError(err.response?.data?.error?.message || err.message || 'Failed to load certificates');
     } finally {
       setLoading(false);
     }
   }, [page, pageSize, statusFilter]);
 
-  useEffect(() => {
-    fetch();
-  }, [fetch]);
+  useEffect(() => { fetchCerts(); }, [fetchCerts]);
 
-  const filteredCerts = search
-    ? certs.filter((c) => {
-        const q = search.toLowerCase();
-        const userName = (c.issuedTo?.name || c.issuedTo?.email || '').toLowerCase();
-        const serverName = (c.issuedFor?.hostname || '').toLowerCase();
-        const serial = (c.serial || '').toLowerCase();
-        return userName.includes(q) || serverName.includes(q) || serial.includes(q);
-      })
-    : certs;
+  // Count certs expiring within 24h
+  const expiringSoonCount = certs.filter((c) => {
+    if (c.status !== 'ACTIVE') return false;
+    const ms = msUntil(c.validBefore);
+    return ms !== null && ms > 0 && ms < ONE_DAY_MS;
+  }).length;
+
+  const handleDownload = (cert) => {
+    if (!cert.signedCert) return;
+    const filename = `cert-${cert.serial || cert.id}.pub`;
+    downloadBlob(filename, cert.signedCert);
+  };
 
   const handleRevoke = async () => {
     if (!revokeTarget) return;
@@ -231,7 +209,7 @@ function Certificates() {
     try {
       await revokeCertificate(revokeTarget.id);
       setRevokeTarget(null);
-      fetch();
+      fetchCerts();
     } catch (err) {
       setError(err.response?.data?.error?.message || 'Failed to revoke certificate');
       setRevokeTarget(null);
@@ -240,10 +218,24 @@ function Certificates() {
     }
   };
 
+  const filterSlot = (
+    <Select
+      value={statusFilter || '_all'}
+      onValueChange={(v) => { setStatusFilter(v === '_all' ? '' : v); setPage(1); }}
+    >
+      <SelectTrigger className="w-[160px]"><SelectValue placeholder="All statuses" /></SelectTrigger>
+      <SelectContent>
+        <SelectItem value="_all">All statuses</SelectItem>
+        {STATUSES.map((s) => <SelectItem key={s} value={s}>{s}</SelectItem>)}
+      </SelectContent>
+    </Select>
+  );
+
   const columns = [
     {
       key: 'serial',
       label: 'Serial',
+      sortable: true,
       render: (r) => (
         <span className="font-mono text-xs text-muted-foreground">
           {r.serial ? r.serial.slice(0, 16) + (r.serial.length > 16 ? '…' : '') : '-'}
@@ -253,11 +245,11 @@ function Certificates() {
     {
       key: 'issuedTo',
       label: 'Issued To',
+      sortable: true,
+      searchAccessor: (r) => `${r.issuedTo?.name || ''} ${r.issuedTo?.email || ''}`,
       render: (r) => (
         <div>
-          <p className="text-sm font-medium text-foreground">
-            {r.issuedTo?.name || '-'}
-          </p>
+          <p className="text-sm font-medium text-foreground">{r.issuedTo?.name || '-'}</p>
           <p className="text-xs text-muted-foreground">{r.issuedTo?.email || r.userId}</p>
         </div>
       ),
@@ -265,6 +257,8 @@ function Certificates() {
     {
       key: 'server',
       label: 'Server',
+      sortable: true,
+      searchAccessor: (r) => `${r.issuedFor?.hostname || ''} ${r.issuedFor?.environment || ''}`,
       render: (r) =>
         r.issuedFor ? (
           <span className="flex items-center gap-2">
@@ -278,6 +272,7 @@ function Certificates() {
     {
       key: 'principals',
       label: 'Principals',
+      hideBelow: 'md',
       render: (r) => {
         const list = Array.isArray(r.principals) ? r.principals : [];
         const display = list.slice(0, 3).join(', ');
@@ -293,18 +288,16 @@ function Certificates() {
     {
       key: 'validBefore',
       label: 'Valid Until',
+      sortable: true,
       render: (r) => {
         const label = validUntilLabel(r.validBefore);
-        const isExpired = label === 'Expired';
+        const isExpiredLabel = label === 'Expired';
         return (
-          <span
-            className={
-              isExpired
-                ? 'text-xs text-muted-foreground'
-                : 'text-xs text-foreground'
-            }
-          >
-            {label}
+          <span className="flex items-center">
+            <span className={isExpiredLabel ? 'text-xs text-muted-foreground' : 'text-xs text-foreground'}>
+              {label}
+            </span>
+            <ExpiryPill validBefore={r.validBefore} />
           </span>
         );
       },
@@ -312,61 +305,48 @@ function Certificates() {
     {
       key: 'status',
       label: 'Status',
+      sortable: true,
+      searchAccessor: (r) => r.status || '',
       render: (r) => <CertStatusBadge status={r.status} />,
     },
     {
       key: 'actions',
       label: '',
       className: 'w-10',
-      render: (r) => (
-        <RowMenu
-          onView={() => setDetailCert(r)}
-          onRevoke={() => setRevokeTarget(r)}
-          canRevoke={canAdmin && r.status === 'ACTIVE'}
-        />
-      ),
+      actions: [
+        { label: 'View Details', icon: Eye, onClick: (r) => setDetailCert(r) },
+        { label: 'Download .pub', icon: Download, onClick: (r) => handleDownload(r) },
+        ...(canAdmin
+          ? [
+              { separator: true },
+              {
+                label: 'Revoke',
+                icon: Ban,
+                variant: 'destructive',
+                onClick: (r) => r.status === 'ACTIVE' && setRevokeTarget(r),
+              },
+            ]
+          : []),
+      ],
     },
   ];
 
-  const totalPages = Math.max(1, Math.ceil(total / pageSize));
-  const selectCls =
-    'h-9 rounded-md border border-input bg-background px-3 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-ring';
-
   return (
-    <div className="space-y-5 p-6">
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-2xl font-bold tracking-tight text-foreground">Certificates</h1>
-          <p className="text-sm text-muted-foreground">
-            Short-lived SSH certificates issued by the Shellius CA.
+    <div className="space-y-6 p-6">
+      <PageHeader
+        icon={FileKey}
+        title="Certificates"
+        subtitle="Short-lived SSH certificates issued by the Shellius CA."
+      />
+
+      {expiringSoonCount > 0 && (
+        <div className="flex items-center gap-3 rounded-md border border-amber-500/40 bg-amber-500/10 px-4 py-3">
+          <AlertTriangle className="h-4 w-4 shrink-0 text-amber-600 dark:text-amber-400" />
+          <p className="text-sm text-amber-700 dark:text-amber-300">
+            {expiringSoonCount} of your certificate{expiringSoonCount === 1 ? '' : 's'} expire{expiringSoonCount === 1 ? 's' : ''} within 24 hours.
           </p>
         </div>
-      </div>
-
-      <div className="flex flex-wrap items-center gap-3">
-        <div className="min-w-64 flex-1">
-          <SearchInput
-            value={search}
-            onChange={(v) => setSearch(v)}
-            placeholder="Search by user, server, or serial..."
-          />
-        </div>
-        <select
-          className={selectCls}
-          value={statusFilter}
-          onChange={(e) => {
-            setStatusFilter(e.target.value);
-            setPage(1);
-          }}
-        >
-          <option value="">All statuses</option>
-          {STATUSES.map((s) => (
-            <option key={s} value={s}>
-              {s}
-            </option>
-          ))}
-        </select>
-      </div>
+      )}
 
       {error && (
         <div className="rounded-md border border-destructive/50 bg-destructive/10 px-3 py-2 text-sm text-destructive">
@@ -376,40 +356,19 @@ function Certificates() {
 
       <DataTable
         columns={columns}
-        data={filteredCerts}
+        data={certs}
         loading={loading}
         emptyMessage="No certificates found"
+        searchPlaceholder="Search by user, server, or serial..."
+        filters={filterSlot}
+        serverPagination={{ page, total, onPageChange: setPage }}
       />
-
-      <div className="flex items-center justify-between">
-        <p className="text-sm text-muted-foreground">
-          {total} certificate{total === 1 ? '' : 's'}
-        </p>
-        <div className="flex items-center gap-2">
-          <button
-            onClick={() => setPage((p) => Math.max(1, p - 1))}
-            disabled={page <= 1}
-            className="flex h-8 items-center gap-1 rounded-md border border-input bg-background px-3 text-sm text-foreground hover:bg-accent disabled:opacity-50"
-          >
-            <ChevronLeft className="h-4 w-4" /> Previous
-          </button>
-          <span className="text-sm text-muted-foreground">
-            Page {page} of {totalPages}
-          </span>
-          <button
-            onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
-            disabled={page >= totalPages}
-            className="flex h-8 items-center gap-1 rounded-md border border-input bg-background px-3 text-sm text-foreground hover:bg-accent disabled:opacity-50"
-          >
-            Next <ChevronRight className="h-4 w-4" />
-          </button>
-        </div>
-      </div>
 
       <CertDetailModal
         cert={detailCert}
         open={!!detailCert}
         onClose={() => setDetailCert(null)}
+        onDownload={handleDownload}
       />
 
       <ConfirmDialog

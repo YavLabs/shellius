@@ -1,11 +1,12 @@
 import { useState, useEffect, useCallback } from 'react';
-import { X, Plus } from 'lucide-react';
+import { X, Plus, FlaskConical } from 'lucide-react';
 import Modal from '@/components/shared/Modal';
 import EnvironmentBadge from '@/components/shared/EnvironmentBadge';
 import { listUsers } from '@/services/userService';
 import { listGroups } from '@/services/groupService';
 import { listCustomers } from '@/services/customerService';
 import { listServers } from '@/services/serverService';
+import PolicyEvaluator from '@/components/policies/PolicyEvaluator';
 
 const ENVIRONMENTS = ['demo', 'dev', 'staging', 'prod'];
 const STEPS = ['Basics', 'Subjects', 'Targets', 'Constraints'];
@@ -132,11 +133,12 @@ function Step1({ form, onChange, errors }) {
           <input
             className={inputCls}
             type="number"
-            min={0}
+            min={1}
+            max={1000}
             value={form.priority}
             onChange={(e) => onChange('priority', Number(e.target.value))}
           />
-          <p className="text-xs text-muted-foreground mt-1">Higher priority evaluates first.</p>
+          <p className="text-xs text-muted-foreground mt-1">Higher priority evaluates first (1–1000).</p>
         </div>
         <div className="flex flex-col justify-end pb-1">
           <label className="flex items-center gap-2 cursor-pointer">
@@ -630,14 +632,14 @@ function Step4({ form, onChange, errors }) {
 }
 
 // Main PolicyForm ─────────────────────────────────────────────────────────────
-function PolicyForm({ open, onClose, onSubmit, policy }) {
+function PolicyForm({ open, onClose, onSubmit, policy, onEvaluate }) {
   const isEdit = !!policy;
 
   const defaultForm = {
     name: '',
     description: '',
     effect: 'ALLOW',
-    priority: 0,
+    priority: 1,
     isActive: true,
     subjects: [],
     customerId: null,
@@ -655,6 +657,7 @@ function PolicyForm({ open, onClose, onSubmit, policy }) {
   const [errors, setErrors] = useState({});
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState('');
+  const [evaluatorOpen, setEvaluatorOpen] = useState(false);
 
   useEffect(() => {
     if (open) {
@@ -663,7 +666,7 @@ function PolicyForm({ open, onClose, onSubmit, policy }) {
           name: policy.name || '',
           description: policy.description || '',
           effect: policy.effect || 'ALLOW',
-          priority: policy.priority ?? 0,
+          priority: policy.priority ?? 1,
           isActive: policy.isActive ?? true,
           subjects: (policy.subjects || []).map((s) => ({
             subjectType: s.subjectType,
@@ -734,7 +737,7 @@ function PolicyForm({ open, onClose, onSubmit, policy }) {
         name: form.name.trim(),
         description: form.description.trim() || undefined,
         effect: form.effect,
-        priority: form.priority,
+        priority: Math.max(1, Number(form.priority) || 1),
         isActive: form.isActive,
         subjects: (form.subjects || []).map(({ subjectType, subjectId }) => ({
           subjectType,
@@ -787,25 +790,42 @@ function PolicyForm({ open, onClose, onSubmit, policy }) {
         >
           {step === 1 ? 'Cancel' : 'Back'}
         </button>
-        {step < STEPS.length ? (
+        <div className="flex items-center gap-2">
           <button
             type="button"
-            onClick={handleNext}
-            className="h-9 rounded-md bg-primary px-4 text-sm font-medium text-primary-foreground hover:bg-primary/90"
+            onClick={() => setEvaluatorOpen(true)}
+            className="flex h-9 items-center gap-1.5 rounded-md border border-input bg-background px-3 text-sm font-medium text-foreground hover:bg-accent"
+            title="Preview policy evaluation"
           >
-            Next
+            <FlaskConical className="h-3.5 w-3.5" />
+            Evaluate
           </button>
-        ) : (
-          <button
-            type="button"
-            onClick={handleSubmit}
-            disabled={submitting}
-            className="h-9 rounded-md bg-primary px-4 text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-60"
-          >
-            {submitting ? 'Saving...' : isEdit ? 'Save Changes' : 'Create Policy'}
-          </button>
-        )}
+          {step < STEPS.length ? (
+            <button
+              type="button"
+              onClick={handleNext}
+              className="h-9 rounded-md bg-primary px-4 text-sm font-medium text-primary-foreground hover:bg-primary/90"
+            >
+              Next
+            </button>
+          ) : (
+            <button
+              type="button"
+              onClick={handleSubmit}
+              disabled={submitting}
+              className="h-9 rounded-md bg-primary px-4 text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-60"
+            >
+              {submitting ? 'Saving...' : isEdit ? 'Save Changes' : 'Create Policy'}
+            </button>
+          )}
+        </div>
       </div>
+
+      <PolicyEvaluator
+        open={evaluatorOpen}
+        onClose={() => setEvaluatorOpen(false)}
+        policy={policy || form}
+      />
     </Modal>
   );
 }

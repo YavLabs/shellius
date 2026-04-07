@@ -7,7 +7,9 @@ import {
   FileKey,
   ArrowRight,
   ScrollText,
+  LayoutDashboard,
 } from 'lucide-react';
+import PageHeader from '@/components/common/PageHeader';
 import MyAccessWidget from '@/components/dashboard/MyAccessWidget';
 import { useAuth } from '@/context/AuthContext';
 import { getServerStats } from '@/services/serverService';
@@ -165,12 +167,11 @@ function Dashboard() {
   return (
     <div className="space-y-6 p-6">
       {/* Page heading */}
-      <div>
-        <h1 className="text-lg font-semibold tracking-tight text-foreground">Dashboard</h1>
-        <p className="mt-1 text-sm text-muted-foreground">
-          Overview of your infrastructure and access management.
-        </p>
-      </div>
+      <PageHeader
+        icon={LayoutDashboard}
+        title="Dashboard"
+        subtitle="Overview of your infrastructure and access management."
+      />
 
       {/* Stat cards */}
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">

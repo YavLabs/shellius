@@ -122,11 +122,21 @@ function filterPolicies(policies, server, serverId, requestedPrincipal) {
 /**
  * Evaluate access for a user against a specific server.
  *
+ * Supports three modes:
+ *   1. `draftPolicy` supplied — evaluate that single draft policy object without
+ *      loading anything from the database.
+ *   2. `policyId` supplied — load that specific saved policy and evaluate it
+ *      against the server, ignoring all other org policies.
+ *   3. Neither — org-wide evaluation (original behaviour): load all active
+ *      policies the user is a subject of and apply deny-before-allow.
+ *
  * @param {object} params
  * @param {string}  params.orgId
  * @param {string}  params.userId
  * @param {string}  params.serverId
  * @param {string}  [params.requestedPrincipal]
+ * @param {string}  [params.policyId]     - evaluate a specific saved policy
+ * @param {object}  [params.draftPolicy]  - evaluate an inline draft policy
  * @returns {Promise<{
  *   allowed: boolean,
  *   requiresApproval: boolean,
@@ -135,9 +145,10 @@ function filterPolicies(policies, server, serverId, requestedPrincipal) {
  *   principals: string[],
  *   maxTtl: number,
  *   policyId?: string,
+ *   draft?: boolean,
  * }>}
  */
-export async function evaluate({ orgId, userId, serverId, requestedPrincipal }) {
+export async function evaluate({ orgId, userId, serverId, requestedPrincipal, policyId, draftPolicy }) {
   if (!orgId) throw new ApiError(400, 'orgId is required');
   if (!userId) throw new ApiError(400, 'userId is required');
   if (!serverId) throw new ApiError(400, 'serverId is required');
@@ -170,6 +181,73 @@ export async function evaluate({ orgId, userId, serverId, requestedPrincipal }) 
       maxTtl: 0,
     };
   }
+
+  // ---------------------------------------------------------------------------
+  // Mode A: Draft policy evaluation (inline, no DB lookup for the policy itself)
+  // ---------------------------------------------------------------------------
+  if (draftPolicy) {
+    const matched = filterPolicies([draftPolicy], server, serverId, requestedPrincipal);
+    if (matched.length === 0 || draftPolicy.effect === 'DENY') {
+      return {
+        allowed: false,
+        requiresApproval: false,
+        autoApprove: false,
+        reason: draftPolicy.effect === 'DENY'
+          ? `Denied by draft policy '${draftPolicy.name}'`
+          : 'Draft policy does not match this server',
+        principals: [],
+        maxTtl: 0,
+        draft: true,
+      };
+    }
+    return {
+      allowed: true,
+      requiresApproval: draftPolicy.requireApproval ?? false,
+      autoApprove: draftPolicy.autoApprove ?? false,
+      principals: draftPolicy.allowedPrincipals ?? [],
+      maxTtl: draftPolicy.maxSessionDuration,
+      reason: `Allowed by draft policy '${draftPolicy.name}'`,
+      draft: true,
+    };
+  }
+
+  // ---------------------------------------------------------------------------
+  // Mode B: Specific saved policy evaluation
+  // ---------------------------------------------------------------------------
+  if (policyId) {
+    const savedPolicy = await prisma.accessPolicy.findFirst({
+      where: { id: policyId, orgId },
+      include: { subjects: true },
+    });
+    if (!savedPolicy) throw new ApiError(404, 'Policy not found');
+
+    const matched = filterPolicies([savedPolicy], server, serverId, requestedPrincipal);
+    if (matched.length === 0 || savedPolicy.effect === 'DENY') {
+      return {
+        allowed: false,
+        requiresApproval: false,
+        autoApprove: false,
+        reason: savedPolicy.effect === 'DENY'
+          ? `Denied by policy '${savedPolicy.name}'`
+          : 'Policy does not match this server',
+        principals: [],
+        maxTtl: 0,
+        policyId: savedPolicy.id,
+      };
+    }
+    return {
+      allowed: true,
+      requiresApproval: savedPolicy.requireApproval,
+      autoApprove: savedPolicy.autoApprove,
+      principals: savedPolicy.allowedPrincipals,
+      maxTtl: savedPolicy.maxSessionDuration,
+      policyId: savedPolicy.id,
+    };
+  }
+
+  // ---------------------------------------------------------------------------
+  // Mode C: Org-wide evaluation (original behaviour)
+  // ---------------------------------------------------------------------------
 
   // Step 3: Resolve user's group memberships
   const userGroupIds = await resolveUserGroupIds(userId, orgId);

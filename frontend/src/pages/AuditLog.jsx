@@ -1,15 +1,31 @@
 import { useState, useEffect, useCallback } from 'react';
 import {
-  ChevronLeft,
-  ChevronRight,
   ChevronDown,
   ChevronUp,
   Download,
   Filter,
   X,
+  ScrollText,
+  Search,
 } from 'lucide-react';
 import Badge from '@/components/shared/Badge';
-import SearchInput from '@/components/shared/SearchInput';
+import DataTable from '@/components/shared/DataTable';
+import PageHeader from '@/components/common/PageHeader';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
 import { listAudit, exportAudit } from '@/services/auditService';
 import { useAuth } from '@/context/AuthContext';
 import { relativeTime, formatDateTime } from '@/utils/time';
@@ -87,7 +103,6 @@ const ACTION_CATEGORIES = {
   },
 };
 
-// Build a reverse map: action string -> badgeClass
 const ACTION_BADGE_MAP = {};
 for (const cat of Object.values(ACTION_CATEGORIES)) {
   for (const action of cat.actions) {
@@ -96,55 +111,27 @@ for (const cat of Object.values(ACTION_CATEGORIES)) {
 }
 
 function ActionBadge({ action }) {
-  const badgeClass =
-    ACTION_BADGE_MAP[action] ||
-    'bg-muted text-foreground border-border';
-
+  const badgeClass = ACTION_BADGE_MAP[action] || 'bg-muted text-foreground border-border';
   return (
-    <span
-      className={`inline-flex items-center rounded-full border px-2 py-0.5 text-xs font-medium ${badgeClass}`}
-    >
+    <span className={`inline-flex items-center rounded-full border px-2 py-0.5 text-xs font-medium ${badgeClass}`}>
       {action}
     </span>
   );
 }
-
-// ---------------------------------------------------------------------------
-// ROLE helpers
-// ---------------------------------------------------------------------------
 
 const ROLE_RANK = { super_admin: 4, admin: 3, operator: 2, viewer: 1 };
 function isAtLeast(user, role) {
   return (ROLE_RANK[user?.role] || 0) >= (ROLE_RANK[role] || 0);
 }
 
-// ---------------------------------------------------------------------------
-// Resource type options
-// ---------------------------------------------------------------------------
-
 const RESOURCE_TYPES = [
-  'User',
-  'Group',
-  'Customer',
-  'Server',
-  'Certificate',
-  'CaKeyPair',
-  'Policy',
-  'AccessRequest',
-  'Session',
-  'CloudConnector',
-  'Organization',
+  'User', 'Group', 'Customer', 'Server', 'Certificate', 'CaKeyPair',
+  'Policy', 'AccessRequest', 'Session', 'CloudConnector', 'Organization',
 ];
-
-// ---------------------------------------------------------------------------
-// Expandable row metadata viewer
-// ---------------------------------------------------------------------------
 
 function MetadataPanel({ metadata }) {
   if (!metadata) {
-    return (
-      <span className="text-xs text-muted-foreground italic">No metadata</span>
-    );
+    return <span className="text-xs text-muted-foreground italic">No metadata</span>;
   }
   return (
     <pre className="overflow-x-auto whitespace-pre-wrap break-all rounded-md bg-muted/40 p-3 text-xs text-foreground font-mono">
@@ -153,24 +140,19 @@ function MetadataPanel({ metadata }) {
   );
 }
 
-// ---------------------------------------------------------------------------
-// Main page
-// ---------------------------------------------------------------------------
-
 const PAGE_SIZE = 25;
+const selectCls = 'h-9 rounded-md border border-input bg-background px-3 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-ring';
 
 function AuditLog() {
   const { user } = useAuth();
   const canExport = isAtLeast(user, 'super_admin');
 
-  // Data state
   const [items, setItems] = useState([]);
   const [total, setTotal] = useState(0);
   const [page, setPage] = useState(1);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
 
-  // Filter state
   const [search, setSearch] = useState('');
   const [actionFilter, setActionFilter] = useState('');
   const [resourceTypeFilter, setResourceTypeFilter] = useState('');
@@ -178,9 +160,7 @@ function AuditLog() {
   const [startDate, setStartDate] = useState('');
   const [endDate, setEndDate] = useState('');
 
-  // UI state
   const [expandedRow, setExpandedRow] = useState(null);
-  const [exportMenuOpen, setExportMenuOpen] = useState(false);
   const [exporting, setExporting] = useState(false);
 
   const fetchData = useCallback(async () => {
@@ -205,9 +185,7 @@ function AuditLog() {
     }
   }, [page, search, actionFilter, resourceTypeFilter, actorSearch, startDate, endDate]);
 
-  useEffect(() => {
-    fetchData();
-  }, [fetchData]);
+  useEffect(() => { fetchData(); }, [fetchData]);
 
   const handleFilterChange = (setter) => (value) => {
     setter(value);
@@ -216,7 +194,6 @@ function AuditLog() {
   };
 
   const handleExport = async (format) => {
-    setExportMenuOpen(false);
     setExporting(true);
     try {
       const params = {};
@@ -244,168 +221,207 @@ function AuditLog() {
     setExpandedRow(null);
   };
 
-  const hasFilters =
-    search || actionFilter || resourceTypeFilter || actorSearch || startDate || endDate;
-
+  const hasFilters = search || actionFilter || resourceTypeFilter || actorSearch || startDate || endDate;
   const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
-  const selectCls =
-    'h-9 rounded-md border border-input bg-background px-3 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-ring';
 
-  return (
-    <div className="space-y-5 p-6">
-      {/* Header */}
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-2xl font-bold tracking-tight text-foreground">Audit Log</h1>
-          <p className="text-sm text-muted-foreground">
-            Immutable record of all system events.
-          </p>
-        </div>
+  // AuditLog uses a bespoke table to support expand-row metadata viewer.
+  // The DataTable v2 `filters` slot is used for the filter bar, and we wire
+  // `serverPagination` for the standard pagination footer. The table body
+  // is rendered manually to support the expand/collapse row pattern.
 
-        {canExport && (
-          <div className="relative">
-            <button
-              onClick={() => setExportMenuOpen((o) => !o)}
-              disabled={exporting}
-              className="flex items-center gap-2 rounded-md border border-input bg-background px-3 py-2 text-sm font-medium text-foreground hover:bg-accent disabled:opacity-50 transition-colors"
-            >
-              <Download className="h-4 w-4" />
-              {exporting ? 'Exporting...' : 'Export'}
-              <ChevronDown className="h-3.5 w-3.5" />
-            </button>
-            {exportMenuOpen && (
-              <>
-                <div
-                  className="fixed inset-0 z-10"
-                  onClick={() => setExportMenuOpen(false)}
-                />
-                <div className="absolute right-0 z-20 mt-1 w-36 rounded-md border border-border bg-card shadow-md">
-                  <button
-                    className="flex w-full items-center px-3 py-2 text-sm text-foreground hover:bg-accent transition-colors"
-                    onClick={() => handleExport('csv')}
-                  >
-                    Export as CSV
-                  </button>
-                  <button
-                    className="flex w-full items-center px-3 py-2 text-sm text-foreground hover:bg-accent transition-colors"
-                    onClick={() => handleExport('json')}
-                  >
-                    Export as JSON
-                  </button>
-                </div>
-              </>
-            )}
-          </div>
+  const columns = [
+    {
+      key: 'createdAt',
+      label: 'Timestamp',
+      sortable: false,
+      render: (item) => (
+        <span className="text-xs text-muted-foreground whitespace-nowrap" title={formatDateTime(item.createdAt)}>
+          {relativeTime(item.createdAt)}
+        </span>
+      ),
+    },
+    {
+      key: 'action',
+      label: 'Action',
+      render: (item) => <ActionBadge action={item.action} />,
+    },
+    {
+      key: 'actorId',
+      label: 'Actor',
+      render: (item) => (
+        <span className="font-mono text-xs text-muted-foreground">
+          {item.actorId ? item.actorId.slice(0, 8) + '...' : <span className="italic">system</span>}
+        </span>
+      ),
+    },
+    {
+      key: 'resource',
+      label: 'Resource',
+      render: (item) => (
+        <span className="text-xs text-foreground">
+          {item.resourceType}
+          {item.resourceId && (
+            <span className="ml-1 font-mono text-muted-foreground">
+              :{item.resourceId.slice(0, 8)}
+            </span>
+          )}
+        </span>
+      ),
+    },
+    {
+      key: 'ipAddress',
+      label: 'IP',
+      render: (item) => (
+        <span className="font-mono text-xs text-muted-foreground">{item.ipAddress || '-'}</span>
+      ),
+    },
+    {
+      key: '_expand',
+      label: '',
+      className: 'w-8',
+      render: (item) => {
+        const isExpanded = expandedRow === item.id;
+        return isExpanded ? (
+          <ChevronUp className="h-3.5 w-3.5 text-muted-foreground" />
+        ) : (
+          <ChevronDown className="h-3.5 w-3.5 text-muted-foreground" />
+        );
+      },
+    },
+  ];
+
+  // Build the filter JSX for the DataTable filters slot
+  const filterSlot = (
+    <div className="space-y-3 rounded-lg border border-border bg-card p-4 w-full">
+      <div className="flex items-center gap-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">
+        <Filter className="h-3.5 w-3.5" />
+        Filters
+        {hasFilters && (
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={clearFilters}
+            className="ml-auto h-6 px-2 text-xs text-muted-foreground"
+          >
+            <X className="mr-1 h-3 w-3" />
+            Clear
+          </Button>
         )}
       </div>
 
-      {/* Filter bar */}
-      <div className="space-y-3 rounded-lg border border-border bg-card p-4">
-        <div className="flex items-center gap-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">
-          <Filter className="h-3.5 w-3.5" />
-          Filters
-          {hasFilters && (
-            <button
-              onClick={clearFilters}
-              className="ml-auto flex items-center gap-1 rounded-md px-2 py-0.5 text-xs text-muted-foreground hover:bg-accent hover:text-foreground transition-colors"
-            >
-              <X className="h-3 w-3" />
-              Clear
-            </button>
-          )}
+      <div className="flex flex-wrap items-end gap-3">
+        {/* Free-text search */}
+        <div className="min-w-48 flex-1">
+          <label className="mb-1 block text-xs text-muted-foreground">Search</label>
+          <div className="relative">
+            <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+            <Input
+              value={search}
+              onChange={(e) => handleFilterChange(setSearch)(e.target.value)}
+              placeholder="Search actions, resources..."
+              className="pl-9"
+            />
+          </div>
         </div>
 
-        <div className="flex flex-wrap items-end gap-3">
-          {/* Free-text search */}
-          <div className="min-w-48 flex-1">
-            <label className="mb-1 block text-xs text-muted-foreground">Search</label>
-            <SearchInput
-              value={search}
-              onChange={handleFilterChange(setSearch)}
-              placeholder="Search actions, resources..."
-            />
-          </div>
+        {/* Actor search */}
+        <div className="min-w-36">
+          <label className="mb-1 block text-xs text-muted-foreground">Actor ID</label>
+          <Input
+            type="text"
+            value={actorSearch}
+            onChange={(e) => handleFilterChange(setActorSearch)(e.target.value)}
+            placeholder="User ID..."
+          />
+        </div>
 
-          {/* Actor search */}
-          <div className="min-w-36">
-            <label className="mb-1 block text-xs text-muted-foreground">Actor ID</label>
-            <input
-              type="text"
-              value={actorSearch}
-              onChange={(e) => handleFilterChange(setActorSearch)(e.target.value)}
-              placeholder="User ID..."
-              className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring"
-            />
-          </div>
+        {/* Action filter — native select for optgroup support */}
+        <div className="min-w-44">
+          <label className="mb-1 block text-xs text-muted-foreground">Action</label>
+          <select
+            value={actionFilter}
+            onChange={(e) => handleFilterChange(setActionFilter)(e.target.value)}
+            className={selectCls}
+          >
+            <option value="">All actions</option>
+            {Object.entries(ACTION_CATEGORIES).map(([catKey, cat]) => (
+              <optgroup key={catKey} label={cat.label}>
+                {cat.actions.map((action) => (
+                  <option key={action} value={action}>{action}</option>
+                ))}
+              </optgroup>
+            ))}
+          </select>
+        </div>
 
-          {/* Action filter grouped by category */}
-          <div className="min-w-44">
-            <label className="mb-1 block text-xs text-muted-foreground">Action</label>
-            <select
-              value={actionFilter}
-              onChange={(e) => handleFilterChange(setActionFilter)(e.target.value)}
-              className={selectCls}
-            >
-              <option value="">All actions</option>
-              {Object.entries(ACTION_CATEGORIES).map(([catKey, cat]) => (
-                <optgroup key={catKey} label={cat.label}>
-                  {cat.actions.map((action) => (
-                    <option key={action} value={action}>
-                      {action}
-                    </option>
-                  ))}
-                </optgroup>
-              ))}
-            </select>
-          </div>
+        {/* Resource type filter */}
+        <div className="min-w-36">
+          <label className="mb-1 block text-xs text-muted-foreground">Resource Type</label>
+          <Select
+            value={resourceTypeFilter || '_all'}
+            onValueChange={(v) => handleFilterChange(setResourceTypeFilter)(v === '_all' ? '' : v)}
+          >
+            <SelectTrigger className="w-full"><SelectValue placeholder="All types" /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="_all">All types</SelectItem>
+              {RESOURCE_TYPES.map((t) => <SelectItem key={t} value={t}>{t}</SelectItem>)}
+            </SelectContent>
+          </Select>
+        </div>
 
-          {/* Resource type filter */}
-          <div className="min-w-36">
-            <label className="mb-1 block text-xs text-muted-foreground">Resource Type</label>
-            <select
-              value={resourceTypeFilter}
-              onChange={(e) => handleFilterChange(setResourceTypeFilter)(e.target.value)}
-              className={selectCls}
-            >
-              <option value="">All types</option>
-              {RESOURCE_TYPES.map((t) => (
-                <option key={t} value={t}>
-                  {t}
-                </option>
-              ))}
-            </select>
-          </div>
-
-          {/* Date range */}
-          <div className="min-w-36">
-            <label className="mb-1 block text-xs text-muted-foreground">From</label>
-            <input
-              type="date"
-              value={startDate}
-              onChange={(e) => handleFilterChange(setStartDate)(e.target.value)}
-              className="h-9 rounded-md border border-input bg-background px-3 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
-            />
-          </div>
-          <div className="min-w-36">
-            <label className="mb-1 block text-xs text-muted-foreground">To</label>
-            <input
-              type="date"
-              value={endDate}
-              onChange={(e) => handleFilterChange(setEndDate)(e.target.value)}
-              className="h-9 rounded-md border border-input bg-background px-3 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
-            />
-          </div>
+        {/* Date range */}
+        <div className="min-w-36">
+          <label className="mb-1 block text-xs text-muted-foreground">From</label>
+          <input
+            type="date"
+            value={startDate}
+            onChange={(e) => handleFilterChange(setStartDate)(e.target.value)}
+            className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
+          />
+        </div>
+        <div className="min-w-36">
+          <label className="mb-1 block text-xs text-muted-foreground">To</label>
+          <input
+            type="date"
+            value={endDate}
+            onChange={(e) => handleFilterChange(setEndDate)(e.target.value)}
+            className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
+          />
         </div>
       </div>
+    </div>
+  );
 
-      {/* Error */}
+  return (
+    <div className="space-y-6 p-6">
+      <PageHeader icon={ScrollText} title="Audit Log" subtitle="Immutable record of all system events.">
+        {canExport && (
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button variant="outline" disabled={exporting}>
+                <Download className="mr-2 h-4 w-4" />
+                {exporting ? 'Exporting...' : 'Export'}
+                <ChevronDown className="ml-2 h-3.5 w-3.5" />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" className="w-40">
+              <DropdownMenuItem onClick={() => handleExport('csv')}>Export as CSV</DropdownMenuItem>
+              <DropdownMenuItem onClick={() => handleExport('json')}>Export as JSON</DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+        )}
+      </PageHeader>
+
+      {/* Filter panel (not inside DataTable — rendered as a standalone block) */}
+      {filterSlot}
+
       {error && (
         <div className="rounded-md border border-destructive/50 bg-destructive/10 px-3 py-2 text-sm text-destructive">
           {error}
         </div>
       )}
 
-      {/* Table */}
+      {/* Bespoke table with expand-row support */}
       <div className="overflow-hidden rounded-lg border border-border bg-card">
         <div className="overflow-x-auto">
           <table className="w-full border-collapse text-sm">
@@ -456,32 +472,21 @@ function AuditLog() {
                         onClick={() => setExpandedRow(isExpanded ? null : item.id)}
                         className="border-b border-border cursor-pointer transition-colors hover:bg-accent/30 last:border-0"
                       >
-                        {/* Timestamp */}
                         <td className="px-4 py-3 whitespace-nowrap">
-                          <span
-                            className="text-xs text-muted-foreground"
-                            title={formatDateTime(item.createdAt)}
-                          >
+                          <span className="text-xs text-muted-foreground" title={formatDateTime(item.createdAt)}>
                             {relativeTime(item.createdAt)}
                           </span>
                         </td>
-
-                        {/* Action */}
                         <td className="px-4 py-3">
                           <ActionBadge action={item.action} />
                         </td>
-
-                        {/* Actor */}
                         <td className="px-4 py-3">
                           <span className="font-mono text-xs text-muted-foreground">
                             {item.actorId
                               ? item.actorId.slice(0, 8) + '...'
-                              : <span className="italic">system</span>
-                            }
+                              : <span className="italic">system</span>}
                           </span>
                         </td>
-
-                        {/* Resource */}
                         <td className="px-4 py-3">
                           <span className="text-xs text-foreground">
                             {item.resourceType}
@@ -492,15 +497,11 @@ function AuditLog() {
                             )}
                           </span>
                         </td>
-
-                        {/* IP */}
                         <td className="px-4 py-3">
                           <span className="font-mono text-xs text-muted-foreground">
                             {item.ipAddress || '-'}
                           </span>
                         </td>
-
-                        {/* Expand toggle */}
                         <td className="px-4 py-3 text-muted-foreground">
                           {isExpanded ? (
                             <ChevronUp className="h-3.5 w-3.5" />
@@ -510,7 +511,6 @@ function AuditLog() {
                         </td>
                       </tr>
 
-                      {/* Expanded metadata row */}
                       {isExpanded && (
                         <tr key={`${item.id}-expanded`} className="border-b border-border bg-muted/20">
                           <td colSpan={6} className="px-6 py-4">
@@ -526,9 +526,7 @@ function AuditLog() {
                                   <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
                                     Actor ID
                                   </p>
-                                  <p className="text-xs text-foreground font-mono mb-3">
-                                    {item.actorId}
-                                  </p>
+                                  <p className="text-xs text-foreground font-mono mb-3">{item.actorId}</p>
                                 </>
                               )}
                               {item.resourceId && (
@@ -536,9 +534,7 @@ function AuditLog() {
                                   <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
                                     Resource ID
                                   </p>
-                                  <p className="text-xs text-foreground font-mono mb-3">
-                                    {item.resourceId}
-                                  </p>
+                                  <p className="text-xs text-foreground font-mono mb-3">{item.resourceId}</p>
                                 </>
                               )}
                               <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
@@ -558,30 +554,48 @@ function AuditLog() {
         </div>
       </div>
 
-      {/* Pagination */}
-      <div className="flex items-center justify-between">
-        <p className="text-sm text-muted-foreground">
-          {total} event{total === 1 ? '' : 's'}
-        </p>
-        <div className="flex items-center gap-2">
-          <button
-            onClick={() => setPage((p) => Math.max(1, p - 1))}
-            disabled={page <= 1}
-            className="flex h-8 items-center gap-1 rounded-md border border-input bg-background px-3 text-sm text-foreground hover:bg-accent disabled:opacity-50 transition-colors"
-          >
-            <ChevronLeft className="h-4 w-4" /> Previous
-          </button>
-          <span className="text-sm text-muted-foreground">
-            Page {page} of {totalPages}
-          </span>
-          <button
-            onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
-            disabled={page >= totalPages}
-            className="flex h-8 items-center gap-1 rounded-md border border-input bg-background px-3 text-sm text-foreground hover:bg-accent disabled:opacity-50 transition-colors"
-          >
-            Next <ChevronRight className="h-4 w-4" />
-          </button>
-        </div>
+      {/* Standard pagination footer via DataTable v2 — rendered as a small helper component */}
+      <AuditPagination
+        page={page}
+        total={total}
+        pageSize={PAGE_SIZE}
+        totalPages={totalPages}
+        onPageChange={setPage}
+      />
+    </div>
+  );
+}
+
+// Minimal pagination footer matching DataTable v2 style
+function AuditPagination({ page, total, pageSize, totalPages, onPageChange }) {
+  const startRow = total === 0 ? 0 : (page - 1) * pageSize + 1;
+  const endRow = Math.min(page * pageSize, total);
+
+  return (
+    <div className="flex items-center justify-between gap-4 text-sm text-muted-foreground">
+      <span className="whitespace-nowrap tabular-nums">
+        Showing {startRow}–{endRow} of {total}
+      </span>
+      <div className="flex items-center gap-2">
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={() => onPageChange(Math.max(1, page - 1))}
+          disabled={page <= 1}
+        >
+          Previous
+        </Button>
+        <span className="text-sm text-muted-foreground">
+          Page {page} of {totalPages}
+        </span>
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={() => onPageChange(Math.min(totalPages, page + 1))}
+          disabled={page >= totalPages}
+        >
+          Next
+        </Button>
       </div>
     </div>
   );

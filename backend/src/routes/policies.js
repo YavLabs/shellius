@@ -83,10 +83,29 @@ const listQuerySchema = Joi.object({
   pageSize: Joi.number().integer().min(1).max(100).default(25),
 });
 
+const draftPolicySchema = Joi.object({
+  name: Joi.string().min(1).max(255).required(),
+  effect: Joi.string().valid('ALLOW', 'DENY').required(),
+  targetEnvironments: Joi.array().items(Joi.string().valid(...ENVIRONMENTS)).default([]),
+  targetLabels: Joi.object().default({}),
+  targetServerIds: Joi.array().items(Joi.string()).default([]),
+  allowedPrincipals: Joi.array().items(Joi.string()).default([]),
+  maxSessionDuration: Joi.number().integer().min(60).max(604800).required(),
+  requireApproval: Joi.boolean().default(false),
+  autoApprove: Joi.boolean().default(false),
+  priority: Joi.number().integer().min(1).max(9999).default(100),
+  customerId: Joi.string().allow(null),
+  subjects: Joi.array().items(subjectSchema).default([]),
+});
+
+// evaluate accepts any combination of the optional policyId / policy fields;
+// the route handler decides how to interpret them.
 const evaluateBodySchema = Joi.object({
   userId: Joi.string().required(),
   serverId: Joi.string().required(),
   requestedPrincipal: Joi.string(),
+  policyId: Joi.string(),          // evaluate a saved policy by id
+  policy: draftPolicySchema,       // evaluate a draft policy inline
 });
 
 // ---------------------------------------------------------------------------
@@ -118,12 +137,16 @@ router.post(
   requireRole('super_admin', 'admin'),
   validate(evaluateBodySchema),
   asyncHandler(async (req, res) => {
-    const { userId, serverId, requestedPrincipal } = req.body;
+    const { userId, serverId, requestedPrincipal, policyId, policy } = req.body;
     const result = await policyService.evaluate({
       orgId: req.orgId,
       userId,
       serverId,
       requestedPrincipal,
+      // Pass through so the service can evaluate against a specific saved
+      // policy or a draft policy object; fall back to org-wide if neither.
+      policyId,
+      draftPolicy: policy,
     });
     res.json({ success: true, data: result });
   })
