@@ -20,9 +20,22 @@ function OutcomeBadge({ outcome }) {
   const cls = styles[outcome] || 'bg-muted text-muted-foreground border border-border';
   return (
     <span className={`inline-flex items-center rounded-full px-3 py-1 text-sm font-semibold ${cls}`}>
-      {labels[outcome] || outcome}
+      {labels[outcome] || outcome || '—'}
     </span>
   );
+}
+
+// Phase 18D: derive a canonical outcome string from whatever shape the
+// backend returns. Today the backend uses { allowed, requiresApproval,
+// autoApprove, reason, maxTtl, policyId } — no top-level `outcome` field —
+// so we derive it. If a future backend rev adds `outcome`, prefer that.
+function deriveOutcome(result) {
+  if (!result) return null;
+  if (typeof result.outcome === 'string') return result.outcome;
+  if (result.allowed === false) return 'deny';
+  if (result.allowed === true && result.requiresApproval === true) return 'requires_approval';
+  if (result.allowed === true) return 'allow';
+  return null;
 }
 
 function PolicyEvaluator({ open, onClose, policy }) {
@@ -152,39 +165,51 @@ function PolicyEvaluator({ open, onClose, policy }) {
           <div className="rounded-lg border border-border bg-muted/20 p-4 space-y-3">
             <div className="flex items-center gap-3">
               <span className="text-sm font-medium text-foreground">Outcome:</span>
-              <OutcomeBadge outcome={result.outcome} />
+              <OutcomeBadge outcome={deriveOutcome(result)} />
             </div>
 
-            {result.matchedRule && (
+            {result.reason && (
               <div>
                 <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground mb-1">
-                  Matched Rule
+                  Reason
                 </p>
-                <pre className="overflow-x-auto rounded border border-border bg-background px-3 py-2 text-xs text-foreground whitespace-pre-wrap break-all">
-                  {typeof result.matchedRule === 'string'
-                    ? result.matchedRule
-                    : JSON.stringify(result.matchedRule, null, 2)}
-                </pre>
+                <p className="text-sm text-foreground">{result.reason}</p>
               </div>
             )}
 
-            {result.constraints && Object.keys(result.constraints).length > 0 && (
+            {result.policyId && (
               <div>
                 <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground mb-1">
-                  Constraints
+                  Matched Policy
                 </p>
-                <dl className="space-y-1">
-                  {Object.entries(result.constraints).map(([k, v]) => (
+                <code className="text-xs font-mono text-foreground">{result.policyId}</code>
+              </div>
+            )}
+
+            {/* Render the rest of the row as a compact details list so any
+                future backend field is visible without further frontend
+                changes. */}
+            <div>
+              <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground mb-1">
+                Details
+              </p>
+              <dl className="space-y-1">
+                {Object.entries(result)
+                  .filter(([k]) => !['reason', 'policyId', 'outcome'].includes(k))
+                  .map(([k, v]) => (
                     <div key={k} className="flex items-start gap-2 text-xs">
                       <dt className="w-40 shrink-0 font-medium text-muted-foreground">{k}</dt>
                       <dd className="text-foreground break-all">
-                        {typeof v === 'object' ? JSON.stringify(v) : String(v)}
+                        {v == null
+                          ? '—'
+                          : typeof v === 'object'
+                          ? JSON.stringify(v)
+                          : String(v)}
                       </dd>
                     </div>
                   ))}
-                </dl>
-              </div>
-            )}
+              </dl>
+            </div>
           </div>
         )}
       </div>

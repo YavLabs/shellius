@@ -53,7 +53,7 @@ function Servers() {
   const [servers, setServers] = useState([]);
   const [total, setTotal] = useState(0);
   const [page, setPage] = useState(1);
-  const [pageSize] = useState(20);
+  const [pageSize, setPageSize] = useState(20);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
 
@@ -407,7 +407,13 @@ function Servers() {
         onSelectionChange={setSelected}
         bulkActions={bulkActionsSlot}
         onRowClick={(r) => navigate(`/servers/${r.id}`)}
-        serverPagination={{ page, total, onPageChange: setPage }}
+        serverPagination={{
+          page,
+          total,
+          onPageChange: setPage,
+          pageSize,
+          onPageSizeChange: (size) => { setPageSize(size); setPage(1); },
+        }}
       />
 
       <Modal

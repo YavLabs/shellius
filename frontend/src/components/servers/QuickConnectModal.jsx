@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { Lock, Unlock } from 'lucide-react';
 import Modal from '@/components/shared/Modal';
+import PrivateIPWarning from './PrivateIPWarning';
 import EnvironmentBadge from '@/components/shared/EnvironmentBadge';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -114,6 +115,9 @@ function QuickConnectModal({ open, onClose, server, currentUser, activeRequest }
       size="md"
     >
       <div className="space-y-4">
+        {/* VPN warning when the server's IP is private (Phase 18E) */}
+        <PrivateIPWarning ipAddress={server?.ipAddress} />
+
         {/* Read-only connection info */}
         <div className="grid grid-cols-3 gap-3">
           <div>

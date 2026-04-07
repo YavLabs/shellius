@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
-import { Link, NavLink, useLocation } from 'react-router-dom';
+import { Link, NavLink, useLocation, useNavigate } from 'react-router-dom';
 import {
   LayoutDashboard,
   Building2,
@@ -14,6 +14,7 @@ import {
   Bell,
   Cloud,
   Settings,
+  User,
   PanelLeft,
   PanelLeftClose,
   Menu,
@@ -89,14 +90,23 @@ const NAV_SECTIONS = [
   },
 ];
 
-const BOTTOM_NAV = [{ id: 'settings', label: 'Settings', icon: Settings, to: '/settings' }];
+const BOTTOM_NAV = [
+  { id: 'profile', label: 'Profile', icon: User, to: '/profile' },
+  { id: 'settings', label: 'Settings', icon: Settings, to: '/settings' },
+];
 
 // ---------------------------------------------------------------------------
 // SectionHeader
 // ---------------------------------------------------------------------------
 
 function SectionHeader({ label, collapsed }) {
-  if (collapsed) return <div className="mt-4" />;
+  // Phase 18B: in collapsed mode, show a horizontal divider so the visual
+  // grouping survives even though the text label is hidden.
+  if (collapsed) {
+    return (
+      <div className="mx-2 my-2 h-px bg-border/60" aria-hidden="true" />
+    );
+  }
   return (
     <p className="mt-6 mb-1 px-3 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground/70 select-none">
       {label}
@@ -114,10 +124,15 @@ function NavItem({ to, icon: Icon, label, badge, collapsed, exact = false, onNav
       to={to}
       end={exact}
       onClick={onNavigate}
+      aria-label={collapsed ? label : undefined}
       className={({ isActive }) =>
         cn(
-          'group flex items-center gap-3 py-1.5 text-sm transition-colors duration-150',
-          collapsed ? 'justify-center rounded-md px-2' : 'rounded-md px-3',
+          'group flex items-center py-1.5 text-sm transition-colors duration-150',
+          // Phase 18B: in collapsed mode strip gap-3 (no label to space against)
+          // and force-center the icon in the rail.
+          collapsed
+            ? 'mx-auto h-9 w-9 justify-center rounded-md'
+            : 'gap-3 rounded-md px-3',
           isActive
             ? 'bg-accent/60 text-primary font-medium'
             : 'text-muted-foreground hover:bg-accent/50 hover:text-foreground'
@@ -271,16 +286,32 @@ function SidebarBody({ collapsed, onToggle, onNavigate }) {
       {/* Bottom: settings + user */}
       <div className="shrink-0 border-t border-border px-2 py-3 space-y-0.5">
         {BOTTOM_NAV.map(renderItem)}
-        {!collapsed && user && (
-          <div className="mt-2 flex items-center gap-2 rounded-md px-3 py-2">
-            <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-primary text-xs font-medium text-primary-foreground">
-              {user.name?.[0]?.toUpperCase() || 'U'}
+        {user && (
+          collapsed ? (
+            // Phase 18B: avatar visible in collapsed mode as a centered
+            // circle with tooltip, instead of vanishing entirely.
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <div className="mx-auto mt-2 flex h-9 w-9 cursor-default items-center justify-center rounded-full bg-primary text-xs font-semibold text-primary-foreground">
+                  {user.name?.[0]?.toUpperCase() || 'U'}
+                </div>
+              </TooltipTrigger>
+              <TooltipContent side="right">
+                <span className="font-medium">{user.name}</span>
+                {user.role && <span className="text-muted-foreground"> · {user.role}</span>}
+              </TooltipContent>
+            </Tooltip>
+          ) : (
+            <div className="mt-2 flex items-center gap-2 rounded-md px-3 py-2">
+              <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-primary text-xs font-medium text-primary-foreground">
+                {user.name?.[0]?.toUpperCase() || 'U'}
+              </div>
+              <div className="min-w-0 flex-1">
+                <p className="truncate text-xs font-medium text-foreground">{user.name}</p>
+                <p className="truncate text-[10px] text-muted-foreground">{user.role}</p>
+              </div>
             </div>
-            <div className="min-w-0 flex-1">
-              <p className="truncate text-xs font-medium text-foreground">{user.name}</p>
-              <p className="truncate text-[10px] text-muted-foreground">{user.role}</p>
-            </div>
-          </div>
+          )
         )}
       </div>
     </div>

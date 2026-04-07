@@ -140,7 +140,6 @@ function MetadataPanel({ metadata }) {
   );
 }
 
-const PAGE_SIZE = 25;
 const selectCls = 'h-9 rounded-md border border-input bg-background px-3 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-ring';
 
 function AuditLog() {
@@ -150,6 +149,7 @@ function AuditLog() {
   const [items, setItems] = useState([]);
   const [total, setTotal] = useState(0);
   const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(25);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
 
@@ -167,7 +167,7 @@ function AuditLog() {
     setLoading(true);
     setError('');
     try {
-      const params = { page, limit: PAGE_SIZE };
+      const params = { page, limit: pageSize };
       if (search) params.search = search;
       if (actionFilter) params.action = actionFilter;
       if (resourceTypeFilter) params.resourceType = resourceTypeFilter;
@@ -183,7 +183,7 @@ function AuditLog() {
     } finally {
       setLoading(false);
     }
-  }, [page, search, actionFilter, resourceTypeFilter, actorSearch, startDate, endDate]);
+  }, [page, pageSize, search, actionFilter, resourceTypeFilter, actorSearch, startDate, endDate]);
 
   useEffect(() => { fetchData(); }, [fetchData]);
 
@@ -222,7 +222,7 @@ function AuditLog() {
   };
 
   const hasFilters = search || actionFilter || resourceTypeFilter || actorSearch || startDate || endDate;
-  const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
+  const totalPages = Math.max(1, Math.ceil(total / pageSize));
 
   // AuditLog uses a bespoke table to support expand-row metadata viewer.
   // The DataTable v2 `filters` slot is used for the filter bar, and we wire
@@ -558,16 +558,17 @@ function AuditLog() {
       <AuditPagination
         page={page}
         total={total}
-        pageSize={PAGE_SIZE}
+        pageSize={pageSize}
         totalPages={totalPages}
         onPageChange={setPage}
+        onPageSizeChange={(size) => { setPageSize(size); setPage(1); }}
       />
     </div>
   );
 }
 
 // Minimal pagination footer matching DataTable v2 style
-function AuditPagination({ page, total, pageSize, totalPages, onPageChange }) {
+function AuditPagination({ page, total, pageSize, totalPages, onPageChange, onPageSizeChange }) {
   const startRow = total === 0 ? 0 : (page - 1) * pageSize + 1;
   const endRow = Math.min(page * pageSize, total);
 
@@ -576,7 +577,21 @@ function AuditPagination({ page, total, pageSize, totalPages, onPageChange }) {
       <span className="whitespace-nowrap tabular-nums">
         Showing {startRow}–{endRow} of {total}
       </span>
-      <div className="flex items-center gap-2">
+      <div className="flex items-center gap-3">
+        {onPageSizeChange && (
+          <label className="flex items-center gap-1.5 text-xs">
+            <span>Rows</span>
+            <select
+              className="h-8 rounded-md border border-input bg-background px-2 text-xs text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
+              value={pageSize}
+              onChange={(e) => onPageSizeChange(Number(e.target.value))}
+            >
+              {[10, 25, 50, 100].map((n) => (
+                <option key={n} value={n}>{n}</option>
+              ))}
+            </select>
+          </label>
+        )}
         <Button
           variant="outline"
           size="sm"

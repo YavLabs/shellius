@@ -148,7 +148,22 @@ router.post(
       policyId,
       draftPolicy: policy,
     });
-    res.json({ success: true, data: result });
+
+    // Derive the canonical outcome string for the frontend contract:
+    //   'allow' | 'deny' | 'requires_approval'
+    // The service returns allowed: boolean + requiresApproval: boolean.
+    // requiresApproval takes precedence over allowed because prod servers
+    // return { allowed: false, requiresApproval: true }.
+    let outcome;
+    if (result.requiresApproval) {
+      outcome = 'requires_approval';
+    } else if (result.allowed) {
+      outcome = 'allow';
+    } else {
+      outcome = 'deny';
+    }
+
+    res.json({ success: true, data: { ...result, outcome } });
   })
 );
 

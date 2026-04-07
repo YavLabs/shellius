@@ -5,6 +5,7 @@ import { createAccessRequest } from '@/services/accessRequestService';
 import { listServers } from '@/services/serverService';
 import { useAuth } from '@/context/AuthContext';
 import { LINUX_USER_RE, defaultPrincipal } from '@/utils/principal';
+import PrivateIPWarning from '@/components/servers/PrivateIPWarning';
 
 const DURATION_UNITS = [
   { label: 'minutes', value: 'minutes', factor: 60 },
@@ -128,6 +129,14 @@ function RequestForm({ open, onClose, onSuccess, initialServerId = '' }) {
               </option>
             ))}
           </select>
+          {serverId && (() => {
+            const sel = servers.find((s) => s.id === serverId);
+            return sel ? (
+              <div className="mt-2">
+                <PrivateIPWarning ipAddress={sel.ipAddress} />
+              </div>
+            ) : null;
+          })()}
         </div>
 
         {/* Protocol */}

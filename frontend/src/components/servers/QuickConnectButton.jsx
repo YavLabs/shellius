@@ -18,20 +18,39 @@ function QuickConnectButton({ server, currentUser }) {
   useEffect(() => {
     if (!server?.id) return;
     let cancelled = false;
-    getActiveAccessForServer(server.id)
-      .then((ar) => {
-        if (!cancelled) setActiveRequest(ar); // null = no active request
-      })
-      .catch(() => {
-        if (!cancelled) setActiveRequest(null);
-      });
+    let interval = null;
+
+    const fetchActive = () => {
+      getActiveAccessForServer(server.id)
+        .then((ar) => {
+          if (!cancelled) setActiveRequest(ar); // null = no active request
+        })
+        .catch(() => {
+          if (!cancelled) setActiveRequest(null);
+        });
+    };
+
+    fetchActive();
+    // Phase 18C: poll every 60s while the row is mounted so a request that
+    // expires mid-session flips the button from "Connect" to "Request Access"
+    // without a manual reload.
+    interval = setInterval(fetchActive, 60_000);
+
     return () => {
       cancelled = true;
+      if (interval) clearInterval(interval);
     };
   }, [server?.id]);
 
   const loading = activeRequest === undefined;
-  const hasAccess = !!activeRequest;
+  // Phase 18C: defensive double-check. The backend filter should already
+  // exclude EXPIRED / DENIED / REVOKED rows (Task 18C backend), but never
+  // trust a single layer.
+  const hasAccess =
+    !!activeRequest &&
+    activeRequest.status === 'APPROVED' &&
+    activeRequest.expiresAt &&
+    new Date(activeRequest.expiresAt) > new Date();
 
   return (
     <>

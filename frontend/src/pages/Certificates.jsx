@@ -160,7 +160,7 @@ function Certificates() {
   const [certs, setCerts] = useState([]);
   const [total, setTotal] = useState(0);
   const [page, setPage] = useState(1);
-  const [pageSize] = useState(20);
+  const [pageSize, setPageSize] = useState(20);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
 
@@ -361,7 +361,13 @@ function Certificates() {
         emptyMessage="No certificates found"
         searchPlaceholder="Search by user, server, or serial..."
         filters={filterSlot}
-        serverPagination={{ page, total, onPageChange: setPage }}
+        serverPagination={{
+          page,
+          total,
+          onPageChange: setPage,
+          pageSize,
+          onPageSizeChange: (size) => { setPageSize(size); setPage(1); },
+        }}
       />
 
       <CertDetailModal

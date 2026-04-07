@@ -9,6 +9,7 @@ import ServerForm from '@/components/servers/ServerForm';
 import BootstrapModal from '@/components/servers/BootstrapModal';
 import UninstallHostModal from '@/components/servers/UninstallHostModal';
 import QuickConnectButton from '@/components/servers/QuickConnectButton';
+import PrivateIPWarning from '@/components/servers/PrivateIPWarning';
 import { Button } from '@/components/ui/button';
 import { useAuth } from '@/context/AuthContext';
 import {
@@ -168,6 +169,8 @@ function ServerDetail() {
           </Button>
         </div>
       </div>
+
+      <PrivateIPWarning ipAddress={server.ipAddress} />
 
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
         <Card title="Connection">

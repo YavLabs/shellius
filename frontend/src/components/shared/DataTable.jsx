@@ -196,7 +196,11 @@ function DataTable({
 
   const isServerPagination = !!serverPagination;
   const page = isServerPagination ? serverPagination.page : localPage;
-  const pageSize = localPageSize;
+  // In server mode, honour the parent-controlled pageSize when provided (Task 18A)
+  const pageSize =
+    isServerPagination && serverPagination.pageSize != null
+      ? serverPagination.pageSize
+      : localPageSize;
   const serverTotal = isServerPagination ? serverPagination.total : undefined;
 
   // Reset to page 1 when search/sort changes (client mode only)
@@ -314,8 +318,14 @@ function DataTable({
 
   const handlePageSizeChange = useCallback(
     (val) => {
-      setLocalPageSize(Number(val));
+      const numVal = Number(val);
+      setLocalPageSize(numVal);
       if (isServerPagination) {
+        // Propagate to parent if callback provided (Task 18A)
+        if (typeof serverPagination.onPageSizeChange === 'function') {
+          serverPagination.onPageSizeChange(numVal);
+        }
+        setLocalPage(1);
         serverPagination.onPageChange(1);
       } else {
         setLocalPage(1);

@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { X, ChevronDown, ChevronRight } from 'lucide-react';
 import { listCustomers } from '@/services/customerService';
+import PrivateIPWarning from './PrivateIPWarning';
 
 const ENVIRONMENTS = ['demo', 'dev', 'staging', 'prod'];
 const PROTOCOLS = ['ssh', 'rdp', 'both'];
@@ -184,6 +185,7 @@ function ServerForm({ server, customerId: initialCustomerId, onSubmit, onCancel 
               required
             />
             {ipError && <p className="mt-1 text-xs text-destructive">{ipError}</p>}
+            <PrivateIPWarning ipAddress={ipAddress} variant="note" />
           </div>
           <div>
             <label className={labelCls}>Port</label>

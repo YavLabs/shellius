@@ -94,7 +94,7 @@ function Users() {
   const [users, setUsers] = useState([]);
   const [total, setTotal] = useState(0);
   const [page, setPage] = useState(1);
-  const [pageSize] = useState(20);
+  const [pageSize, setPageSize] = useState(20);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
 
@@ -328,7 +328,13 @@ function Users() {
         emptyMessage="No users found"
         searchPlaceholder="Search by name or email..."
         filters={filterSlot}
-        serverPagination={{ page, total, onPageChange: setPage }}
+        serverPagination={{
+          page,
+          total,
+          onPageChange: setPage,
+          pageSize,
+          onPageSizeChange: (size) => { setPageSize(size); setPage(1); },
+        }}
       />
 
       <Modal
