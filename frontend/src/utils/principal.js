@@ -22,3 +22,26 @@ export function defaultPrincipal(user) {
   if (fromEmail && LINUX_USER_RE.test(fromEmail)) return fromEmail;
   return 'ubuntu';
 }
+
+/**
+ * Pick the principal to use when connecting to a specific server. Precedence:
+ *   1. The principal already issued in the active access request (so the
+ *      cert and the SSH login agree)
+ *   2. The sshUser the operator stored on the server when creating it
+ *   3. The current user's defaultPrincipal (email-local-part fallback)
+ *   4. 'ubuntu'
+ *
+ * @param {object|null} activeRequest — approved access request row, or null
+ * @param {object|null} server        — server row
+ * @param {object|null} currentUser   — auth user from useAuth()
+ * @returns {string}
+ */
+export function principalForServer(activeRequest, server, currentUser) {
+  if (activeRequest?.requestedPrincipal && LINUX_USER_RE.test(activeRequest.requestedPrincipal)) {
+    return activeRequest.requestedPrincipal;
+  }
+  if (server?.sshUser && LINUX_USER_RE.test(server.sshUser)) {
+    return server.sshUser;
+  }
+  return defaultPrincipal(currentUser);
+}

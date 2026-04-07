@@ -1,7 +1,7 @@
 # Task 17B: Default to server.sshUser + Override Toggle
 
 **Agent:** frontend
-**Status:** [ ] Pending
+**Status:** [x] Done
 **Blocks:** 17Q-B, 17R-B
 **Blocked By:** None
 **Model:** sonnet

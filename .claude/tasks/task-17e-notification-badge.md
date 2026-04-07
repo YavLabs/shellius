@@ -1,7 +1,7 @@
 # Task 17E: Notification Badge UI Fix
 
 **Agent:** frontend
-**Status:** [ ] Pending
+**Status:** [x] Done
 **Blocks:** 17Q-E, 17R-E
 **Blocked By:** None
 **Model:** sonnet

@@ -1,7 +1,7 @@
 # Task 17A: QuickConnect Modal Close Bug + ServerDetail Connect Button
 
 **Agent:** debugger → frontend
-**Status:** [ ] Pending
+**Status:** [x] Done
 **Blocks:** 17Q-A, 17R-A
 **Blocked By:** None
 **Model:** sonnet
