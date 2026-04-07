@@ -9,6 +9,7 @@ import { authLimiter, tokenActionLimiter } from '../middleware/rateLimiter.js';
 import * as authService from '../services/authService.js';
 import * as inviteService from '../services/inviteService.js';
 import { sendMail } from '../services/mailer.js';
+import { renderTemplate } from '../email/index.js';
 import { log as auditLog } from '../services/auditService.js';
 import prisma from '../config/db.js';
 import config from '../config/index.js';
@@ -353,13 +354,17 @@ router.post(
           null // no req available post-response; use env-var base URL
         );
 
-        const orgName = user.organization?.name ?? 'Shellius';
-
+        const tpl = renderTemplate('passwordReset', {
+          recipientName: user.name,
+          resetUrl,
+          expiresInHours: 1,
+        });
         await sendMail({
+          orgId: user.orgId,
           to: user.email,
-          subject: `Reset your ${orgName} password`,
-          html: buildResetHtml({ name: user.name, orgName, resetUrl }),
-          text: buildResetText({ name: user.name, orgName, resetUrl }),
+          subject: tpl.subject,
+          html: tpl.html,
+          text: tpl.text,
         });
 
         await auditLog({
@@ -382,46 +387,8 @@ router.post(
   })
 );
 
-// ---------------------------------------------------------------------------
-// Email template helpers
-// ---------------------------------------------------------------------------
-
-function buildResetHtml({ name, orgName, resetUrl }) {
-  return `
-<!DOCTYPE html>
-<html>
-<head><meta charset="utf-8"></head>
-<body style="font-family:sans-serif;max-width:600px;margin:0 auto;padding:24px">
-  <h2>Reset your ${orgName} password</h2>
-  <p>Hi ${name},</p>
-  <p>A password reset was requested for your <strong>${orgName}</strong> account on Shellius.</p>
-  <p>Click the link below to set a new password.
-     This link expires in 1 hour and can only be used once.</p>
-  <p style="margin:24px 0">
-    <a href="${resetUrl}" style="background:#0f172a;color:#fff;padding:12px 24px;border-radius:6px;text-decoration:none;display:inline-block">
-      Reset password
-    </a>
-  </p>
-  <p style="color:#6b7280;font-size:13px">Or copy this URL into your browser:<br>${resetUrl}</p>
-  <p style="color:#6b7280;font-size:13px">If you did not request this, you can safely ignore this email.</p>
-</body>
-</html>
-  `.trim();
-}
-
-function buildResetText({ name, orgName, resetUrl }) {
-  return [
-    `Reset your ${orgName} password`,
-    '',
-    `Hi ${name},`,
-    '',
-    `A password reset was requested for your ${orgName} account on Shellius.`,
-    'Click the link below to set a new password. This link expires in 1 hour.',
-    '',
-    resetUrl,
-    '',
-    'If you did not request this, you can safely ignore this email.',
-  ].join('\n');
-}
+// Legacy template helpers replaced by the shared registry under
+// backend/src/email/. See renderTemplate('passwordReset', vars).
+// Phase 16D rewrite.
 
 export default router;

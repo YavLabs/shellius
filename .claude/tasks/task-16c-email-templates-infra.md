@@ -1,7 +1,7 @@
 # Task 16C: HTML Email Template Infrastructure
 
 **Agent:** backend
-**Status:** [ ] Pending
+**Status:** [x] Done
 **Blocks:** 16D, 16Q-C, 16R-C
 **Blocked By:** None
 **Model:** sonnet

@@ -1,7 +1,7 @@
 # Task 16G: Env Defaults + Email Template Docs
 
 **Agent:** devops + planner
-**Status:** [ ] Pending
+**Status:** [x] Done
 **Blocks:** 16Q-G
 **Blocked By:** 16A, 16B, 16C
 **Model:** sonnet

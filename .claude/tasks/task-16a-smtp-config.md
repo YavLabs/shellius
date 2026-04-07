@@ -1,7 +1,7 @@
 # Task 16A: SMTP Config Table + Env-Merge
 
 **Agent:** backend
-**Status:** [ ] Pending
+**Status:** [x] Done
 **Blocks:** 16D, 16Q-A, 16R-A
 **Blocked By:** None
 **Model:** sonnet

@@ -38,6 +38,12 @@ const validate = (schema) => (req, res, next) => {
 // Joi schemas for SSO config endpoints
 // ---------------------------------------------------------------------------
 
+// Tight regexes for the per-preset identifier fields. These run BEFORE the
+// derived issuer URL is built, so a malformed value can never be interpolated
+// into login.microsoftonline.com/<tenantId>/v2.0 etc. (Phase 16F follow-up.)
+const ENTRA_TENANT_RE = /^[a-fA-F0-9]{8}-[a-fA-F0-9]{4}-[a-fA-F0-9]{4}-[a-fA-F0-9]{4}-[a-fA-F0-9]{12}$|^[a-zA-Z0-9.-]+$/;
+const DNS_HOSTNAME_RE = /^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$/i;
+
 const ssoConfigSchema = Joi.object({
   provider: Joi.string().valid('oidc', 'saml').required(),
   presetId: Joi.string().valid('google', 'entra', 'okta', 'auth0', 'generic-oidc', 'saml').optional(),
@@ -47,6 +53,16 @@ const ssoConfigSchema = Joi.object({
   redirectUri: Joi.string().uri(),
   scopes: Joi.string().max(500),
   isActive: Joi.boolean(),
+  // Optional per-preset identifiers — accepted only when matching the
+  // preset's expected pattern. Server-side defense in depth: even if the
+  // frontend skips its own regex check, these can never reach the URL
+  // builder with garbage in them.
+  tenantId: Joi.string().pattern(ENTRA_TENANT_RE).optional()
+    .messages({ 'string.pattern.base': 'tenantId must be a UUID or DNS-friendly name' }),
+  oktaDomain: Joi.string().pattern(DNS_HOSTNAME_RE).optional()
+    .messages({ 'string.pattern.base': 'oktaDomain must be a valid hostname like acme.okta.com' }),
+  auth0Domain: Joi.string().pattern(DNS_HOSTNAME_RE).optional()
+    .messages({ 'string.pattern.base': 'auth0Domain must be a valid hostname like acme.auth0.com' }),
 });
 
 const ssoTestSchema = Joi.object({
