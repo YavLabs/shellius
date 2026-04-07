@@ -115,6 +115,33 @@ router.post(
   })
 );
 
+// ---------------------------------------------------------------------------
+// GET /api/auth/sso/public-status — public; tells the unauth login page
+// whether to render an SSO button and which provider preset is active.
+// MUST be registered before /:orgSlug or Express will swallow it.
+// ---------------------------------------------------------------------------
+
+async function resolvePublicOrg(req) {
+  const hostname = req.hostname || req.get('host') || '';
+  if (hostname) {
+    const byDomain = await prisma.organization.findFirst({ where: { domain: hostname } });
+    if (byDomain) return byDomain;
+  }
+  return prisma.organization.findFirst({ orderBy: { createdAt: 'asc' } });
+}
+
+router.get(
+  '/public-status',
+  asyncHandler(async (req, res) => {
+    const org = await resolvePublicOrg(req);
+    if (!org) {
+      return res.json({ success: true, data: { enabled: false, presetId: null, orgSlug: null } });
+    }
+    const status = await ssoService.getPublicSsoStatus(org.id);
+    res.json({ success: true, data: { ...status, orgSlug: org.slug } });
+  })
+);
+
 async function discover(issuerUrl) {
   const cached = discoveryCache.get(issuerUrl);
   if (cached && cached.expires > Date.now()) return cached.doc;
@@ -147,7 +174,7 @@ router.get(
     const org = await prisma.organization.findUnique({ where: { slug: orgSlug } });
     if (!org) throw new ApiError(404, 'Organization not found');
 
-    const cfg = await ssoService.getDecryptedConfig(org.id);
+    const cfg = await ssoService.getDecryptedConfig(org.id, { orgSlug: org.slug, req });
     if (!cfg || !cfg.isActive) {
       return res.status(400).json({
         success: false,
@@ -190,7 +217,7 @@ router.get(
     const org = await prisma.organization.findUnique({ where: { slug: orgSlug } });
     if (!org || org.id !== stateData.orgId) throw new ApiError(400, 'Org mismatch');
 
-    const cfg = await ssoService.getDecryptedConfig(org.id);
+    const cfg = await ssoService.getDecryptedConfig(org.id, { orgSlug: org.slug, req });
     if (!cfg) throw new ApiError(400, 'SSO not configured');
 
     const discovery = await discover(cfg.issuerUrl);

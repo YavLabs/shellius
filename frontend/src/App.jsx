@@ -29,6 +29,7 @@ import Device from './pages/Device';
 import Profile from './pages/Profile';
 import Register from './pages/Register';
 import Legal from './pages/Legal';
+import AuthCallback from './pages/AuthCallback';
 import NotFound from './pages/NotFound';
 
 function App() {
@@ -45,6 +46,7 @@ function App() {
               <Route path="/device" element={<Device />} />
               <Route path="/register" element={<Register />} />
               <Route path="/legal/:doc" element={<Legal />} />
+              <Route path="/auth/callback" element={<AuthCallback />} />
               <Route element={<ProtectedRoute />}>
                 {/* Full-screen terminal — no app chrome */}
                 <Route

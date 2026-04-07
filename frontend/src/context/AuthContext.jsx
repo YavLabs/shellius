@@ -52,6 +52,20 @@ export function AuthProvider({ children }) {
     }
   }, []);
 
+  // Used by the SSO popup callback flow — tokens come from the OIDC
+  // exchange, not from a username/password POST. Stores them and
+  // hydrates the user via /auth/me.
+  const loginWithTokens = useCallback(async ({ accessToken: at, refreshToken: rt }) => {
+    setError(null);
+    if (at) localStorage.setItem('accessToken', at);
+    if (rt) localStorage.setItem('refreshToken', rt);
+    setAccessToken(at);
+    const res = await api.get('/auth/me');
+    const u = res.data?.data?.user || null;
+    setUser(u);
+    return u;
+  }, []);
+
   const logout = useCallback(async () => {
     const refreshToken = localStorage.getItem('refreshToken');
     try {
@@ -86,6 +100,7 @@ export function AuthProvider({ children }) {
     error,
     isAuthenticated: !!user,
     login,
+    loginWithTokens,
     logout,
     refresh,
   };

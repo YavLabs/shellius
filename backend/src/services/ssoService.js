@@ -59,10 +59,74 @@ export async function upsertSsoConfig(orgId, configData) {
   return redactSecret(result);
 }
 
-export async function getDecryptedConfig(orgId) {
+// Env-only preset definitions used as a fallback when no DB row exists.
+// Lets operators wire up Google SSO purely from .env.prod without ever
+// touching the Settings → SSO wizard. Add new presets here as needed.
+const ENV_ONLY_PRESETS = {
+  google: () => {
+    const clientId = process.env.SSO_GOOGLE_CLIENT_ID;
+    const clientSecret = process.env.SSO_GOOGLE_CLIENT_SECRET;
+    if (!clientId || !clientSecret) return null;
+    return {
+      provider: 'oidc',
+      presetId: 'google',
+      clientId,
+      clientSecret,
+      issuerUrl: 'https://accounts.google.com',
+      scopes: 'openid email profile',
+      isActive: true,
+    };
+  },
+};
+
+/**
+ * Build the public callback URL for an org. Used when no DB row exists
+ * (env-only configs) so the OAuth redirect_uri matches whatever public
+ * host the user is hitting Shellius on.
+ */
+function buildEnvCallbackUrl(orgSlug, req) {
+  const publicBase =
+    process.env.PUBLIC_BASE_URL ||
+    (req ? `${req.protocol}://${req.get('host')}` : 'http://localhost:3001');
+  return `${publicBase.replace(/\/$/, '')}/api/auth/sso/${orgSlug}/callback`;
+}
+
+export async function getDecryptedConfig(orgId, { orgSlug = null, req = null } = {}) {
   const cfg = await prisma.ssoConfig.findUnique({ where: { orgId } });
-  if (!cfg) return null;
-  return { ...cfg, clientSecret: decrypt(cfg.clientSecretEncrypted) };
+  if (cfg) {
+    return { ...cfg, clientSecret: decrypt(cfg.clientSecretEncrypted) };
+  }
+
+  // Fall back to env-only presets
+  for (const [presetId, build] of Object.entries(ENV_ONLY_PRESETS)) {
+    const envCfg = build();
+    if (envCfg) {
+      return {
+        ...envCfg,
+        redirectUri: buildEnvCallbackUrl(orgSlug, req),
+      };
+    }
+    // suppress unused
+    void presetId;
+  }
+
+  return null;
+}
+
+/**
+ * Lightweight public probe used by the unauthenticated login page to
+ * decide which SSO button(s) to render. Never returns secrets — only
+ * { enabled, presetId }.
+ */
+export async function getPublicSsoStatus(orgId) {
+  const row = await prisma.ssoConfig.findUnique({ where: { orgId } });
+  if (row && row.isActive) {
+    return { enabled: true, presetId: row.presetId || 'oidc' };
+  }
+  for (const [presetId, build] of Object.entries(ENV_ONLY_PRESETS)) {
+    if (build()) return { enabled: true, presetId };
+  }
+  return { enabled: false, presetId: null };
 }
 
 export async function handleOidcUserInfo(userinfo, orgId) {
