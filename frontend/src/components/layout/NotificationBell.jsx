@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from 'react';
-import { Bell, CheckCheck, CheckCircle, XCircle, Clock, Ban } from 'lucide-react';
+import { Bell, BellRing, CheckCheck, CheckCircle, XCircle, Clock, Ban } from 'lucide-react';
 import { useNotifications } from '@/context/NotificationContext';
 import { relativeTime } from '@/utils/time';
 import { cn } from '@/lib/utils';
@@ -65,12 +65,17 @@ function NotificationBell() {
     <div className="relative" ref={ref}>
       <button
         onClick={() => setOpen((p) => !p)}
-        className="relative flex h-8 w-8 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground transition-colors"
-        title="Notifications"
+        className="relative flex h-9 w-9 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground transition-colors"
+        title={unreadCount > 0 ? `${unreadCount} unread notification${unreadCount === 1 ? '' : 's'}` : 'Notifications'}
+        aria-label={unreadCount > 0 ? `${unreadCount} unread notifications` : 'Notifications'}
       >
-        <Bell className="h-4 w-4" />
+        {unreadCount > 0 ? (
+          <BellRing className="h-[18px] w-[18px] text-foreground" />
+        ) : (
+          <Bell className="h-[18px] w-[18px]" />
+        )}
         {unreadCount > 0 && (
-          <span className="absolute right-1 top-1 flex h-4 w-4 items-center justify-center rounded-full bg-destructive text-[10px] font-bold text-destructive-foreground">
+          <span className="pointer-events-none absolute -right-0.5 -top-0.5 flex h-[14px] min-w-[14px] items-center justify-center rounded-full bg-destructive px-[3px] text-[9px] font-semibold leading-none text-destructive-foreground ring-2 ring-card">
             {unreadCount > 9 ? '9+' : unreadCount}
           </span>
         )}

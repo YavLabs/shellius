@@ -6,6 +6,77 @@ import ApiError from '../utils/ApiError.js';
 import { encrypt } from '../utils/crypto.js';
 import logger from '../utils/logger.js';
 
+// ---------------------------------------------------------------------------
+// Per-preset env-var defaults (Task 16B)
+// ---------------------------------------------------------------------------
+
+const ENV_DEFAULTS = {
+  google: {
+    clientId: process.env.SSO_GOOGLE_CLIENT_ID,
+    clientSecret: process.env.SSO_GOOGLE_CLIENT_SECRET,
+    issuerUrl: 'https://accounts.google.com',
+  },
+  entra: {
+    tenantId: process.env.SSO_ENTRA_TENANT_ID,
+    clientId: process.env.SSO_ENTRA_CLIENT_ID,
+    clientSecret: process.env.SSO_ENTRA_CLIENT_SECRET,
+  },
+  okta: {
+    oktaDomain: process.env.SSO_OKTA_DOMAIN,
+    clientId: process.env.SSO_OKTA_CLIENT_ID,
+    clientSecret: process.env.SSO_OKTA_CLIENT_SECRET,
+  },
+  auth0: {
+    auth0Domain: process.env.SSO_AUTH0_DOMAIN,
+    clientId: process.env.SSO_AUTH0_CLIENT_ID,
+    clientSecret: process.env.SSO_AUTH0_CLIENT_SECRET,
+  },
+  'generic-oidc': {
+    issuerUrl: process.env.SSO_ISSUER_URL,
+    clientId: process.env.SSO_CLIENT_ID,
+    clientSecret: process.env.SSO_CLIENT_SECRET,
+  },
+};
+
+/**
+ * Return the DB row merged with env-var defaults for the org's SSO preset.
+ * DB values win over env vars. Secret values are never returned; only a
+ * boolean `hasClientSecret` is included.
+ *
+ * @param {string} orgId
+ * @returns {Promise<{row: object|null, envDefaults: object, source: object}>}
+ */
+export async function getEffective(orgId) {
+  const row = await prisma.ssoConfig.findUnique({ where: { orgId } });
+  const presetId = row?.presetId || null;
+  const envDefaults = presetId ? (ENV_DEFAULTS[presetId] || {}) : {};
+
+  // Build a source map per logical field. NEVER leak env-var secret values —
+  // only track provenance as 'db' | 'env' | null.
+  const source = {};
+  const fields = ['clientId', 'clientSecret', 'issuerUrl', 'tenantId', 'oktaDomain', 'auth0Domain'];
+  for (const f of fields) {
+    if (row && row[f]) source[f] = 'db';
+    else if (envDefaults[f]) source[f] = 'env';
+    else source[f] = null;
+  }
+
+  return {
+    row: row ? maskRow(row) : null,
+    envDefaults: {
+      presetId,
+      clientId: envDefaults.clientId || null,
+      issuerUrl: envDefaults.issuerUrl || null,
+      tenantId: envDefaults.tenantId || null,
+      oktaDomain: envDefaults.oktaDomain || null,
+      auth0Domain: envDefaults.auth0Domain || null,
+      // NEVER include clientSecret in the response
+      hasClientSecret: !!envDefaults.clientSecret,
+    },
+    source,
+  };
+}
+
 const dnsLookup = promisify(dns.lookup);
 
 // ---------------------------------------------------------------------------

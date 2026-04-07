@@ -5,6 +5,7 @@ import ApiError from '../utils/ApiError.js';
 import authenticate from '../middleware/auth.js';
 import tenant from '../middleware/tenant.js';
 import requireRole from '../middleware/rbac.js';
+import audit from '../middleware/audit.js';
 import * as groupService from '../services/groupService.js';
 
 const router = express.Router();
@@ -82,6 +83,7 @@ router.delete(
 router.post(
   '/:id/members',
   requireRole('super_admin', 'admin'),
+  audit('group.member.added', 'Group'),
   validate(memberSchema),
   asyncHandler(async (req, res) => {
     const membership = await groupService.addMember(
@@ -97,6 +99,7 @@ router.post(
 router.delete(
   '/:id/members/:userId',
   requireRole('super_admin', 'admin'),
+  audit('group.member.removed', 'Group'),
   asyncHandler(async (req, res) => {
     await groupService.removeMember(req.orgId, req.params.id, req.params.userId);
     res.json({ success: true, data: { success: true } });

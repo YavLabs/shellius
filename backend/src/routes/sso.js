@@ -66,7 +66,8 @@ router.get(
   requireRole('admin'),
   asyncHandler(async (req, res) => {
     const config = await ssoConfigService.get(req.orgId);
-    res.json({ success: true, data: { config } });
+    const effective = await ssoConfigService.getEffective(req.orgId);
+    res.json({ success: true, data: { config, effective } });
   })
 );
 
