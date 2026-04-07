@@ -141,7 +141,7 @@ function Customers() {
 
   return (
     <div className="space-y-6 p-6">
-      <PageHeader icon={Building2} title="Customers" subtitle="Organize servers and access by tenant.">
+      <PageHeader icon={Building2} title="Customers" subtitle="Organize servers and access by tenant." helpKey="customers">
         <Button onClick={() => setCreateOpen(true)}>
           <Plus className="mr-2 h-4 w-4" /> Add Customer
         </Button>

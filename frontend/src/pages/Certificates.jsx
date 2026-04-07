@@ -337,7 +337,7 @@ function Certificates() {
         icon={FileKey}
         title="Certificates"
         subtitle="Short-lived SSH certificates issued by the Shellius CA."
-      />
+      helpKey="certificates" />
 
       {expiringSoonCount > 0 && (
         <div className="flex items-center gap-3 rounded-md border border-amber-500/40 bg-amber-500/10 px-4 py-3">

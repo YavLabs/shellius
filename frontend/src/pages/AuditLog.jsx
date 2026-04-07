@@ -394,7 +394,7 @@ function AuditLog() {
 
   return (
     <div className="space-y-6 p-6">
-      <PageHeader icon={ScrollText} title="Audit Log" subtitle="Immutable record of all system events.">
+      <PageHeader icon={ScrollText} title="Audit Log" subtitle="Immutable record of all system events." helpKey="audit-log">
         {canExport && (
           <DropdownMenu>
             <DropdownMenuTrigger asChild>

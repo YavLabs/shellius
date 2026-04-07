@@ -320,7 +320,7 @@ function Sessions() {
         icon={TerminalIcon}
         title="Sessions"
         subtitle="Active and historical SSH/RDP sessions."
-      />
+      helpKey="sessions" />
 
       {/* Tabs */}
       <div className="flex items-center gap-1 border-b border-border">

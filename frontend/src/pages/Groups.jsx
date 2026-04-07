@@ -115,7 +115,7 @@ function Groups() {
 
   return (
     <div className="space-y-6 p-6">
-      <PageHeader icon={UsersRound} title="Groups" subtitle="Organize users into access groups.">
+      <PageHeader icon={UsersRound} title="Groups" subtitle="Organize users into access groups." helpKey="groups">
         <Button onClick={() => setCreateOpen(true)}>
           <Plus className="mr-2 h-4 w-4" /> Create Group
         </Button>

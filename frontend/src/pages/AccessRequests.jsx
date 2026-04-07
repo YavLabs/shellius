@@ -418,8 +418,7 @@ function AccessRequests() {
       <PageHeader
         icon={KeyRound}
         title="Access Requests"
-        subtitle="Request temporary access to servers or review pending requests."
-      >
+        subtitle="Request temporary access to servers or review pending requests." helpKey="access-requests">
         <Button onClick={() => setFormOpen(true)}>
           <Plus className="mr-2 h-4 w-4" />
           New Request

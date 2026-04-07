@@ -256,8 +256,7 @@ function Policies() {
       <PageHeader
         icon={Shield}
         title="Policies"
-        subtitle="Access control policies governing who can reach which servers."
-      >
+        subtitle="Access control policies governing who can reach which servers." helpKey="policies">
         {canAdmin && (
           <Button onClick={() => { setEditing(null); setFormOpen(true); }}>
             <Plus className="mr-2 h-4 w-4" /> New Policy

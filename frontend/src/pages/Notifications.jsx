@@ -148,6 +148,7 @@ function Notifications() {
       <PageHeader
         icon={Bell}
         title="Notifications"
+        helpKey="notifications"
         subtitle={
           unreadCount > 0
             ? `${unreadCount} unread notification${unreadCount === 1 ? '' : 's'}`
