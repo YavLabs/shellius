@@ -11,6 +11,7 @@ import {
   Monitor,
   Download,
   Eye,
+  Eraser,
 } from 'lucide-react';
 import DataTable from '@/components/shared/DataTable';
 import Modal from '@/components/shared/Modal';
@@ -19,6 +20,7 @@ import EnvironmentBadge from '@/components/shared/EnvironmentBadge';
 import HealthStatusDot from '@/components/shared/HealthStatusDot';
 import ServerForm from '@/components/servers/ServerForm';
 import BootstrapModal from '@/components/servers/BootstrapModal';
+import UninstallHostModal from '@/components/servers/UninstallHostModal';
 import QuickConnectButton from '@/components/servers/QuickConnectButton';
 import PageHeader from '@/components/common/PageHeader';
 import { Button } from '@/components/ui/button';
@@ -68,6 +70,7 @@ function Servers() {
   const [editing, setEditing] = useState(null);
   const [confirm, setConfirm] = useState(null);
   const [bootstrapServer, setBootstrapServer] = useState(null);
+  const [uninstallServer, setUninstallServer] = useState(null);
 
   const fetchCustomers = useCallback(async () => {
     try {
@@ -350,6 +353,11 @@ function Servers() {
           onClick: (r) => setBootstrapServer(r),
         },
         {
+          label: 'Uninstall Agent',
+          icon: Eraser,
+          onClick: (r) => setUninstallServer(r),
+        },
+        {
           label: 'Run Health Check',
           icon: Activity,
           onClick: (r) => handleHealthCheck(r),
@@ -426,6 +434,12 @@ function Servers() {
         open={!!bootstrapServer}
         server={bootstrapServer}
         onClose={() => setBootstrapServer(null)}
+      />
+
+      <UninstallHostModal
+        open={!!uninstallServer}
+        server={uninstallServer}
+        onClose={() => setUninstallServer(null)}
       />
 
       <ConfirmDialog

@@ -1,12 +1,13 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
-import { ArrowLeft, Pencil, Trash2, Activity, Download } from 'lucide-react';
+import { ArrowLeft, Pencil, Trash2, Activity, Download, Eraser } from 'lucide-react';
 import Modal from '@/components/shared/Modal';
 import ConfirmDialog from '@/components/shared/ConfirmDialog';
 import EnvironmentBadge from '@/components/shared/EnvironmentBadge';
 import HealthStatusDot from '@/components/shared/HealthStatusDot';
 import ServerForm from '@/components/servers/ServerForm';
 import BootstrapModal from '@/components/servers/BootstrapModal';
+import UninstallHostModal from '@/components/servers/UninstallHostModal';
 import QuickConnectButton from '@/components/servers/QuickConnectButton';
 import { Button } from '@/components/ui/button';
 import { useAuth } from '@/context/AuthContext';
@@ -53,6 +54,7 @@ function ServerDetail() {
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [checking, setChecking] = useState(false);
   const [bootstrapOpen, setBootstrapOpen] = useState(false);
+  const [uninstallOpen, setUninstallOpen] = useState(false);
 
   const fetch = useCallback(async () => {
     setLoading(true);
@@ -151,6 +153,9 @@ function ServerDetail() {
           <Button variant="outline" size="sm" onClick={() => setBootstrapOpen(true)}>
             <Download className="mr-2 h-4 w-4" /> Bootstrap Host
           </Button>
+          <Button variant="outline" size="sm" onClick={() => setUninstallOpen(true)}>
+            <Eraser className="mr-2 h-4 w-4" /> Uninstall Agent
+          </Button>
           <Button variant="outline" size="sm" onClick={handleHealthCheck} disabled={checking}>
             <Activity className={`mr-2 h-4 w-4 ${checking ? 'animate-pulse' : ''}`} />
             {checking ? 'Checking...' : 'Run Health Check'}
@@ -240,6 +245,12 @@ function ServerDetail() {
         open={bootstrapOpen}
         server={server}
         onClose={() => setBootstrapOpen(false)}
+      />
+
+      <UninstallHostModal
+        open={uninstallOpen}
+        server={server}
+        onClose={() => setUninstallOpen(false)}
       />
 
       <ConfirmDialog
