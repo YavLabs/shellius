@@ -1,80 +1,69 @@
 /**
  * mailer.js
  *
- * Thin nodemailer wrapper with lazy transport initialization.
- * Reads SMTP config from environment variables. When SMTP_HOST is not set
- * the transport falls back to "log" mode: the email body is emitted via
- * the structured logger and the raw URL (if any) is returned to the caller
- * so an admin can copy-paste it manually.
+ * Per-call nodemailer wrapper. Resolves SMTP config fresh on every call
+ * from the DB + env merge via smtpConfigService.getEffective(). Falls
+ * back to log-only mode when neither source is configured.
+ *
+ * When orgId is undefined (legacy callsites not yet migrated by Task 16D),
+ * getEffective() uses env vars only — preserving the original behavior.
  *
  * Exported:
- *   sendMail({ to, subject, html, text }) → { delivered: bool, transport: 'smtp'|'log' }
+ *   sendMail({ orgId, to, subject, html, text })
+ *     → { delivered: boolean, transport: 'smtp'|'log', error?: string }
  */
 
 import nodemailer from 'nodemailer';
 import logger from '../utils/logger.js';
-
-let _transport = null;
-let _from = null;
-let _transportType = null;
-
-function initTransport() {
-  if (_transport !== null) return;
-
-  const host = process.env.SMTP_HOST;
-  const port = parseInt(process.env.SMTP_PORT ?? '587', 10);
-  const user = process.env.SMTP_USER;
-  const pass = process.env.SMTP_PASS;
-
-  const defaultFrom =
-    process.env.SMTP_FROM ??
-    `noreply@${process.env.TRAEFIK_HOST ?? 'shellius.local'}`;
-
-  _from = defaultFrom;
-
-  if (!host) {
-    _transportType = 'log';
-    _transport = null; // Sentinel: no real transport
-    return;
-  }
-
-  _transportType = 'smtp';
-  _transport = nodemailer.createTransport({
-    host,
-    port,
-    secure: port === 465,
-    auth: user && pass ? { user, pass } : undefined,
-  });
-}
+import { getEffective } from './smtpConfigService.js';
 
 /**
- * Send an email (or log it when SMTP is not configured).
+ * Send an email. Resolves SMTP config fresh on every call from the
+ * DB + env merge. Falls back to log-only mode when neither source is
+ * configured.
  *
  * @param {object} params
- * @param {string}  params.to       - Recipient address
- * @param {string}  params.subject  - Email subject
- * @param {string}  [params.html]   - HTML body
- * @param {string}  [params.text]   - Plain-text body
- * @returns {Promise<{ delivered: boolean, transport: 'smtp'|'log' }>}
+ * @param {string} [params.orgId]   - org for per-org SMTP config lookup; if
+ *                                    omitted, falls through to env defaults only
+ * @param {string} params.to
+ * @param {string} params.subject
+ * @param {string} [params.html]
+ * @param {string} [params.text]
+ * @returns {Promise<{delivered: boolean, transport: 'smtp'|'log', error?: string}>}
  */
-export async function sendMail({ to, subject, html, text }) {
-  initTransport();
+export async function sendMail({ orgId, to, subject, html, text }) {
+  let cfg = null;
+  try {
+    cfg = await getEffective(orgId);
+  } catch (err) {
+    logger.warn('mailer: smtp config lookup failed', { orgId, error: err.message });
+  }
 
-  if (_transportType === 'log') {
-    logger.warn('mailer: SMTP_HOST not configured — email not sent (log-only mode)', {
+  if (!cfg || !cfg.configured) {
+    logger.warn('mailer: no SMTP config — email not sent (log-only mode)', {
       to,
       subject,
-      // Intentionally log the text body so an admin can extract the URL.
-      // We never log passwords or keys, but a one-time invite/reset URL is
-      // acceptable — it is the intended delivery mechanism in log mode.
+      // Intentionally log the text body in log-only mode so an admin can
+      // extract the URL. We never log passwords or keys, but a one-time
+      // invite/reset URL is acceptable here — it is the intended delivery
+      // mechanism when SMTP is not set up.
       textPreview: text ? text.slice(0, 400) : '(no text body)',
     });
     return { delivered: false, transport: 'log' };
   }
 
+  const transport = nodemailer.createTransport({
+    host: cfg.host,
+    port: cfg.port,
+    secure: cfg.useTls && cfg.port === 465,
+    auth: cfg.username && cfg.password
+      ? { user: cfg.username, pass: cfg.password }
+      : undefined,
+  });
+
   try {
-    await _transport.sendMail({
-      from: _from,
+    await transport.sendMail({
+      from: cfg.fromAddress || cfg.username || 'noreply@shellius.local',
       to,
       subject,
       html,
@@ -84,7 +73,9 @@ export async function sendMail({ to, subject, html, text }) {
     return { delivered: true, transport: 'smtp' };
   } catch (err) {
     logger.error('mailer: SMTP delivery failed', { to, subject, error: err.message });
-    return { delivered: false, transport: 'smtp' };
+    return { delivered: false, transport: 'log', error: err.message };
+  } finally {
+    transport.close();
   }
 }
 

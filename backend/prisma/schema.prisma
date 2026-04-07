@@ -44,6 +44,7 @@ model Organization {
   auditLogs       AuditLog[]
   groups          Group[]
   ssoConfig       SsoConfig?
+  smtpConfig      SmtpConfig?
   deviceAuthRequests DeviceAuthRequest[]
   caKeyPairs      CaKeyPair[]
   certificates    Certificate[]
@@ -549,4 +550,22 @@ model UserToken {
   @@index([userId])
   @@index([expiresAt])
   @@map("user_tokens")
+}
+
+model SmtpConfig {
+  id                String   @id @default(cuid())
+  orgId             String   @unique @map("org_id")
+  host              String
+  port              Int      @default(587)
+  username          String?
+  passwordEncrypted String?  @map("password_encrypted") @db.Text
+  fromAddress       String?  @map("from_address")
+  useTls            Boolean  @default(true) @map("use_tls")
+  isActive          Boolean  @default(true) @map("is_active")
+  createdAt         DateTime @default(now()) @map("created_at")
+  updatedAt         DateTime @updatedAt @map("updated_at")
+
+  organization Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+
+  @@map("smtp_configs")
 }
