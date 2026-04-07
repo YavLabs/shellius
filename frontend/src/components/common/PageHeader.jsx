@@ -1,4 +1,6 @@
-function PageHeader({ icon: Icon, title, subtitle, children }) {
+import HelpButton from './HelpButton';
+
+function PageHeader({ icon: Icon, title, subtitle, children, helpKey }) {
   return (
     <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
       <div className="space-y-1">
@@ -8,7 +10,10 @@ function PageHeader({ icon: Icon, title, subtitle, children }) {
         </h1>
         {subtitle && <p className="text-sm text-muted-foreground">{subtitle}</p>}
       </div>
-      {children && <div className="flex shrink-0 items-center gap-2">{children}</div>}
+      <div className="flex shrink-0 items-center gap-2">
+        {children}
+        {helpKey && <HelpButton helpKey={helpKey} />}
+      </div>
     </div>
   );
 }

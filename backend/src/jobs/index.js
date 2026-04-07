@@ -16,6 +16,7 @@ import {
   registerSessionCleanupJob,
   startSessionCleanupWorker,
 } from './sessionCleanup.js';
+import { seedDefaultPolicies } from './seedDefaultPolicies.js';
 import logger from '../utils/logger.js';
 
 export async function startAllJobs() {
@@ -38,6 +39,12 @@ export async function startAllJobs() {
 
   await registerSessionCleanupJob();
   startSessionCleanupWorker();
+
+  // Idempotent one-shot: seed default policies for any org with zero rows.
+  // Runs in the background so a slow DB doesn't block boot.
+  seedDefaultPolicies().catch((err) =>
+    logger.error('seedDefaultPolicies: top-level failure', { error: err.message })
+  );
 
   logger.info('jobs: all background jobs registered');
 }

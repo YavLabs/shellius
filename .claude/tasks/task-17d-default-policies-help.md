@@ -1,7 +1,7 @@
 # Task 17D: Default Policies Seed + Per-Page Help Drawer
 
 **Agent:** db + backend + frontend
-**Status:** [ ] Pending
+**Status:** [x] Done
 **Blocks:** 17Q-D, 17R-D
 **Blocked By:** None
 **Model:** sonnet

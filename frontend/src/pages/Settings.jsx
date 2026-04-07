@@ -1015,7 +1015,7 @@ function Settings() {
         icon={SettingsIcon}
         title="Settings"
         subtitle="Organization and infrastructure configuration."
-      />
+      helpKey="settings" />
 
       {/* Tab bar */}
       <div className="flex flex-wrap items-center gap-1 border-b border-border">

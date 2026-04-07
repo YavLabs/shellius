@@ -378,8 +378,7 @@ function Servers() {
       <PageHeader
         icon={ServerIcon}
         title="Servers"
-        subtitle="Manage target servers across customers."
-      >
+        subtitle="Manage target servers across customers." helpKey="servers">
         <Button
           onClick={() => {
             setEditing(null);

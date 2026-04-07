@@ -303,7 +303,7 @@ function Users() {
 
   return (
     <div className="space-y-6 p-6">
-      <PageHeader icon={UsersIcon} title="Users" subtitle="Manage user accounts, roles, and access.">
+      <PageHeader icon={UsersIcon} title="Users" subtitle="Manage user accounts, roles, and access." helpKey="users">
         <Button onClick={openCreate}>
           <Plus className="mr-2 h-4 w-4" /> Add User
         </Button>
