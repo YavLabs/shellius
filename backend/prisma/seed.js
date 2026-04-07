@@ -1,42 +1,126 @@
+/**
+ * Prisma seed — creates the bootstrap organization + super admin user.
+ *
+ * All values are read from environment variables so secrets never live
+ * in source. The seed is idempotent: rerunning it on a populated DB
+ * does NOT overwrite an existing super admin's password (use the UI's
+ * "Change password" or `prisma db seed -- --force-password` to rotate).
+ *
+ * Required env (in `.env.prod` / `.env`):
+ *   SEED_ORG_NAME
+ *   SEED_ORG_SLUG
+ *   SEED_ORG_DOMAIN          (optional)
+ *   SEED_ADMIN_EMAIL
+ *   SEED_ADMIN_NAME          (optional, defaults to "Super Admin")
+ *   SEED_ADMIN_PASSWORD
+ *
+ * Behaviour:
+ *   - If SEED_ADMIN_EMAIL or SEED_ADMIN_PASSWORD is missing, the seed
+ *     refuses to run with a clear error message.
+ *   - The organization is upserted by slug.
+ *   - The super admin user is upserted by (orgId, email). On insert,
+ *     the password is bcrypt-hashed from SEED_ADMIN_PASSWORD.
+ *   - On update, the password is left untouched UNLESS the
+ *     `--force-password` CLI flag is passed (or
+ *     SEED_FORCE_ADMIN_PASSWORD=true is set), so a stale `.env`
+ *     can't accidentally reset a super admin's password.
+ */
+
+import 'dotenv/config';
 import { PrismaClient } from '@prisma/client';
 import bcrypt from 'bcryptjs';
 
 const prisma = new PrismaClient();
 
+function requireEnv(name) {
+  const v = process.env[name];
+  if (!v || !v.trim()) {
+    console.error(
+      `\n[seed] ERROR: ${name} is not set.\n` +
+      `[seed] The seed requires SEED_ORG_NAME, SEED_ORG_SLUG,\n` +
+      `[seed] SEED_ADMIN_EMAIL, and SEED_ADMIN_PASSWORD in .env / .env.prod.\n` +
+      `[seed] See .env.prod.example for the full list.\n`
+    );
+    process.exit(1);
+  }
+  return v.trim();
+}
+
 async function main() {
+  const ORG_NAME = requireEnv('SEED_ORG_NAME');
+  const ORG_SLUG = requireEnv('SEED_ORG_SLUG');
+  const ORG_DOMAIN = (process.env.SEED_ORG_DOMAIN || '').trim() || null;
+
+  const ADMIN_EMAIL = requireEnv('SEED_ADMIN_EMAIL');
+  const ADMIN_NAME = (process.env.SEED_ADMIN_NAME || 'Super Admin').trim();
+  const ADMIN_PASSWORD = requireEnv('SEED_ADMIN_PASSWORD');
+
+  const FORCE_PASSWORD =
+    process.argv.includes('--force-password') ||
+    String(process.env.SEED_FORCE_ADMIN_PASSWORD || '').toLowerCase() === 'true';
+
+  // ---------------------------------------------------------------------
+  // Organization
+  // ---------------------------------------------------------------------
   const org = await prisma.organization.upsert({
-    where: { slug: 'shellius-demo' },
-    update: {},
+    where: { slug: ORG_SLUG },
+    update: {
+      name: ORG_NAME,
+      ...(ORG_DOMAIN ? { domain: ORG_DOMAIN } : {}),
+    },
     create: {
-      name: 'Shellius Demo',
-      slug: 'shellius-demo',
-      domain: 'shellius.local',
+      name: ORG_NAME,
+      slug: ORG_SLUG,
+      domain: ORG_DOMAIN,
     },
   });
+  console.log(`[seed] Organization: ${org.name} (${org.slug})`);
 
-  console.log('Organization:', org.name);
+  // ---------------------------------------------------------------------
+  // Super admin
+  // ---------------------------------------------------------------------
+  const passwordHash = await bcrypt.hash(ADMIN_PASSWORD, 12);
+  const existing = await prisma.user.findUnique({
+    where: { orgId_email: { orgId: org.id, email: ADMIN_EMAIL } },
+  });
 
-  const passwordHash = await bcrypt.hash('Shellius2024!', 12);
-
-  const admin = await prisma.user.upsert({
-    where: { orgId_email: { orgId: org.id, email: 'admin@shellius.local' } },
-    update: {},
-    create: {
-      orgId: org.id,
-      email: 'admin@shellius.local',
-      name: 'Admin User',
-      passwordHash,
+  if (!existing) {
+    const admin = await prisma.user.create({
+      data: {
+        orgId: org.id,
+        email: ADMIN_EMAIL,
+        name: ADMIN_NAME,
+        passwordHash,
+        role: 'super_admin',
+        status: 'active',
+      },
+    });
+    console.log(`[seed] Super admin created: ${admin.email}`);
+  } else {
+    // Idempotent re-run: never silently overwrite the password unless
+    // explicitly forced. Always keep the role at super_admin and the
+    // status active in case somebody downgraded it via SQL.
+    const update = {
+      name: ADMIN_NAME,
       role: 'super_admin',
       status: 'active',
-    },
-  });
+    };
+    if (FORCE_PASSWORD) update.passwordHash = passwordHash;
 
-  console.log('Admin user:', admin.email);
+    const admin = await prisma.user.update({
+      where: { orgId_email: { orgId: org.id, email: ADMIN_EMAIL } },
+      data: update,
+    });
+    console.log(
+      `[seed] Super admin updated: ${admin.email}` +
+        (FORCE_PASSWORD ? ' (password reset via --force-password)' : ' (password preserved)')
+    );
+  }
 }
 
 main()
   .catch((e) => {
-    console.error(e);
+    console.error('[seed] failed:', e);
     process.exit(1);
   })
   .finally(() => prisma.$disconnect());
