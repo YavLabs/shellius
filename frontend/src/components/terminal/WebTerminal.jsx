@@ -38,7 +38,7 @@ function StatusIndicator({ status }) {
 }
 
 function WebTerminal({ requestId, onClose }) {
-  const { accessToken } = useAuth();
+  const { accessToken, refresh } = useAuth();
   const containerRef = useRef(null);
   const termRef = useRef(null);
   const fitAddonRef = useRef(null);
@@ -54,13 +54,24 @@ function WebTerminal({ requestId, onClose }) {
     }
   }, []);
 
-  const connect = useCallback(() => {
+  const connect = useCallback(async () => {
     if (!requestId) return;
 
     setStatus(STATUS.CONNECTING);
     setError('');
 
-    const token = accessToken || localStorage.getItem('accessToken');
+    // Force-refresh the access token before opening the WebSocket. The WS
+    // bypasses axios entirely, so the auto-refresh interceptor never fires
+    // for it. Without this, a stale token (15 min default TTL) leaves the
+    // backend rejecting the upgrade with "Invalid or expired token".
+    let token = accessToken || localStorage.getItem('accessToken');
+    try {
+      const refreshed = await refresh();
+      if (refreshed?.accessToken) token = refreshed.accessToken;
+    } catch {
+      // If refresh fails, fall back to whatever's in storage and let the
+      // backend reject — the user will get the auth error and can re-login.
+    }
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
     const host = window.location.host;
 
@@ -131,7 +142,7 @@ function WebTerminal({ requestId, onClose }) {
     return () => {
       window.removeEventListener('resize', handleResize);
     };
-  }, [requestId, accessToken, sendResize]);
+  }, [requestId, accessToken, refresh, sendResize]);
 
   function openWs(url, term) {
     const ws = new WebSocket(url);
@@ -153,18 +164,35 @@ function WebTerminal({ requestId, onClose }) {
         evt.data.text().then((t) => term.write(t));
         return;
       }
+      // Backend may send structured JSON control frames (e.g. errors).
+      if (text && text.length > 0 && text[0] === '{') {
+        try {
+          const msg = JSON.parse(text);
+          if (msg && msg.type === 'error' && typeof msg.message === 'string') {
+            setError(msg.message);
+            return;
+          }
+        } catch {
+          // not JSON — treat as raw shell output
+        }
+      }
       term.write(text);
     };
 
     ws.onerror = () => {
       setStatus(STATUS.DISCONNECTED);
-      setError('WebSocket connection error. Check your network or try reconnecting.');
+      setError((prev) => prev || 'WebSocket connection error. Check your network or try reconnecting.');
     };
 
     ws.onclose = (evt) => {
       setStatus(STATUS.DISCONNECTED);
       if (evt.code !== 1000 && evt.code !== 1001) {
-        setError(`Connection closed (code ${evt.code}). You may reconnect.`);
+        // Prefer the human reason from the backend (set via setError on the
+        // structured error frame just before close). Fall back to evt.reason
+        // if the frame never arrived.
+        setError((prev) =>
+          prev || (evt.reason ? evt.reason : `Connection closed (code ${evt.code}). You may reconnect.`)
+        );
       }
     };
 
@@ -180,9 +208,21 @@ function WebTerminal({ requestId, onClose }) {
   }
 
   useEffect(() => {
-    const cleanup = connect();
+    // connect() is async and resolves to its own cleanup function (or
+    // undefined). Capture the resolved value into a ref so the useEffect
+    // teardown can call it correctly.
+    let cleanupFn = null;
+    let cancelled = false;
+    connect().then((fn) => {
+      if (cancelled) {
+        if (typeof fn === 'function') fn();
+      } else {
+        cleanupFn = fn;
+      }
+    });
 
     return () => {
+      cancelled = true;
       if (resizeObserverRef.current) {
         resizeObserverRef.current.disconnect();
       }
@@ -194,7 +234,7 @@ function WebTerminal({ requestId, onClose }) {
         termRef.current.dispose();
         termRef.current = null;
       }
-      if (cleanup) cleanup();
+      if (typeof cleanupFn === 'function') cleanupFn();
     };
   }, [connect]);
 

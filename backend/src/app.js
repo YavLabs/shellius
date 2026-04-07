@@ -1,4 +1,13 @@
 import 'dotenv/config';
+
+// Make BigInt JSON-serializable globally — Prisma returns Certificate.serial
+// (and similar columns) as native BigInt, which JSON.stringify chokes on.
+// Serialize as string so the frontend gets a stable representation.
+// eslint-disable-next-line no-extend-native
+BigInt.prototype.toJSON = function () {
+  return this.toString();
+};
+
 import express from 'express';
 import cors from 'cors';
 import helmet from 'helmet';
@@ -19,6 +28,8 @@ import accessRequestsRouter from './routes/accessRequests.js';
 import notificationsRouter from './routes/notifications.js';
 import sessionsRouter from './routes/sessions.js';
 import auditRouter from './routes/audit.js';
+import bootstrapRouter from './routes/bootstrap.js';
+import orgRouter from './routes/org.js';
 import errorHandler from './middleware/errorHandler.js';
 import { startAllJobs } from './jobs/index.js';
 
@@ -54,6 +65,8 @@ app.use('/api/access-requests', accessRequestsRouter);
 app.use('/api/notifications', notificationsRouter);
 app.use('/api/sessions', sessionsRouter);
 app.use('/api/audit', auditRouter);
+app.use('/api/bootstrap', bootstrapRouter);
+app.use('/api/org', orgRouter);
 
 app.use(errorHandler);
 

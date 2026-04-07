@@ -4,6 +4,7 @@ import EnvironmentBadge from '@/components/shared/EnvironmentBadge';
 import { createAccessRequest } from '@/services/accessRequestService';
 import { listServers } from '@/services/serverService';
 import { useAuth } from '@/context/AuthContext';
+import { LINUX_USER_RE, defaultPrincipal } from '@/utils/principal';
 
 const DURATION_UNITS = [
   { label: 'minutes', value: 'minutes', factor: 60 },
@@ -21,7 +22,7 @@ const labelCls = 'block text-xs font-medium text-muted-foreground mb-1';
 const selectCls =
   'rounded-md border border-input bg-background px-3 py-2 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-ring';
 
-function RequestForm({ open, onClose, onSuccess }) {
+function RequestForm({ open, onClose, onSuccess, initialServerId = '' }) {
   const { user } = useAuth();
 
   const [servers, setServers] = useState([]);
@@ -53,15 +54,15 @@ function RequestForm({ open, onClose, onSuccess }) {
   useEffect(() => {
     if (open) {
       fetchServers();
-      setServerId('');
+      setServerId(initialServerId || '');
       setReason('');
       setDurationAmount('1');
       setDurationUnit('hours');
-      setPrincipal(user?.username || user?.name || 'ubuntu');
+      setPrincipal(defaultPrincipal(user));
       setProtocol('SSH');
       setError('');
     }
-  }, [open, fetchServers, user]);
+  }, [open, fetchServers, user, initialServerId]);
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -73,6 +74,13 @@ function RequestForm({ open, onClose, onSuccess }) {
     }
     if (!reason || reason.trim().length < 10) {
       setError('Reason must be at least 10 characters.');
+      return;
+    }
+    const trimmedPrincipal = principal.trim();
+    if (!LINUX_USER_RE.test(trimmedPrincipal)) {
+      setError(
+        'Principal must be a valid Linux username: lowercase letters, digits, underscore, or hyphen (1-32 chars, must start with a letter or underscore).'
+      );
       return;
     }
     const requestedDuration = toSeconds(durationAmount, durationUnit);
@@ -87,7 +95,7 @@ function RequestForm({ open, onClose, onSuccess }) {
         serverId,
         reason: reason.trim(),
         requestedDuration,
-        requestedPrincipal: principal.trim() || 'ubuntu',
+        requestedPrincipal: trimmedPrincipal,
         protocol,
       });
       onSuccess?.();
@@ -184,11 +192,29 @@ function RequestForm({ open, onClose, onSuccess }) {
           <label className={labelCls}>Requested Principal (SSH username)</label>
           <input
             type="text"
-            className={inputCls}
+            className={`${inputCls} ${
+              principal && !LINUX_USER_RE.test(principal.trim())
+                ? 'border-destructive focus:ring-destructive'
+                : ''
+            }`}
             value={principal}
             onChange={(e) => setPrincipal(e.target.value)}
             placeholder="ubuntu"
+            autoComplete="off"
+            spellCheck={false}
           />
+          <p className="mt-1 text-[11px] text-muted-foreground">
+            Must match an existing Linux user on the target host. Lowercase
+            letters, digits, underscore, or hyphen (1-32 chars).
+          </p>
+          {principal && !LINUX_USER_RE.test(principal.trim()) && (
+            <p className="mt-1 text-[11px] text-destructive">
+              Invalid Linux username — example valid values:{' '}
+              <code className="font-mono">ubuntu</code>,{' '}
+              <code className="font-mono">ec2-user</code>,{' '}
+              <code className="font-mono">yavadmin</code>.
+            </p>
+          )}
         </div>
 
         {error && (

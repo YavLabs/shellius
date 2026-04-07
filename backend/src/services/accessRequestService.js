@@ -492,6 +492,9 @@ export async function generateSshCredentials({ requestId, callerId }) {
       privateKey: privateKeyBuf.toString('utf8'),
       certificate: signedCert,
       hostname: server.hostname,
+      // Prefer the IP address for the actual SSH connection — the backend
+      // container's DNS may not resolve user-supplied hostnames.
+      address: server.ipAddress || server.hostname,
       port,
       username: principal,
       expiresAt: accessRequest.expiresAt,
@@ -731,6 +734,37 @@ export async function revoke({ requestId, callerId, callerRole, reason }) {
   logger.info('accessRequestService.revoke: request revoked', { requestId, callerId });
 
   return prisma.accessRequest.findUnique({ where: { id: requestId }, include: REQUEST_INCLUDE });
+}
+
+// ---------------------------------------------------------------------------
+// Public API — getActiveByServerForUser
+// ---------------------------------------------------------------------------
+
+/**
+ * Find the most recent APPROVED, non-expired access request for a given
+ * (orgId, userId, serverId) tuple. Returns the AR row or null if none exists.
+ *
+ * Used by the Quick Connect button on the Servers list page.
+ *
+ * @param {string} orgId    - tenant scope (Task 15R-D fix)
+ * @param {string} userId
+ * @param {string} serverId
+ * @returns {Promise<object|null>}
+ */
+export async function getActiveByServerForUser(orgId, userId, serverId) {
+  const now = new Date();
+  const ar = await prisma.accessRequest.findFirst({
+    where: {
+      orgId, // tenant isolation — prevents cross-org existence oracle (15R-D)
+      requesterId: userId,
+      serverId,
+      status: 'APPROVED',
+      expiresAt: { gt: now },
+    },
+    orderBy: { approvedAt: 'desc' },
+    include: REQUEST_INCLUDE,
+  });
+  return ar; // null when none
 }
 
 // ---------------------------------------------------------------------------
@@ -1036,6 +1070,7 @@ export default {
   revoke,
   list,
   getById,
+  getActiveByServerForUser,
   markExpired,
   markPendingExpired,
   notifyExpiringAccess,

@@ -211,7 +211,10 @@ export async function signCertificate({
     const caPrivPath = path.join(tmpDir, 'ca_key');
     const userPubPath = path.join(tmpDir, 'user_key.pub');
 
-    await writeSecret(caPrivPath, caPrivBuffer.toString('utf8'));
+    // ssh-keygen requires the OpenSSH private key file to end with a newline.
+    // The generator helper trims input before encryption, so re-append it.
+    const caPrivText = caPrivBuffer.toString('utf8');
+    await writeSecret(caPrivPath, caPrivText.endsWith('\n') ? caPrivText : caPrivText + '\n');
     await fs.writeFile(userPubPath, publicKey.trim() + '\n', { mode: 0o644 });
 
     // Build ssh-keygen args

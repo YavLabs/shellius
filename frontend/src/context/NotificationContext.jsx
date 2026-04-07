@@ -19,9 +19,10 @@ export function NotificationProvider({ children }) {
   const refresh = useCallback(async () => {
     if (!isAuthenticated) return;
     try {
-      const resp = await listNotifications({ page: 1, limit: 20 });
-      const items = resp.data || [];
-      const count = resp.meta?.unreadCount ?? items.filter((n) => !n.isRead).length;
+      const { notifications: items, unreadCount: count } = await listNotifications({
+        page: 1,
+        limit: 20,
+      });
       setNotifications(items);
       setUnreadCount(count);
     } catch {
