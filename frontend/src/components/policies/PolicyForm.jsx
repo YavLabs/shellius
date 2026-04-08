@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
-import { X, Plus, FlaskConical } from 'lucide-react';
+import { X, Plus, FlaskConical, Info, CheckCircle2, XCircle } from 'lucide-react';
 import Modal from '@/components/shared/Modal';
 import EnvironmentBadge from '@/components/shared/EnvironmentBadge';
 import { listUsers } from '@/services/userService';
@@ -9,58 +9,123 @@ import { listServers } from '@/services/serverService';
 import PolicyEvaluator from '@/components/policies/PolicyEvaluator';
 
 const ENVIRONMENTS = ['demo', 'dev', 'staging', 'prod'];
-const STEPS = ['Basics', 'Subjects', 'Targets', 'Constraints'];
+
+/**
+ * SectionHeader — a clean numbered heading with a one-line description.
+ * Used in the new single-scroll PolicyForm layout (replaces the old
+ * step-by-step wizard).
+ */
+function SectionHeader({ number, title, description }) {
+  return (
+    <div className="flex items-start gap-3 mb-4">
+      <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-primary/10 text-xs font-semibold text-primary">
+        {number}
+      </div>
+      <div>
+        <h3 className="text-sm font-semibold text-foreground">{title}</h3>
+        {description && (
+          <p className="mt-0.5 text-xs text-muted-foreground">{description}</p>
+        )}
+      </div>
+    </div>
+  );
+}
+
+/**
+ * PolicySummary — a live plain-English sentence that describes what the
+ * current form values will do. Updates as the user types.
+ */
+function PolicySummary({ form }) {
+  const effect = form.effect === 'DENY' ? 'Denies' : 'Allows';
+  const EffectIcon = form.effect === 'DENY' ? XCircle : CheckCircle2;
+  const effectClass =
+    form.effect === 'DENY'
+      ? 'border-destructive/30 bg-destructive/5 text-destructive'
+      : 'border-emerald-500/30 bg-emerald-500/5 text-emerald-700 dark:text-emerald-400';
+
+  // Subjects
+  const userCount = form.subjects?.filter((s) => s.subjectType === 'USER').length || 0;
+  const groupCount = form.subjects?.filter((s) => s.subjectType === 'GROUP').length || 0;
+  const roleCount = form.subjects?.filter((s) => s.subjectType === 'ROLE').length || 0;
+  const subjectParts = [];
+  if (userCount) subjectParts.push(`${userCount} user${userCount !== 1 ? 's' : ''}`);
+  if (groupCount) subjectParts.push(`${groupCount} group${groupCount !== 1 ? 's' : ''}`);
+  if (roleCount) {
+    const roleNames = form.subjects.filter((s) => s.subjectType === 'ROLE').map((s) => s.subjectId);
+    subjectParts.push(roleNames.length === 1 ? `all ${roleNames[0]}s` : `${roleCount} roles`);
+  }
+  const who = subjectParts.length ? subjectParts.join(' + ') : 'nobody (yet)';
+
+  // Targets
+  const envCount = form.targetEnvironments?.length || 0;
+  const serverCount = form.targetServerIds?.length || 0;
+  const labelCount = Object.keys(form.targetLabels || {}).length;
+  let where;
+  if (serverCount) where = `${serverCount} specific server${serverCount !== 1 ? 's' : ''}`;
+  else if (envCount) where = `all ${form.targetEnvironments.join('/')} servers`;
+  else if (labelCount) where = `servers matching ${labelCount} label${labelCount !== 1 ? 's' : ''}`;
+  else where = 'every server in the org';
+
+  // Constraints
+  const mins = Math.round((form.maxSessionDuration || 0) / 60);
+  const duration =
+    mins >= 60
+      ? `${Math.round((mins / 60) * 10) / 10}h`
+      : `${mins}m`;
+  const approvalTag = form.autoApprove
+    ? 'auto-approved'
+    : form.requireApproval
+    ? 'after manager approval'
+    : 'subject to policy evaluation';
+
+  // JIT
+  const hasJit =
+    form.osProvisioning &&
+    ((form.osProvisioning.linuxGroups || []).length > 0 ||
+      form.osProvisioning.sudo ||
+      (form.osProvisioning.aclReadPaths || []).length > 0 ||
+      form.osProvisioning.hardCutoff);
+
+  const principals = form.allowedPrincipals?.length
+    ? form.allowedPrincipals.join(', ')
+    : 'any principal';
+
+  return (
+    <div className={`rounded-md border px-4 py-3 ${effectClass}`}>
+      <div className="flex items-start gap-2">
+        <EffectIcon className="h-4 w-4 mt-0.5 shrink-0" />
+        <div className="text-xs leading-relaxed">
+          <strong className="text-sm">{effect}</strong> {who} to connect as{' '}
+          <span className="font-mono">{principals}</span> on {where} for up to{' '}
+          <strong>{duration}</strong> per session, {approvalTag}.
+          {hasJit && (
+            <span className="block mt-1 text-[11px] opacity-80">
+              ⚡ JIT provisioning enabled — target hosts will auto-create a per-user Linux
+              account for each session.
+            </span>
+          )}
+          {form.isBreakGlass && (
+            <span className="block mt-1 text-[11px] opacity-80">
+              🚨 Marked as a break-glass policy — invoking it notifies all admins.
+            </span>
+          )}
+          {form.allowKeyDownload && (
+            <span className="block mt-1 text-[11px] opacity-80">
+              🔑 SSH key download enabled — users can take credentials offline.
+            </span>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
 
 const inputCls =
   'w-full h-9 rounded-md border border-input bg-background px-3 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring';
 const labelCls = 'block text-sm font-medium text-foreground mb-1';
 const errorCls = 'text-xs text-destructive mt-1';
 
-function StepIndicator({ current }) {
-  return (
-    <div className="flex items-center gap-0 mb-6">
-      {STEPS.map((label, i) => {
-        const num = i + 1;
-        const active = current === num;
-        const done = current > num;
-        return (
-          <div key={label} className="flex items-center">
-            <div className="flex items-center gap-2">
-              <div
-                className={[
-                  'flex h-6 w-6 items-center justify-center rounded-full text-xs font-semibold',
-                  done
-                    ? 'bg-primary text-primary-foreground'
-                    : active
-                    ? 'bg-primary text-primary-foreground'
-                    : 'bg-muted text-muted-foreground',
-                ].join(' ')}
-              >
-                {num}
-              </div>
-              <span
-                className={[
-                  'text-xs font-medium',
-                  active ? 'text-foreground' : 'text-muted-foreground',
-                ].join(' ')}
-              >
-                {label}
-              </span>
-            </div>
-            {i < STEPS.length - 1 && (
-              <div
-                className={[
-                  'mx-3 h-px w-10 flex-shrink-0',
-                  done ? 'bg-primary' : 'bg-border',
-                ].join(' ')}
-              />
-            )}
-          </div>
-        );
-      })}
-    </div>
-  );
-}
+// StepIndicator removed — the form is now single-scroll; see SectionHeader.
 
 function Chip({ label, onRemove }) {
   return (
@@ -850,7 +915,6 @@ function PolicyForm({ open, onClose, onSubmit, policy, onEvaluate }) {
     isBreakGlass: false,
   };
 
-  const [step, setStep] = useState(1);
   const [form, setForm] = useState(defaultForm);
   const [errors, setErrors] = useState({});
   const [submitting, setSubmitting] = useState(false);
@@ -892,7 +956,6 @@ function PolicyForm({ open, onClose, onSubmit, policy, onEvaluate }) {
       } else {
         setForm(defaultForm);
       }
-      setStep(1);
       setErrors({});
       setSubmitError('');
     }
@@ -904,39 +967,23 @@ function PolicyForm({ open, onClose, onSubmit, policy, onEvaluate }) {
     setErrors((prev) => ({ ...prev, [field]: undefined }));
   };
 
-  const validateStep = () => {
+  // Single-pass validation — all sections checked at once on submit.
+  const validateAll = () => {
     const errs = {};
-    if (step === 1) {
-      if (!form.name.trim()) errs.name = 'Name is required.';
-      if (!form.effect) errs.effect = 'Effect is required.';
-    }
-    if (step === 2) {
-      if ((form.subjects || []).length === 0)
-        errs.subjects = 'At least one subject (user or group) is required.';
-    }
-    if (step === 3) {
-      if ((form.allowedPrincipals || []).length === 0)
-        errs.allowedPrincipals = 'At least one allowed principal (e.g. ubuntu) is required.';
-    }
-    if (step === 4) {
-      if (!form.maxSessionDuration || form.maxSessionDuration < 60)
-        errs.maxSessionDuration = 'Minimum session duration is 1 minute.';
-    }
+    if (!form.name.trim()) errs.name = 'Name is required.';
+    if (!form.effect) errs.effect = 'Effect is required.';
+    if ((form.subjects || []).length === 0)
+      errs.subjects = 'At least one subject (user, group, or role) is required.';
+    if ((form.allowedPrincipals || []).length === 0)
+      errs.allowedPrincipals = 'At least one allowed principal (e.g. ubuntu) is required.';
+    if (!form.maxSessionDuration || form.maxSessionDuration < 60)
+      errs.maxSessionDuration = 'Minimum session duration is 1 minute.';
     setErrors(errs);
     return Object.keys(errs).length === 0;
   };
 
-  const handleNext = () => {
-    if (validateStep()) setStep((s) => s + 1);
-  };
-
-  const handleBack = () => {
-    setErrors({});
-    setStep((s) => s - 1);
-  };
-
   const handleSubmit = async () => {
-    if (!validateStep()) return;
+    if (!validateAll()) return;
     setSubmitting(true);
     setSubmitError('');
     try {
@@ -958,6 +1005,10 @@ function PolicyForm({ open, onClose, onSubmit, policy, onEvaluate }) {
         maxSessionDuration: form.maxSessionDuration,
         requireApproval: form.requireApproval,
         autoApprove: form.autoApprove,
+        // Phase 21A — JIT provisioning fields must be persisted on save.
+        osProvisioning: form.osProvisioning || {},
+        allowKeyDownload: !!form.allowKeyDownload,
+        isBreakGlass: !!form.isBreakGlass,
       };
       await onSubmit(payload);
     } catch (err) {
@@ -967,7 +1018,7 @@ function PolicyForm({ open, onClose, onSubmit, policy, onEvaluate }) {
     }
   };
 
-  const stepProps = { form, onChange: handleChange, errors };
+  const sectionProps = { form, onChange: handleChange, errors };
 
   return (
     <Modal
@@ -976,46 +1027,86 @@ function PolicyForm({ open, onClose, onSubmit, policy, onEvaluate }) {
       title={isEdit ? 'Edit Policy' : 'New Policy'}
       size="lg"
     >
-      <StepIndicator current={step} />
+      <div className="space-y-6">
+        {/* Live plain-English summary — always visible at the top so the
+            user sees what their current choices translate to. */}
+        <PolicySummary form={form} />
 
-      {step === 1 && <Step1 {...stepProps} />}
-      {step === 2 && <Step2 {...stepProps} />}
-      {step === 3 && <Step3 {...stepProps} />}
-      {step === 4 && <Step4 {...stepProps} />}
+        {/* All four sections stacked in one scroll view. Each is numbered
+            and has a one-line description. No wizard, no Next/Back. */}
+        <section>
+          <SectionHeader
+            number={1}
+            title="Basics"
+            description="Name, effect (allow or deny), priority, and active state."
+          />
+          <Step1 {...sectionProps} />
+        </section>
 
-      {submitError && (
-        <div className="mt-4 rounded-md border border-destructive/50 bg-destructive/10 px-3 py-2 text-sm text-destructive">
-          {submitError}
-        </div>
-      )}
+        <div className="border-t border-border" />
 
-      <div className="mt-6 flex items-center justify-between">
-        <button
-          type="button"
-          onClick={step === 1 ? onClose : handleBack}
-          className="h-9 rounded-md border border-input bg-background px-4 text-sm font-medium text-foreground hover:bg-accent"
-        >
-          {step === 1 ? 'Cancel' : 'Back'}
-        </button>
-        <div className="flex items-center gap-2">
+        <section>
+          <SectionHeader
+            number={2}
+            title="Who does this apply to?"
+            description="Pick users, groups, or roles. A role matches every user assigned to it."
+          />
+          <Step2 {...sectionProps} />
+        </section>
+
+        <div className="border-t border-border" />
+
+        <section>
+          <SectionHeader
+            number={3}
+            title="Which servers?"
+            description="Scope by customer, environment, specific servers, or label matches."
+          />
+          <Step3 {...sectionProps} />
+        </section>
+
+        <div className="border-t border-border" />
+
+        <section>
+          <SectionHeader
+            number={4}
+            title="Constraints & JIT Provisioning"
+            description="Session duration, approval requirements, and optional just-in-time Linux user creation."
+          />
+          <Step4 {...sectionProps} />
+        </section>
+
+        {submitError && (
+          <div className="rounded-md border border-destructive/50 bg-destructive/10 px-3 py-2 text-sm text-destructive">
+            {submitError}
+          </div>
+        )}
+
+        {Object.keys(errors).length > 0 && (
+          <div className="rounded-md border border-amber-500/30 bg-amber-500/5 px-3 py-2 text-xs text-amber-700 dark:text-amber-400">
+            <Info className="inline h-3 w-3 mr-1" />
+            Fix the highlighted fields before saving.
+          </div>
+        )}
+
+        <div className="flex items-center justify-between border-t border-border pt-4">
           <button
             type="button"
-            onClick={() => setEvaluatorOpen(true)}
-            className="flex h-9 items-center gap-1.5 rounded-md border border-input bg-background px-3 text-sm font-medium text-foreground hover:bg-accent"
-            title="Preview policy evaluation"
+            onClick={onClose}
+            className="h-9 rounded-md border border-input bg-background px-4 text-sm font-medium text-foreground hover:bg-accent"
           >
-            <FlaskConical className="h-3.5 w-3.5" />
-            Evaluate
+            Cancel
           </button>
-          {step < STEPS.length ? (
+          <div className="flex items-center gap-2">
             <button
               type="button"
-              onClick={handleNext}
-              className="h-9 rounded-md bg-primary px-4 text-sm font-medium text-primary-foreground hover:bg-primary/90"
+              onClick={() => setEvaluatorOpen(true)}
+              className="flex h-9 items-center gap-1.5 rounded-md border border-input bg-background px-3 text-sm font-medium text-foreground hover:bg-accent"
+              title="Preview policy evaluation"
             >
-              Next
+              <FlaskConical className="h-3.5 w-3.5" />
+              Evaluate
             </button>
-          ) : (
             <button
               type="button"
               onClick={handleSubmit}
@@ -1024,7 +1115,7 @@ function PolicyForm({ open, onClose, onSubmit, policy, onEvaluate }) {
             >
               {submitting ? 'Saving...' : isEdit ? 'Save Changes' : 'Create Policy'}
             </button>
-          )}
+          </div>
         </div>
       </div>
 

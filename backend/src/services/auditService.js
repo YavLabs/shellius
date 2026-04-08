@@ -222,7 +222,8 @@ export async function list({ orgId, filters = {}, page = 1, limit = 25 } = {}) {
     ]);
 
     const total = countRows[0]?.total ?? 0;
-    return { items: rows, total, page, limit };
+    const enriched = await enrichAuditItems(rows, orgId);
+    return { items: enriched, total, page, limit };
   }
 
   // Non-search path: pure Prisma ORM query
@@ -236,7 +237,260 @@ export async function list({ orgId, filters = {}, page = 1, limit = 25 } = {}) {
     prisma.auditLog.count({ where }),
   ]);
 
-  return { items, total, page, limit };
+  const enriched = await enrichAuditItems(items, orgId);
+  return { items: enriched, total, page, limit };
+}
+
+// ---------------------------------------------------------------------------
+// Enrichment — attach human-readable labels so the UI never has to show a
+// raw primary key. Each item gets:
+//
+//   actorName      — user name (fall back to email local-part)
+//   actorEmail     — user email
+//   resourceLabel  — human string (server hostname, user name, AR composite, ...)
+//   resourceLink   — optional frontend route to drill into
+//
+// The IDs stay in the payload so the UI can navigate, but they are never
+// rendered as strings to the user.
+// ---------------------------------------------------------------------------
+
+async function enrichAuditItems(items, orgId) {
+  if (!Array.isArray(items) || items.length === 0) return items;
+
+  // Bucket distinct IDs by resource type so each lookup is a single
+  // batched query.
+  const actorIds = new Set();
+  const byType = new Map(); // type -> Set(id)
+
+  for (const it of items) {
+    if (it.actorId) actorIds.add(it.actorId);
+    if (it.resourceType && it.resourceId) {
+      if (!byType.has(it.resourceType)) byType.set(it.resourceType, new Set());
+      byType.get(it.resourceType).add(it.resourceId);
+    }
+  }
+
+  // Always include actorIds in the User batch, regardless of resourceType.
+  if (actorIds.size > 0) {
+    if (!byType.has('User')) byType.set('User', new Set());
+    actorIds.forEach((id) => byType.get('User').add(id));
+  }
+
+  // Fire all lookups in parallel.
+  const lookups = {};
+  const promises = [];
+
+  if (byType.has('User')) {
+    promises.push(
+      prisma.user
+        .findMany({
+          where: { id: { in: [...byType.get('User')] }, orgId },
+          select: { id: true, name: true, email: true },
+        })
+        .then((rows) => {
+          lookups.User = new Map(rows.map((r) => [r.id, r]));
+        })
+    );
+  }
+  if (byType.has('Server')) {
+    promises.push(
+      prisma.server
+        .findMany({
+          where: { id: { in: [...byType.get('Server')] }, orgId },
+          select: { id: true, hostname: true, environment: true, ipAddress: true },
+        })
+        .then((rows) => {
+          lookups.Server = new Map(rows.map((r) => [r.id, r]));
+        })
+    );
+  }
+  if (byType.has('Customer')) {
+    promises.push(
+      prisma.customer
+        .findMany({
+          where: { id: { in: [...byType.get('Customer')] }, orgId },
+          select: { id: true, name: true, slug: true },
+        })
+        .then((rows) => {
+          lookups.Customer = new Map(rows.map((r) => [r.id, r]));
+        })
+    );
+  }
+  if (byType.has('AccessRequest')) {
+    promises.push(
+      prisma.accessRequest
+        .findMany({
+          where: { id: { in: [...byType.get('AccessRequest')] }, orgId },
+          select: {
+            id: true,
+            requestedPrincipal: true,
+            requester: { select: { name: true, email: true } },
+            server: { select: { hostname: true, environment: true } },
+          },
+        })
+        .then((rows) => {
+          lookups.AccessRequest = new Map(rows.map((r) => [r.id, r]));
+        })
+    );
+  }
+  if (byType.has('Certificate')) {
+    promises.push(
+      prisma.certificate
+        .findMany({
+          where: { id: { in: [...byType.get('Certificate')] }, orgId },
+          select: { id: true, keyId: true, principals: true },
+        })
+        .then((rows) => {
+          lookups.Certificate = new Map(rows.map((r) => [r.id, r]));
+        })
+    );
+  }
+  if (byType.has('Session')) {
+    promises.push(
+      prisma.session
+        .findMany({
+          where: { id: { in: [...byType.get('Session')] }, orgId },
+          select: {
+            id: true,
+            user: { select: { name: true, email: true } },
+            server: { select: { hostname: true } },
+          },
+        })
+        .then((rows) => {
+          lookups.Session = new Map(rows.map((r) => [r.id, r]));
+        })
+    );
+  }
+  if (byType.has('Group')) {
+    promises.push(
+      prisma.group
+        .findMany({
+          where: { id: { in: [...byType.get('Group')] }, orgId },
+          select: { id: true, name: true },
+        })
+        .then((rows) => {
+          lookups.Group = new Map(rows.map((r) => [r.id, r]));
+        })
+    );
+  }
+  if (byType.has('AccessPolicy')) {
+    promises.push(
+      prisma.accessPolicy
+        .findMany({
+          where: { id: { in: [...byType.get('AccessPolicy')] }, orgId },
+          select: { id: true, name: true, effect: true },
+        })
+        .then((rows) => {
+          lookups.AccessPolicy = new Map(rows.map((r) => [r.id, r]));
+        })
+    );
+  }
+
+  await Promise.all(promises);
+
+  // Build the enriched view-models.
+  return items.map((it) => {
+    const out = { ...it };
+
+    // Actor display name
+    if (it.actorId && lookups.User) {
+      const u = lookups.User.get(it.actorId);
+      if (u) {
+        out.actorName = u.name || (u.email || '').split('@')[0] || 'Unknown';
+        out.actorEmail = u.email;
+      }
+    }
+    if (!out.actorName) out.actorName = it.actorId ? 'Unknown user' : 'System';
+
+    // Resource label + link
+    const rt = it.resourceType;
+    const rid = it.resourceId;
+    let label = rt;
+    let link = null;
+    if (rt && rid) {
+      switch (rt) {
+        case 'User': {
+          const u = lookups.User?.get(rid);
+          if (u) {
+            label = u.name || u.email || 'User';
+            link = `/users/${rid}`;
+          }
+          break;
+        }
+        case 'Server': {
+          const s = lookups.Server?.get(rid);
+          if (s) {
+            label = `${s.hostname}${s.environment ? ` (${s.environment})` : ''}`;
+            link = `/servers/${rid}`;
+          }
+          break;
+        }
+        case 'Customer': {
+          const c = lookups.Customer?.get(rid);
+          if (c) {
+            label = c.name;
+            link = `/customers/${rid}`;
+          }
+          break;
+        }
+        case 'AccessRequest': {
+          const ar = lookups.AccessRequest?.get(rid);
+          if (ar) {
+            const who = ar.requester?.name || ar.requester?.email || 'someone';
+            const where = ar.server?.hostname || 'server';
+            label = `${who} → ${where}`;
+            link = `/access-requests/${rid}`;
+          }
+          break;
+        }
+        case 'Certificate': {
+          const c = lookups.Certificate?.get(rid);
+          if (c) {
+            label = c.keyId || (c.principals?.[0] ?? 'certificate');
+            link = `/certificates/${rid}`;
+          }
+          break;
+        }
+        case 'Session': {
+          const s = lookups.Session?.get(rid);
+          if (s) {
+            const who = s.user?.name || s.user?.email || 'user';
+            label = `${who} on ${s.server?.hostname || 'host'}`;
+            link = `/sessions/${rid}`;
+          }
+          break;
+        }
+        case 'Group': {
+          const g = lookups.Group?.get(rid);
+          if (g) {
+            label = g.name;
+            link = `/groups/${rid}`;
+          }
+          break;
+        }
+        case 'AccessPolicy': {
+          const p = lookups.AccessPolicy?.get(rid);
+          if (p) {
+            label = p.name;
+            link = `/policies/${rid}`;
+          }
+          break;
+        }
+        default:
+          // Unknown resource type — just use the type name, no ID leak.
+          label = rt;
+      }
+    } else if (rt) {
+      label = rt;
+    }
+    out.resourceLabel = label;
+    out.resourceLink = link;
+
+    // Strip actorId / resourceId from the serialized output is NOT done —
+    // keep them for the detail pages. Only the UI chooses to hide them.
+
+    return out;
+  });
 }
 
 // ---------------------------------------------------------------------------

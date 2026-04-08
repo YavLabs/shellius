@@ -207,7 +207,7 @@ function Profile() {
   }
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-6 p-6">
       <PageHeader icon={User} title="Profile" subtitle="Manage your account and personal data" />
 
       <div className="grid gap-5 md:grid-cols-2">
