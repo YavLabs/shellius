@@ -41,9 +41,13 @@ const submitSchema = Joi.object({
   requestedDuration: Joi.number().integer().min(60).max(86400 * 7).required(),
   // POSIX-ish Linux username — must match an actual local account on the
   // target host or sshd cert auth will refuse the connection.
+  // Optional — when omitted, the service auto-resolves to the JIT
+  // principal if a matching policy has osProvisioning, otherwise the
+  // server's legacy sshUser.
   requestedPrincipal: Joi.string()
     .pattern(/^[a-z_][a-z0-9_-]{0,31}$/)
-    .required()
+    .optional()
+    .allow('', null)
     .messages({
       'string.pattern.base':
         'requestedPrincipal must be a valid Linux username: lowercase letters, digits, underscore, or hyphen (1-32 chars, must start with a letter or underscore).',
@@ -112,6 +116,7 @@ router.post(
       requestedDuration: req.body.requestedDuration,
       requestedPrincipal: req.body.requestedPrincipal,
       protocol: req.body.protocol,
+      callerRole: req.user.role,
     });
     res.status(201).json({ success: true, data: { accessRequest } });
   })
@@ -378,6 +383,30 @@ router.post(
         expiresAt: accessRequest.expiresAt,
       },
     });
+  })
+);
+
+// ---------------------------------------------------------------------------
+// GET /api/access-requests/intent?serverId=... — any authenticated user
+//
+// Returns everything the frontend needs to decide whether the user should
+// see a "Request Access" or "Connect" button for a given server, and which
+// principal to pre-fill in the form. One round trip instead of three.
+// ---------------------------------------------------------------------------
+
+router.get(
+  '/intent',
+  asyncHandler(async (req, res) => {
+    const serverId = req.query.serverId;
+    if (!serverId) throw new ApiError(400, 'serverId query parameter is required');
+
+    const intent = await accessRequestService.getAccessIntent({
+      orgId: req.orgId,
+      userId: req.user.userId,
+      userRole: req.user.role,
+      serverId,
+    });
+    res.json({ success: true, data: intent });
   })
 );
 

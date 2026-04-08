@@ -10,6 +10,7 @@ import ApiError from '../utils/ApiError.js';
 import logger from '../utils/logger.js';
 import * as caService from './caService.js';
 import * as policyService from './policyService.js';
+import * as jitManifestService from './jitManifestService.js';
 import * as notificationService from './notificationService.js';
 import * as rdpService from './rdpService.js';
 
@@ -96,6 +97,7 @@ export async function submit({
   requestedDuration,
   requestedPrincipal,
   protocol = 'SSH',
+  callerRole,
 }) {
   if (!orgId) throw new ApiError(400, 'orgId is required');
   if (!requesterId) throw new ApiError(400, 'requesterId is required');
@@ -104,7 +106,6 @@ export async function submit({
   if (!requestedDuration || requestedDuration <= 0) {
     throw new ApiError(400, 'requestedDuration must be a positive integer (seconds)');
   }
-  if (!requestedPrincipal) throw new ApiError(400, 'requestedPrincipal is required');
 
   // Load server scoped to org
   const server = await prisma.server.findFirst({ where: { id: serverId, orgId } });
@@ -116,6 +117,43 @@ export async function submit({
     include: { manager: { select: { id: true, name: true, email: true } } },
   });
   if (!requester) throw new ApiError(404, 'Requester not found');
+
+  // Phase 21A Part 2 — JIT-aware principal resolution.
+  //
+  //   1. Look for an ALLOW policy that matches this user+server AND has
+  //      non-empty osProvisioning (linuxGroups, sudo, aclReadPaths, or
+  //      hardCutoff). If one exists, the default principal is the user's
+  //      stable JIT account name (e.g. "alice_jit").
+  //   2. Otherwise fall back to server.sshUser (the legacy shared-user
+  //      path that existing bootstrapped hosts already use).
+  //
+  // Caller-supplied `requestedPrincipal` is honored as an override, but
+  // only if the caller is admin/super_admin OR the value matches one of
+  // the two resolved candidates. This prevents non-admins from requesting
+  // arbitrary Linux usernames (which would fail at sshd auth anyway, but
+  // better to reject early with a clear error).
+  const jitPolicy = await jitManifestService.findJitPolicyForUserServer({
+    orgId,
+    userId: requesterId,
+    serverId,
+  });
+  const jitPrincipal = jitPolicy ? jitManifestService.jitPrincipalFor(requester) : null;
+  const legacyPrincipal = server.sshUser || 'root';
+  const defaultPrincipal = jitPrincipal || legacyPrincipal;
+
+  const isAdminCaller = callerRole === 'admin' || callerRole === 'super_admin';
+  if (!requestedPrincipal) {
+    requestedPrincipal = defaultPrincipal;
+  } else if (!isAdminCaller) {
+    const allowed = new Set([legacyPrincipal]);
+    if (jitPrincipal) allowed.add(jitPrincipal);
+    if (!allowed.has(requestedPrincipal)) {
+      throw new ApiError(
+        403,
+        `Principal "${requestedPrincipal}" is not allowed for this user. Allowed: ${[...allowed].join(', ')}. Admins can override.`
+      );
+    }
+  }
 
   // Evaluate policy (handles prod hard-block internally)
   const policyResult = await policyService.evaluate({
@@ -381,7 +419,12 @@ export async function review({ requestId, reviewerId, decision, approvedDuration
  *   connectCommand: string,
  * }>}
  */
-export async function generateSshCredentials({ requestId, callerId }) {
+export async function generateSshCredentials({
+  requestId,
+  callerId,
+  callerRole,
+  principalOverride,
+}) {
   if (!requestId) throw new ApiError(400, 'requestId is required');
   if (!callerId) throw new ApiError(400, 'callerId is required');
 
@@ -412,7 +455,40 @@ export async function generateSshCredentials({ requestId, callerId }) {
   }
 
   const server = accessRequest.server;
-  const principal = accessRequest.requestedPrincipal;
+  const legacySshUser = server.sshUser || 'root';
+  const isAdminCaller = callerRole === 'admin' || callerRole === 'super_admin';
+
+  // Phase 21A Part 2 — optional per-connect principal override.
+  //   - Non-admins may only pass an override that matches the AR's stored
+  //     principal or the legacy sshUser. Anything else → 403.
+  //   - Admins may pass any valid Linux username (still regex-validated).
+  // If no override is passed, use the AR's stored principal as primary.
+  let primaryPrincipal = accessRequest.requestedPrincipal;
+  if (principalOverride) {
+    const LINUX_USER_RE = /^[a-z_][a-z0-9_-]{0,31}$/;
+    if (!LINUX_USER_RE.test(principalOverride)) {
+      throw new ApiError(400, 'principalOverride is not a valid Linux username');
+    }
+    if (!isAdminCaller) {
+      const allowedSet = new Set([accessRequest.requestedPrincipal, legacySshUser]);
+      if (!allowedSet.has(principalOverride)) {
+        throw new ApiError(
+          403,
+          `Principal "${principalOverride}" is not allowed for this connection. Admins can override.`
+        );
+      }
+    }
+    primaryPrincipal = principalOverride;
+  }
+
+  // Sign the cert with both the primary and the legacy sshUser so the
+  // client can connect as either one. Host-side check-principals will
+  // validate whichever the ssh client actually asks for.
+  const certPrincipals = [primaryPrincipal];
+  if (legacySshUser && legacySshUser !== primaryPrincipal) {
+    certPrincipals.push(legacySshUser);
+  }
+
   const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'shellius-ssh-cred-'));
   const keyPath = path.join(tmpDir, 'id_ed25519');
 
@@ -433,7 +509,7 @@ export async function generateSshCredentials({ requestId, callerId }) {
     const { signedCert, serial, caKeyPairId } = await caService.signCertificate({
       orgId: accessRequest.orgId,
       publicKey: publicKeyRaw.trim(),
-      principals: [principal],
+      principals: certPrincipals,
       validitySeconds: remainingSeconds,
       certType: 'USER',
       keyId: `ar-${requestId}`,
@@ -450,7 +526,7 @@ export async function generateSshCredentials({ requestId, callerId }) {
         serial,
         type: 'USER',
         keyId: `ar-${requestId}`,
-        principals: [principal],
+        principals: certPrincipals,
         publicKey: publicKeyRaw.trim(),
         signedCert,
         validAfter: now,
@@ -473,20 +549,20 @@ export async function generateSshCredentials({ requestId, callerId }) {
       callerId,
       'access_request.ssh_credentials_generated',
       requestId,
-      { certId: certRow.id, principal, remainingSeconds }
+      { certId: certRow.id, principal: primaryPrincipal, principals: certPrincipals, remainingSeconds }
     );
 
     logger.info('accessRequestService.generateSshCredentials: credentials issued', {
       requestId,
       callerId,
       certId: certRow.id,
-      principal,
+      principal: primaryPrincipal,
       remainingSeconds,
     });
 
     const port = server.port ?? 22;
     const connectCommand =
-      `ssh -i id_ed25519 -o CertificateFile=id_ed25519-cert.pub ${principal}@${server.hostname} -p ${port}`;
+      `ssh -i id_ed25519 -o CertificateFile=id_ed25519-cert.pub ${primaryPrincipal}@${server.hostname} -p ${port}`;
 
     const result = {
       privateKey: privateKeyBuf.toString('utf8'),
@@ -496,7 +572,7 @@ export async function generateSshCredentials({ requestId, callerId }) {
       // container's DNS may not resolve user-supplied hostnames.
       address: server.ipAddress || server.hostname,
       port,
-      username: principal,
+      username: primaryPrincipal,
       expiresAt: accessRequest.expiresAt,
       connectCommand,
     };
@@ -1075,7 +1151,114 @@ export default {
   markPendingExpired,
   notifyExpiringAccess,
   createBreakGlass,
+  getAccessIntent,
 };
+
+// ---------------------------------------------------------------------------
+// getAccessIntent — one-shot "what should the UI do for this server"
+// ---------------------------------------------------------------------------
+
+/**
+ * Aggregates the minimum state a client needs to render the Request
+ * Access / Connect button correctly for a given (user, server).
+ *
+ * Returned shape:
+ *   {
+ *     hasActiveAccess: boolean,           // APPROVED + not-expired AR exists
+ *     activeRequestId: string | null,
+ *     hasPendingRequest: boolean,         // a PENDING AR exists (neither req nor connect fits)
+ *     preferredPrincipal: string,         // what to pre-fill in the form
+ *     allowedPrincipals: string[],        // all legal values for this user
+ *     adminCanOverride: boolean,          // whether the current caller can type custom
+ *     protocol: 'SSH' | 'RDP',            // normalized
+ *     requiresApproval: boolean,          // prod always, or policy says so
+ *     isProduction: boolean,
+ *     jitEnabled: boolean,                // a matching policy has osProvisioning
+ *   }
+ *
+ * @param {object} params
+ * @param {string} params.orgId
+ * @param {string} params.userId
+ * @param {string} params.userRole
+ * @param {string} params.serverId
+ * @returns {Promise<object>}
+ */
+export async function getAccessIntent({ orgId, userId, userRole, serverId }) {
+  const server = await prisma.server.findFirst({
+    where: { id: serverId, orgId },
+    select: {
+      id: true,
+      sshUser: true,
+      environment: true,
+      protocol: true,
+    },
+  });
+  if (!server) throw new ApiError(404, 'Server not found');
+
+  const user = await prisma.user.findUnique({
+    where: { id: userId },
+    select: { id: true, email: true, name: true },
+  });
+  if (!user) throw new ApiError(404, 'User not found');
+
+  // Active (APPROVED, unexpired) + pending lookups, in parallel.
+  const [activeAr, pendingAr, jitPolicy] = await Promise.all([
+    prisma.accessRequest.findFirst({
+      where: {
+        orgId,
+        requesterId: userId,
+        serverId,
+        status: 'APPROVED',
+        expiresAt: { gt: new Date() },
+      },
+      orderBy: { approvedAt: 'desc' },
+      select: { id: true, requestedPrincipal: true, expiresAt: true, breakGlass: true },
+    }),
+    prisma.accessRequest.findFirst({
+      where: {
+        orgId,
+        requesterId: userId,
+        serverId,
+        status: 'PENDING',
+      },
+      select: { id: true },
+    }),
+    jitManifestService.findJitPolicyForUserServer({ orgId, userId, serverId }),
+  ]);
+
+  const legacyPrincipal = server.sshUser || 'root';
+  const jitPrincipal = jitPolicy ? jitManifestService.jitPrincipalFor(user) : null;
+  const allowed = [legacyPrincipal];
+  if (jitPrincipal && !allowed.includes(jitPrincipal)) allowed.push(jitPrincipal);
+
+  // When the user has an active AR, honor the principal that was signed
+  // into the cert — even admins shouldn't silently swap it. But admins
+  // can still override at connect time via the override UI.
+  const preferred = activeAr?.requestedPrincipal
+    ? activeAr.requestedPrincipal
+    : jitPrincipal || legacyPrincipal;
+
+  // Normalize protocol (server stores lowercase ssh/rdp/both).
+  let protocol = 'SSH';
+  const p = String(server.protocol || 'ssh').toLowerCase();
+  if (p === 'rdp') protocol = 'RDP';
+
+  const isProduction = server.environment === 'prod';
+
+  return {
+    hasActiveAccess: !!activeAr,
+    activeRequestId: activeAr?.id || null,
+    hasPendingRequest: !!pendingAr && !activeAr,
+    preferredPrincipal: preferred,
+    allowedPrincipals: allowed,
+    adminCanOverride: userRole === 'admin' || userRole === 'super_admin',
+    protocol,
+    requiresApproval: isProduction, // a partial signal; full eval still runs server-side on submit
+    isProduction,
+    jitEnabled: !!jitPolicy,
+    breakGlass: !!activeAr?.breakGlass,
+  };
+}
 
 // ---------------------------------------------------------------------------
 // createBreakGlass — admin-only emergency access bypass

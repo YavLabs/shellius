@@ -212,7 +212,7 @@ async function handleConnection(ws, req) {
     return;
   }
 
-  const { token, requestId } = query;
+  const { token, requestId, principal: principalOverride } = query;
   const rows = Math.max(1, parseInt(query.rows, 10) || 24);
   const cols = Math.max(1, parseInt(query.cols, 10) || 80);
 
@@ -271,6 +271,8 @@ async function handleConnection(ws, req) {
     credentials = await accessRequestService.generateSshCredentials({
       requestId,
       callerId: userId,
+      callerRole: decoded.role,
+      principalOverride,
     });
   } catch (err) {
     logger.error('terminalService: credential generation failed', {

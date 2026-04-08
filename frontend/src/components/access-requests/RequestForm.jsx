@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import Modal from '@/components/shared/Modal';
 import EnvironmentBadge from '@/components/shared/EnvironmentBadge';
-import { createAccessRequest } from '@/services/accessRequestService';
+import { createAccessRequest, getAccessIntent } from '@/services/accessRequestService';
 import { listServers } from '@/services/serverService';
 import { useAuth } from '@/context/AuthContext';
 import { LINUX_USER_RE, defaultPrincipal } from '@/utils/principal';
@@ -64,6 +64,29 @@ function RequestForm({ open, onClose, onSuccess, initialServerId = '' }) {
       setError('');
     }
   }, [open, fetchServers, user, initialServerId]);
+
+  // Whenever the selected server changes, fetch the access-intent so we
+  // can preload a JIT-aware principal and the right protocol. This is
+  // what makes the Request Access button on the Servers page behave
+  // intelligently (pre-selects the server + the JIT principal if any).
+  useEffect(() => {
+    if (!open || !serverId) return;
+    let cancelled = false;
+    getAccessIntent(serverId)
+      .then((intent) => {
+        if (cancelled || !intent) return;
+        if (intent.preferredPrincipal) setPrincipal(intent.preferredPrincipal);
+        if (intent.protocol === 'SSH' || intent.protocol === 'RDP') {
+          setProtocol(intent.protocol);
+        }
+      })
+      .catch(() => {
+        // Non-fatal — fall back to the static default already set.
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [open, serverId]);
 
   const handleSubmit = async (e) => {
     e.preventDefault();
