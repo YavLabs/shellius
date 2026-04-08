@@ -509,7 +509,7 @@ function CustomerDetail() {
 
         {/* LEFT: servers table (2/3) */}
         <div className="lg:col-span-2">
-          <div className="rounded-lg border border-border bg-card">
+          <div className="rounded-lg border border-border bg-card overflow-hidden">
             <div className="flex items-center justify-between border-b border-border px-5 py-3">
               <h3 className="text-sm font-semibold text-foreground">
                 Servers
@@ -522,18 +522,23 @@ function CustomerDetail() {
                 Add Server
               </Button>
             </div>
-            <DataTable
-              columns={serverColumns}
-              data={filteredServers}
-              emptyMessage={
-                envFilter
-                  ? `No ${envFilter} servers for this customer.`
-                  : 'No servers yet. Add one to get started.'
-              }
-              searchPlaceholder="Search hostname or IP..."
-              filters={filterSlot}
-              onRowClick={(r) => navigate(`/servers/${r.id}`)}
-            />
+            {/* Padding around the DataTable so the inner content (search,
+                filters, rows, pagination) never butts up against the card
+                borders. */}
+            <div className="p-4">
+              <DataTable
+                columns={serverColumns}
+                data={filteredServers}
+                emptyMessage={
+                  envFilter
+                    ? `No ${envFilter} servers for this customer.`
+                    : 'No servers yet. Add one to get started.'
+                }
+                searchPlaceholder="Search hostname or IP..."
+                filters={filterSlot}
+                onRowClick={(r) => navigate(`/servers/${r.id}`)}
+              />
+            </div>
           </div>
         </div>
 

@@ -32,47 +32,78 @@ const ENV_COLORS = {
   demo: 'text-purple-600 dark:text-purple-400',
 };
 
-function StatCard({ title, value, description, icon: Icon, loading, children, to, onClick }) {
+// Accent palette per card — icon tile + hover ring color.
+const STAT_ACCENTS = {
+  primary: { bg: 'bg-primary/10', text: 'text-primary', ring: 'group-hover:border-primary/40' },
+  emerald: { bg: 'bg-emerald-500/10', text: 'text-emerald-600 dark:text-emerald-400', ring: 'group-hover:border-emerald-500/40' },
+  amber: { bg: 'bg-amber-500/10', text: 'text-amber-600 dark:text-amber-400', ring: 'group-hover:border-amber-500/40' },
+  violet: { bg: 'bg-violet-500/10', text: 'text-violet-600 dark:text-violet-400', ring: 'group-hover:border-violet-500/40' },
+};
+
+function StatCard({
+  title,
+  value,
+  description,
+  icon: Icon,
+  loading,
+  footer,
+  accent = 'primary',
+  to,
+  onClick,
+}) {
   const navigate = useNavigate();
   const interactive = !!to || !!onClick;
   const handleClick = () => {
     if (onClick) onClick();
     else if (to) navigate(to);
   };
+  const accentCls = STAT_ACCENTS[accent] || STAT_ACCENTS.primary;
+
   const Wrapper = interactive ? 'button' : 'div';
-  // flex column w/ fixed structure: header row on top, value next,
-  // description fills the middle, extras (env badges) anchor to bottom.
-  // h-full + auto-rows-fr on the parent grid makes all four cards
-  // identical height regardless of how much content they carry.
-  const wrapperProps = interactive
-    ? {
-        type: 'button',
-        onClick: handleClick,
-        className:
-          'group flex h-full w-full flex-col rounded-lg border border-border bg-card p-5 text-left transition-all hover:border-primary/40 hover:shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
-      }
-    : {
-        className:
-          'flex h-full flex-col rounded-lg border border-border bg-card p-5 transition-colors',
-      };
+  const baseCls =
+    'group relative flex h-full w-full flex-col rounded-lg border border-border bg-card p-5 text-left transition-all';
+  const interactiveCls = interactive
+    ? ` hover:shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${accentCls.ring}`
+    : '';
+
   return (
-    <Wrapper {...wrapperProps}>
-      <div className="flex items-center justify-between">
+    <Wrapper
+      {...(interactive ? { type: 'button', onClick: handleClick } : {})}
+      className={baseCls + interactiveCls}
+    >
+      {/* Header: icon tile + title */}
+      <div className="flex items-center gap-3">
+        <div
+          className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-lg ${accentCls.bg} ${accentCls.text}`}
+        >
+          <Icon className="h-5 w-5" />
+        </div>
         <p className="text-sm font-medium text-muted-foreground">{title}</p>
-        <Icon className="h-4 w-4 text-muted-foreground/60 group-hover:text-muted-foreground" />
       </div>
-      {loading ? (
-        <Skeleton className="mt-2 h-8 w-16" />
-      ) : (
-        <p className="mt-2 text-2xl font-semibold tracking-tight text-foreground">
-          {value}
-        </p>
-      )}
+
+      {/* Big number */}
+      <div className="mt-4">
+        {loading ? (
+          <Skeleton className="h-9 w-20" />
+        ) : (
+          <p className="text-3xl font-semibold tracking-tight text-foreground tabular-nums">
+            {value}
+          </p>
+        )}
+      </div>
+
+      {/* Description */}
       {description && (
-        <p className="mt-1 text-xs text-muted-foreground">{description}</p>
+        <p className="mt-1.5 text-xs text-muted-foreground">{description}</p>
       )}
-      {/* Extras anchored to the bottom of the card so all four line up */}
-      {children && <div className="mt-auto pt-3">{children}</div>}
+
+      {/* Footer strip — anchored to bottom with a top border so all four
+          cards render their extras at identical Y positions */}
+      {footer && (
+        <div className="mt-auto pt-4 border-t border-border/50">
+          {footer}
+        </div>
+      )}
     </Wrapper>
   );
 }
@@ -276,50 +307,81 @@ function Dashboard() {
         <StatCard
           title="Total Servers"
           value={serverStats.total}
-          description="Click to browse managed infrastructure"
+          description="Managed infrastructure"
           icon={Server}
+          accent="primary"
           loading={statsLoading}
           to="/servers"
-        >
-          {!statsLoading && Object.entries(byEnv).some(([, v]) => v > 0) && (
-            <div className="mt-3 flex flex-wrap gap-x-3 gap-y-1">
-              {Object.entries(byEnv).map(([env, count]) =>
-                count > 0 ? (
-                  <span key={env} className={`text-xs font-medium ${ENV_COLORS[env] || 'text-muted-foreground'}`}>
-                    {env} {count}
-                  </span>
-                ) : null
-              )}
-            </div>
-          )}
-        </StatCard>
+          footer={
+            !statsLoading && Object.entries(byEnv).some(([, v]) => v > 0) ? (
+              <div className="flex flex-wrap items-center gap-1.5">
+                {Object.entries(byEnv)
+                  .filter(([, v]) => v > 0)
+                  .map(([env, count]) => (
+                    <span
+                      key={env}
+                      className={`inline-flex items-center gap-1 rounded-full border border-border bg-background/60 px-2 py-0.5 text-[10px] font-medium ${
+                        ENV_COLORS[env] || 'text-muted-foreground'
+                      }`}
+                    >
+                      {env}
+                      <span className="text-foreground tabular-nums">{count}</span>
+                    </span>
+                  ))}
+              </div>
+            ) : null
+          }
+        />
 
         <StatCard
           title="Active Sessions"
           value={activeSessions}
-          description="Click to view live sessions"
+          description="Currently connected"
           icon={Terminal}
+          accent="emerald"
           loading={statsLoading}
           to="/sessions?tab=active"
+          footer={
+            !statsLoading ? (
+              <span className="text-[11px] text-muted-foreground">
+                {activeSessions === 0 ? 'No one online right now' : 'View live sessions →'}
+              </span>
+            ) : null
+          }
         />
 
-        {/* Pending requests card — drills into the review tab */}
         <StatCard
           title="Pending Requests"
           value={pendingRequests}
-          description="Click to review requests"
+          description="Awaiting your review"
           icon={KeyRound}
+          accent="amber"
           loading={statsLoading}
           to="/access-requests?tab=to-review&status=PENDING"
+          footer={
+            !statsLoading ? (
+              <span className="text-[11px] text-muted-foreground">
+                {pendingRequests === 0 ? 'Queue clear' : 'Review now →'}
+              </span>
+            ) : null
+          }
         />
 
         <StatCard
           title="Certificates Issued"
           value={activeCerts}
-          description="Click to view active certificates"
+          description="Currently active"
           icon={FileKey}
+          accent="violet"
           loading={statsLoading}
           to="/certificates?status=ACTIVE"
+          footer={
+            !statsLoading ? (
+              <span className="text-[11px] text-muted-foreground">
+                Signed by the org CA
+              </span>
+            ) : null
+          }
         />
       </div>
 

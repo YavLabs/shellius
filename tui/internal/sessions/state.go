@@ -11,7 +11,6 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
-	"syscall"
 	"time"
 
 	"github.com/shellius/tui/internal/logx"
@@ -204,14 +203,9 @@ func pruneHistory() error {
 }
 
 // pidAlive returns true when a process with the given PID exists and is
-// reachable by the current user (signal 0 is a no-op but tests existence).
-func pidAlive(pid int) bool {
-	if pid <= 0 {
-		return false
-	}
-	err := syscall.Kill(pid, 0)
-	return err == nil
-}
+// reachable by the current user. Implementation lives in state_unix.go
+// / state_windows.go so we don't pull in os-specific syscalls on the
+// wrong platform.
 
 // generateID returns a unique session ID based on current time and PID.
 func generateID() string {

@@ -1,0 +1,5 @@
+# Never commit compiled binaries — they should be built on the host
+# before `docker compose build backend` and served out of the image.
+shellius-*
+*.sha256
+version.txt
