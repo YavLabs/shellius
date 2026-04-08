@@ -125,11 +125,40 @@ import("@prisma/client").then(async ({PrismaClient}) => {
 
 Open `https://<your-host>` in your browser. Log in with the credentials you just created.
 
-## TUI Client
+## TUI Client (Shellius CLI)
 
-Shellius ships with a Bubble Tea TUI for fast, terminal-native access.
+Shellius ships with a Bubble Tea-based terminal client that runs on developer
+workstations — **not** on target servers. Install it once, sign in once, and
+`shellius` will land you directly on your approved access requests with one
+keystroke to SSH. Tokens are persisted and refreshed automatically.
 
-### Install
+### Quick install (macOS and Linux)
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/vaidyayash8/shellius/main/scripts/install-tui.sh | sh
+```
+
+The script detects your OS (`darwin`/`linux`) and architecture
+(`amd64`/`arm64`), pulls the matching binary from the latest GitHub release,
+verifies its SHA256 checksum, and installs to `/usr/local/bin/shellius`
+(or `~/.local/bin/shellius` if not root). Windows users should download the
+`.exe` directly from [Releases](https://github.com/vaidyayash8/shellius/releases/latest).
+
+### Manual download
+
+Grab the binary matching your platform from the [latest release](https://github.com/vaidyayash8/shellius/releases/latest):
+
+| Platform | Asset |
+|---|---|
+| Linux amd64 | `shellius-linux-amd64` |
+| Linux arm64 | `shellius-linux-arm64` |
+| macOS Intel | `shellius-darwin-amd64` |
+| macOS Apple Silicon | `shellius-darwin-arm64` |
+| Windows | `shellius-windows-amd64.exe` |
+
+Each asset ships with a `.sha256` sidecar for verification.
+
+### Build from source
 
 ```bash
 cd tui
@@ -140,20 +169,71 @@ sudo install -m 0755 bin/shellius /usr/local/bin/shellius
 make build-all          # bin/shellius-{linux,darwin,windows}-{amd64,arm64}
 ```
 
-### First run
+### First-time login
 
 ```bash
-shellius --server https://shellius.example.com
+shellius login https://shellius.example.com
 ```
 
-The TUI will:
+The CLI will:
 
 1. Hit `/api/auth/device/authorize` for a user code and verification URL
-2. Open the URL in your default browser; you confirm the code while authenticated
-3. Poll until approved, persist tokens to `~/.shellius/config.yaml`
-4. Drop you into a fuzzy-searchable host list grouped by customer
+2. Open your browser so you can approve the device while already authenticated on the web UI
+3. Poll until approved, persist tokens to `~/.shellius/credentials` (0600)
+4. Drop you into the active-access picker
 
-After the first run, just type `shellius` -- tokens are refreshed automatically. Use `shellius --logout` to clear credentials.
+Every subsequent `shellius` invocation lands straight on the picker with
+zero prompts — access tokens refresh automatically via the stored refresh
+token until you explicitly run `shellius logout`.
+
+### Daily usage
+
+| Key | Action |
+|---|---|
+| `↑` / `↓` | Navigate the active-access list |
+| `↵` | SSH into the selected server |
+| `/` | Open the slash-command palette (fuzzy search) |
+| `?` | Open the help overlay |
+| `Ctrl+C` | Quit |
+
+### Slash commands
+
+| Command | What it does |
+|---|---|
+| `/help` | Cheatsheet overlay |
+| `/servers` | Browse the full host list (not just your active access) |
+| `/request` | Submit a new access request |
+| `/sessions` | Active and recent SSH sessions started from this machine |
+| `/refresh` | Force-refresh the active-access list |
+| `/profile` | Current identity and token expiry |
+| `/logout` | Clear credentials and exit |
+| `/quit` | Exit without logging out |
+
+### Diagnose
+
+If something isn't working, run `shellius doctor` — it prints the config
+path, file permissions, server URL, token expiry (human-readable), and the
+most recent refresh-token attempt from the log. Exits non-zero on any
+detected issue.
+
+```bash
+shellius doctor
+```
+
+### Config and credentials layout
+
+```
+~/.shellius/
+├── config.yaml       # non-secret prefs (0644): serverURL, orgSlug, theme
+├── credentials       # tokens (0600, refuses to load if looser)
+├── shellius.log      # rolling log, 1 MB cap
+├── cache/            # host list cache for instant startup
+└── sessions/         # per-session state files for multi-window awareness
+    └── history/      # 7-day pruned history
+```
+
+The CLI install instructions are also available inside the web UI under
+**Settings → CLI / TUI** with copy-to-clipboard buttons for every command.
 
 ## Development Setup
 
