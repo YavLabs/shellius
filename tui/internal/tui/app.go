@@ -6,12 +6,14 @@ import (
 	"os"
 	"os/exec"
 	"strings"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/shellius/tui/internal/api"
 	"github.com/shellius/tui/internal/config"
 	"github.com/shellius/tui/internal/logx"
+	"github.com/shellius/tui/internal/sessions"
 	sshpkg "github.com/shellius/tui/internal/ssh"
 )
 
@@ -422,7 +424,8 @@ type sshConnectMsg struct {
 type appErrMsg struct{ err error }
 
 // execSSH writes temp credentials and uses tea.ExecProcess to hand off the
-// terminal to an SSH subprocess.
+// terminal to an SSH subprocess. It records a sessions state file while the
+// session is active so other shellius instances can observe it.
 func (m AppModel) execSSH(creds api.SshCreds, host api.Host) tea.Cmd {
 	keyPath, certPath, cleanup, err := sshpkg.WriteTempCreds(creds)
 	if err != nil {
@@ -450,10 +453,27 @@ func (m AppModel) execSSH(creds api.SshCreds, host api.Host) tea.Cmd {
 		port = 22
 	}
 
+	// Register the session in the local state dir.
+	sess := sessions.Session{
+		ServerID:   host.ID,
+		ServerName: serverDisplayName(host),
+		Principal:  user,
+	}
+	if creds.ExpiresAt != nil {
+		sess.LeaseExpiry = *creds.ExpiresAt
+	}
+	_, closeSession, sessErr := sessions.Start(sess)
+	if sessErr != nil {
+		logx.Warnf("app: failed to record session state: %v", sessErr)
+		// Non-fatal — continue with SSH anyway.
+		closeSession = func() {}
+	}
+
 	sshCmd := sshpkg.BuildCommand(hostname, port, user, keyPath, certPath)
 
 	return tea.ExecProcess(sshCmd, func(err error) tea.Msg {
 		cleanup()
+		closeSession()
 		if err != nil {
 			if exitErr, ok := err.(*exec.ExitError); ok && exitErr.ExitCode() == 1 {
 				return nil
@@ -462,6 +482,14 @@ func (m AppModel) execSSH(creds api.SshCreds, host api.Host) tea.Cmd {
 		}
 		return nil
 	})
+}
+
+// serverDisplayName returns the best available display name for a host.
+func serverDisplayName(h api.Host) string {
+	if h.Name != "" {
+		return h.Name
+	}
+	return h.Hostname
 }
 
 // View renders the currently active screen.
@@ -677,11 +705,73 @@ func (m AppModel) renderSessions() string {
 	var b strings.Builder
 	b.WriteString(TitleStyle.Render("Sessions"))
 	b.WriteString("\n\n")
-	b.WriteString(MutedStyle.Render("  Session history is coming soon."))
-	b.WriteString("\n\n")
-	b.WriteString(MutedStyle.Render("  Active and historical SSH sessions will be listed here."))
+
+	// --- Active ---
+	active, activeErr := sessions.List()
+	b.WriteString(SectionHeaderStyle.Render("ACTIVE"))
 	b.WriteString("\n")
+	if activeErr != nil {
+		b.WriteString(MutedStyle.Render("  (error reading session state: " + activeErr.Error() + ")"))
+		b.WriteString("\n")
+	} else if len(active) == 0 {
+		b.WriteString(MutedStyle.Render("  No active sessions."))
+		b.WriteString("\n")
+	} else {
+		for _, s := range active {
+			b.WriteString(m.renderSessionRow(s, true))
+			b.WriteString("\n")
+		}
+	}
+
+	b.WriteString("\n")
+
+	// --- Recent ---
+	hist, histErr := sessions.History()
+	b.WriteString(SectionHeaderStyle.Render("RECENT"))
+	b.WriteString("\n")
+	if histErr != nil {
+		b.WriteString(MutedStyle.Render("  (error reading history: " + histErr.Error() + ")"))
+		b.WriteString("\n")
+	} else if len(hist) == 0 {
+		b.WriteString(MutedStyle.Render("  No recent sessions."))
+		b.WriteString("\n")
+	} else {
+		for _, s := range hist {
+			b.WriteString(m.renderSessionRow(s, false))
+			b.WriteString("\n")
+		}
+	}
+
 	return b.String()
+}
+
+func (m AppModel) renderSessionRow(s sessions.Session, isActive bool) string {
+	nameCol := lipgloss.NewStyle().Width(22).Render(s.ServerName)
+	principalCol := lipgloss.NewStyle().Width(12).
+		Foreground(lipgloss.Color(colorSubtle)).
+		Render(s.Principal)
+
+	var timeCol string
+	if isActive {
+		dur := time.Since(s.StartedAt)
+		timeCol = "active " + formatDuration(dur)
+	} else if !s.EndedAt.IsZero() {
+		timeCol = s.EndedAt.Local().Format("01-02 15:04")
+	} else {
+		timeCol = s.StartedAt.Local().Format("01-02 15:04")
+	}
+	timeStr := lipgloss.NewStyle().Width(14).
+		Foreground(lipgloss.Color(colorMuted)).
+		Render(timeCol)
+
+	statusBadge := ""
+	if isActive {
+		statusBadge = SuccessStyle.Render("live ")
+	} else {
+		statusBadge = MutedStyle.Render("done ")
+	}
+
+	return fmt.Sprintf("  %s  %s  %s  %s", statusBadge, nameCol, principalCol, timeStr)
 }
 
 // Run starts the Bubble Tea program.

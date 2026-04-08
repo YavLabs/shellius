@@ -42,7 +42,7 @@ var builtinCommands = []Command{
 	},
 	{
 		Name: "/sessions",
-		Desc: "Recent sessions (coming soon)",
+		Desc: "Active and recent SSH sessions",
 		Run: func(app *AppModel) tea.Cmd {
 			return func() tea.Msg { return showSessionsMsg{} }
 		},

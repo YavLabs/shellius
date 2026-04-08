@@ -105,7 +105,7 @@ func runDoctor(configPath, logPath string) int {
 	fmt.Println("Shellius TUI — doctor report")
 	fmt.Println(strings.Repeat("-", 44))
 
-	// --- Config file ---
+	// --- Config file (prefs, 0644) ---
 	fmt.Printf("Config path : %s\n", configPath)
 
 	fi, statErr := os.Stat(configPath)
@@ -117,11 +117,11 @@ func runDoctor(configPath, logPath string) int {
 			issues++
 		}
 	} else {
-		// File exists — show permissions.
 		perms := fi.Mode().Perm()
 		permStr := fmt.Sprintf("%04o", perms)
-		if perms&0077 != 0 {
-			fmt.Printf("Config perms: %s  WARN: file is world/group readable\n", permStr)
+		// config.yaml is intentionally 0644; warn only if world-writable.
+		if perms&0002 != 0 {
+			fmt.Printf("Config perms: %s  WARN: file is world-writable\n", permStr)
 			issues++
 		} else {
 			fmt.Printf("Config perms: %s  OK\n", permStr)
@@ -140,6 +140,28 @@ func runDoctor(configPath, logPath string) int {
 			issues++
 		} else {
 			fmt.Printf("Server URL  : %s\n", cfg.ServerURL)
+		}
+
+		// --- Credentials file (secrets, 0600) ---
+		credsPath := cfg.CredentialsPath()
+		fmt.Printf("Creds path  : %s\n", credsPath)
+		credsFi, credsStatErr := os.Stat(credsPath)
+		if credsStatErr != nil {
+			if os.IsNotExist(credsStatErr) {
+				fmt.Println("Creds file  : NOT FOUND (not logged in?)")
+			} else {
+				fmt.Printf("Creds file  : ERROR (%v)\n", credsStatErr)
+				issues++
+			}
+		} else {
+			credsPerms := credsFi.Mode().Perm()
+			credsPermStr := fmt.Sprintf("%04o", credsPerms)
+			if credsPerms&0177 != 0 {
+				fmt.Printf("Creds perms : %s  WARN: should be 0600 — fix with: chmod 0600 %s\n", credsPermStr, credsPath)
+				issues++
+			} else {
+				fmt.Printf("Creds perms : %s  OK\n", credsPermStr)
+			}
 		}
 
 		// --- Token expiry ---
