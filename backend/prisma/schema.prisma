@@ -76,6 +76,7 @@ model User {
   lastLoginAt         DateTime?  @map("last_login_at")
   passwordChangedAt   DateTime?  @map("password_changed_at")
   deletedAt           DateTime?  @map("deleted_at")
+  jitUid              Int?       @map("jit_uid")
   createdAt           DateTime   @default(now()) @map("created_at")
   updatedAt           DateTime   @updatedAt @map("updated_at")
 
@@ -96,6 +97,7 @@ model User {
   sessions                Session[]
 
   @@unique([orgId, email])
+  @@unique([orgId, jitUid], map: "user_org_jit_uid_unique")
   @@index([orgId])
   @@index([managerId])
   @@map("users")
@@ -416,6 +418,9 @@ model AccessPolicy {
   autoApprove         Boolean      @default(false) @map("auto_approve")
   isActive            Boolean      @default(true) @map("is_active")
   priority            Int          @default(100)
+  osProvisioning      Json         @default("{}") @map("os_provisioning")
+  allowKeyDownload    Boolean      @default(false) @map("allow_key_download")
+  isBreakGlass        Boolean      @default(false) @map("is_break_glass")
   createdAt           DateTime     @default(now()) @map("created_at")
   updatedAt           DateTime     @updatedAt @map("updated_at")
 

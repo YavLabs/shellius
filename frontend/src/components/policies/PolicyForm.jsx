@@ -685,6 +685,137 @@ function Step4({ form, onChange, errors }) {
           Production servers always require manager approval regardless of these settings. This is a hard system rule that cannot be overridden by any policy.
         </p>
       </div>
+
+      {/* Phase 21A — OS Provisioning (JIT user creation) */}
+      <div className="rounded-md border border-border p-4 space-y-4">
+        <div>
+          <h4 className="text-sm font-semibold text-foreground">OS Provisioning (JIT)</h4>
+          <p className="text-xs text-muted-foreground mt-0.5">
+            When a target host runs the upgraded check-principals agent, it
+            will create a per-user Linux account with these settings for the
+            duration of the access request.
+          </p>
+        </div>
+
+        <div>
+          <label className={labelCls}>Linux groups (comma-separated)</label>
+          <input
+            className={inputCls}
+            placeholder="docker, webapp"
+            value={(form.osProvisioning?.linuxGroups || []).join(', ')}
+            onChange={(e) => {
+              const groups = e.target.value
+                .split(',')
+                .map((g) => g.trim())
+                .filter(Boolean);
+              onChange('osProvisioning', { ...(form.osProvisioning || {}), linuxGroups: groups });
+            }}
+          />
+        </div>
+
+        <div>
+          <label className={labelCls}>ACL read paths (comma-separated absolute paths)</label>
+          <input
+            className={inputCls}
+            placeholder="/home/ubuntu, /var/log/app"
+            value={(form.osProvisioning?.aclReadPaths || []).join(', ')}
+            onChange={(e) => {
+              const paths = e.target.value
+                .split(',')
+                .map((p) => p.trim())
+                .filter(Boolean);
+              onChange('osProvisioning', { ...(form.osProvisioning || {}), aclReadPaths: paths });
+            }}
+          />
+          <p className="text-xs text-muted-foreground mt-1">
+            Grants read access via setfacl without adding the user to a group.
+          </p>
+        </div>
+
+        <label className="flex items-start gap-3 cursor-pointer">
+          <input
+            type="checkbox"
+            checked={!!form.osProvisioning?.aclRecursive}
+            onChange={(e) =>
+              onChange('osProvisioning', { ...(form.osProvisioning || {}), aclRecursive: e.target.checked })
+            }
+            className="accent-primary h-4 w-4 mt-0.5 shrink-0"
+          />
+          <div>
+            <span className="text-sm font-medium text-foreground">ACL recursive</span>
+            <p className="text-xs text-muted-foreground mt-0.5">
+              Apply ACL read access recursively to the paths above (can be slow on large trees).
+            </p>
+          </div>
+        </label>
+
+        <label className="flex items-start gap-3 cursor-pointer">
+          <input
+            type="checkbox"
+            checked={!!form.osProvisioning?.sudo}
+            onChange={(e) =>
+              onChange('osProvisioning', { ...(form.osProvisioning || {}), sudo: e.target.checked })
+            }
+            className="accent-primary h-4 w-4 mt-0.5 shrink-0"
+          />
+          <div>
+            <span className="text-sm font-medium text-foreground">Grant sudo (NOPASSWD)</span>
+            <p className="text-xs text-muted-foreground mt-0.5">
+              Writes a sudoers drop-in for the JIT user. Use sparingly.
+            </p>
+          </div>
+        </label>
+
+        <label className="flex items-start gap-3 cursor-pointer">
+          <input
+            type="checkbox"
+            checked={!!form.osProvisioning?.hardCutoff}
+            onChange={(e) =>
+              onChange('osProvisioning', { ...(form.osProvisioning || {}), hardCutoff: e.target.checked })
+            }
+            className="accent-primary h-4 w-4 mt-0.5 shrink-0"
+          />
+          <div>
+            <span className="text-sm font-medium text-foreground">Hard cutoff on lease expiry</span>
+            <p className="text-xs text-muted-foreground mt-0.5">
+              Kill active sessions when the lease expires. Default is graceful — active commands finish.
+            </p>
+          </div>
+        </label>
+      </div>
+
+      {/* Phase 21A — key download + break-glass flags */}
+      <div className="rounded-md border border-border p-4 space-y-4">
+        <label className="flex items-start gap-3 cursor-pointer">
+          <input
+            type="checkbox"
+            checked={!!form.allowKeyDownload}
+            onChange={(e) => onChange('allowKeyDownload', e.target.checked)}
+            className="accent-primary h-4 w-4 mt-0.5 shrink-0"
+          />
+          <div>
+            <span className="text-sm font-medium text-foreground">Allow SSH key download</span>
+            <p className="text-xs text-muted-foreground mt-0.5">
+              Risky. Users can download a short-lived key pair and connect from outside the web terminal. Logged as a distinct audit event.
+            </p>
+          </div>
+        </label>
+
+        <label className="flex items-start gap-3 cursor-pointer">
+          <input
+            type="checkbox"
+            checked={!!form.isBreakGlass}
+            onChange={(e) => onChange('isBreakGlass', e.target.checked)}
+            className="accent-primary h-4 w-4 mt-0.5 shrink-0"
+          />
+          <div>
+            <span className="text-sm font-medium text-foreground">Break-glass policy</span>
+            <p className="text-xs text-muted-foreground mt-0.5">
+              Marks this as an emergency-access policy. Invoking it notifies all org admins.
+            </p>
+          </div>
+        </label>
+      </div>
     </div>
   );
 }
@@ -708,6 +839,15 @@ function PolicyForm({ open, onClose, onSubmit, policy, onEvaluate }) {
     maxSessionDuration: 3600,
     requireApproval: false,
     autoApprove: false,
+    osProvisioning: {
+      linuxGroups: [],
+      aclReadPaths: [],
+      aclRecursive: false,
+      sudo: false,
+      hardCutoff: false,
+    },
+    allowKeyDownload: false,
+    isBreakGlass: false,
   };
 
   const [step, setStep] = useState(1);
@@ -739,6 +879,15 @@ function PolicyForm({ open, onClose, onSubmit, policy, onEvaluate }) {
           maxSessionDuration: policy.maxSessionDuration ?? 3600,
           requireApproval: policy.requireApproval ?? false,
           autoApprove: policy.autoApprove ?? false,
+          osProvisioning: {
+            linuxGroups: policy.osProvisioning?.linuxGroups || [],
+            aclReadPaths: policy.osProvisioning?.aclReadPaths || [],
+            aclRecursive: !!policy.osProvisioning?.aclRecursive,
+            sudo: !!policy.osProvisioning?.sudo,
+            hardCutoff: !!policy.osProvisioning?.hardCutoff,
+          },
+          allowKeyDownload: !!policy.allowKeyDownload,
+          isBreakGlass: !!policy.isBreakGlass,
         });
       } else {
         setForm(defaultForm);
