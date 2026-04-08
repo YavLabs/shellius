@@ -48,7 +48,20 @@ const submitSchema = Joi.object({
       'string.pattern.base':
         'requestedPrincipal must be a valid Linux username: lowercase letters, digits, underscore, or hyphen (1-32 chars, must start with a letter or underscore).',
     }),
-  protocol: Joi.string().valid('SSH', 'RDP').default('SSH'),
+  // Accept any case — the Server model's ServerProtocol enum stores 'ssh'/'rdp'
+  // lowercase, but the AccessRequest Protocol enum stores uppercase. Normalize
+  // so the callers don't have to care about the difference.
+  protocol: Joi.string()
+    .custom((value, helpers) => {
+      if (value == null) return 'SSH';
+      const v = String(value).toUpperCase();
+      if (v === 'SSH' || v === 'RDP') return v;
+      return helpers.error('any.only');
+    })
+    .default('SSH')
+    .messages({
+      'any.only': 'protocol must be one of: SSH, RDP',
+    }),
 });
 
 const listQuerySchema = Joi.object({
