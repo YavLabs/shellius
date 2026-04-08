@@ -274,52 +274,81 @@ function Step2({ form, onChange, errors }) {
   });
 
   const ROLES = [
-    { id: 'super_admin', label: 'Super Admin' },
-    { id: 'admin', label: 'Admin' },
-    { id: 'operator', label: 'Operator' },
-    { id: 'viewer', label: 'Viewer' },
+    { id: 'super_admin', label: 'Super Admin', description: 'Full access, bypasses policy evaluation' },
+    { id: 'admin', label: 'Admin', description: 'Manages users, servers, and policies' },
+    { id: 'operator', label: 'Operator', description: 'Connects to servers within policy scope' },
+    { id: 'viewer', label: 'Viewer', description: 'Read-only access to the UI' },
   ];
 
   const subjectTypeLabel = (t) =>
     t === 'USER' ? 'User' : t === 'GROUP' ? 'Group' : 'Role';
 
+  // Redesigned layout:
+  //   - Selected-subjects chip strip at top with a summary count.
+  //   - Three side-by-side pickers (Users / Groups / Roles) but each
+  //     is now a card with a clear header, unified search, and
+  //     consistent row styling. Roles card shows a short description
+  //     next to each role for clarity.
+  //   - No duplicate paragraph copy — the section header explains it.
+
+  const selectedUsers = subjects.filter((s) => s.subjectType === 'USER');
+  const selectedGroups = subjects.filter((s) => s.subjectType === 'GROUP');
+  const selectedRoles = subjects.filter((s) => s.subjectType === 'ROLE');
+
   return (
     <div className="space-y-4">
-      <p className="text-sm text-muted-foreground">
-        Choose which users, groups, or roles this policy applies to.
-      </p>
-
-      {subjects.length > 0 && (
-        <div className="flex flex-wrap gap-2 rounded-md border border-border bg-muted/30 p-3">
-          {subjects.map((s) => (
-            <Chip
-              key={`${s.subjectType}-${s.subjectId}`}
-              label={`${s._label || s.subjectId} (${subjectTypeLabel(s.subjectType)})`}
-              onRemove={() => removeSubject(s.subjectType, s.subjectId)}
-              className={
-                s.subjectType === 'ROLE'
-                  ? 'bg-violet-500/20 text-violet-700 dark:text-violet-300 border-violet-500/40'
-                  : undefined
-              }
-            />
-          ))}
+      {/* Selected chip strip with count summary */}
+      <div className="rounded-lg border border-border bg-muted/20 px-3 py-2.5">
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="text-xs font-medium text-muted-foreground">
+            Selected ({subjects.length}):
+          </span>
+          {subjects.length === 0 ? (
+            <span className="text-xs italic text-muted-foreground">
+              Nothing selected yet
+            </span>
+          ) : (
+            subjects.map((s) => (
+              <Chip
+                key={`${s.subjectType}-${s.subjectId}`}
+                label={`${subjectTypeLabel(s.subjectType)}: ${s._label || s.subjectId}`}
+                onRemove={() => removeSubject(s.subjectType, s.subjectId)}
+                className={
+                  s.subjectType === 'ROLE'
+                    ? 'bg-violet-500/20 text-violet-700 dark:text-violet-300 border border-violet-500/40'
+                    : s.subjectType === 'GROUP'
+                    ? 'bg-blue-500/15 text-blue-700 dark:text-blue-300 border border-blue-500/30'
+                    : 'bg-primary/15 text-primary border border-primary/30'
+                }
+              />
+            ))
+          )}
         </div>
-      )}
+      </div>
 
-      <div className="grid grid-cols-3 gap-4">
-        <div>
-          <label className={labelCls}>Users</label>
-          <input
-            className={inputCls}
-            placeholder="Search users..."
-            value={userSearch}
-            onChange={(e) => setUserSearch(e.target.value)}
-          />
-          <div className="mt-1 max-h-40 overflow-y-auto rounded-md border border-border">
+      {/* Three pickers — Users / Groups / Roles */}
+      <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
+        {/* Users picker card */}
+        <PickerCard
+          title="Users"
+          count={selectedUsers.length}
+          hint="Match a specific person"
+        >
+          <div className="relative">
+            <input
+              className={`${inputCls} h-8 text-xs`}
+              placeholder="Search by name or email..."
+              value={userSearch}
+              onChange={(e) => setUserSearch(e.target.value)}
+            />
+          </div>
+          <div className="mt-2 max-h-52 overflow-y-auto rounded-md border border-border divide-y divide-border">
             {loadingUsers ? (
-              <p className="p-2 text-xs text-muted-foreground">Loading...</p>
+              <p className="p-3 text-xs text-muted-foreground">Loading users...</p>
             ) : filteredUsers.length === 0 ? (
-              <p className="p-2 text-xs text-muted-foreground">No users found</p>
+              <p className="p-3 text-xs text-muted-foreground">
+                {userSearch ? 'No matches' : 'No users yet'}
+              </p>
             ) : (
               filteredUsers.map((u) => {
                 const selected = subjects.some(
@@ -329,48 +358,55 @@ function Step2({ form, onChange, errors }) {
                   <button
                     key={u.id}
                     type="button"
-                    onClick={() => {
-                      if (selected) {
-                        removeSubject('USER', u.id);
-                      } else {
-                        addSubject('USER', u.id, u.name || u.email);
-                      }
-                    }}
+                    onClick={() =>
+                      selected
+                        ? removeSubject('USER', u.id)
+                        : addSubject('USER', u.id, u.name || u.email)
+                    }
                     className={[
-                      'flex w-full items-center gap-2 px-3 py-2 text-left text-xs hover:bg-accent',
-                      selected ? 'bg-accent/60' : '',
+                      'flex w-full items-start gap-2 px-3 py-2 text-left transition-colors',
+                      selected ? 'bg-primary/10' : 'hover:bg-accent/50',
                     ].join(' ')}
                   >
-                    <div
-                      className={[
-                        'flex h-4 w-4 shrink-0 items-center justify-center rounded border',
-                        selected ? 'border-primary bg-primary text-primary-foreground' : 'border-input',
-                      ].join(' ')}
-                    >
-                      {selected && <span className="text-[10px] font-bold">✓</span>}
+                    <CheckMark on={selected} accent="primary" />
+                    <div className="min-w-0 flex-1">
+                      <div className="truncate text-xs font-medium text-foreground">
+                        {u.name || u.email}
+                      </div>
+                      {u.name && u.email && (
+                        <div className="truncate text-[10px] text-muted-foreground">
+                          {u.email}
+                        </div>
+                      )}
                     </div>
-                    <span className="font-medium text-foreground">{u.name || u.email}</span>
-                    {u.name && <span className="text-muted-foreground">{u.email}</span>}
                   </button>
                 );
               })
             )}
           </div>
-        </div>
+        </PickerCard>
 
-        <div>
-          <label className={labelCls}>Groups</label>
-          <input
-            className={inputCls}
-            placeholder="Search groups..."
-            value={groupSearch}
-            onChange={(e) => setGroupSearch(e.target.value)}
-          />
-          <div className="mt-1 max-h-40 overflow-y-auto rounded-md border border-border">
+        {/* Groups picker card */}
+        <PickerCard
+          title="Groups"
+          count={selectedGroups.length}
+          hint="Match every member of a group"
+        >
+          <div className="relative">
+            <input
+              className={`${inputCls} h-8 text-xs`}
+              placeholder="Search groups..."
+              value={groupSearch}
+              onChange={(e) => setGroupSearch(e.target.value)}
+            />
+          </div>
+          <div className="mt-2 max-h-52 overflow-y-auto rounded-md border border-border divide-y divide-border">
             {loadingGroups ? (
-              <p className="p-2 text-xs text-muted-foreground">Loading...</p>
+              <p className="p-3 text-xs text-muted-foreground">Loading groups...</p>
             ) : filteredGroups.length === 0 ? (
-              <p className="p-2 text-xs text-muted-foreground">No groups found</p>
+              <p className="p-3 text-xs text-muted-foreground">
+                {groupSearch ? 'No matches' : 'No groups yet'}
+              </p>
             ) : (
               filteredGroups.map((g) => {
                 const selected = subjects.some(
@@ -380,40 +416,32 @@ function Step2({ form, onChange, errors }) {
                   <button
                     key={g.id}
                     type="button"
-                    onClick={() => {
-                      if (selected) {
-                        removeSubject('GROUP', g.id);
-                      } else {
-                        addSubject('GROUP', g.id, g.name);
-                      }
-                    }}
+                    onClick={() =>
+                      selected ? removeSubject('GROUP', g.id) : addSubject('GROUP', g.id, g.name)
+                    }
                     className={[
-                      'flex w-full items-center gap-2 px-3 py-2 text-left text-xs hover:bg-accent',
-                      selected ? 'bg-accent/60' : '',
+                      'flex w-full items-center gap-2 px-3 py-2 text-left transition-colors',
+                      selected ? 'bg-blue-500/10' : 'hover:bg-accent/50',
                     ].join(' ')}
                   >
-                    <div
-                      className={[
-                        'flex h-4 w-4 shrink-0 items-center justify-center rounded border',
-                        selected ? 'border-primary bg-primary text-primary-foreground' : 'border-input',
-                      ].join(' ')}
-                    >
-                      {selected && <span className="text-[10px] font-bold">✓</span>}
-                    </div>
-                    <span className="font-medium text-foreground">{g.name}</span>
+                    <CheckMark on={selected} accent="blue" />
+                    <span className="truncate text-xs font-medium text-foreground">
+                      {g.name}
+                    </span>
                   </button>
                 );
               })
             )}
           </div>
-        </div>
+        </PickerCard>
 
-        <div>
-          <label className={labelCls}>Roles</label>
-          <p className="mb-1 text-[11px] text-muted-foreground">
-            Matches every user with this role.
-          </p>
-          <div className="mt-1 max-h-40 overflow-y-auto rounded-md border border-border">
+        {/* Roles picker card */}
+        <PickerCard
+          title="Roles"
+          count={selectedRoles.length}
+          hint="Match every user assigned this role"
+        >
+          <div className="mt-0 max-h-[22.5rem] overflow-y-auto rounded-md border border-border divide-y divide-border">
             {ROLES.map((r) => {
               const selected = subjects.some(
                 (s) => s.subjectType === 'ROLE' && s.subjectId === r.id
@@ -422,37 +450,71 @@ function Step2({ form, onChange, errors }) {
                 <button
                   key={r.id}
                   type="button"
-                  onClick={() => {
-                    if (selected) {
-                      removeSubject('ROLE', r.id);
-                    } else {
-                      addSubject('ROLE', r.id, r.label);
-                    }
-                  }}
+                  onClick={() =>
+                    selected ? removeSubject('ROLE', r.id) : addSubject('ROLE', r.id, r.label)
+                  }
                   className={[
-                    'flex w-full items-center gap-2 px-3 py-2 text-left text-xs hover:bg-accent',
-                    selected ? 'bg-violet-500/10' : '',
+                    'flex w-full items-start gap-2 px-3 py-2.5 text-left transition-colors',
+                    selected ? 'bg-violet-500/10' : 'hover:bg-accent/50',
                   ].join(' ')}
                 >
-                  <div
-                    className={[
-                      'flex h-4 w-4 shrink-0 items-center justify-center rounded border',
-                      selected
-                        ? 'border-violet-500 bg-violet-500 text-white'
-                        : 'border-input',
-                    ].join(' ')}
-                  >
-                    {selected && <span className="text-[10px] font-bold">✓</span>}
+                  <CheckMark on={selected} accent="violet" />
+                  <div className="min-w-0 flex-1">
+                    <div className="text-xs font-medium text-foreground">{r.label}</div>
+                    <div className="text-[10px] leading-snug text-muted-foreground">
+                      {r.description}
+                    </div>
                   </div>
-                  <span className="font-medium text-foreground">{r.label}</span>
                 </button>
               );
             })}
           </div>
-        </div>
+        </PickerCard>
       </div>
 
       {errors.subjects && <p className={errorCls}>{errors.subjects}</p>}
+    </div>
+  );
+}
+
+// Picker card scaffold — unifies the look of Users/Groups/Roles columns
+// in Step 2. Shows a header with a selection count badge and a hint line.
+function PickerCard({ title, count, hint, children }) {
+  return (
+    <div className="rounded-lg border border-border bg-card p-3">
+      <div className="mb-2 flex items-center justify-between">
+        <div className="flex items-center gap-2">
+          <h4 className="text-xs font-semibold uppercase tracking-wide text-foreground">
+            {title}
+          </h4>
+          {count > 0 && (
+            <span className="inline-flex h-5 min-w-[1.25rem] items-center justify-center rounded-full bg-primary/15 px-1.5 text-[10px] font-semibold text-primary">
+              {count}
+            </span>
+          )}
+        </div>
+      </div>
+      {hint && <p className="mb-2 text-[10px] text-muted-foreground">{hint}</p>}
+      {children}
+    </div>
+  );
+}
+
+function CheckMark({ on, accent = 'primary' }) {
+  const activeCls =
+    accent === 'violet'
+      ? 'border-violet-500 bg-violet-500 text-white'
+      : accent === 'blue'
+      ? 'border-blue-500 bg-blue-500 text-white'
+      : 'border-primary bg-primary text-primary-foreground';
+  return (
+    <div
+      className={[
+        'flex h-4 w-4 shrink-0 items-center justify-center rounded border mt-0.5',
+        on ? activeCls : 'border-input',
+      ].join(' ')}
+    >
+      {on && <span className="text-[10px] font-bold">✓</span>}
     </div>
   );
 }
