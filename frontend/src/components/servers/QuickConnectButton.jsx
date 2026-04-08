@@ -1,68 +1,82 @@
-import { useState, useEffect } from 'react';
-import { Terminal, KeyRound, Loader2 } from 'lucide-react';
+import { useState, useEffect, useCallback } from 'react';
+import { Terminal, KeyRound, Loader2, Clock } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import QuickConnectModal from './QuickConnectModal';
-import { getActiveAccessForServer } from '@/services/accessRequestService';
+import ConnectModal from './ConnectModal';
+import RequestForm from '@/components/access-requests/RequestForm';
+import { getAccessIntent } from '@/services/accessRequestService';
 
 /**
  * QuickConnectButton
+ *
+ * Dispatches between three states:
+ *   - loading         → spinner
+ *   - hasActiveAccess → "Connect" → opens ConnectModal with principal picker
+ *   - hasPendingReq   → "Request Pending" (disabled, tooltip)
+ *   - else            → "Request Access" → opens RequestForm with the
+ *                       current server pre-selected (SAME flow as the
+ *                       /access-requests page "New Request" button)
  *
  * Props:
  *   server       — the server row object
  *   currentUser  — auth user from useAuth()
  */
 function QuickConnectButton({ server, currentUser }) {
-  const [activeRequest, setActiveRequest] = useState(undefined); // undefined = loading
-  const [modalOpen, setModalOpen] = useState(false);
+  const [intent, setIntent] = useState(undefined); // undefined = loading, null = error
+  const [connectOpen, setConnectOpen] = useState(false);
+  const [requestOpen, setRequestOpen] = useState(false);
 
-  useEffect(() => {
+  const fetchIntent = useCallback(() => {
     if (!server?.id) return;
-    let cancelled = false;
-    let interval = null;
-
-    const fetchActive = () => {
-      getActiveAccessForServer(server.id)
-        .then((ar) => {
-          if (!cancelled) setActiveRequest(ar); // null = no active request
-        })
-        .catch(() => {
-          if (!cancelled) setActiveRequest(null);
-        });
-    };
-
-    fetchActive();
-    // Phase 18C: poll every 60s while the row is mounted so a request that
-    // expires mid-session flips the button from "Connect" to "Request Access"
-    // without a manual reload.
-    interval = setInterval(fetchActive, 60_000);
-
-    return () => {
-      cancelled = true;
-      if (interval) clearInterval(interval);
-    };
+    getAccessIntent(server.id)
+      .then((data) => setIntent(data))
+      .catch(() => setIntent(null));
   }, [server?.id]);
 
-  const loading = activeRequest === undefined;
-  // Phase 18C: defensive double-check. The backend filter should already
-  // exclude EXPIRED / DENIED / REVOKED rows (Task 18C backend), but never
-  // trust a single layer.
-  const hasAccess =
-    !!activeRequest &&
-    activeRequest.status === 'APPROVED' &&
-    activeRequest.expiresAt &&
-    new Date(activeRequest.expiresAt) > new Date();
+  useEffect(() => {
+    let cancelled = false;
+    setIntent(undefined);
+    fetchIntent();
+    // Phase 18C: poll every 60s while the row is mounted so a request
+    // that expires mid-session flips the button automatically.
+    const id = setInterval(() => {
+      if (!cancelled) fetchIntent();
+    }, 60_000);
+    return () => {
+      cancelled = true;
+      clearInterval(id);
+    };
+  }, [fetchIntent]);
+
+  const loading = intent === undefined;
+  const hasAccess = !!intent?.hasActiveAccess;
+  const hasPending = !!intent?.hasPendingRequest;
+
+  const handleClick = (e) => {
+    e.stopPropagation();
+    // Always re-check right before opening — covers the "second browser
+    // tab approved my AR 10 seconds ago" edge case.
+    fetchIntent();
+    if (hasAccess) {
+      setConnectOpen(true);
+    } else if (hasPending) {
+      // no-op; button is disabled
+    } else {
+      setRequestOpen(true);
+    }
+  };
+
+  const variant = hasAccess ? 'default' : hasPending ? 'ghost' : 'outline';
+  const title = hasPending ? 'An access request is pending manager approval' : undefined;
 
   return (
     <>
       <Button
         size="sm"
-        variant={hasAccess ? 'default' : 'outline'}
+        variant={variant}
         className="gap-1.5"
-        disabled={loading}
-        onClick={(e) => {
-          e.stopPropagation();
-          setModalOpen(true);
-        }}
+        disabled={loading || hasPending}
+        onClick={handleClick}
+        title={title}
       >
         {loading ? (
           <Loader2 className="h-4 w-4 animate-spin" />
@@ -70,6 +84,11 @@ function QuickConnectButton({ server, currentUser }) {
           <>
             <Terminal className="h-4 w-4" />
             Connect
+          </>
+        ) : hasPending ? (
+          <>
+            <Clock className="h-4 w-4" />
+            Request Pending
           </>
         ) : (
           <>
@@ -79,13 +98,28 @@ function QuickConnectButton({ server, currentUser }) {
         )}
       </Button>
 
-      {modalOpen && (
-        <QuickConnectModal
-          open={modalOpen}
-          onClose={() => setModalOpen(false)}
+      {connectOpen && intent?.hasActiveAccess && (
+        <ConnectModal
+          open={connectOpen}
+          onClose={() => {
+            setConnectOpen(false);
+            fetchIntent();
+          }}
           server={server}
+          intent={intent}
           currentUser={currentUser}
-          activeRequest={hasAccess ? activeRequest : null}
+        />
+      )}
+
+      {requestOpen && (
+        <RequestForm
+          open={requestOpen}
+          onClose={() => setRequestOpen(false)}
+          onSuccess={() => {
+            setRequestOpen(false);
+            fetchIntent();
+          }}
+          initialServerId={server?.id}
         />
       )}
     </>
