@@ -115,24 +115,33 @@ function CertDetailModal({ cert, open, onClose, onDownload }) {
                   <EnvironmentBadge environment={cert.issuedFor.environment} />
                 )}
               </span>
-            ) : cert.serverId
+            ) : (
+              <span className="italic text-muted-foreground">unknown server</span>
+            )
           }
         />
         <DetailRow
           label="Principals"
           value={Array.isArray(cert.principals) ? cert.principals.join(', ') : cert.principals}
         />
-        <DetailRow label="Key ID" value={cert.keyId} />
-        <DetailRow label="Cert Type" value={cert.certType} />
-        <DetailRow label="CA Key Pair ID" value={cert.caKeyPairId} />
+        <DetailRow label="Type" value={cert.certType} />
         <DetailRow label="Valid After" value={formatDateTime(cert.validAfter)} />
         <DetailRow label="Valid Before" value={formatDateTime(cert.validBefore)} />
         <DetailRow label="Issued At" value={formatDateTime(cert.createdAt)} />
-        <DetailRow label="Revoked At" value={formatDateTime(cert.revokedAt)} />
-        <DetailRow
-          label="Revoked By"
-          value={cert.revokedBy?.name || cert.revokedBy?.email || cert.revokedById}
-        />
+        {cert.revokedAt && (
+          <DetailRow label="Revoked At" value={formatDateTime(cert.revokedAt)} />
+        )}
+        {cert.revokedAt && (
+          <DetailRow
+            label="Revoked By"
+            value={
+              cert.revokedBy?.name ||
+              cert.revokedBy?.email || (
+                <span className="italic text-muted-foreground">Unknown</span>
+              )
+            }
+          />
+        )}
         {cert.extensions && Object.keys(cert.extensions).length > 0 && (
           <DetailRow
             label="Extensions"

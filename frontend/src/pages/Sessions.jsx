@@ -96,7 +96,6 @@ function SessionDetailDrawer({ sessionId, open, onClose }) {
       )}
       {!loading && session && (
         <dl>
-          <DetailRow label="ID" value={<span className="font-mono text-xs">{session.id}</span>} />
           <DetailRow label="Status" value={<SessionStatusBadge status={session.status} />} />
           <DetailRow
             label="Server"
@@ -108,10 +107,20 @@ function SessionDetailDrawer({ sessionId, open, onClose }) {
                     <EnvironmentBadge environment={session.server.environment} />
                   )}
                 </span>
-              ) : session.serverId
+              ) : (
+                <span className="italic text-muted-foreground">unknown server</span>
+              )
             }
           />
-          <DetailRow label="User" value={session.user?.name || session.user?.email || session.userId} />
+          <DetailRow
+            label="User"
+            value={
+              session.user?.name ||
+              session.user?.email || (
+                <span className="italic text-muted-foreground">unknown user</span>
+              )
+            }
+          />
           <DetailRow label="Protocol" value={session.protocol} />
           <DetailRow label="Client IP" value={session.clientIp} />
           <DetailRow label="Principal" value={session.principal} />
@@ -121,11 +130,36 @@ function SessionDetailDrawer({ sessionId, open, onClose }) {
             label="Duration"
             value={session.status === 'ACTIVE' ? 'Active' : durationLabel(session.startedAt, session.endedAt)}
           />
-          <DetailRow label="Access Request ID" value={<span className="font-mono text-xs">{session.accessRequestId || '-'}</span>} />
+          {session.accessRequest && (
+            <DetailRow
+              label="Access Request"
+              value={
+                <span className="flex items-center gap-2">
+                  <span>
+                    {session.accessRequest.requester?.name ||
+                      session.accessRequest.requester?.email ||
+                      'requester'}{' '}
+                    →{' '}
+                    {session.accessRequest.server?.hostname ||
+                      session.server?.hostname ||
+                      'server'}
+                  </span>
+                  {session.accessRequest.reason && (
+                    <span
+                      className="truncate text-xs text-muted-foreground max-w-xs"
+                      title={session.accessRequest.reason}
+                    >
+                      ({session.accessRequest.reason})
+                    </span>
+                  )}
+                </span>
+              }
+            />
+          )}
           {session.terminatedBy && (
             <DetailRow
               label="Terminated By"
-              value={session.terminatedBy?.name || session.terminatedBy?.email || session.terminatedById}
+              value={session.terminatedBy?.name || session.terminatedBy?.email || 'Unknown'}
             />
           )}
         </dl>

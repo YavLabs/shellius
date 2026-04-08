@@ -236,6 +236,7 @@ export async function evaluate({ orgId, userId, serverId, requestedPrincipal, po
         principals: [],
         maxTtl: 0,
         policyId: savedPolicy.id,
+        policyName: savedPolicy.name,
       };
     }
     return {
@@ -245,6 +246,7 @@ export async function evaluate({ orgId, userId, serverId, requestedPrincipal, po
       principals: savedPolicy.allowedPrincipals,
       maxTtl: savedPolicy.maxSessionDuration,
       policyId: savedPolicy.id,
+      policyName: savedPolicy.name,
     };
   }
 
