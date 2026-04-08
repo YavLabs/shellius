@@ -4,6 +4,7 @@ import Joi from 'joi';
 import asyncHandler from '../utils/asyncHandler.js';
 import ApiError from '../utils/ApiError.js';
 import prisma from '../config/db.js';
+import config from '../config/index.js';
 import * as ssoService from '../services/ssoService.js';
 import * as ssoConfigService from '../services/ssoConfigService.js';
 import { generateAccessToken, generateRefreshToken, hashToken } from '../utils/jwt.js';
@@ -15,7 +16,7 @@ import audit from '../middleware/audit.js';
 
 const router = express.Router();
 
-const FRONTEND_URL = process.env.FRONTEND_URL || 'http://localhost:5173';
+const FRONTEND_URL = config.frontendUrl;
 const REFRESH_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 
 // In-memory state store (TODO: move to Redis for production)

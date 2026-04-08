@@ -2,6 +2,7 @@ import dns from 'dns';
 import net from 'net';
 import { promisify } from 'util';
 import prisma from '../config/db.js';
+import runtimeConfig from '../config/index.js';
 import ApiError from '../utils/ApiError.js';
 import { encrypt } from '../utils/crypto.js';
 import logger from '../utils/logger.js';
@@ -198,7 +199,10 @@ export async function get(orgId) {
  * @param {boolean} [data.isActive]
  * @returns {Promise<object>} masked row
  */
-const DEFAULT_APP_URL = process.env.APP_URL || process.env.FRONTEND_URL || 'http://localhost:5173';
+// APP_URL override takes precedence; otherwise falls back to the centrally
+// derived publicBaseUrl (which itself honors FRONTEND_URL → PUBLIC_BASE_URL
+// → TRAEFIK_HOST in that order).
+const DEFAULT_APP_URL = process.env.APP_URL || runtimeConfig.publicBaseUrl;
 const DEFAULT_REDIRECT_URI = `${DEFAULT_APP_URL.replace(/\/$/, '')}/api/auth/sso/callback`;
 
 export async function upsert(orgId, data) {
