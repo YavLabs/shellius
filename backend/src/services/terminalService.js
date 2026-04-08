@@ -23,9 +23,8 @@ import { WebSocketServer } from 'ws';
 import { spawn } from 'child_process';
 import os from 'os';
 import { URL } from 'url';
-import fs from 'fs';
-import path from 'path';
-import { mkdir, mkdtemp, writeFile, rm } from 'fs/promises';
+import { PassThrough } from 'stream';
+import { mkdtemp, writeFile, rm } from 'fs/promises';
 
 import { verifyAccessToken } from '../utils/jwt.js';
 import prisma from '../config/db.js';
@@ -33,32 +32,39 @@ import logger from '../utils/logger.js';
 import * as accessRequestService from './accessRequestService.js';
 import * as sessionService from './sessionService.js';
 import * as rdpService from './rdpService.js';
+import * as storageService from './storageService.js';
 
 // ---------------------------------------------------------------------------
 // Recording helpers
 // ---------------------------------------------------------------------------
 
-const RECORDINGS_DIR = process.env.RECORDINGS_DIR || './data/recordings';
-
 /**
  * Create a new asciinema v2 recording writer for a session.
- * Returns a writer object with { write(chunk), close() } or null on failure.
+ *
+ * Data is streamed directly to MinIO via a PassThrough stream so we never
+ * touch the local filesystem. The upload promise is tracked on the writer
+ * and awaited by the caller on session close.
+ *
+ * Returns { recordingKey, write, close, waitUpload } or null if MinIO is
+ * not configured (in which case the session proceeds with no recording).
  *
  * @param {string} sessionId
+ * @param {string} orgId
  * @param {{ rows: number, cols: number }} dims
  * @returns {Promise<object|null>}
  */
-async function openRecordingWriter(sessionId, { rows, cols }) {
+async function openRecordingWriter(sessionId, orgId, { rows, cols }) {
+  if (!storageService.isConfigured()) {
+    logger.warn('terminalService: MinIO not configured; recording disabled', { sessionId });
+    return null;
+  }
+
   try {
-    const absDir = path.resolve(RECORDINGS_DIR);
-    await mkdir(absDir, { recursive: true });
-
-    const filePath = path.join(absDir, `session-${sessionId}.cast`);
-    const stream = fs.createWriteStream(filePath, { flags: 'w', encoding: 'utf8' });
-
+    const recordingKey = `sessions/${orgId}/${sessionId}.cast`;
+    const passThrough = new PassThrough();
     const startTs = Date.now();
 
-    // asciinema v2 header
+    // asciinema v2 header first.
     const header = JSON.stringify({
       version: 2,
       width: cols,
@@ -67,30 +73,53 @@ async function openRecordingWriter(sessionId, { rows, cols }) {
       env: { SHELL: '/bin/bash', TERM: 'xterm-256color' },
       title: `shellius-${sessionId}`,
     });
-    stream.write(header + '\n');
+    passThrough.write(header + '\n');
+
+    const uploadPromise = storageService
+      .putObjectStream(recordingKey, passThrough, {
+        contentType: 'application/x-asciicast',
+        metadata: { 'x-amz-meta-session-id': sessionId, 'x-amz-meta-org-id': orgId },
+      })
+      .catch((err) => {
+        logger.error('terminalService: recording upload failed', {
+          sessionId,
+          recordingKey,
+          error: err.message,
+        });
+        return null;
+      });
 
     let closed = false;
 
     return {
-      filePath,
+      recordingKey,
       write(chunk) {
         if (closed) return;
         try {
           const elapsed = (Date.now() - startTs) / 1000;
           const str = Buffer.isBuffer(chunk) ? chunk.toString('utf8') : String(chunk);
-          stream.write(JSON.stringify([elapsed, 'o', str]) + '\n');
+          passThrough.write(JSON.stringify([elapsed, 'o', str]) + '\n');
         } catch (err) {
-          logger.warn('terminalService: recording write error', { sessionId, error: err.message });
+          logger.warn('terminalService: recording write error', {
+            sessionId,
+            error: err.message,
+          });
         }
       },
       close() {
         if (closed) return;
         closed = true;
         try {
-          stream.end();
+          passThrough.end();
         } catch (err) {
-          logger.warn('terminalService: recording close error', { sessionId, error: err.message });
+          logger.warn('terminalService: recording close error', {
+            sessionId,
+            error: err.message,
+          });
         }
+      },
+      async waitUpload() {
+        return uploadPromise;
       },
     };
   } catch (err) {
@@ -326,16 +355,19 @@ async function handleConnection(ws, req) {
 
     if (recordingWriter) {
       recordingWriter.close();
-      try {
-        await prisma.session.update({
-          where: { id: sessionId },
-          data: { recordingPath: recordingWriter.filePath },
-        });
-      } catch (err) {
-        logger.warn('terminalService: failed to persist recordingPath', {
-          sessionId,
-          error: err.message,
-        });
+      const upload = await recordingWriter.waitUpload();
+      if (upload) {
+        try {
+          await prisma.session.update({
+            where: { id: sessionId },
+            data: { recordingKey: recordingWriter.recordingKey },
+          });
+        } catch (err) {
+          logger.warn('terminalService: failed to persist recordingKey', {
+            sessionId,
+            error: err.message,
+          });
+        }
       }
       recordingWriter = null;
     }
@@ -426,7 +458,7 @@ async function handleConnection(ws, req) {
   }
 
   // Open asciinema recording writer once the process is up.
-  recordingWriter = await openRecordingWriter(sessionId, { rows, cols });
+  recordingWriter = await openRecordingWriter(sessionId, orgId, { rows, cols });
 
   activeSessions.set(sessionId, { ws, sshProc });
 
