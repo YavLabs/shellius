@@ -33,6 +33,25 @@ services:
     networks:
       - default
 
+  minio:
+    image: minio/minio:latest
+    command: server /data --console-address ":9001"
+    restart: unless-stopped
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ACCESS_KEY}
+      MINIO_ROOT_PASSWORD: ${MINIO_SECRET_KEY}
+      MINIO_BROWSER_REDIRECT_URL: http://localhost/minio
+    volumes:
+      - minio_data:/data
+    ports:
+      - "9002:9001"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 15s
+
   backend:
     build:
       context: .
@@ -52,8 +71,8 @@ services:
         condition: service_healthy
       guacd:
         condition: service_started
-    volumes:
-      - recordings_data:/data/recordings
+      minio:
+        condition: service_healthy
 
   frontend:
     build:
@@ -77,4 +96,4 @@ services:
 volumes:
   postgres_data:
   redis_data:
-  recordings_data:
+  minio_data:
