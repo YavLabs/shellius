@@ -31,6 +31,7 @@ import auditRouter from './routes/audit.js';
 import bootstrapRouter from './routes/bootstrap.js';
 import orgRouter from './routes/org.js';
 import smtpRouter from './routes/smtp.js';
+import cliRouter from './routes/cli.js';
 import errorHandler from './middleware/errorHandler.js';
 import { startAllJobs } from './jobs/index.js';
 
@@ -69,6 +70,7 @@ app.use('/api/audit', auditRouter);
 app.use('/api/bootstrap', bootstrapRouter);
 app.use('/api/org', orgRouter);
 app.use('/api/settings/smtp', smtpRouter);
+app.use('/api/cli', cliRouter);
 
 app.use(errorHandler);
 

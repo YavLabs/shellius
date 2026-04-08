@@ -1236,7 +1236,6 @@ function NotificationsTab() {
 // ---------------------------------------------------------------------------
 
 const GITHUB_REPO = 'vaidyayash8/shellius';
-const INSTALL_SCRIPT_URL = `https://raw.githubusercontent.com/${GITHUB_REPO}/main/scripts/install-tui.sh`;
 const RELEASES_URL = `https://github.com/${GITHUB_REPO}/releases/latest`;
 
 function CodeBlock({ code, language = 'bash' }) {
@@ -1260,7 +1259,12 @@ function CliTab() {
   const publicUrl =
     typeof window !== 'undefined' ? window.location.origin : 'https://shellius.yavlabs.com';
 
-  const oneLiner = `curl -fsSL ${INSTALL_SCRIPT_URL} | sh`;
+  // The installer is served directly from this deployment at
+  // /api/cli/install.sh — no GitHub round-trip needed. The script
+  // itself still downloads the platform binary from GitHub releases,
+  // but the entry point stays on-prem.
+  const installScriptUrl = `${publicUrl}/api/cli/install.sh`;
+  const oneLiner = `curl -fsSL ${installScriptUrl} | sh`;
   const loginCmd = `shellius login ${publicUrl}`;
   const brewCmd = `brew install ${GITHUB_REPO.split('/')[1]}  # (planned)`;
 
