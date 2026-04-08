@@ -34,11 +34,16 @@ const validateQuery = (schema) => (req, res, next) => {
 
 const ENVIRONMENTS = ['demo', 'dev', 'staging', 'prod'];
 const EFFECTS = ['ALLOW', 'DENY'];
-const SUBJECT_TYPES = ['USER', 'GROUP'];
+const SUBJECT_TYPES = ['USER', 'GROUP', 'ROLE'];
+const ORG_ROLES = ['super_admin', 'admin', 'operator', 'viewer'];
 
 const subjectSchema = Joi.object({
   subjectType: Joi.string().valid(...SUBJECT_TYPES).required(),
-  subjectId: Joi.string().required(),
+  subjectId: Joi.when('subjectType', {
+    is: 'ROLE',
+    then: Joi.string().valid(...ORG_ROLES).required(),
+    otherwise: Joi.string().required(),
+  }),
 });
 
 const policyBodySchema = Joi.object({

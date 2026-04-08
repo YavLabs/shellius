@@ -30,13 +30,16 @@ async function resolveUserGroupIds(userId, orgId) {
  * @param {string[]} userGroupIds
  * @returns {Promise<import('@prisma/client').AccessPolicy[]>}
  */
-async function loadMatchingPolicies(orgId, userId, userGroupIds) {
-  // Build subject filter: USER match OR GROUP match
+async function loadMatchingPolicies(orgId, userId, userGroupIds, userRole) {
+  // Build subject filter: USER match OR GROUP match OR ROLE match
   const subjectFilter = [
     { subjectType: 'USER', subjectId: userId },
   ];
   if (userGroupIds.length > 0) {
     subjectFilter.push({ subjectType: 'GROUP', subjectId: { in: userGroupIds } });
+  }
+  if (userRole) {
+    subjectFilter.push({ subjectType: 'ROLE', subjectId: userRole });
   }
 
   const policies = await prisma.accessPolicy.findMany({
@@ -249,11 +252,15 @@ export async function evaluate({ orgId, userId, serverId, requestedPrincipal, po
   // Mode C: Org-wide evaluation (original behaviour)
   // ---------------------------------------------------------------------------
 
-  // Step 3: Resolve user's group memberships
-  const userGroupIds = await resolveUserGroupIds(userId, orgId);
+  // Step 3: Resolve user's group memberships and role
+  const [userGroupIds, userRecord] = await Promise.all([
+    resolveUserGroupIds(userId, orgId),
+    prisma.user.findUnique({ where: { id: userId }, select: { role: true } }),
+  ]);
+  const userRole = userRecord?.role || null;
 
-  // Step 4: Load active policies where user or their groups are subjects
-  const rawPolicies = await loadMatchingPolicies(orgId, userId, userGroupIds);
+  // Step 4: Load active policies where user, their groups, or their role are subjects
+  const rawPolicies = await loadMatchingPolicies(orgId, userId, userGroupIds, userRole);
 
   // Steps 5-9: Apply server/environment/label/serverIds/principal filters
   const matchingPolicies = filterPolicies(rawPolicies, server, serverId, requestedPrincipal);

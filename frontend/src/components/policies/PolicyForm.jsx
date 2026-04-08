@@ -208,10 +208,20 @@ function Step2({ form, onChange, errors }) {
     return !q || (g.name || '').toLowerCase().includes(q);
   });
 
+  const ROLES = [
+    { id: 'super_admin', label: 'Super Admin' },
+    { id: 'admin', label: 'Admin' },
+    { id: 'operator', label: 'Operator' },
+    { id: 'viewer', label: 'Viewer' },
+  ];
+
+  const subjectTypeLabel = (t) =>
+    t === 'USER' ? 'User' : t === 'GROUP' ? 'Group' : 'Role';
+
   return (
     <div className="space-y-4">
       <p className="text-sm text-muted-foreground">
-        Choose which users and groups this policy applies to.
+        Choose which users, groups, or roles this policy applies to.
       </p>
 
       {subjects.length > 0 && (
@@ -219,14 +229,19 @@ function Step2({ form, onChange, errors }) {
           {subjects.map((s) => (
             <Chip
               key={`${s.subjectType}-${s.subjectId}`}
-              label={`${s._label || s.subjectId} (${s.subjectType === 'USER' ? 'User' : 'Group'})`}
+              label={`${s._label || s.subjectId} (${subjectTypeLabel(s.subjectType)})`}
               onRemove={() => removeSubject(s.subjectType, s.subjectId)}
+              className={
+                s.subjectType === 'ROLE'
+                  ? 'bg-violet-500/20 text-violet-700 dark:text-violet-300 border-violet-500/40'
+                  : undefined
+              }
             />
           ))}
         </div>
       )}
 
-      <div className="grid grid-cols-2 gap-4">
+      <div className="grid grid-cols-3 gap-4">
         <div>
           <label className={labelCls}>Users</label>
           <input
@@ -325,6 +340,49 @@ function Step2({ form, onChange, errors }) {
                 );
               })
             )}
+          </div>
+        </div>
+
+        <div>
+          <label className={labelCls}>Roles</label>
+          <p className="mb-1 text-[11px] text-muted-foreground">
+            Matches every user with this role.
+          </p>
+          <div className="mt-1 max-h-40 overflow-y-auto rounded-md border border-border">
+            {ROLES.map((r) => {
+              const selected = subjects.some(
+                (s) => s.subjectType === 'ROLE' && s.subjectId === r.id
+              );
+              return (
+                <button
+                  key={r.id}
+                  type="button"
+                  onClick={() => {
+                    if (selected) {
+                      removeSubject('ROLE', r.id);
+                    } else {
+                      addSubject('ROLE', r.id, r.label);
+                    }
+                  }}
+                  className={[
+                    'flex w-full items-center gap-2 px-3 py-2 text-left text-xs hover:bg-accent',
+                    selected ? 'bg-violet-500/10' : '',
+                  ].join(' ')}
+                >
+                  <div
+                    className={[
+                      'flex h-4 w-4 shrink-0 items-center justify-center rounded border',
+                      selected
+                        ? 'border-violet-500 bg-violet-500 text-white'
+                        : 'border-input',
+                    ].join(' ')}
+                  >
+                    {selected && <span className="text-[10px] font-bold">✓</span>}
+                  </div>
+                  <span className="font-medium text-foreground">{r.label}</span>
+                </button>
+              );
+            })}
           </div>
         </div>
       </div>
