@@ -40,14 +40,21 @@ function StatCard({ title, value, description, icon: Icon, loading, children, to
     else if (to) navigate(to);
   };
   const Wrapper = interactive ? 'button' : 'div';
+  // flex column w/ fixed structure: header row on top, value next,
+  // description fills the middle, extras (env badges) anchor to bottom.
+  // h-full + auto-rows-fr on the parent grid makes all four cards
+  // identical height regardless of how much content they carry.
   const wrapperProps = interactive
     ? {
         type: 'button',
         onClick: handleClick,
         className:
-          'group w-full rounded-lg border border-border bg-card p-5 text-left transition-all hover:border-primary/40 hover:shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
+          'group flex h-full w-full flex-col rounded-lg border border-border bg-card p-5 text-left transition-all hover:border-primary/40 hover:shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
       }
-    : { className: 'rounded-lg border border-border bg-card p-5 transition-colors' };
+    : {
+        className:
+          'flex h-full flex-col rounded-lg border border-border bg-card p-5 transition-colors',
+      };
   return (
     <Wrapper {...wrapperProps}>
       <div className="flex items-center justify-between">
@@ -64,7 +71,8 @@ function StatCard({ title, value, description, icon: Icon, loading, children, to
       {description && (
         <p className="mt-1 text-xs text-muted-foreground">{description}</p>
       )}
-      {children}
+      {/* Extras anchored to the bottom of the card so all four line up */}
+      {children && <div className="mt-auto pt-3">{children}</div>}
     </Wrapper>
   );
 }
@@ -263,8 +271,8 @@ function Dashboard() {
         subtitle="Overview of your infrastructure and access management."
       helpKey="dashboard" />
 
-      {/* Stat cards */}
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+      {/* Stat cards — auto-rows-fr makes all four cards the same height */}
+      <div className="grid grid-cols-1 auto-rows-fr gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <StatCard
           title="Total Servers"
           value={serverStats.total}
