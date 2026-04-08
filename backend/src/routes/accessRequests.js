@@ -8,6 +8,8 @@ import requireRole from '../middleware/rbac.js';
 import audit from '../middleware/audit.js';
 import * as accessRequestService from '../services/accessRequestService.js';
 import * as rdpService from '../services/rdpService.js';
+import prisma from '../config/db.js';
+import logger from '../utils/logger.js';
 
 const router = express.Router();
 
@@ -220,10 +222,62 @@ router.post(
     res.set('Cache-Control', 'no-store');
     res.set('Pragma', 'no-cache');
 
+    // Phase 21A — gate SSH key download behind policy.allowKeyDownload.
+    // Web-terminal sessions bypass this route entirely (they hit the
+    // WebSocket proxy directly), so we only restrict out-of-band key
+    // downloads here. Default is deny — any ALLOW policy with the flag
+    // set opens it up.
+    const ar = await prisma.accessRequest.findFirst({
+      where: { id: req.params.id, orgId: req.orgId },
+      include: { requester: { select: { id: true, role: true } } },
+    });
+    if (!ar) throw new ApiError(404, 'Access request not found');
+    if (ar.requesterId !== req.user.userId) {
+      throw new ApiError(403, 'Only the requester may download credentials');
+    }
+
+    // Find any ALLOW policy in the org that permits key download.
+    const allowed = await prisma.accessPolicy.findFirst({
+      where: {
+        orgId: req.orgId,
+        isActive: true,
+        effect: 'ALLOW',
+        allowKeyDownload: true,
+      },
+      select: { id: true },
+    });
+    if (!allowed && !ar.breakGlass) {
+      logger.warn('accessRequests: key download denied by policy', {
+        accessRequestId: ar.id,
+        userId: req.user.userId,
+      });
+      throw new ApiError(
+        403,
+        'Key download is disabled by policy. Use the web terminal instead, or ask an admin to enable "Allow SSH key download" on a matching policy.'
+      );
+    }
+
     const credentials = await accessRequestService.generateSshCredentials({
       requestId: req.params.id,
       callerId: req.user.userId,
     });
+
+    // High-severity audit event distinct from the generic access_request.ssh_credentials
+    try {
+      const auditService = await import('../services/auditService.js');
+      await auditService.default.create
+        ? auditService.default.create({
+            orgId: req.orgId,
+            actorId: req.user.userId,
+            action: 'certificate.key_downloaded',
+            targetType: 'AccessRequest',
+            targetId: ar.id,
+            metadata: { severity: 'HIGH' },
+          })
+        : null;
+    } catch (err) {
+      logger.warn('accessRequests: failed to write KEY_DOWNLOADED audit', { error: err.message });
+    }
 
     res.json({ success: true, data: { credentials } });
   })
@@ -311,6 +365,33 @@ router.post(
         expiresAt: accessRequest.expiresAt,
       },
     });
+  })
+);
+
+// ---------------------------------------------------------------------------
+// POST /api/access-requests/break-glass — admin-only emergency access
+// ---------------------------------------------------------------------------
+
+const breakGlassSchema = Joi.object({
+  serverId: Joi.string().required(),
+  reason: Joi.string().min(20).max(1000).required(),
+  durationSeconds: Joi.number().integer().min(300).max(3600).default(3600),
+});
+
+router.post(
+  '/break-glass',
+  requireRole('admin', 'super_admin'),
+  validate(breakGlassSchema),
+  asyncHandler(async (req, res) => {
+    const ar = await accessRequestService.createBreakGlass({
+      orgId: req.orgId,
+      invokerId: req.user.userId,
+      invokerRole: req.user.role,
+      serverId: req.body.serverId,
+      reason: req.body.reason,
+      durationSeconds: req.body.durationSeconds,
+    });
+    res.status(201).json({ success: true, data: ar });
   })
 );
 

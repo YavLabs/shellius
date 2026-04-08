@@ -389,6 +389,7 @@ enum NotificationType {
   ACCESS_REQUEST_EXPIRING
   ACCESS_REQUEST_EXPIRED
   ACCESS_REQUEST_REVOKED
+  BREAK_GLASS_INVOKED
 }
 
 enum PolicyEffect {
@@ -467,6 +468,7 @@ model AccessRequest {
   revokedAt           DateTime?           @map("revoked_at")
   revokedReason       String?             @map("revoked_reason")
   certificateId       String?             @map("certificate_id")
+  breakGlass          Boolean             @default(false) @map("break_glass")
   createdAt           DateTime            @default(now()) @map("created_at")
   updatedAt           DateTime            @updatedAt @map("updated_at")
 

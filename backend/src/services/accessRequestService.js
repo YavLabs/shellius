@@ -1074,4 +1074,123 @@ export default {
   markExpired,
   markPendingExpired,
   notifyExpiringAccess,
+  createBreakGlass,
 };
+
+// ---------------------------------------------------------------------------
+// createBreakGlass — admin-only emergency access bypass
+// ---------------------------------------------------------------------------
+
+/**
+ * Create a pre-approved AccessRequest flagged breakGlass. Used by admins
+ * for emergency access to any server in the org. Every invocation writes
+ * a high-severity audit event and notifies every admin/super_admin.
+ *
+ * @param {object} params
+ * @param {string} params.orgId
+ * @param {string} params.invokerId          - admin/super_admin initiating
+ * @param {string} params.invokerRole        - must be admin or super_admin
+ * @param {string} params.serverId
+ * @param {string} params.reason             - mandatory, min 20 chars
+ * @param {number} params.durationSeconds    - clamped to [300, 3600]
+ * @returns {Promise<object>}                - the created AccessRequest
+ */
+export async function createBreakGlass({
+  orgId,
+  invokerId,
+  invokerRole,
+  serverId,
+  reason,
+  durationSeconds = 3600,
+}) {
+  if (!['admin', 'super_admin'].includes(invokerRole)) {
+    throw new ApiError(403, 'Break-glass access requires admin or super_admin role');
+  }
+  if (!reason || reason.trim().length < 20) {
+    throw new ApiError(400, 'reason must be at least 20 characters');
+  }
+  const ttl = Math.max(300, Math.min(Number(durationSeconds) || 3600, 3600));
+
+  const server = await prisma.server.findFirst({ where: { id: serverId, orgId } });
+  if (!server) throw new ApiError(404, 'Server not found');
+
+  const invoker = await prisma.user.findFirst({
+    where: { id: invokerId, orgId },
+    select: { id: true, name: true, email: true, role: true },
+  });
+  if (!invoker) throw new ApiError(404, 'Invoker not found');
+
+  const now = new Date();
+  const expiresAt = new Date(now.getTime() + ttl * 1000);
+  const principal = server.sshUser || 'root';
+
+  const ar = await prisma.accessRequest.create({
+    data: {
+      orgId,
+      requesterId: invokerId,
+      reviewerId: invokerId, // self-approved
+      serverId,
+      protocol: 'SSH',
+      requestedPrincipal: principal,
+      reason: reason.trim(),
+      requestedDuration: ttl,
+      approvedDuration: ttl,
+      status: 'APPROVED',
+      approvedAt: now,
+      expiresAt,
+      breakGlass: true,
+    },
+    include: REQUEST_INCLUDE,
+  });
+
+  // Audit — distinct, high-severity event.
+  await writeAudit(orgId, invokerId, 'access_request.break_glass', ar.id, {
+    serverId,
+    serverHostname: server.hostname,
+    environment: server.environment,
+    reason: reason.trim(),
+    durationSeconds: ttl,
+    expiresAt: expiresAt.toISOString(),
+    severity: 'HIGH',
+  });
+
+  // Fan out a notification to every admin + super_admin in the org.
+  try {
+    const admins = await prisma.user.findMany({
+      where: {
+        orgId,
+        role: { in: ['admin', 'super_admin'] },
+        status: 'active',
+        deletedAt: null,
+      },
+      select: { id: true, email: true, name: true },
+    });
+    for (const admin of admins) {
+      await notificationService.create({
+        orgId,
+        userId: admin.id,
+        type: 'BREAK_GLASS_INVOKED',
+        title: `⚠️ Break-glass access invoked on ${server.hostname}`,
+        body: `${invoker.name} invoked break-glass access to ${server.hostname} (${server.environment}). Reason: ${reason.trim().slice(0, 160)}`,
+        metadata: {
+          accessRequestId: ar.id,
+          invokerId,
+          serverId,
+          expiresAt: expiresAt.toISOString(),
+        },
+      });
+    }
+    logger.info('accessRequestService.createBreakGlass: fanned out notifications', {
+      accessRequestId: ar.id,
+      adminCount: admins.length,
+    });
+  } catch (err) {
+    // Non-fatal — access still works, but flag it.
+    logger.error('accessRequestService.createBreakGlass: notification fanout failed', {
+      accessRequestId: ar.id,
+      error: err.message,
+    });
+  }
+
+  return ar;
+}
