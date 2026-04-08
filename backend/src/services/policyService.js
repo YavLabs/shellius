@@ -439,6 +439,9 @@ export async function create(orgId, data) {
     autoApprove = false,
     isActive = true,
     priority = 100,
+    osProvisioning = {},
+    allowKeyDownload = false,
+    isBreakGlass = false,
   } = data;
 
   if (!name) throw new ApiError(400, 'name is required');
@@ -470,6 +473,9 @@ export async function create(orgId, data) {
         autoApprove,
         isActive,
         priority,
+        osProvisioning,
+        allowKeyDownload,
+        isBreakGlass,
       },
     });
 
@@ -524,6 +530,9 @@ export async function update(orgId, id, data) {
     autoApprove,
     isActive,
     priority,
+    osProvisioning,
+    allowKeyDownload,
+    isBreakGlass,
   } = data;
 
   // Verify customerId belongs to org if changing it
@@ -546,6 +555,9 @@ export async function update(orgId, id, data) {
   if (autoApprove !== undefined) updateData.autoApprove = autoApprove;
   if (isActive !== undefined) updateData.isActive = isActive;
   if (priority !== undefined) updateData.priority = priority;
+  if (osProvisioning !== undefined) updateData.osProvisioning = osProvisioning;
+  if (allowKeyDownload !== undefined) updateData.allowKeyDownload = allowKeyDownload;
+  if (isBreakGlass !== undefined) updateData.isBreakGlass = isBreakGlass;
 
   const policy = await prisma.$transaction(async (tx) => {
     await tx.accessPolicy.update({ where: { id }, data: updateData });

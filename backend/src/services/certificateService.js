@@ -318,11 +318,41 @@ export async function verify({ serial, principal }) {
       return { valid: false, reason: 'principal not in certificate' };
     }
 
-    return {
+    const result = {
       valid: true,
       principals: cert.principals,
       validBefore: cert.validBefore,
     };
+
+    // Phase 21A — attach optional JIT provisioning manifest. Only
+    // populated when a matching policy has non-empty osProvisioning.
+    // Existing hosts ignore unknown fields; future check-principals
+    // will consume the manifest. Errors are swallowed so verify stays
+    // fast and never fails on manifest issues.
+    try {
+      // Find the approved access request this cert was issued for.
+      const ar = await prisma.accessRequest.findFirst({
+        where: {
+          certificateId: cert.id,
+          status: 'APPROVED',
+          expiresAt: { gt: new Date() },
+        },
+        select: { id: true },
+      });
+      if (ar) {
+        const jitManifestService = await import('./jitManifestService.js');
+        const manifest = await jitManifestService.buildManifest({ accessRequestId: ar.id });
+        if (manifest) {
+          result.manifest = manifest;
+        }
+      }
+    } catch (err) {
+      logger.warn('certificateService.verify: manifest lookup failed (non-fatal)', {
+        error: err.message,
+      });
+    }
+
+    return result;
   } catch (err) {
     logger.error('certificateService.verify: unexpected error', { error: err.message });
     return { valid: false, reason: 'internal error during verification' };

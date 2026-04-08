@@ -46,6 +46,15 @@ const subjectSchema = Joi.object({
   }),
 });
 
+// Phase 21A — JIT OS provisioning block embedded in AccessPolicy.
+const osProvisioningSchema = Joi.object({
+  linuxGroups: Joi.array().items(Joi.string().pattern(/^[a-z][a-z0-9_-]{0,31}$/)).default([]),
+  sudo: Joi.boolean().default(false),
+  aclReadPaths: Joi.array().items(Joi.string().pattern(/^\/[^\0]*$/)).default([]),
+  aclRecursive: Joi.boolean().default(false),
+  hardCutoff: Joi.boolean().default(false),
+}).default({});
+
 const policyBodySchema = Joi.object({
   name: Joi.string().min(1).max(255).required(),
   description: Joi.string().allow('', null).max(1000),
@@ -60,6 +69,9 @@ const policyBodySchema = Joi.object({
   autoApprove: Joi.boolean().default(false),
   isActive: Joi.boolean().default(true),
   priority: Joi.number().integer().min(1).max(9999).default(100),
+  osProvisioning: osProvisioningSchema,
+  allowKeyDownload: Joi.boolean().default(false),
+  isBreakGlass: Joi.boolean().default(false),
   subjects: Joi.array().items(subjectSchema).default([]),
 });
 
@@ -77,6 +89,9 @@ const policyUpdateSchema = Joi.object({
   autoApprove: Joi.boolean(),
   isActive: Joi.boolean(),
   priority: Joi.number().integer().min(1).max(9999),
+  osProvisioning: osProvisioningSchema,
+  allowKeyDownload: Joi.boolean(),
+  isBreakGlass: Joi.boolean(),
   subjects: Joi.array().items(subjectSchema),
 }).min(1);
 
