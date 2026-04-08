@@ -1,4 +1,5 @@
 import prisma from '../config/db.js';
+import ssoConfig from '../config/index.js';
 import ApiError from '../utils/ApiError.js';
 import { encrypt, decrypt } from '../utils/crypto.js';
 
@@ -85,8 +86,11 @@ const ENV_ONLY_PRESETS = {
  * host the user is hitting Shellius on.
  */
 function buildEnvCallbackUrl(orgSlug, req) {
+  // Prefer config.publicBaseUrl (derived from TRAEFIK_HOST / FRONTEND_URL /
+  // PUBLIC_BASE_URL) — single source of truth. Falls back to the incoming
+  // request origin for dev / reverse-proxy-less setups.
   const publicBase =
-    process.env.PUBLIC_BASE_URL ||
+    ssoConfig.publicBaseUrl ||
     (req ? `${req.protocol}://${req.get('host')}` : 'http://localhost:3001');
   return `${publicBase.replace(/\/$/, '')}/api/auth/sso/${orgSlug}/callback`;
 }
