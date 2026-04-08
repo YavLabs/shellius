@@ -41,3 +41,16 @@ export const getActiveAccessForServer = (serverId) =>
   api
     .get(`/access-requests/by-server/${serverId}/active`)
     .then((r) => r.data?.data?.accessRequest ?? r.data?.data ?? null);
+
+/**
+ * One-shot endpoint that tells the UI everything it needs to render the
+ * Request Access / Connect flow for a given server: active-AR state,
+ * preferred principal, allowed principals, admin-override capability,
+ * protocol, and whether a JIT policy is in scope.
+ *
+ * See backend/src/services/accessRequestService.js `getAccessIntent`.
+ */
+export const getAccessIntent = (serverId) =>
+  api
+    .get('/access-requests/intent', { params: { serverId } })
+    .then((r) => r.data?.data ?? r.data);
