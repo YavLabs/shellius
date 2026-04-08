@@ -6,6 +6,7 @@ import prisma from './config/db.js';
 import redis from './config/redis.js';
 import { registerHealthCheckJob, startHealthCheckWorker } from './jobs/healthCheck.js';
 import { attachWebSocketServer } from './services/terminalService.js';
+import * as storageService from './services/storageService.js';
 
 const httpServer = http.createServer(app);
 attachWebSocketServer(httpServer);
@@ -17,6 +18,19 @@ const server = httpServer.listen(config.port, async () => {
     startHealthCheckWorker();
   } catch (err) {
     logger.error('Failed to initialize health check job:', err.message);
+  }
+  // Best-effort MinIO bucket provisioning for session recordings.
+  // Non-fatal on failure — the backend still serves other routes and the
+  // web terminal falls back to silent no-op recording writer.
+  if (storageService.isConfigured()) {
+    try {
+      await storageService.ensureBucket();
+      logger.info(`Recordings bucket ready: ${storageService.recordingsBucket()}`);
+    } catch (err) {
+      logger.warn('storageService.ensureBucket failed (recordings disabled):', err.message);
+    }
+  } else {
+    logger.warn('MinIO not configured — session recording will be disabled');
   }
 });
 

@@ -506,6 +506,7 @@ model Session {
   endedAt          DateTime?     @map("ended_at")
   durationSeconds  Int?          @map("duration_seconds")
   recordingPath    String?       @map("recording_path")
+  recordingKey     String?       @map("recording_key")
   metadata         Json?
 
   organization   Organization  @relation(fields: [orgId], references: [id], onDelete: Cascade)

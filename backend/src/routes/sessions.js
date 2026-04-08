@@ -10,6 +10,7 @@ import requireRole from '../middleware/rbac.js';
 import audit from '../middleware/audit.js';
 import logger from '../utils/logger.js';
 import * as sessionService from '../services/sessionService.js';
+import * as storageService from '../services/storageService.js';
 import { terminateSession } from '../services/terminalService.js';
 
 const router = express.Router();
@@ -98,26 +99,41 @@ router.get(
   asyncHandler(async (req, res) => {
     const session = await sessionService.getById(req.orgId, req.params.id);
 
+    const filename = `session-${session.id}.cast`;
+    res.set('Content-Type', 'application/octet-stream');
+    res.set('Content-Disposition', `attachment; filename="${filename}"`);
+
+    // Preferred path: stream from MinIO when recordingKey is set.
+    if (session.recordingKey) {
+      let objStream;
+      try {
+        objStream = await storageService.getObjectStream(session.recordingKey);
+      } catch (err) {
+        if (err.code === 'NoSuchKey' || err.code === 'NotFound') {
+          throw new ApiError(404, 'Recording not found in object storage');
+        }
+        throw err;
+      }
+      objStream.on('error', (err) => {
+        logger.warn('sessions: MinIO stream error', { sessionId: session.id, error: err.message });
+        res.destroy(err);
+      });
+      objStream.pipe(res);
+      return;
+    }
+
+    // Legacy fallback: older sessions that still have a filesystem path.
     if (!session.recordingPath) {
       throw new ApiError(404, 'No recording available for this session');
     }
-
     const absPath = path.resolve(session.recordingPath);
-
-    // Verify the file exists on disk
     try {
       await fs.promises.access(absPath, fs.constants.R_OK);
     } catch {
       throw new ApiError(404, 'Recording file not found on disk');
     }
-
-    const filename = `session-${session.id}.cast`;
-    res.set('Content-Type', 'application/octet-stream');
-    res.set('Content-Disposition', `attachment; filename="${filename}"`);
-
     const fileStream = fs.createReadStream(absPath);
     fileStream.on('error', (err) => {
-      // Headers may already be sent; log and destroy
       logger.warn('sessions: recording stream error', { sessionId: session.id, error: err.message });
       res.destroy(err);
     });
