@@ -24,6 +24,7 @@ import { spawn } from 'child_process';
 import os from 'os';
 import { URL } from 'url';
 import { PassThrough } from 'stream';
+import path from 'path';
 import { mkdtemp, writeFile, rm } from 'fs/promises';
 
 import { verifyAccessToken } from '../utils/jwt.js';
