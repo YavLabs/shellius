@@ -2,63 +2,84 @@ package tui
 
 import "github.com/charmbracelet/lipgloss"
 
-// Color palette
+// Color palette — Phase 22 redesign.
+// Two accents only: emerald for selected/active, red for prod/warning.
+// Everything else is dim gray.
 const (
-	colorAccent  = "#14b8a6" // teal
-	colorProd    = "#ef4444" // red
-	colorStaging = "#f59e0b" // amber
-	colorDev     = "#22c55e" // green
-	colorDemo    = "#3b82f6" // blue
+	colorAccent  = "#10b981" // emerald — selected, active access
+	colorProd    = "#ef4444" // red — prod env badge, error states
+	colorStaging = "#f59e0b" // amber — staging env badge
+	colorDev     = "#22c55e" // green — dev / demo env badge
+	colorDemo    = "#22c55e" // green — same as dev
 
-	colorBg        = "#0f172a"
-	colorSurface   = "#1e293b"
-	colorBorder    = "#334155"
-	colorText      = "#f1f5f9"
-	colorMuted     = "#64748b"
-	colorSubtle    = "#94a3b8"
-	colorHighlight = "#0f766e"
+	colorBorder    = "#374151" // outer border
+	colorMuted     = "#6b7280" // help text, secondary info
+	colorSubtle    = "#9ca3af" // slightly brighter secondary
+	colorText      = "#f9fafb" // primary text
+	colorHighlight = "#065f46" // emerald background for selected rows
+	colorSurface   = "#111827" // slight surface tint (unused in outer border model)
+
+	// Legacy aliases kept so existing callers compile without change.
+	colorBg = colorSurface
 )
 
-// Badge styles — environment badges.
-var (
-	BadgeProd = lipgloss.NewStyle().
+// EnvBadge returns a short styled environment label.
+// Labels are intentionally short: PROD, STG, DEV, DEMO.
+func EnvBadge(env string) string {
+	switch env {
+	case "prod":
+		return lipgloss.NewStyle().
 			Bold(true).
 			Foreground(lipgloss.Color(colorProd)).
-			Background(lipgloss.Color("#450a0a")).
-			Padding(0, 1).
-			SetString("[PROD]")
-
-	BadgeStaging = lipgloss.NewStyle().
+			Render("PROD")
+	case "staging":
+		return lipgloss.NewStyle().
 			Bold(true).
 			Foreground(lipgloss.Color(colorStaging)).
-			Background(lipgloss.Color("#451a03")).
-			Padding(0, 1).
-			SetString("[STAGING]")
-
-	BadgeDev = lipgloss.NewStyle().
+			Render("STG")
+	case "dev":
+		return lipgloss.NewStyle().
 			Bold(true).
 			Foreground(lipgloss.Color(colorDev)).
-			Background(lipgloss.Color("#052e16")).
-			Padding(0, 1).
-			SetString("[DEV]")
-
-	BadgeDemo = lipgloss.NewStyle().
+			Render("DEV")
+	case "demo":
+		return lipgloss.NewStyle().
 			Bold(true).
 			Foreground(lipgloss.Color(colorDemo)).
-			Background(lipgloss.Color("#172554")).
-			Padding(0, 1).
-			SetString("[DEMO]")
-)
+			Render("DEMO")
+	default:
+		return lipgloss.NewStyle().
+			Foreground(lipgloss.Color(colorMuted)).
+			Render(env)
+	}
+}
 
-// Layout styles
+// AccessStatusStyle returns a styled string for the access status (host list).
+func AccessStatusStyle(status string) string {
+	switch status {
+	case "direct":
+		return lipgloss.NewStyle().Foreground(lipgloss.Color(colorAccent)).Render("ready")
+	case "requires_approval":
+		return lipgloss.NewStyle().Foreground(lipgloss.Color(colorStaging)).Render("needs approval")
+	case "approved":
+		return lipgloss.NewStyle().Foreground(lipgloss.Color(colorAccent)).Render("approved")
+	default:
+		return MutedStyle.Render(status)
+	}
+}
+
+// Layout / component styles.
 var (
+	// AppStyle is the outer rounded border framing the whole application.
+	// Sub-views render plain strings; only AppModel wraps with this border.
 	AppStyle = lipgloss.NewStyle().
+			Border(lipgloss.RoundedBorder()).
+			BorderForeground(lipgloss.Color(colorBorder)).
 			Padding(0, 1)
 
 	TitleStyle = lipgloss.NewStyle().
 			Bold(true).
-			Foreground(lipgloss.Color(colorAccent)).
-			MarginBottom(1)
+			Foreground(lipgloss.Color(colorAccent))
 
 	SubtitleStyle = lipgloss.NewStyle().
 			Foreground(lipgloss.Color(colorSubtle))
@@ -69,11 +90,12 @@ var (
 
 	SuccessStyle = lipgloss.NewStyle().
 			Bold(true).
-			Foreground(lipgloss.Color(colorDev))
+			Foreground(lipgloss.Color(colorAccent))
 
 	MutedStyle = lipgloss.NewStyle().
 			Foreground(lipgloss.Color(colorMuted))
 
+	// HighlightStyle is used for selected rows.
 	HighlightStyle = lipgloss.NewStyle().
 			Bold(true).
 			Foreground(lipgloss.Color(colorText)).
@@ -82,28 +104,24 @@ var (
 
 	CodeStyle = lipgloss.NewStyle().
 			Bold(true).
-			Foreground(lipgloss.Color(colorAccent)).
-			Background(lipgloss.Color(colorSurface)).
-			Padding(0, 1)
+			Foreground(lipgloss.Color(colorAccent))
 
+	// BorderStyle is kept for sub-overlays (palette, etc.) that need their own frame.
 	BorderStyle = lipgloss.NewStyle().
 			Border(lipgloss.RoundedBorder()).
 			BorderForeground(lipgloss.Color(colorBorder)).
-			Padding(1, 2)
-
-	StatusBarStyle = lipgloss.NewStyle().
-			Background(lipgloss.Color(colorSurface)).
-			Foreground(lipgloss.Color(colorSubtle)).
 			Padding(0, 1)
 
+	// StatusBarStyle — one-line header, no background fill.
+	StatusBarStyle = lipgloss.NewStyle().
+			Foreground(lipgloss.Color(colorSubtle))
+
 	HelpBarStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color(colorMuted)).
-			MarginTop(1)
+			Foreground(lipgloss.Color(colorMuted))
 
 	SectionHeaderStyle = lipgloss.NewStyle().
 				Bold(true).
-				Foreground(lipgloss.Color(colorAccent)).
-				MarginTop(1)
+				Foreground(lipgloss.Color(colorMuted))
 
 	InputLabelStyle = lipgloss.NewStyle().
 			Foreground(lipgloss.Color(colorSubtle))
@@ -120,41 +138,24 @@ var (
 				Background(lipgloss.Color(colorHighlight)).
 				PaddingLeft(2)
 
-	// ToastStyle renders non-destructive warning banners (e.g. refresh failure).
+	// ToastStyle renders non-destructive warning banners.
 	ToastStyle = lipgloss.NewStyle().
 			Bold(true).
-			Foreground(lipgloss.Color(colorStaging)).
-			Background(lipgloss.Color("#451a03")).
-			Padding(0, 1).
-			MarginBottom(1)
+			Foreground(lipgloss.Color(colorStaging))
+
+	// PaletteStyle frames the command-palette overlay.
+	PaletteStyle = lipgloss.NewStyle().
+			Border(lipgloss.RoundedBorder()).
+			BorderForeground(lipgloss.Color(colorBorder)).
+			Padding(0, 1)
+
+	// PaletteItemSelected highlights the active command in the palette.
+	PaletteItemSelected = lipgloss.NewStyle().
+				Bold(true).
+				Foreground(lipgloss.Color(colorText)).
+				Background(lipgloss.Color(colorHighlight)).
+				PaddingLeft(1)
+
+	PaletteItemNormal = lipgloss.NewStyle().
+				PaddingLeft(1)
 )
-
-// EnvBadge returns the appropriate styled badge string for a given environment.
-func EnvBadge(env string) string {
-	switch env {
-	case "prod":
-		return BadgeProd.String()
-	case "staging":
-		return BadgeStaging.String()
-	case "dev":
-		return BadgeDev.String()
-	case "demo":
-		return BadgeDemo.String()
-	default:
-		return MutedStyle.Render("[" + env + "]")
-	}
-}
-
-// AccessStatusStyle returns a styled string for the access status.
-func AccessStatusStyle(status string) string {
-	switch status {
-	case "direct":
-		return SuccessStyle.Render("ready")
-	case "requires_approval":
-		return lipgloss.NewStyle().Foreground(lipgloss.Color(colorStaging)).Render("approval required")
-	case "approved":
-		return SuccessStyle.Render("approved")
-	default:
-		return MutedStyle.Render(status)
-	}
-}

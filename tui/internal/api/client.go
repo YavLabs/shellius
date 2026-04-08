@@ -29,7 +29,7 @@ type Host struct {
 	Environment  string `json:"environment"`
 	CustomerName string `json:"customerName"`
 	// Principal / SSH user to use when connecting.
-	Principal    string `json:"sshUser"`
+	Principal string `json:"sshUser"`
 	// AccessStatus is one of: "direct", "requires_approval", "no_access".
 	AccessStatus string `json:"accessStatus"`
 	// AccessExpiry is set when the user already has an active approved request.
@@ -48,6 +48,21 @@ type AccessRequest struct {
 	Reason             string     `json:"reason"`
 	ExpiresAt          *time.Time `json:"expiresAt,omitempty"`
 	CreatedAt          time.Time  `json:"createdAt"`
+	// Server is inlined when the backend supports it.
+	Server *AccessRequestServer `json:"server,omitempty"`
+}
+
+// AccessRequestServer is the server info inlined into an access request response.
+type AccessRequestServer struct {
+	ID          string `json:"id"`
+	DisplayName string `json:"displayName"`
+	Hostname    string `json:"hostname"`
+	Port        int    `json:"port"`
+	Environment string `json:"environment"`
+	SshUser     string `json:"sshUser"`
+	Customer    struct {
+		Name string `json:"name"`
+	} `json:"customer"`
 }
 
 // SshCreds is returned by POST /api/access-requests/:id/ssh-credentials.
@@ -195,6 +210,49 @@ func (c *Client) ListHosts() ([]Host, error) {
 		})
 	}
 	return hosts, nil
+}
+
+// accessRequestListData is the shape returned by GET /api/access-requests.
+type accessRequestListData struct {
+	Items []AccessRequest `json:"items"`
+	// Some backends wrap in accessRequests instead of items.
+	AccessRequests []AccessRequest `json:"accessRequests"`
+}
+
+// ListMyActiveAccessRequests fetches the caller's active (APPROVED, not expired)
+// access requests. It calls GET /api/access-requests and filters client-side
+// since older backends may not support mine/active query params.
+func (c *Client) ListMyActiveAccessRequests() ([]AccessRequest, error) {
+	var raw json.RawMessage
+	if err := c.do("GET", "/api/access-requests?mine=true&status=APPROVED", nil, &raw); err != nil {
+		return nil, err
+	}
+
+	// Try array first, then object with items/accessRequests.
+	var requests []AccessRequest
+	if err := json.Unmarshal(raw, &requests); err != nil {
+		var data accessRequestListData
+		if err2 := json.Unmarshal(raw, &data); err2 != nil {
+			return nil, fmt.Errorf("decode access requests: %w", err2)
+		}
+		requests = data.Items
+		if len(requests) == 0 {
+			requests = data.AccessRequests
+		}
+	}
+
+	now := time.Now()
+	var active []AccessRequest
+	for _, r := range requests {
+		if r.Status != "APPROVED" {
+			continue
+		}
+		if r.ExpiresAt != nil && r.ExpiresAt.Before(now) {
+			continue
+		}
+		active = append(active, r)
+	}
+	return active, nil
 }
 
 // SubmitAccessRequest creates a new access request for a production server.

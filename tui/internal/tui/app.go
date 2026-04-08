@@ -5,8 +5,10 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 	"github.com/shellius/tui/internal/api"
 	"github.com/shellius/tui/internal/config"
 	"github.com/shellius/tui/internal/logx"
@@ -17,10 +19,14 @@ import (
 type view int
 
 const (
-	viewServerURL view = iota
-	viewLogin
-	viewHostList
+	viewServerURL    view = iota
+	viewLogin        // device-auth login
+	viewActiveAccess // default: my approved access requests
+	viewHostList     // /servers: full server browser
 	viewAccessRequest
+	viewHelp
+	viewProfile
+	viewSessions
 	viewConnecting
 	viewError
 )
@@ -34,32 +40,28 @@ type AppModel struct {
 	cfg           *config.Config
 	client        *api.Client
 	currentView   view
+	prevView      view // for Esc-back from overlays
 	urlPrompt     ServerURLPromptModel
 	loginModel    LoginModel
+	activeAccess  activeAccessModel
 	hostList      HostListModel
 	accessRequest AccessRequestModel
-	statusBar     *StatusBar
+	palette       paletteModel
 	selectedHost  api.Host
 	errMsg        string
-	// toastMsg is a non-destructive warning shown above the current view.
-	// It does NOT change the active view.
-	toastMsg string
-	width     int
-	height    int
+	toastMsg      string
+	width         int
+	height        int
 }
 
 // NewApp creates the root application model.
 func NewApp(cfg *config.Config) AppModel {
-	sb := NewStatusBar(cfg)
-
 	m := AppModel{
-		cfg:       cfg,
-		statusBar: sb,
+		cfg:     cfg,
+		palette: newPaletteModel(),
 	}
 
 	// Decide the initial view.
-	// We treat the user as logged in whenever a refresh token is present —
-	// the API client will transparently refresh the access token on first use.
 	if cfg.ServerURL == "" {
 		m.currentView = viewServerURL
 		m.urlPrompt = NewServerURLPrompt(cfg)
@@ -67,9 +69,10 @@ func NewApp(cfg *config.Config) AppModel {
 		m.currentView = viewLogin
 		m.loginModel = NewLoginModel(cfg)
 	} else {
-		m.currentView = viewHostList
+		// Logged in — show active-access picker as the default view.
 		m.client = api.New(cfg)
-		m.hostList = NewHostListModel(m.client)
+		m.currentView = viewActiveAccess
+		m.activeAccess = NewActiveAccessModel(m.client)
 	}
 
 	return m
@@ -82,8 +85,8 @@ func (m AppModel) Init() tea.Cmd {
 		return m.urlPrompt.Init()
 	case viewLogin:
 		return m.loginModel.Init()
-	case viewHostList:
-		return m.hostList.Init()
+	case viewActiveAccess:
+		return m.activeAccess.Init()
 	}
 	return nil
 }
@@ -95,10 +98,11 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
-		m.statusBar.SetWidth(msg.Width)
+		m.palette.width = msg.Width - 6 // account for border + padding
 		// Forward to active sub-models.
 		m.urlPrompt, _ = m.urlPrompt.Update(msg)
 		m.loginModel, _ = m.loginModel.Update(msg)
+		m.activeAccess, _ = m.activeAccess.Update(msg)
 		m.hostList, _ = m.hostList.Update(msg)
 		if m.currentView == viewAccessRequest {
 			m.accessRequest, _ = m.accessRequest.Update(msg)
@@ -106,27 +110,90 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case tea.KeyMsg:
-		// Global quit — ctrl+c always exits. We do NOT bind plain 'q'
-		// because it conflicts with typing into the host filter.
+		// Global quit.
 		if msg.String() == "ctrl+c" {
 			return m, tea.Quit
 		}
+
+		// Palette is active — route to palette; Enter may run a command.
+		if m.palette.Active() {
+			return m.updatePalette(msg)
+		}
+
+		// / opens the palette (in authenticated views).
+		if msg.String() == "/" && m.isAuthenticatedView() {
+			m.palette = m.palette.Open("")
+			return m, nil
+		}
+
+		// ? opens help directly.
+		if msg.String() == "?" && m.isAuthenticatedView() {
+			m.prevView = m.currentView
+			m.currentView = viewHelp
+			return m, nil
+		}
 	}
 
-	// Handle non-destructive toast messages that can arrive from any view.
+	// Non-destructive toast messages from any view.
 	switch msg := msg.(type) {
 	case urlSaveErrMsg:
 		logx.Warnf("app: failed to save config after URL entry: %v", msg.err)
 		m.toastMsg = fmt.Sprintf("Warning: could not save config: %v", msg.err)
+
 	case hostsErrMsg:
-		// If the host-fetch failed only because of a refresh failure, show a
-		// toast instead of sending the user to the error screen.
 		if errors.Is(msg.err, api.ErrTokenRefreshFailed) {
 			logx.Warnf("app: token refresh failed, showing toast: %v", msg.err)
 			m.toastMsg = "Warning: token refresh failed — showing cached data. Check your network."
-			// Let the hostlist model also handle it so it transitions out of
-			// the loading state.
 		}
+	}
+
+	// Command messages from palette Run functions.
+	switch msg.(type) {
+	case showHelpMsg:
+		m.prevView = m.currentView
+		m.currentView = viewHelp
+		return m, nil
+
+	case openHostListMsg:
+		if m.client == nil {
+			m.client = api.New(m.cfg)
+		}
+		m.prevView = m.currentView
+		m.hostList = NewHostListModel(m.client)
+		m.currentView = viewHostList
+		return m, m.hostList.Init()
+
+	case openRequestMsg:
+		// Stub: go to host list so user can pick a server for the request.
+		if m.client == nil {
+			m.client = api.New(m.cfg)
+		}
+		m.prevView = m.currentView
+		m.hostList = NewHostListModel(m.client)
+		m.currentView = viewHostList
+		return m, m.hostList.Init()
+
+	case showSessionsMsg:
+		m.prevView = m.currentView
+		m.currentView = viewSessions
+		return m, nil
+
+	case showProfileMsg:
+		m.prevView = m.currentView
+		m.currentView = viewProfile
+		return m, nil
+
+	case forceRefreshMsg:
+		// Refresh the current view's data.
+		switch m.currentView {
+		case viewActiveAccess:
+			m.activeAccess.state = activeAccessLoading
+			return m, tea.Batch(m.activeAccess.spinner.Tick, m.activeAccess.fetchCmd())
+		case viewHostList:
+			m.hostList.state = hostListStateLoading
+			return m, m.hostList.fetchHosts()
+		}
+		return m, nil
 	}
 
 	// Route to active view.
@@ -135,10 +202,14 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.updateServerURL(msg)
 	case viewLogin:
 		return m.updateLogin(msg)
+	case viewActiveAccess:
+		return m.updateActiveAccess(msg)
 	case viewHostList:
 		return m.updateHostList(msg)
 	case viewAccessRequest:
 		return m.updateAccessRequest(msg)
+	case viewHelp, viewProfile, viewSessions:
+		return m.updateOverlay(msg)
 	case viewError:
 		return m.updateError(msg)
 	}
@@ -146,11 +217,30 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+// isAuthenticatedView returns true for views that appear after login.
+func (m AppModel) isAuthenticatedView() bool {
+	return m.currentView != viewServerURL && m.currentView != viewLogin
+}
+
+func (m AppModel) updatePalette(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	if msg.String() == "enter" {
+		cmd := m.palette.SelectedCommand()
+		m.palette = m.palette.Close()
+		if cmd != nil {
+			return m, cmd.Run(&m)
+		}
+		return m, nil
+	}
+
+	var paletteCmd tea.Cmd
+	m.palette, paletteCmd = m.palette.Update(msg)
+	return m, paletteCmd
+}
+
 func (m AppModel) updateServerURL(msg tea.Msg) (tea.Model, tea.Cmd) {
 	var cmd tea.Cmd
 	m.urlPrompt, cmd = m.urlPrompt.Update(msg)
 	if m.urlPrompt.Done() {
-		// Save and move to login.
 		_ = m.cfg.Save()
 		m.currentView = viewLogin
 		m.loginModel = NewLoginModel(m.cfg)
@@ -162,15 +252,25 @@ func (m AppModel) updateServerURL(msg tea.Msg) (tea.Model, tea.Cmd) {
 func (m AppModel) updateLogin(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg.(type) {
 	case loginSuccessMsg:
-		// Transition to host list.
 		m.client = api.New(m.cfg)
-		m.hostList = NewHostListModel(m.client)
-		m.currentView = viewHostList
-		return m, m.hostList.Init()
+		m.activeAccess = NewActiveAccessModel(m.client)
+		m.currentView = viewActiveAccess
+		return m, m.activeAccess.Init()
 	}
 
 	var cmd tea.Cmd
 	m.loginModel, cmd = m.loginModel.Update(msg)
+	return m, cmd
+}
+
+func (m AppModel) updateActiveAccess(msg tea.Msg) (tea.Model, tea.Cmd) {
+	switch msg := msg.(type) {
+	case activeAccessConnectMsg:
+		return m, m.connectFromAR(msg.req)
+	}
+
+	var cmd tea.Cmd
+	m.activeAccess, cmd = m.activeAccess.Update(msg)
 	return m, cmd
 }
 
@@ -183,8 +283,13 @@ func (m AppModel) updateHostList(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.accessRequest = NewAccessRequestModel(m.client, msg.host)
 			return m, m.accessRequest.Init()
 		}
-		// Direct access — fetch credentials and connect.
 		return m, m.connectDirect(msg.host)
+
+	case tea.KeyMsg:
+		if msg.String() == "esc" {
+			m.currentView = viewActiveAccess
+			return m, nil
+		}
 	}
 
 	var cmd tea.Cmd
@@ -195,11 +300,13 @@ func (m AppModel) updateHostList(msg tea.Msg) (tea.Model, tea.Cmd) {
 func (m AppModel) updateAccessRequest(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case navBackMsg:
-		m.currentView = viewHostList
+		m.currentView = m.prevView
+		if m.currentView == viewActiveAccess || m.currentView == viewError || m.currentView == viewConnecting {
+			m.currentView = viewActiveAccess
+		}
 		return m, nil
 
 	case arApprovedMsg:
-		// Fetch SSH credentials for the approved request and connect.
 		reqID := msg.requestID
 		client := m.client
 		host := m.selectedHost
@@ -225,30 +332,66 @@ func (m AppModel) updateAccessRequest(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, cmd
 }
 
-func (m AppModel) updateError(msg tea.Msg) (tea.Model, tea.Cmd) {
+// updateOverlay handles the simple read-only overlay views (help, profile, sessions).
+func (m AppModel) updateOverlay(msg tea.Msg) (tea.Model, tea.Cmd) {
 	if kMsg, ok := msg.(tea.KeyMsg); ok {
 		switch kMsg.String() {
 		case "esc", "q", "enter":
-			m.currentView = viewHostList
+			back := m.prevView
+			if back == viewError || back == viewConnecting {
+				back = viewActiveAccess
+			}
+			m.currentView = back
 			return m, nil
 		}
 	}
 	return m, nil
 }
 
+func (m AppModel) updateError(msg tea.Msg) (tea.Model, tea.Cmd) {
+	if kMsg, ok := msg.(tea.KeyMsg); ok {
+		switch kMsg.String() {
+		case "esc", "q", "enter":
+			m.currentView = viewActiveAccess
+			return m, nil
+		}
+	}
+	return m, nil
+}
+
+// connectFromAR fetches credentials for an approved access request and launches SSH.
+func (m AppModel) connectFromAR(req api.AccessRequest) tea.Cmd {
+	client := m.client
+	return func() tea.Msg {
+		creds, err := client.GetSshCredentials(req.ID)
+		if err != nil {
+			return appErrMsg{err: fmt.Errorf("get SSH credentials: %w", err)}
+		}
+		// Build a synthetic Host from the inlined server info.
+		host := api.Host{ID: req.ServerID}
+		if req.Server != nil {
+			host.Name = req.Server.DisplayName
+			host.Hostname = req.Server.Hostname
+			host.Port = req.Server.Port
+			host.Environment = req.Server.Environment
+			host.Principal = req.Server.SshUser
+			host.CustomerName = req.Server.Customer.Name
+		}
+		if req.RequestedPrincipal != "" {
+			host.Principal = req.RequestedPrincipal
+		}
+		return sshConnectMsg{creds: creds, host: host}
+	}
+}
+
 // connectDirect fetches credentials for a non-prod host and connects.
 func (m AppModel) connectDirect(host api.Host) tea.Cmd {
 	client := m.client
 	return func() tea.Msg {
-		// For non-prod we need to get credentials too — use a minimal access request.
-		// If the server returns direct credentials via a different endpoint this
-		// can be updated. For now, create a short-lived access request and poll
-		// until approved (auto-approval for non-prod).
 		req, err := client.SubmitAccessRequest(host.ID, "Direct access via Shellius TUI", 3600, host.Principal)
 		if err != nil {
 			return appErrMsg{err: fmt.Errorf("request credentials: %w", err)}
 		}
-		// Poll until approved (non-prod should auto-approve quickly).
 		for i := 0; i < 10; i++ {
 			updated, pollErr := client.GetAccessRequest(req.ID)
 			if pollErr != nil {
@@ -312,7 +455,6 @@ func (m AppModel) execSSH(creds api.SshCreds, host api.Host) tea.Cmd {
 	return tea.ExecProcess(sshCmd, func(err error) tea.Msg {
 		cleanup()
 		if err != nil {
-			// Exit code 1 from ssh is normal (remote closed connection).
 			if exitErr, ok := err.(*exec.ExitError); ok && exitErr.ExitCode() == 1 {
 				return nil
 			}
@@ -324,37 +466,222 @@ func (m AppModel) execSSH(creds api.SshCreds, host api.Host) tea.Cmd {
 
 // View renders the currently active screen.
 func (m AppModel) View() string {
-	var content string
+	// Pre-login views have no outer border.
+	if m.currentView == viewServerURL || m.currentView == viewLogin {
+		content := m.renderInner()
+		if m.toastMsg != "" {
+			content = ToastStyle.Render(m.toastMsg) + "\n" + content
+		}
+		return content
+	}
 
+	// Authenticated views: build header + content + footer, then wrap in border.
+	header := m.renderHeader()
+	inner := m.renderInner()
+	footer := m.renderFooter()
+
+	// If palette is active, overlay it on top of the inner content.
+	if m.palette.Active() {
+		paletteView := m.palette.View()
+		inner = paletteView + "\n" + inner
+	}
+
+	// Toast above everything.
+	if m.toastMsg != "" {
+		inner = ToastStyle.Render(m.toastMsg) + "\n" + inner
+	}
+
+	body := header + "\n" + inner + "\n" + footer
+
+	// Outer border sized to terminal width (minus 2 for the border itself).
+	borderWidth := m.width - 2
+	if borderWidth < 60 {
+		borderWidth = 60
+	}
+	return AppStyle.Width(borderWidth).Render(body)
+}
+
+// renderHeader builds the one-line header: "shellius" left, "user@org · url" right.
+func (m AppModel) renderHeader() string {
+	left := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color(colorAccent)).Render("shellius")
+
+	var parts []string
+	if m.cfg != nil {
+		if m.cfg.Username != "" {
+			ident := m.cfg.Username
+			if m.cfg.OrgSlug != "" {
+				ident += "@" + m.cfg.OrgSlug
+			}
+			parts = append(parts, ident)
+		}
+		if m.cfg.ServerURL != "" {
+			parts = append(parts, m.cfg.ServerURL)
+		}
+	}
+
+	right := MutedStyle.Render(strings.Join(parts, " · "))
+
+	// Fill gap between left and right.
+	leftW := lipgloss.Width(left)
+	rightW := lipgloss.Width(right)
+	// inner width = borderWidth - 2*padding(1) - 2*border(1) = m.width - 6
+	innerW := m.width - 6
+	if innerW < 20 {
+		innerW = 20
+	}
+	gap := innerW - leftW - rightW
+	if gap < 1 {
+		gap = 1
+	}
+	return left + strings.Repeat(" ", gap) + right
+}
+
+// renderFooter returns context-sensitive key hints for the current view.
+func (m AppModel) renderFooter() string {
+	var hints string
+	switch m.currentView {
+	case viewActiveAccess:
+		hints = "↑↓ select  enter connect  / commands  ? help  ctrl+c quit"
+	case viewHostList:
+		hints = "↑↓ select  enter connect  esc back  r refresh  ctrl+c quit"
+	case viewAccessRequest:
+		hints = "tab next  enter submit  esc back  ctrl+c quit"
+	case viewHelp:
+		hints = "esc / enter close"
+	case viewProfile:
+		hints = "esc / enter close"
+	case viewSessions:
+		hints = "esc / enter close"
+	case viewError:
+		hints = "esc / enter back  ctrl+c quit"
+	default:
+		hints = "ctrl+c quit"
+	}
+	return HelpBarStyle.Render(hints)
+}
+
+// renderInner delegates to the active view's content renderer.
+func (m AppModel) renderInner() string {
 	switch m.currentView {
 	case viewServerURL:
-		content = m.urlPrompt.View()
+		return m.urlPrompt.View()
 	case viewLogin:
-		content = m.loginModel.View()
+		return m.loginModel.View()
+	case viewActiveAccess:
+		return m.activeAccess.View()
 	case viewHostList:
-		content = m.hostList.View()
+		return m.hostList.View()
 	case viewAccessRequest:
-		content = m.accessRequest.View()
+		return m.accessRequest.View()
+	case viewHelp:
+		return m.renderHelp()
+	case viewProfile:
+		return m.renderProfile()
+	case viewSessions:
+		return m.renderSessions()
 	case viewConnecting:
-		content = MutedStyle.Render("Connecting...")
+		return MutedStyle.Render("Connecting...")
 	case viewError:
-		content = fmt.Sprintf("%s\n\n%s\n\n%s",
+		return fmt.Sprintf("%s\n\n%s",
 			ErrorStyle.Render("Error"),
 			MutedStyle.Render(m.errMsg),
-			HelpBarStyle.Render("press esc or enter to go back  •  ctrl+c to quit"),
 		)
 	}
+	return ""
+}
 
-	// Prepend any non-destructive toast warning.
-	if m.toastMsg != "" {
-		content = ToastStyle.Render(m.toastMsg) + "\n" + content
+func (m AppModel) renderHelp() string {
+	var b strings.Builder
+	b.WriteString(TitleStyle.Render("Key bindings"))
+	b.WriteString("\n\n")
+
+	rows := [][2]string{
+		{"↑ / k", "move up"},
+		{"↓ / j", "move down"},
+		{"enter", "connect via SSH"},
+		{"/", "open command palette"},
+		{"?", "this help screen"},
+		{"ctrl+c", "quit"},
+		{"", ""},
+		{"Slash commands:", ""},
+		{"/servers", "browse all servers"},
+		{"/request", "submit an access request"},
+		{"/sessions", "recent sessions"},
+		{"/refresh", "force refresh"},
+		{"/profile", "identity & token info"},
+		{"/logout", "clear credentials & exit"},
+		{"/quit", "exit"},
 	}
 
-	// Only show status bar after login.
-	if m.currentView != viewServerURL && m.currentView != viewLogin {
-		return AppStyle.Render(content) + "\n" + m.statusBar.View()
+	nameStyle := lipgloss.NewStyle().Width(20).Foreground(lipgloss.Color(colorAccent))
+	for _, row := range rows {
+		if row[0] == "" && row[1] == "" {
+			b.WriteString("\n")
+			continue
+		}
+		if row[1] == "" {
+			b.WriteString(SectionHeaderStyle.Render(row[0]))
+			b.WriteString("\n")
+			continue
+		}
+		b.WriteString("  ")
+		b.WriteString(nameStyle.Render(row[0]))
+		b.WriteString(MutedStyle.Render(row[1]))
+		b.WriteString("\n")
 	}
-	return AppStyle.Render(content)
+	return b.String()
+}
+
+func (m AppModel) renderProfile() string {
+	var b strings.Builder
+	b.WriteString(TitleStyle.Render("Profile"))
+	b.WriteString("\n\n")
+
+	field := func(label, value string) {
+		b.WriteString("  ")
+		b.WriteString(InputLabelStyle.Render(fmt.Sprintf("%-18s", label)))
+		b.WriteString(lipgloss.NewStyle().Foreground(lipgloss.Color(colorText)).Render(value))
+		b.WriteString("\n")
+	}
+
+	if m.cfg == nil {
+		b.WriteString(MutedStyle.Render("  (no config loaded)"))
+		return b.String()
+	}
+
+	if m.cfg.Username != "" {
+		field("User", m.cfg.Username)
+	}
+	if m.cfg.OrgSlug != "" {
+		field("Org", m.cfg.OrgSlug)
+	}
+	if m.cfg.Role != "" {
+		field("Role", m.cfg.Role)
+	}
+	if m.cfg.ServerURL != "" {
+		field("Server URL", m.cfg.ServerURL)
+	}
+	if !m.cfg.TokenExpiresAt.IsZero() {
+		remaining := m.cfg.TokenExpiresAt.Sub(nowFunc())
+		if remaining > 0 {
+			field("Token expires", formatDuration(remaining)+" from now")
+		} else {
+			field("Token expires", ErrorStyle.Render("expired (will refresh on next request)"))
+		}
+	}
+	field("Config path", m.cfg.Path())
+	return b.String()
+}
+
+func (m AppModel) renderSessions() string {
+	var b strings.Builder
+	b.WriteString(TitleStyle.Render("Sessions"))
+	b.WriteString("\n\n")
+	b.WriteString(MutedStyle.Render("  Session history is coming soon."))
+	b.WriteString("\n\n")
+	b.WriteString(MutedStyle.Render("  Active and historical SSH sessions will be listed here."))
+	b.WriteString("\n")
+	return b.String()
 }
 
 // Run starts the Bubble Tea program.
