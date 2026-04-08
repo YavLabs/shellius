@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -8,6 +9,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/shellius/tui/internal/api"
 	"github.com/shellius/tui/internal/config"
+	"github.com/shellius/tui/internal/logx"
 	sshpkg "github.com/shellius/tui/internal/ssh"
 )
 
@@ -39,8 +41,11 @@ type AppModel struct {
 	statusBar     *StatusBar
 	selectedHost  api.Host
 	errMsg        string
-	width         int
-	height        int
+	// toastMsg is a non-destructive warning shown above the current view.
+	// It does NOT change the active view.
+	toastMsg string
+	width     int
+	height    int
 }
 
 // NewApp creates the root application model.
@@ -105,6 +110,22 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// because it conflicts with typing into the host filter.
 		if msg.String() == "ctrl+c" {
 			return m, tea.Quit
+		}
+	}
+
+	// Handle non-destructive toast messages that can arrive from any view.
+	switch msg := msg.(type) {
+	case urlSaveErrMsg:
+		logx.Warnf("app: failed to save config after URL entry: %v", msg.err)
+		m.toastMsg = fmt.Sprintf("Warning: could not save config: %v", msg.err)
+	case hostsErrMsg:
+		// If the host-fetch failed only because of a refresh failure, show a
+		// toast instead of sending the user to the error screen.
+		if errors.Is(msg.err, api.ErrTokenRefreshFailed) {
+			logx.Warnf("app: token refresh failed, showing toast: %v", msg.err)
+			m.toastMsg = "Warning: token refresh failed — showing cached data. Check your network."
+			// Let the hostlist model also handle it so it transitions out of
+			// the loading state.
 		}
 	}
 
@@ -322,6 +343,11 @@ func (m AppModel) View() string {
 			MutedStyle.Render(m.errMsg),
 			HelpBarStyle.Render("press esc or enter to go back  •  ctrl+c to quit"),
 		)
+	}
+
+	// Prepend any non-destructive toast warning.
+	if m.toastMsg != "" {
+		content = ToastStyle.Render(m.toastMsg) + "\n" + content
 	}
 
 	// Only show status bar after login.

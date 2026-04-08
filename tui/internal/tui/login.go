@@ -261,6 +261,15 @@ func (m ServerURLPromptModel) Update(msg tea.Msg) (ServerURLPromptModel, tea.Cmd
 			val := strings.TrimSpace(m.input.Value())
 			if val != "" {
 				m.cfg.ServerURL = val
+				// Persist the server URL immediately so it survives a quit
+				// between URL entry and login completion (task 22a fix #1).
+				if err := m.cfg.Save(); err != nil {
+					// Surface the error so the parent view can decide what to
+					// do, but still mark done so the flow continues — the URL
+					// is in memory even if the file write failed.
+					m.done = true
+					return m, urlSaveErrCmd(err)
+				}
 				m.done = true
 				return m, nil
 			}
@@ -269,6 +278,13 @@ func (m ServerURLPromptModel) Update(msg tea.Msg) (ServerURLPromptModel, tea.Cmd
 	var cmd tea.Cmd
 	m.input, cmd = m.input.Update(msg)
 	return m, cmd
+}
+
+// urlSaveErrMsg carries a non-fatal config-save error from the URL prompt.
+type urlSaveErrMsg struct{ err error }
+
+func urlSaveErrCmd(err error) tea.Cmd {
+	return func() tea.Msg { return urlSaveErrMsg{err: err} }
 }
 
 func (m ServerURLPromptModel) View() string {
