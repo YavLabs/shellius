@@ -6,7 +6,6 @@ import {
   KeyRound,
   FileKey,
   ArrowRight,
-  ScrollText,
   LayoutDashboard,
 } from 'lucide-react';
 import PageHeader from '@/components/common/PageHeader';
@@ -33,12 +32,27 @@ const ENV_COLORS = {
   demo: 'text-purple-600 dark:text-purple-400',
 };
 
-function StatCard({ title, value, description, icon: Icon, loading, children }) {
+function StatCard({ title, value, description, icon: Icon, loading, children, to, onClick }) {
+  const navigate = useNavigate();
+  const interactive = !!to || !!onClick;
+  const handleClick = () => {
+    if (onClick) onClick();
+    else if (to) navigate(to);
+  };
+  const Wrapper = interactive ? 'button' : 'div';
+  const wrapperProps = interactive
+    ? {
+        type: 'button',
+        onClick: handleClick,
+        className:
+          'group w-full rounded-lg border border-border bg-card p-5 text-left transition-all hover:border-primary/40 hover:shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
+      }
+    : { className: 'rounded-lg border border-border bg-card p-5 transition-colors' };
   return (
-    <div className="rounded-lg border border-border bg-card p-5 transition-colors">
+    <Wrapper {...wrapperProps}>
       <div className="flex items-center justify-between">
         <p className="text-sm font-medium text-muted-foreground">{title}</p>
-        <Icon className="h-4 w-4 text-muted-foreground/60" />
+        <Icon className="h-4 w-4 text-muted-foreground/60 group-hover:text-muted-foreground" />
       </div>
       {loading ? (
         <Skeleton className="mt-2 h-8 w-16" />
@@ -51,7 +65,7 @@ function StatCard({ title, value, description, icon: Icon, loading, children }) 
         <p className="mt-1 text-xs text-muted-foreground">{description}</p>
       )}
       {children}
-    </div>
+    </Wrapper>
   );
 }
 
@@ -72,6 +86,81 @@ function ActionBadge({ action }) {
     <span className={`inline-flex shrink-0 items-center rounded-full border px-2 py-0.5 text-xs font-medium ${cls}`}>
       {action}
     </span>
+  );
+}
+
+// Humanize an audit action like "access_request.submit" → "submitted an access request"
+const ACTION_VERBS = {
+  'access_request.submit': 'submitted access request',
+  'access_request.approve': 'approved access request',
+  'access_request.deny': 'denied access request',
+  'access_request.revoke': 'revoked access request',
+  'access_request.expire': 'expired access request',
+  'access_request.break_glass': 'invoked break-glass access',
+  'access_request.ssh_credentials': 'downloaded SSH credentials',
+  'access_request.rdp_credentials': 'downloaded RDP credentials',
+  'access_request.ssh_credentials_generated': 'opened web terminal',
+  'certificate.issue': 'issued certificate',
+  'certificate.revoke': 'revoked certificate',
+  'certificate.key_downloaded': 'downloaded private key',
+  'server.create': 'added server',
+  'server.update': 'updated server',
+  'server.delete': 'removed server',
+  'server.bootstrap': 'bootstrapped server',
+  'user.create': 'created user',
+  'user.update': 'updated user',
+  'user.delete': 'deleted user',
+  'user.invite': 'invited user',
+  'auth.login': 'signed in',
+  'auth.logout': 'signed out',
+  'auth.password_change': 'changed password',
+  'policy.create': 'created policy',
+  'policy.update': 'updated policy',
+  'policy.delete': 'deleted policy',
+  'session.terminate': 'terminated session',
+  'group.create': 'created group',
+  'group.update': 'updated group',
+  'group.delete': 'deleted group',
+};
+
+function humanizeAction(action) {
+  if (ACTION_VERBS[action]) return ACTION_VERBS[action];
+  // Fallback: convert "resource.verb" → "verbed resource"
+  const [, verb] = (action || '').split('.');
+  return verb ? verb.replace(/_/g, ' ') : action || '';
+}
+
+function AuditRow({ item }) {
+  const navigate = useNavigate();
+  const verb = humanizeAction(item.action);
+  const handleClick = () => {
+    if (item.resourceLink) navigate(item.resourceLink);
+    else navigate('/audit-log');
+  };
+  return (
+    <li>
+      <button
+        type="button"
+        onClick={handleClick}
+        className="flex w-full items-start gap-3 border-b border-border py-2.5 text-left last:border-0 hover:bg-accent/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring rounded-sm px-1 -mx-1"
+      >
+        <span className="mt-0.5 w-20 shrink-0 text-xs text-muted-foreground whitespace-nowrap">
+          {relativeTime(item.createdAt)}
+        </span>
+        <ActionBadge action={item.action} />
+        <span className="min-w-0 flex-1 text-xs text-muted-foreground">
+          <span className="font-medium text-foreground">{item.actorName || 'System'}</span>
+          {' '}
+          {verb}
+          {item.resourceLabel && item.resourceLabel !== item.resourceType && (
+            <>
+              {': '}
+              <span className="text-foreground">{item.resourceLabel}</span>
+            </>
+          )}
+        </span>
+      </button>
+    </li>
   );
 }
 
@@ -99,6 +188,7 @@ function QuickActionCard({ icon: Icon, label, description, to }) {
 }
 
 function Dashboard() {
+  const navigate = useNavigate();
   const { user } = useAuth();
   const isAdmin = isAtLeast(user, 'admin');
 
@@ -178,9 +268,10 @@ function Dashboard() {
         <StatCard
           title="Total Servers"
           value={serverStats.total}
-          description="Managed infrastructure"
+          description="Click to browse managed infrastructure"
           icon={Server}
           loading={statsLoading}
+          to="/servers"
         >
           {!statsLoading && Object.entries(byEnv).some(([, v]) => v > 0) && (
             <div className="mt-3 flex flex-wrap gap-x-3 gap-y-1">
@@ -198,26 +289,29 @@ function Dashboard() {
         <StatCard
           title="Active Sessions"
           value={activeSessions}
-          description="Currently connected"
+          description="Click to view live sessions"
           icon={Terminal}
           loading={statsLoading}
+          to="/sessions?tab=active"
         />
 
-        {/* Pending requests card — visible to admin+ or anyone who can be a reviewer */}
+        {/* Pending requests card — drills into the review tab */}
         <StatCard
           title="Pending Requests"
           value={pendingRequests}
-          description="Awaiting your review"
+          description="Click to review requests"
           icon={KeyRound}
           loading={statsLoading}
+          to="/access-requests?tab=to-review&status=PENDING"
         />
 
         <StatCard
           title="Certificates Issued"
           value={activeCerts}
-          description="Currently active"
+          description="Click to view active certificates"
           icon={FileKey}
           loading={statsLoading}
+          to="/certificates?status=ACTIVE"
         />
       </div>
 
@@ -257,7 +351,14 @@ function Dashboard() {
                 <h2 className="text-sm font-semibold text-foreground">Recent Activity</h2>
                 <p className="mt-0.5 text-xs text-muted-foreground">Last 10 audit events</p>
               </div>
-              <ScrollText className="h-4 w-4 text-muted-foreground/60" />
+              <button
+                type="button"
+                onClick={() => navigate('/audit-log')}
+                className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors"
+              >
+                View all
+                <ArrowRight className="h-3 w-3" />
+              </button>
             </div>
 
             {auditLoading ? (
@@ -277,23 +378,7 @@ function Dashboard() {
             ) : (
               <ul className="space-y-0">
                 {auditItems.map((item) => (
-                  <li
-                    key={item.id}
-                    className="flex items-start gap-3 border-b border-border py-2.5 last:border-0"
-                  >
-                    <span className="mt-0.5 w-20 shrink-0 text-xs text-muted-foreground whitespace-nowrap">
-                      {relativeTime(item.createdAt)}
-                    </span>
-                    <ActionBadge action={item.action} />
-                    <span className="min-w-0 flex-1 truncate text-xs text-muted-foreground">
-                      {item.resourceType}
-                      {item.resourceId && (
-                        <span className="ml-1 font-mono">
-                          :{item.resourceId.slice(0, 8)}
-                        </span>
-                      )}
-                    </span>
-                  </li>
+                  <AuditRow key={item.id} item={item} />
                 ))}
               </ul>
             )}
