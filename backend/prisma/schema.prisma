@@ -397,6 +397,7 @@ enum PolicyEffect {
 enum SubjectType {
   USER
   GROUP
+  ROLE
 }
 
 model AccessPolicy {
