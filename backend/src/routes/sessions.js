@@ -72,7 +72,17 @@ router.get(
   requireRole('super_admin', 'admin', 'operator'),
   asyncHandler(async (req, res) => {
     const sessions = await sessionService.listActive(req.orgId);
-    res.json({ success: true, data: { sessions, total: sessions.length } });
+    // Match the shape of GET /api/sessions so the frontend can treat
+    // both responses identically (`data.items`).
+    res.json({
+      success: true,
+      data: {
+        items: sessions,
+        total: sessions.length,
+        page: 1,
+        pageSize: sessions.length,
+      },
+    });
   })
 );
 
