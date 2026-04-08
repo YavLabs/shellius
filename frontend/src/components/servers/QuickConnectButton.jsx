@@ -57,7 +57,7 @@ function QuickConnectButton({ server, currentUser }) {
       <Button
         size="sm"
         variant={hasAccess ? 'default' : 'outline'}
-        className="h-7 gap-1.5 px-2.5 text-xs"
+        className="gap-1.5"
         disabled={loading}
         onClick={(e) => {
           e.stopPropagation();
@@ -65,15 +65,15 @@ function QuickConnectButton({ server, currentUser }) {
         }}
       >
         {loading ? (
-          <Loader2 className="h-3.5 w-3.5 animate-spin" />
+          <Loader2 className="h-4 w-4 animate-spin" />
         ) : hasAccess ? (
           <>
-            <Terminal className="h-3.5 w-3.5" />
+            <Terminal className="h-4 w-4" />
             Connect
           </>
         ) : (
           <>
-            <KeyRound className="h-3.5 w-3.5" />
+            <KeyRound className="h-4 w-4" />
             Request Access
           </>
         )}
@@ -85,7 +85,7 @@ function QuickConnectButton({ server, currentUser }) {
           onClose={() => setModalOpen(false)}
           server={server}
           currentUser={currentUser}
-          activeRequest={activeRequest ?? null}
+          activeRequest={hasAccess ? activeRequest : null}
         />
       )}
     </>
