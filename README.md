@@ -134,9 +134,16 @@ keystroke to SSH. Tokens are persisted and refreshed automatically.
 
 ### Quick install (macOS and Linux)
 
+The installer is served directly by your Shellius deployment at
+`/api/cli/install.sh`, so you never need to visit GitHub:
+
 ```bash
-curl -fsSL https://raw.githubusercontent.com/vaidyayash8/shellius/main/scripts/install-tui.sh | sh
+# Replace <your-shellius-host> with the URL you reach the web UI at.
+curl -fsSL https://<your-shellius-host>/api/cli/install.sh | sh
 ```
+
+You'll also find a copy-paste-ready version with the correct host
+already filled in under **Settings → CLI / TUI** in the web UI.
 
 The script detects your OS (`darwin`/`linux`) and architecture
 (`amd64`/`arm64`), pulls the matching binary from the latest GitHub release,

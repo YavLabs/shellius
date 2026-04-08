@@ -6,6 +6,9 @@ COPY backend/package*.json ./
 RUN npm ci
 
 COPY backend/ .
+# Include the CLI installer script so the backend can serve it from
+# /api/cli/install.sh. See backend/src/routes/cli.js.
+COPY scripts/install-tui.sh /app/scripts/install-tui.sh
 RUN npx prisma generate
 
 FROM node:20-alpine
@@ -22,6 +25,7 @@ COPY --from=builder /app/src ./src
 COPY --from=builder /app/prisma ./prisma
 COPY --from=builder /app/package*.json ./
 COPY --from=builder /app/node_modules/.prisma ./node_modules/.prisma
+COPY --from=builder /app/scripts ./scripts
 
 RUN mkdir -p /data/recordings && chown -R appuser:appgroup /data
 
