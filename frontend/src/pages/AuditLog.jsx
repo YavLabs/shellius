@@ -246,11 +246,11 @@ function AuditLog() {
       render: (item) => <ActionBadge action={item.action} />,
     },
     {
-      key: 'actorId',
+      key: 'actor',
       label: 'Actor',
       render: (item) => (
-        <span className="font-mono text-xs text-muted-foreground">
-          {item.actorId ? item.actorId.slice(0, 8) + '...' : <span className="italic">system</span>}
+        <span className="text-xs text-foreground">
+          {item.actorName || (item.actorId ? 'Unknown user' : <span className="italic text-muted-foreground">system</span>)}
         </span>
       ),
     },
@@ -259,12 +259,7 @@ function AuditLog() {
       label: 'Resource',
       render: (item) => (
         <span className="text-xs text-foreground">
-          {item.resourceType}
-          {item.resourceId && (
-            <span className="ml-1 font-mono text-muted-foreground">
-              :{item.resourceId.slice(0, 8)}
-            </span>
-          )}
+          {item.resourceLabel || item.resourceType || '-'}
         </span>
       ),
     },
@@ -481,20 +476,13 @@ function AuditLog() {
                           <ActionBadge action={item.action} />
                         </td>
                         <td className="px-4 py-3">
-                          <span className="font-mono text-xs text-muted-foreground">
-                            {item.actorId
-                              ? item.actorId.slice(0, 8) + '...'
-                              : <span className="italic">system</span>}
+                          <span className="text-xs text-foreground">
+                            {item.actorName || (item.actorId ? 'Unknown user' : <span className="italic text-muted-foreground">system</span>)}
                           </span>
                         </td>
                         <td className="px-4 py-3">
                           <span className="text-xs text-foreground">
-                            {item.resourceType}
-                            {item.resourceId && (
-                              <span className="ml-1 font-mono text-muted-foreground">
-                                :{item.resourceId.slice(0, 8)}
-                              </span>
-                            )}
+                            {item.resourceLabel || item.resourceType || <span className="text-muted-foreground">-</span>}
                           </span>
                         </td>
                         <td className="px-4 py-3">

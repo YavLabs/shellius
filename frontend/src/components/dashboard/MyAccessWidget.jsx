@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
-import { Shield, ShieldAlert, Server } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
+import { Shield, ShieldAlert, Server, ChevronRight } from 'lucide-react';
 import EnvironmentBadge from '@/components/shared/EnvironmentBadge';
 import { getMyAccess } from '@/services/policyService';
 
@@ -14,10 +15,17 @@ function formatMaxTtl(seconds) {
 }
 
 function AccessRow({ entry }) {
+  const navigate = useNavigate();
   const requiresApproval = entry.requiresApproval;
   const principals = Array.isArray(entry.principals) ? entry.principals : [];
+  const serverId = entry.server?.id || entry.serverId;
+
   return (
-    <div className="flex items-start justify-between gap-3 py-2.5 border-b border-border last:border-0">
+    <button
+      type="button"
+      onClick={() => serverId && navigate(`/servers/${serverId}`)}
+      className="group flex w-full items-start justify-between gap-3 py-2.5 text-left border-b border-border last:border-0 hover:bg-accent/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring rounded-sm px-1 -mx-1 transition-colors"
+    >
       <div className="flex items-start gap-2 min-w-0">
         <Server className="h-3.5 w-3.5 mt-0.5 shrink-0 text-muted-foreground" />
         <div className="min-w-0">
@@ -37,21 +45,24 @@ function AccessRow({ entry }) {
           )}
         </div>
       </div>
-      <div className="flex flex-col items-end gap-1 shrink-0">
-        <span className="text-xs text-muted-foreground">{formatMaxTtl(entry.maxTtl)}</span>
-        {requiresApproval ? (
-          <span className="inline-flex items-center gap-1 text-[10px] font-semibold uppercase tracking-wide text-amber-600 dark:text-amber-400">
-            <ShieldAlert className="h-3 w-3" />
-            Needs approval
-          </span>
-        ) : (
-          <span className="inline-flex items-center gap-1 text-[10px] font-semibold uppercase tracking-wide text-emerald-600 dark:text-emerald-400">
-            <Shield className="h-3 w-3" />
-            Direct access
-          </span>
-        )}
+      <div className="flex items-center gap-3 shrink-0">
+        <div className="flex flex-col items-end gap-1">
+          <span className="text-xs text-muted-foreground">{formatMaxTtl(entry.maxTtl)}</span>
+          {requiresApproval ? (
+            <span className="inline-flex items-center gap-1 text-[10px] font-semibold uppercase tracking-wide text-amber-600 dark:text-amber-400">
+              <ShieldAlert className="h-3 w-3" />
+              Needs approval
+            </span>
+          ) : (
+            <span className="inline-flex items-center gap-1 text-[10px] font-semibold uppercase tracking-wide text-emerald-600 dark:text-emerald-400">
+              <Shield className="h-3 w-3" />
+              Direct access
+            </span>
+          )}
+        </div>
+        <ChevronRight className="h-4 w-4 text-muted-foreground/40 group-hover:text-muted-foreground transition-colors" />
       </div>
-    </div>
+    </button>
   );
 }
 

@@ -402,7 +402,10 @@ async function enrichAuditItems(items, orgId) {
     }
     if (!out.actorName) out.actorName = it.actorId ? 'Unknown user' : 'System';
 
-    // Resource label + link
+    // Resource label + link — links MUST point at routes that actually
+    // exist in the frontend. Detail pages exist only for Server, Group,
+    // and Customer; everything else falls back to the list page (with a
+    // filter query param when the list page supports it).
     const rt = it.resourceType;
     const rid = it.resourceId;
     let label = rt;
@@ -411,26 +414,20 @@ async function enrichAuditItems(items, orgId) {
       switch (rt) {
         case 'User': {
           const u = lookups.User?.get(rid);
-          if (u) {
-            label = u.name || u.email || 'User';
-            link = `/users/${rid}`;
-          }
+          if (u) label = u.name || u.email || 'User';
+          link = '/users';
           break;
         }
         case 'Server': {
           const s = lookups.Server?.get(rid);
-          if (s) {
-            label = `${s.hostname}${s.environment ? ` (${s.environment})` : ''}`;
-            link = `/servers/${rid}`;
-          }
+          if (s) label = `${s.hostname}${s.environment ? ` (${s.environment})` : ''}`;
+          link = `/servers/${rid}`; // detail page exists
           break;
         }
         case 'Customer': {
           const c = lookups.Customer?.get(rid);
-          if (c) {
-            label = c.name;
-            link = `/customers/${rid}`;
-          }
+          if (c) label = c.name;
+          link = `/customers/${rid}`; // detail page exists
           break;
         }
         case 'AccessRequest': {
@@ -439,16 +436,15 @@ async function enrichAuditItems(items, orgId) {
             const who = ar.requester?.name || ar.requester?.email || 'someone';
             const where = ar.server?.hostname || 'server';
             label = `${who} → ${where}`;
-            link = `/access-requests/${rid}`;
           }
+          // No detail route — go to the list.
+          link = '/access-requests';
           break;
         }
         case 'Certificate': {
           const c = lookups.Certificate?.get(rid);
-          if (c) {
-            label = c.keyId || (c.principals?.[0] ?? 'certificate');
-            link = `/certificates/${rid}`;
-          }
+          if (c) label = c.keyId || (c.principals?.[0] ?? 'certificate');
+          link = '/certificates'; // list only
           break;
         }
         case 'Session': {
@@ -456,29 +452,25 @@ async function enrichAuditItems(items, orgId) {
           if (s) {
             const who = s.user?.name || s.user?.email || 'user';
             label = `${who} on ${s.server?.hostname || 'host'}`;
-            link = `/sessions/${rid}`;
           }
+          link = '/sessions'; // list only
           break;
         }
         case 'Group': {
           const g = lookups.Group?.get(rid);
-          if (g) {
-            label = g.name;
-            link = `/groups/${rid}`;
-          }
+          if (g) label = g.name;
+          link = `/groups/${rid}`; // detail page exists
           break;
         }
         case 'AccessPolicy': {
           const p = lookups.AccessPolicy?.get(rid);
-          if (p) {
-            label = p.name;
-            link = `/policies/${rid}`;
-          }
+          if (p) label = p.name;
+          link = '/policies'; // list only
           break;
         }
         default:
-          // Unknown resource type — just use the type name, no ID leak.
           label = rt;
+          link = null;
       }
     } else if (rt) {
       label = rt;

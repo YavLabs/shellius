@@ -18,6 +18,7 @@ import ConfirmDialog from '@/components/shared/ConfirmDialog';
 import UserForm from '@/components/users/UserForm';
 import SshKeyDialog from '@/components/users/SshKeyDialog';
 import PageHeader from '@/components/common/PageHeader';
+import { formatLabel } from '@/utils/format';
 import { Button } from '@/components/ui/button';
 import {
   Select,
@@ -233,14 +234,14 @@ function Users() {
         <SelectTrigger className="w-[160px]"><SelectValue placeholder="All roles" /></SelectTrigger>
         <SelectContent>
           <SelectItem value="_all">All roles</SelectItem>
-          {ROLES.map((r) => <SelectItem key={r} value={r}>{r}</SelectItem>)}
+          {ROLES.map((r) => <SelectItem key={r} value={r}>{formatLabel(r)}</SelectItem>)}
         </SelectContent>
       </Select>
       <Select value={status || '_all'} onValueChange={(v) => { setStatus(v === '_all' ? '' : v); setPage(1); }}>
         <SelectTrigger className="w-[160px]"><SelectValue placeholder="All statuses" /></SelectTrigger>
         <SelectContent>
           <SelectItem value="_all">All statuses</SelectItem>
-          {STATUSES.map((s) => <SelectItem key={s} value={s}>{s}</SelectItem>)}
+          {STATUSES.map((s) => <SelectItem key={s} value={s}>{formatLabel(s)}</SelectItem>)}
         </SelectContent>
       </Select>
     </>
@@ -264,14 +265,14 @@ function Users() {
       label: 'Role',
       sortable: true,
       searchAccessor: (r) => r.role || '',
-      render: (r) => <Badge variant={roleVariant(r.role)}>{r.role}</Badge>,
+      render: (r) => <Badge variant={roleVariant(r.role)}>{formatLabel(r.role)}</Badge>,
     },
     {
       key: 'status',
       label: 'Status',
       sortable: true,
       searchAccessor: (r) => r.status || '',
-      render: (r) => <Badge variant={statusVariant(r.status)}>{r.status}</Badge>,
+      render: (r) => <Badge variant={statusVariant(r.status)}>{formatLabel(r.status)}</Badge>,
     },
     {
       key: 'manager',
