@@ -26,3 +26,21 @@ Ship a `curl | sh` installer and GitHub Actions release workflow so any develope
 - `curl -fsSL https://get.shellius.io/tui | sh` on a fresh Linux box → binary installed and runnable.
 - `shellius --version` prints the expected version.
 - Release workflow succeeds on a test tag in a fork.
+
+## Status: DONE
+
+Shipped 2026-04-08.
+
+### What shipped
+- `scripts/install-tui.sh` — POSIX shell installer (OS/arch detection, GitHub Releases
+  latest API, binary + SHA-256 download, checksum verification, /usr/local/bin with sudo
+  fallback to ~/.local/bin, PATH warning, smoke-test with `shellius --version`).
+- `.github/workflows/release-tui.yml` — GHA workflow: matrix build (linux+darwin ×
+  amd64/arm64, windows/amd64) with Go 1.22, ldflags version stamping, SHA-256 sidecars,
+  auto-changelog since previous `tui/v*` tag, softprops/action-gh-release@v2 release
+  creation. Triggers on `tui/v*` tags and manual dispatch.
+- `tui/cmd/shellius/main.go` — replaced `const version` with `var version/commit/buildTime`
+  stamped at build time; `--version` now prints `shellius v0.2.0 (a1b2c3d, built <time>)`.
+- `tui/Makefile` — added `VERSION`, `COMMIT`, `BUILD_TIME` variables with full ldflags
+  including commit and buildTime; added `checksums` target; added `-trimpath` and
+  `CGO_ENABLED=0` to all build targets.
