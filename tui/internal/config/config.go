@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/shellius/tui/internal/logx"
 	"gopkg.in/yaml.v3"
 )
 
@@ -39,8 +40,18 @@ func DefaultPath() (string, error) {
 func Load(path string) (*Config, error) {
 	cfg := &Config{configPath: path}
 
+	// Resolve the absolute path and log it so diagnostics can find it without
+	// source-diving. The logx package is a no-op when uninitialised (before
+	// main calls logx.Init), so this is always safe.
+	absPath, absErr := filepath.Abs(path)
+	if absErr != nil {
+		absPath = path
+	}
+	logx.Infof("config load: path=%s", absPath)
+
 	data, err := os.ReadFile(path)
 	if os.IsNotExist(err) {
+		logx.Infof("config load: file does not exist, starting with defaults")
 		return cfg, nil
 	}
 	if err != nil {
@@ -51,6 +62,7 @@ func Load(path string) (*Config, error) {
 		return nil, fmt.Errorf("parse config: %w", err)
 	}
 	cfg.configPath = path
+	logx.Infof("config load: ok (serverURL=%s username=%s)", cfg.ServerURL, cfg.Username)
 	return cfg, nil
 }
 

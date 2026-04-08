@@ -119,6 +119,14 @@ var (
 				Foreground(lipgloss.Color(colorText)).
 				Background(lipgloss.Color(colorHighlight)).
 				PaddingLeft(2)
+
+	// ToastStyle renders non-destructive warning banners (e.g. refresh failure).
+	ToastStyle = lipgloss.NewStyle().
+			Bold(true).
+			Foreground(lipgloss.Color(colorStaging)).
+			Background(lipgloss.Color("#451a03")).
+			Padding(0, 1).
+			MarginBottom(1)
 )
 
 // EnvBadge returns the appropriate styled badge string for a given environment.

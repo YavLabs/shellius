@@ -3,6 +3,7 @@ package api
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -10,7 +11,14 @@ import (
 
 	"github.com/shellius/tui/internal/auth"
 	"github.com/shellius/tui/internal/config"
+	"github.com/shellius/tui/internal/logx"
 )
+
+// ErrTokenRefreshFailed is returned by Client.do when the background token
+// refresh fails. The caller should surface this as a non-destructive warning
+// (toast) and NOT wipe the config — the existing tokens are left intact so the
+// user can retry without re-authenticating.
+var ErrTokenRefreshFailed = errors.New("token refresh failed")
 
 // Host represents a server entry returned by the Shellius API.
 type Host struct {
@@ -78,8 +86,14 @@ type apiEnvelope struct {
 
 func (c *Client) do(method, path string, body interface{}, result interface{}) error {
 	if err := auth.RefreshIfNeeded(c.Config); err != nil {
-		// Non-fatal: proceed with existing token.
-		_ = err
+		// Log the failure at WARN so it shows up in shellius doctor output.
+		// We deliberately do NOT wipe the config — only shellius logout may
+		// clear credentials. The caller receives ErrTokenRefreshFailed so it
+		// can surface a non-destructive toast and then proceed with whatever
+		// access token is currently cached (it may still be valid).
+		logx.Warnf("api: token refresh failed (oldExpiry=%s): %v",
+			c.Config.TokenExpiresAt.UTC().Format(time.RFC3339), err)
+		return fmt.Errorf("%w: %v", ErrTokenRefreshFailed, err)
 	}
 
 	var bodyReader io.Reader
