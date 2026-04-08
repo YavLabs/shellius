@@ -12,7 +12,13 @@ import (
 	"github.com/shellius/tui/internal/tui"
 )
 
-const version = "0.1.0"
+// Build-time variables injected via -ldflags. Defaults are used for local
+// builds without version stamping.
+var (
+	version   = "dev"
+	commit    = "unknown"
+	buildTime = "unknown"
+)
 
 func main() {
 	var (
@@ -29,7 +35,7 @@ func main() {
 	flag.Parse()
 
 	if showVersion {
-		fmt.Printf("shellius v%s\n", version)
+		fmt.Printf("shellius %s (%s, built %s)\n", version, commit, buildTime)
 		os.Exit(0)
 	}
 

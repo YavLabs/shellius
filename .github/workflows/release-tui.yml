@@ -1,0 +1,239 @@
+name: Release TUI
+
+on:
+  push:
+    tags:
+      - "tui/v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag to build (e.g. tui/v0.2.0). Leave empty to use HEAD."
+        required: false
+        default: ""
+
+# ---------------------------------------------------------------------------
+# Permissions
+# ---------------------------------------------------------------------------
+permissions:
+  contents: write
+
+# ---------------------------------------------------------------------------
+# Global env
+# ---------------------------------------------------------------------------
+env:
+  GO_VERSION: "1.22"
+
+jobs:
+  # --------------------------------------------------------------------------
+  # Job 1: build — cross-compile every platform in a matrix
+  # --------------------------------------------------------------------------
+  build:
+    name: Build ${{ matrix.goos }}/${{ matrix.goarch }}
+    runs-on: ubuntu-latest
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - goos: linux
+            goarch: amd64
+          - goos: linux
+            goarch: arm64
+          - goos: darwin
+            goarch: amd64
+          - goos: darwin
+            goarch: arm64
+          - goos: windows
+            goarch: amd64
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # needed for changelog generation
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache-dependency-path: tui/go.sum
+
+      - name: Resolve version
+        id: version
+        run: |
+          # Strip "tui/" prefix from the tag name so ldflags get a clean semver.
+          if [ -n "${{ github.event.inputs.tag }}" ]; then
+            RAW_TAG="${{ github.event.inputs.tag }}"
+          else
+            RAW_TAG="${GITHUB_REF_NAME}"
+          fi
+          VERSION="${RAW_TAG#tui/}"
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "raw_tag=${RAW_TAG}" >> "$GITHUB_OUTPUT"
+          echo "Building version: ${VERSION}"
+
+      - name: Build binary
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+          CGO_ENABLED: "0"
+        run: |
+          mkdir -p dist
+
+          EXT=""
+          if [ "${{ matrix.goos }}" = "windows" ]; then
+            EXT=".exe"
+          fi
+
+          BINARY_NAME="shellius-${{ matrix.goos }}-${{ matrix.goarch }}${EXT}"
+
+          BUILD_TIME="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          SHORT_SHA="${GITHUB_SHA::7}"
+          VERSION="${{ steps.version.outputs.version }}"
+
+          cd tui
+          go build \
+            -trimpath \
+            -ldflags "-s -w \
+              -X main.version=${VERSION} \
+              -X main.commit=${SHORT_SHA} \
+              -X main.buildTime=${BUILD_TIME}" \
+            -o "../dist/${BINARY_NAME}" \
+            ./cmd/shellius
+
+          echo "Built: dist/${BINARY_NAME}"
+
+      - name: Generate SHA-256 checksum
+        run: |
+          cd dist
+          EXT=""
+          if [ "${{ matrix.goos }}" = "windows" ]; then
+            EXT=".exe"
+          fi
+          BINARY_NAME="shellius-${{ matrix.goos }}-${{ matrix.goarch }}${EXT}"
+          sha256sum "${BINARY_NAME}" > "${BINARY_NAME%.exe}.sha256"
+          # Always write the plain name without .exe for the checksum file,
+          # matching the installer's expectation: shellius-windows-amd64.sha256
+          # (the binary inside the checksum file path still has .exe)
+          if [ "${{ matrix.goos }}" = "windows" ]; then
+            sha256sum "${BINARY_NAME}" > "shellius-${{ matrix.goos }}-${{ matrix.goarch }}.sha256"
+          fi
+          echo "Checksum:"
+          cat "shellius-${{ matrix.goos }}-${{ matrix.goarch }}.sha256"
+
+      - name: Upload dist artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: shellius-${{ matrix.goos }}-${{ matrix.goarch }}
+          path: dist/
+          retention-days: 1
+
+  # --------------------------------------------------------------------------
+  # Job 2: release — collect all artifacts and create the GitHub Release
+  # --------------------------------------------------------------------------
+  release:
+    name: Create GitHub Release
+    needs: build
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Download all build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: dist/
+          merge-multiple: true
+
+      - name: List dist contents
+        run: ls -lh dist/
+
+      - name: Resolve tag
+        id: tag
+        run: |
+          if [ -n "${{ github.event.inputs.tag }}" ]; then
+            RAW_TAG="${{ github.event.inputs.tag }}"
+          else
+            RAW_TAG="${GITHUB_REF_NAME}"
+          fi
+          VERSION="${RAW_TAG#tui/}"
+          echo "raw_tag=${RAW_TAG}" >> "$GITHUB_OUTPUT"
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+
+      - name: Generate changelog
+        id: changelog
+        run: |
+          # Find the previous tui/v* tag to scope the changelog.
+          CURRENT_TAG="${{ steps.tag.outputs.raw_tag }}"
+
+          PREV_TAG="$(git tag --sort=-version:refname \
+            | grep '^tui/v' \
+            | grep -v "^${CURRENT_TAG}$" \
+            | head -1)" || true
+
+          if [ -z "${PREV_TAG}" ]; then
+            # No previous tag — show all commits touching tui/ or scripts/
+            RANGE="HEAD"
+            RANGE_DESC="(all commits)"
+          else
+            RANGE="${PREV_TAG}..HEAD"
+            RANGE_DESC="${PREV_TAG}..${CURRENT_TAG}"
+          fi
+
+          echo "Changelog range: ${RANGE_DESC}"
+
+          CHANGELOG="$(git log ${RANGE} \
+            --pretty=format:'- %s (%h)' \
+            -- tui/ scripts/install-tui.sh \
+            | head -50)"
+
+          if [ -z "${CHANGELOG}" ]; then
+            CHANGELOG="- No TUI-specific changes logged in this range."
+          fi
+
+          # Write to a file to avoid quoting issues in the step output.
+          {
+            echo "## What's changed"
+            echo ""
+            echo "${CHANGELOG}"
+            echo ""
+            echo "---"
+            echo ""
+            echo "**Full diff:** [\`${RANGE_DESC}\`](https://github.com/${{ github.repository }}/compare/${PREV_TAG}...${CURRENT_TAG})"
+            echo ""
+            echo "### Install"
+            echo '```sh'
+            echo "curl -fsSL https://raw.githubusercontent.com/${{ github.repository }}/main/scripts/install-tui.sh | sh"
+            echo '```'
+          } > /tmp/release-body.md
+
+          cat /tmp/release-body.md
+
+      - name: Copy install script into dist
+        run: cp scripts/install-tui.sh dist/install-tui.sh
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.tag.outputs.raw_tag }}
+          name: "Shellius TUI ${{ steps.tag.outputs.version }}"
+          body_path: /tmp/release-body.md
+          draft: false
+          prerelease: ${{ contains(steps.tag.outputs.version, '-') }}
+          files: |
+            dist/shellius-linux-amd64
+            dist/shellius-linux-arm64
+            dist/shellius-darwin-amd64
+            dist/shellius-darwin-arm64
+            dist/shellius-windows-amd64.exe
+            dist/shellius-linux-amd64.sha256
+            dist/shellius-linux-arm64.sha256
+            dist/shellius-darwin-amd64.sha256
+            dist/shellius-darwin-arm64.sha256
+            dist/shellius-windows-amd64.sha256
+            dist/install-tui.sh
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
