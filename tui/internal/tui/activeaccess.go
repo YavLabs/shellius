@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"encoding/json"
 	"fmt"
 	"strings"
 	"time"
@@ -10,7 +11,12 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/shellius/tui/internal/api"
+	"github.com/shellius/tui/internal/cache"
+	"github.com/shellius/tui/internal/logx"
 )
+
+const activeAccessCacheName = "active-access.json"
+const activeAccessCacheTTL = 15 * time.Minute
 
 // activeAccessState tracks the loading lifecycle of the active-access picker.
 type activeAccessState int
@@ -24,6 +30,7 @@ const (
 // activeAccessLoadedMsg carries the fetched access requests.
 type activeAccessLoadedMsg struct {
 	requests []api.AccessRequest
+	fromCache bool
 }
 
 // activeAccessErrMsg carries a fetch error.
@@ -31,6 +38,9 @@ type activeAccessErrMsg struct{ err error }
 
 // activeAccessRefreshTick signals it is time for a background refresh.
 type activeAccessRefreshTick struct{}
+
+// activeAccessCacheHintExpired hides the "cached" footer hint after ~5s.
+type activeAccessCacheHintExpired struct{}
 
 // activeAccessConnectMsg requests that the app exec SSH for this access request.
 type activeAccessConnectMsg struct {
@@ -42,16 +52,19 @@ const activeAccessRefreshInterval = 30 * time.Second
 // activeAccessModel is the default post-login view: my currently approved
 // access requests with an instant-SSH Enter key.
 type activeAccessModel struct {
-	client   *api.Client
-	state    activeAccessState
-	requests []api.AccessRequest
-	filtered []api.AccessRequest
-	cursor   int
-	filter   textinput.Model
-	spinner  spinner.Model
-	errMsg   string
-	width    int
-	height   int
+	client     *api.Client
+	state      activeAccessState
+	requests   []api.AccessRequest
+	filtered   []api.AccessRequest
+	cursor     int
+	filter     textinput.Model
+	spinner    spinner.Model
+	errMsg     string
+	width      int
+	height     int
+	// cacheHint is the footer annotation shown briefly after painting from cache.
+	// "" = no hint, "cached" = show cached badge, "stale" = network error
+	cacheHint string
 }
 
 // NewActiveAccessModel creates the active-access picker model.
@@ -73,11 +86,33 @@ func NewActiveAccessModel(client *api.Client) activeAccessModel {
 	}
 }
 
-// Init starts the initial fetch and spinner.
+// Init starts the initial fetch and spinner. If a warm cache exists it paints
+// immediately while a background network fetch reconciles the data.
 func (m activeAccessModel) Init() tea.Cmd {
-	return tea.Batch(m.spinner.Tick, m.fetchCmd())
+	cmds := []tea.Cmd{m.spinner.Tick}
+
+	// Try to serve from cache immediately.
+	cachedData, _, ok := cache.Read(activeAccessCacheName, activeAccessCacheTTL)
+	if ok && len(cachedData) > 0 {
+		var reqs []api.AccessRequest
+		if err := json.Unmarshal(cachedData, &reqs); err == nil {
+			logx.Infof("activeaccess: painting from cache (%d entries)", len(reqs))
+			// Return a pre-populated loaded msg so the UI is instant.
+			cmds = append(cmds, func() tea.Msg {
+				return activeAccessLoadedMsg{requests: reqs, fromCache: true}
+			})
+			// Schedule a background reconciliation fetch.
+			cmds = append(cmds, m.backgroundFetchCmd())
+			return tea.Batch(cmds...)
+		}
+	}
+
+	// No warm cache — normal blocking fetch.
+	cmds = append(cmds, m.fetchCmd())
+	return tea.Batch(cmds...)
 }
 
+// fetchCmd performs a live network fetch and updates the cache on success.
 func (m activeAccessModel) fetchCmd() tea.Cmd {
 	client := m.client
 	return func() tea.Msg {
@@ -85,7 +120,30 @@ func (m activeAccessModel) fetchCmd() tea.Cmd {
 		if err != nil {
 			return activeAccessErrMsg{err: err}
 		}
-		return activeAccessLoadedMsg{requests: reqs}
+		// Persist to cache.
+		if data, mErr := json.Marshal(reqs); mErr == nil {
+			_ = cache.Write(activeAccessCacheName, data, "")
+		}
+		return activeAccessLoadedMsg{requests: reqs, fromCache: false}
+	}
+}
+
+// backgroundFetchCmd performs a silent network fetch to reconcile cache.
+// It does NOT switch to the loading state even if it runs before the
+// cache-served message is processed.
+func (m activeAccessModel) backgroundFetchCmd() tea.Cmd {
+	client := m.client
+	return func() tea.Msg {
+		reqs, err := client.ListMyActiveAccessRequests()
+		if err != nil {
+			logx.Warnf("activeaccess: background refresh failed: %v", err)
+			// Signal stale-network so the UI can add a hint but keep the data.
+			return activeAccessErrMsg{err: err}
+		}
+		if data, mErr := json.Marshal(reqs); mErr == nil {
+			_ = cache.Write(activeAccessCacheName, data, "")
+		}
+		return activeAccessLoadedMsg{requests: reqs, fromCache: false}
 	}
 }
 
@@ -94,6 +152,13 @@ func (m activeAccessModel) fetchCmd() tea.Cmd {
 func (m activeAccessModel) scheduleRefresh() tea.Cmd {
 	return tea.Tick(activeAccessRefreshInterval, func(_ time.Time) tea.Msg {
 		return activeAccessRefreshTick{}
+	})
+}
+
+// scheduleCacheHintExpiry hides the cache hint after 5 seconds.
+func scheduleCacheHintExpiry() tea.Cmd {
+	return tea.Tick(5*time.Second, func(_ time.Time) tea.Msg {
+		return activeAccessCacheHintExpired{}
 	})
 }
 
@@ -111,6 +176,13 @@ func (m activeAccessModel) Update(msg tea.Msg) (activeAccessModel, tea.Cmd) {
 			return m, cmd
 		}
 
+	case activeAccessCacheHintExpired:
+		// Only clear if we're still showing the "cached" hint — not "stale".
+		if m.cacheHint == "cached" {
+			m.cacheHint = ""
+		}
+		return m, nil
+
 	case activeAccessLoadedMsg:
 		m.requests = msg.requests
 		m.state = activeAccessReady
@@ -122,9 +194,26 @@ func (m activeAccessModel) Update(msg tea.Msg) (activeAccessModel, tea.Cmd) {
 		if m.state == activeAccessReady && !m.filter.Focused() {
 			m.filter.Focus()
 		}
-		return m, m.scheduleRefresh()
+
+		var cmds []tea.Cmd
+		cmds = append(cmds, m.scheduleRefresh())
+
+		if msg.fromCache {
+			m.cacheHint = "cached"
+			cmds = append(cmds, scheduleCacheHintExpiry())
+		} else {
+			// Fresh data arrived — clear any stale hint.
+			m.cacheHint = ""
+		}
+		return m, tea.Batch(cmds...)
 
 	case activeAccessErrMsg:
+		// If we already have data (from cache), don't switch to error state —
+		// just annotate with a stale hint.
+		if m.state == activeAccessReady {
+			m.cacheHint = "stale"
+			return m, nil
+		}
 		m.state = activeAccessError
 		m.errMsg = msg.err.Error()
 		return m, nil
@@ -265,6 +354,15 @@ func (m activeAccessModel) renderReady() string {
 	b.WriteString(SectionHeaderStyle.Render("ACTIVE ACCESS"))
 	b.WriteString("  ")
 	b.WriteString(MutedStyle.Render(countLabel))
+
+	// Cache hint (briefly shown after painting from cache, or on stale network).
+	if m.cacheHint == "cached" {
+		b.WriteString("  ")
+		b.WriteString(MutedStyle.Render("[cached]"))
+	} else if m.cacheHint == "stale" {
+		b.WriteString("  ")
+		b.WriteString(lipgloss.NewStyle().Foreground(lipgloss.Color(colorStaging)).Render("[stale, network error]"))
+	}
 	b.WriteString("\n")
 
 	// Filter input
