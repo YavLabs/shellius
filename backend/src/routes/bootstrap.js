@@ -387,14 +387,40 @@ AGENT_SECRET_B64='${Buffer.from(agentSecret + '\n', 'utf8').toString('base64')}'
 # ---------------------------------------------------------------------------
 if [ "$PLATFORM" = "linux" ] && [ "\$UPGRADE_ONLY" = "0" ]; then
   echo "[shellius] [0/12] Installing prerequisites (jq, acl)"
-  if command -v apt-get >/dev/null 2>&1; then
-    apt-get install -y -q jq acl 2>&1 | tail -3 || true
-  elif command -v yum >/dev/null 2>&1; then
-    yum install -y -q jq acl 2>&1 | tail -3 || true
+  # Skip if already installed — idempotent, and avoids slow apt refresh on
+  # hosts that already have what we need.
+  if command -v jq >/dev/null 2>&1 && command -v setfacl >/dev/null 2>&1; then
+    echo "[shellius]   ✓ jq and setfacl already installed — skipping package manager"
+  elif command -v apt-get >/dev/null 2>&1; then
+    # Non-interactive + force-keep existing confs so we never hang on a
+    # debconf prompt when stdin is an HTTP pipe (curl | sudo bash).
+    export DEBIAN_FRONTEND=noninteractive
+    export NEEDRESTART_MODE=a
+    export NEEDRESTART_SUSPEND=1
+    echo "[shellius]   • apt-get update"
+    apt-get update -qq -o Dpkg::Use-Pty=0 || true
+    echo "[shellius]   • apt-get install jq acl"
+    apt-get install -y -qq \\
+      -o Dpkg::Use-Pty=0 \\
+      -o Dpkg::Options::=--force-confdef \\
+      -o Dpkg::Options::=--force-confold \\
+      jq acl < /dev/null || {
+        echo "[shellius]   ! apt-get install failed — ensure jq and setfacl are available manually."
+      }
   elif command -v dnf >/dev/null 2>&1; then
-    dnf install -y -q jq acl 2>&1 | tail -3 || true
+    dnf install -y -q jq acl < /dev/null || true
+  elif command -v yum >/dev/null 2>&1; then
+    yum install -y -q jq acl < /dev/null || true
   else
     echo "[shellius]   ! No supported package manager found — ensure jq and setfacl are installed manually."
+  fi
+  # Sanity check — both tools must be present to proceed.
+  if ! command -v jq >/dev/null 2>&1; then
+    echo "[shellius]   ✗ jq is not installed; aborting." >&2
+    exit 1
+  fi
+  if ! command -v setfacl >/dev/null 2>&1; then
+    echo "[shellius]   ! setfacl not installed — JIT ACL read paths will be skipped."
   fi
 fi
 
