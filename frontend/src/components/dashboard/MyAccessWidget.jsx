@@ -24,13 +24,14 @@ function AccessRow({ entry }) {
     <button
       type="button"
       onClick={() => serverId && navigate(`/servers/${serverId}`)}
-      className="group flex w-full items-start justify-between gap-3 py-2.5 text-left border-b border-border last:border-0 hover:bg-accent/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring rounded-sm px-1 -mx-1 transition-colors"
+      className="group flex w-full items-center justify-between gap-3 py-2.5 text-left border-b border-border last:border-0 hover:bg-accent/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring rounded-sm px-1 -mx-1 transition-colors"
     >
-      <div className="flex items-start gap-2 min-w-0">
-        <Server className="h-3.5 w-3.5 mt-0.5 shrink-0 text-muted-foreground" />
+      {/* Left: server icon + name + env badge + principals subline */}
+      <div className="flex min-w-0 items-center gap-2">
+        <Server className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
         <div className="min-w-0">
-          <div className="flex items-center gap-2 flex-wrap">
-            <span className="text-sm font-medium text-foreground truncate">
+          <div className="flex items-center gap-2">
+            <span className="truncate text-sm font-medium text-foreground">
               {entry.server?.hostname || entry.serverId}
             </span>
             {entry.server?.environment && (
@@ -38,29 +39,31 @@ function AccessRow({ entry }) {
             )}
           </div>
           {principals.length > 0 && (
-            <p className="text-xs text-muted-foreground mt-0.5 font-mono">
+            <p className="mt-0.5 truncate text-[11px] font-mono text-muted-foreground">
               {principals.slice(0, 3).join(', ')}
               {principals.length > 3 && ` +${principals.length - 3}`}
             </p>
           )}
         </div>
       </div>
-      <div className="flex items-center gap-3 shrink-0">
-        <div className="flex flex-col items-end gap-1">
-          <span className="text-xs text-muted-foreground">{formatMaxTtl(entry.maxTtl)}</span>
-          {requiresApproval ? (
-            <span className="inline-flex items-center gap-1 text-[10px] font-semibold uppercase tracking-wide text-amber-600 dark:text-amber-400">
-              <ShieldAlert className="h-3 w-3" />
-              Needs approval
-            </span>
-          ) : (
-            <span className="inline-flex items-center gap-1 text-[10px] font-semibold uppercase tracking-wide text-emerald-600 dark:text-emerald-400">
-              <Shield className="h-3 w-3" />
-              Direct access
-            </span>
-          )}
-        </div>
-        <ChevronRight className="h-4 w-4 text-muted-foreground/40 group-hover:text-muted-foreground transition-colors" />
+
+      {/* Right: access label + ttl + chevron — single centered row */}
+      <div className="flex shrink-0 items-center gap-3">
+        {requiresApproval ? (
+          <span className="inline-flex items-center gap-1 rounded-full border border-amber-500/30 bg-amber-500/5 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-amber-700 dark:text-amber-400">
+            <ShieldAlert className="h-3 w-3" />
+            Needs approval
+          </span>
+        ) : (
+          <span className="inline-flex items-center gap-1 rounded-full border border-emerald-500/30 bg-emerald-500/5 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-emerald-700 dark:text-emerald-400">
+            <Shield className="h-3 w-3" />
+            Direct access
+          </span>
+        )}
+        <span className="whitespace-nowrap text-xs text-muted-foreground">
+          {formatMaxTtl(entry.maxTtl)}
+        </span>
+        <ChevronRight className="h-4 w-4 text-muted-foreground/40 transition-colors group-hover:text-muted-foreground" />
       </div>
     </button>
   );
