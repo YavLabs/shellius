@@ -181,9 +181,9 @@ function Profile() {
 
   if (loadingProfile) {
     return (
-      <div className="space-y-6">
+      <div className="space-y-6 p-6">
         <PageHeader icon={User} title="Profile" subtitle="Manage your account and personal data" />
-        <div className="mx-auto max-w-2xl space-y-4">
+        <div className="space-y-4">
           <Skeleton className="h-40 rounded-lg" />
           <Skeleton className="h-56 rounded-lg" />
           <Skeleton className="h-36 rounded-lg" />
@@ -195,9 +195,9 @@ function Profile() {
 
   if (loadError) {
     return (
-      <div className="space-y-6">
+      <div className="space-y-6 p-6">
         <PageHeader icon={User} title="Profile" subtitle="Manage your account and personal data" />
-        <div className="mx-auto max-w-2xl">
+        <div>
           <div className="rounded-md border border-destructive/50 bg-destructive/10 px-4 py-3 text-sm text-destructive">
             {loadError}
           </div>
@@ -210,7 +210,7 @@ function Profile() {
     <div className="space-y-6">
       <PageHeader icon={User} title="Profile" subtitle="Manage your account and personal data" />
 
-      <div className="mx-auto max-w-2xl space-y-5">
+      <div className="grid gap-5 md:grid-cols-2">
         {/* Profile section */}
         <SectionCard title="Profile" description="Your personal information and account details.">
           <div className="flex items-center gap-4 mb-6">
