@@ -1,0 +1,2 @@
+# Shellius TUI binaries go here — populated by scripts/build-tui-binaries.sh.
+# Binaries are served by the backend at /api/cli/bin/<name>.

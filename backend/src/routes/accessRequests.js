@@ -168,6 +168,56 @@ router.get(
 );
 
 // ---------------------------------------------------------------------------
+// GET /api/access-requests/intent?serverId=...
+// MUST be registered BEFORE /:id so Express doesn't match "intent" as an id.
+// ---------------------------------------------------------------------------
+
+router.get(
+  '/intent',
+  asyncHandler(async (req, res) => {
+    const serverId = req.query.serverId;
+    if (!serverId) throw new ApiError(400, 'serverId query parameter is required');
+
+    const intent = await accessRequestService.getAccessIntent({
+      orgId: req.orgId,
+      userId: req.user.userId,
+      userRole: req.user.role,
+      serverId,
+    });
+    res.json({ success: true, data: intent });
+  })
+);
+
+// ---------------------------------------------------------------------------
+// POST /api/access-requests/break-glass — admin-only emergency access
+// Registered before /:id/* routes to avoid the "break-glass" path being
+// interpreted as an id lookup.
+// ---------------------------------------------------------------------------
+
+const breakGlassSchema = Joi.object({
+  serverId: Joi.string().required(),
+  reason: Joi.string().min(20).max(1000).required(),
+  durationSeconds: Joi.number().integer().min(300).max(3600).default(3600),
+});
+
+router.post(
+  '/break-glass',
+  requireRole('admin', 'super_admin'),
+  validate(breakGlassSchema),
+  asyncHandler(async (req, res) => {
+    const ar = await accessRequestService.createBreakGlass({
+      orgId: req.orgId,
+      invokerId: req.user.userId,
+      invokerRole: req.user.role,
+      serverId: req.body.serverId,
+      reason: req.body.reason,
+      durationSeconds: req.body.durationSeconds,
+    });
+    res.status(201).json({ success: true, data: ar });
+  })
+);
+
+// ---------------------------------------------------------------------------
 // GET /api/access-requests/:id — requester, reviewer, or admin+
 // Access control enforced in service via callerId/callerRole
 // ---------------------------------------------------------------------------
@@ -383,57 +433,6 @@ router.post(
         expiresAt: accessRequest.expiresAt,
       },
     });
-  })
-);
-
-// ---------------------------------------------------------------------------
-// GET /api/access-requests/intent?serverId=... — any authenticated user
-//
-// Returns everything the frontend needs to decide whether the user should
-// see a "Request Access" or "Connect" button for a given server, and which
-// principal to pre-fill in the form. One round trip instead of three.
-// ---------------------------------------------------------------------------
-
-router.get(
-  '/intent',
-  asyncHandler(async (req, res) => {
-    const serverId = req.query.serverId;
-    if (!serverId) throw new ApiError(400, 'serverId query parameter is required');
-
-    const intent = await accessRequestService.getAccessIntent({
-      orgId: req.orgId,
-      userId: req.user.userId,
-      userRole: req.user.role,
-      serverId,
-    });
-    res.json({ success: true, data: intent });
-  })
-);
-
-// ---------------------------------------------------------------------------
-// POST /api/access-requests/break-glass — admin-only emergency access
-// ---------------------------------------------------------------------------
-
-const breakGlassSchema = Joi.object({
-  serverId: Joi.string().required(),
-  reason: Joi.string().min(20).max(1000).required(),
-  durationSeconds: Joi.number().integer().min(300).max(3600).default(3600),
-});
-
-router.post(
-  '/break-glass',
-  requireRole('admin', 'super_admin'),
-  validate(breakGlassSchema),
-  asyncHandler(async (req, res) => {
-    const ar = await accessRequestService.createBreakGlass({
-      orgId: req.orgId,
-      invokerId: req.user.userId,
-      invokerRole: req.user.role,
-      serverId: req.body.serverId,
-      reason: req.body.reason,
-      durationSeconds: req.body.durationSeconds,
-    });
-    res.status(201).json({ success: true, data: ar });
   })
 );
 

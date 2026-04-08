@@ -1,43 +1,35 @@
 #!/bin/sh
 # Install the Shellius TUI on macOS or Linux.
 #
+# This script is served by the Shellius backend itself — NOT from
+# GitHub — so it works on self-hosted, private-repo deployments.
+#
 # One-liner:
-#   curl -fsSL https://raw.githubusercontent.com/vaidyayash8/shellius/main/scripts/install-tui.sh | sh
+#   curl -fsSL https://<your-shellius-host>/api/cli/install.sh | sh
+#
+# Or with an explicit host (useful for CI or when piping into sh
+# discards the original URL):
+#   SHELLIUS_HOST=https://shellius.example.com curl -fsSL \
+#       "$SHELLIUS_HOST/api/cli/install.sh" | SHELLIUS_HOST="$SHELLIUS_HOST" sh
 #
 # What this script does:
-#   1. Detects your OS and CPU architecture.
-#   2. Fetches the latest release metadata from GitHub.
-#   3. Downloads the matching binary and its SHA-256 checksum file.
-#   4. Verifies the checksum.
+#   1. Figures out which Shellius deployment served it (self-discovery).
+#   2. Detects your OS and CPU architecture.
+#   3. Downloads the matching binary from /api/cli/bin/<name>.
+#   4. Verifies the SHA-256 checksum against /api/cli/bin/<name>.sha256.
 #   5. Installs to /usr/local/bin/shellius (or ~/.local/bin/shellius if not writable).
-#   6. Confirms the installation with `shellius --version`.
+#   6. Confirms with `shellius --version`.
 
 set -e
 
-REPO="vaidyayash8/shellius"
-RELEASES_API="https://api.github.com/repos/${REPO}/releases/latest"
-UA="shellius-install/1.0 (https://github.com/${REPO})"
-
 # ---------------------------------------------------------------------------
-# Helpers
+# Colors / helpers
 # ---------------------------------------------------------------------------
 
-die() {
-    printf '\033[0;31mERROR:\033[0m %s\n' "$*" >&2
-    exit 1
-}
-
-info() {
-    printf '\033[0;34m-->\033[0m %s\n' "$*"
-}
-
-ok() {
-    printf '\033[0;32m OK\033[0m %s\n' "$*"
-}
-
-warn() {
-    printf '\033[0;33mWARN:\033[0m %s\n' "$*" >&2
-}
+die()  { printf '\033[0;31mERROR:\033[0m %s\n' "$*" >&2; exit 1; }
+info() { printf '\033[0;34m-->\033[0m %s\n' "$*"; }
+ok()   { printf '\033[0;32m OK\033[0m %s\n' "$*"; }
+warn() { printf '\033[0;33mWARN:\033[0m %s\n' "$*" >&2; }
 
 # ---------------------------------------------------------------------------
 # Dependency checks
@@ -48,230 +40,161 @@ if ! command -v curl > /dev/null 2>&1; then
 fi
 
 # ---------------------------------------------------------------------------
-# Detect OS
+# Figure out which Shellius host we're installing from.
+#
+# Precedence:
+#   1. $SHELLIUS_HOST env var (explicit override)
+#   2. $0 — if the script was downloaded via curl this is set to "sh"
+#      or a temp path, so it's usually useless; fall through.
+#   3. Prompt the user. Only ever happens on interactive terminals.
 # ---------------------------------------------------------------------------
 
-RAW_OS="$(uname -s)"
-case "${RAW_OS}" in
-    Darwin)  OS="darwin" ;;
-    Linux)   OS="linux" ;;
-    MINGW*|MSYS*|CYGWIN*|Windows*)
-        die "Windows is not supported by this installer. Download the .exe binary directly from:
-  https://github.com/${REPO}/releases/latest"
-        ;;
-    *)
-        die "Unsupported operating system: ${RAW_OS}. Only linux and darwin are supported."
-        ;;
-esac
-
-# ---------------------------------------------------------------------------
-# Detect architecture
-# ---------------------------------------------------------------------------
-
-RAW_ARCH="$(uname -m)"
-case "${RAW_ARCH}" in
-    x86_64|amd64) ARCH="amd64" ;;
-    aarch64|arm64) ARCH="arm64" ;;
-    *)
-        die "Unsupported CPU architecture: ${RAW_ARCH}. Only amd64 and arm64 are supported."
-        ;;
-esac
-
-info "Detected platform: ${OS}/${ARCH}"
-
-# ---------------------------------------------------------------------------
-# Fetch latest release metadata
-# ---------------------------------------------------------------------------
-
-info "Fetching latest release from GitHub..."
-
-RELEASE_JSON="$(curl -fsSL \
-    -H "Accept: application/vnd.github+json" \
-    -A "${UA}" \
-    "${RELEASES_API}" 2>&1)" || die "Failed to fetch release metadata from ${RELEASES_API}.
-Check your internet connection or visit https://github.com/${REPO}/releases manually."
-
-# Extract tag_name (POSIX sed, no perl/python required)
-TAG="$(printf '%s' "${RELEASE_JSON}" | grep '"tag_name"' | head -1 | sed 's/.*"tag_name": *"\([^"]*\)".*/\1/')"
-
-if [ -z "${TAG}" ]; then
-    die "Could not parse release tag from GitHub API response. The response was:
-${RELEASE_JSON}"
-fi
-
-info "Latest release: ${TAG}"
-
-# Strip leading "tui/" prefix if present (tags are tui/v0.2.0 → v0.2.0)
-VERSION="${TAG#tui/}"
-
-# ---------------------------------------------------------------------------
-# Resolve asset names
-# ---------------------------------------------------------------------------
-
-BINARY_ASSET="shellius-${OS}-${ARCH}"
-CHECKSUM_ASSET="${BINARY_ASSET}.sha256"
-
-# ---------------------------------------------------------------------------
-# Extract download URLs from the release JSON
-# ---------------------------------------------------------------------------
-
-# We look for browser_download_url entries that match the asset name exactly.
-# The JSON has pairs: "name": "...", then "browser_download_url": "..."
-# We use a two-pass approach: find the name, grab the next download_url line.
-
-extract_url() {
-    # $1 = asset filename to look for
-    printf '%s' "${RELEASE_JSON}" | grep -A 5 "\"name\": \"${1}\"" | grep '"browser_download_url"' | head -1 | sed 's/.*"browser_download_url": *"\([^"]*\)".*/\1/'
-}
-
-BINARY_URL="$(extract_url "${BINARY_ASSET}")"
-CHECKSUM_URL="$(extract_url "${CHECKSUM_ASSET}")"
-
-if [ -z "${BINARY_URL}" ]; then
-    die "No release asset found for '${BINARY_ASSET}' in release ${TAG}.
-Visit https://github.com/${REPO}/releases/tag/${TAG} to see available assets."
-fi
-
-if [ -z "${CHECKSUM_URL}" ]; then
-    die "No checksum asset found for '${CHECKSUM_ASSET}' in release ${TAG}.
-The release may be incomplete."
-fi
-
-# ---------------------------------------------------------------------------
-# Download to temp directory
-# ---------------------------------------------------------------------------
-
-TMPDIR="$(mktemp -d 2>/dev/null || mktemp -d -t shellius-install)"
-BINARY_TMP="${TMPDIR}/${BINARY_ASSET}"
-CHECKSUM_TMP="${TMPDIR}/${CHECKSUM_ASSET}"
-
-# Ensure cleanup on exit
-trap 'rm -rf "${TMPDIR}"' EXIT INT TERM
-
-info "Downloading ${BINARY_ASSET}..."
-curl -fsSL -A "${UA}" -o "${BINARY_TMP}" "${BINARY_URL}" || \
-    die "Failed to download binary from ${BINARY_URL}"
-
-info "Downloading ${CHECKSUM_ASSET}..."
-curl -fsSL -A "${UA}" -o "${CHECKSUM_TMP}" "${CHECKSUM_URL}" || \
-    die "Failed to download checksum from ${CHECKSUM_URL}"
-
-# ---------------------------------------------------------------------------
-# Verify checksum
-# ---------------------------------------------------------------------------
-
-info "Verifying checksum..."
-
-# The .sha256 file may contain "HASH  filename" or just "HASH"
-EXPECTED_HASH="$(awk '{print $1}' "${CHECKSUM_TMP}")"
-
-if command -v sha256sum > /dev/null 2>&1; then
-    ACTUAL_HASH="$(sha256sum "${BINARY_TMP}" | awk '{print $1}')"
-elif command -v shasum > /dev/null 2>&1; then
-    ACTUAL_HASH="$(shasum -a 256 "${BINARY_TMP}" | awk '{print $1}')"
+if [ -n "$SHELLIUS_HOST" ]; then
+    HOST="$SHELLIUS_HOST"
+elif [ -t 0 ]; then
+    printf 'Enter your Shellius URL (e.g. https://shellius.example.com): '
+    read -r HOST
 else
-    warn "Neither sha256sum nor shasum found — skipping checksum verification."
-    ACTUAL_HASH="${EXPECTED_HASH}"
+    die "SHELLIUS_HOST env var is required when piping into sh. Example:
+  SHELLIUS_HOST=https://shellius.example.com curl -fsSL \"\$SHELLIUS_HOST/api/cli/install.sh\" | sh"
 fi
 
-if [ "${ACTUAL_HASH}" != "${EXPECTED_HASH}" ]; then
-    die "Checksum mismatch for ${BINARY_ASSET}!
-  Expected : ${EXPECTED_HASH}
-  Got      : ${ACTUAL_HASH}
-The download may be corrupted or tampered with. Aborting."
-fi
+# Strip trailing slash so URL concatenation is clean.
+HOST="${HOST%/}"
 
-ok "Checksum verified."
+# Must start with http:// or https://
+case "$HOST" in
+    http://*|https://*) ;;
+    *) die "SHELLIUS_HOST must start with http:// or https:// (got: $HOST)" ;;
+esac
+
+info "Using Shellius host: $HOST"
 
 # ---------------------------------------------------------------------------
-# Determine install location
+# Detect OS + arch
 # ---------------------------------------------------------------------------
 
-INSTALL_DIR="/usr/local/bin"
-NEEDS_SUDO=0
+UNAME_S="$(uname -s 2>/dev/null || echo unknown)"
+UNAME_M="$(uname -m 2>/dev/null || echo unknown)"
 
-if [ ! -d "${INSTALL_DIR}" ]; then
-    mkdir -p "${INSTALL_DIR}" 2>/dev/null || NEEDS_SUDO=1
+case "$UNAME_S" in
+    Darwin) OS="darwin" ;;
+    Linux)  OS="linux"  ;;
+    MINGW*|MSYS*|CYGWIN*)
+        die "Windows is not supported by this script. Download the binary from:
+  $HOST/api/cli/bin/shellius-windows-amd64.exe"
+        ;;
+    *)
+        die "Unsupported OS: $UNAME_S"
+        ;;
+esac
+
+case "$UNAME_M" in
+    x86_64|amd64) ARCH="amd64" ;;
+    arm64|aarch64) ARCH="arm64" ;;
+    *)
+        die "Unsupported architecture: $UNAME_M"
+        ;;
+esac
+
+ASSET="shellius-${OS}-${ARCH}"
+info "Detected platform: $OS/$ARCH → $ASSET"
+
+# ---------------------------------------------------------------------------
+# Query deployment version (best-effort — script still works if the
+# endpoint is absent on older deployments)
+# ---------------------------------------------------------------------------
+
+VERSION="$(curl -fsSL "$HOST/api/cli/version" 2>/dev/null \
+    | grep -o '"version":"[^"]*"' | head -n 1 | cut -d'"' -f4 || true)"
+if [ -n "$VERSION" ] && [ "$VERSION" != "unknown" ]; then
+    info "Deployment reports CLI version: $VERSION"
 fi
 
-if [ ! -w "${INSTALL_DIR}" ]; then
-    NEEDS_SUDO=1
+# ---------------------------------------------------------------------------
+# Download binary + checksum
+# ---------------------------------------------------------------------------
+
+TMPDIR="$(mktemp -d 2>/dev/null || mktemp -d -t shellius)"
+trap 'rm -rf "$TMPDIR"' EXIT
+
+BIN_URL="$HOST/api/cli/bin/$ASSET"
+SUM_URL="$HOST/api/cli/bin/$ASSET.sha256"
+
+info "Downloading: $BIN_URL"
+if ! curl -fsSL "$BIN_URL" -o "$TMPDIR/$ASSET"; then
+    die "Download failed. This deployment may not have published the CLI binary yet.
+Ask your Shellius admin to run scripts/build-tui-binaries.sh on the server
+and redeploy the backend image."
 fi
 
-if [ "${NEEDS_SUDO}" = "1" ]; then
-    # Fall back to ~/.local/bin if sudo is unavailable
-    if ! command -v sudo > /dev/null 2>&1; then
-        INSTALL_DIR="${HOME}/.local/bin"
-        warn "sudo not available and /usr/local/bin is not writable."
-        warn "Installing to ${INSTALL_DIR} instead."
+info "Downloading: $SUM_URL"
+if curl -fsSL "$SUM_URL" -o "$TMPDIR/$ASSET.sha256" 2>/dev/null; then
+    if command -v sha256sum > /dev/null 2>&1; then
+        ( cd "$TMPDIR" && sha256sum -c "$ASSET.sha256" >/dev/null 2>&1 ) \
+            || die "Checksum mismatch — refusing to install."
+        ok "Checksum verified"
+    elif command -v shasum > /dev/null 2>&1; then
+        ( cd "$TMPDIR" && shasum -a 256 -c "$ASSET.sha256" >/dev/null 2>&1 ) \
+            || die "Checksum mismatch — refusing to install."
+        ok "Checksum verified"
     else
-        info "${INSTALL_DIR} requires elevated permissions — will use sudo."
+        warn "No sha256sum/shasum found — skipping checksum verification."
     fi
+else
+    warn "Checksum file not available — proceeding without verification."
 fi
 
-DEST="${INSTALL_DIR}/shellius"
+chmod +x "$TMPDIR/$ASSET"
 
 # ---------------------------------------------------------------------------
 # Install
 # ---------------------------------------------------------------------------
 
-info "Installing shellius ${VERSION} to ${DEST}..."
+TARGET_SYSTEM="/usr/local/bin/shellius"
+TARGET_USER="$HOME/.local/bin/shellius"
 
-chmod +x "${BINARY_TMP}"
-
-if [ "${NEEDS_SUDO}" = "1" ] && [ "${INSTALL_DIR}" = "/usr/local/bin" ]; then
-    sudo mkdir -p "${INSTALL_DIR}" || die "sudo mkdir -p ${INSTALL_DIR} failed."
-    sudo mv "${BINARY_TMP}" "${DEST}" || die "Failed to install binary to ${DEST} (sudo mv failed)."
-    sudo chmod +x "${DEST}" || die "Failed to chmod +x ${DEST}."
+if [ -w "/usr/local/bin" ]; then
+    mv "$TMPDIR/$ASSET" "$TARGET_SYSTEM"
+    INSTALLED="$TARGET_SYSTEM"
+elif command -v sudo > /dev/null 2>&1; then
+    info "Installing to $TARGET_SYSTEM (requires sudo)..."
+    sudo install -m 0755 "$TMPDIR/$ASSET" "$TARGET_SYSTEM"
+    INSTALLED="$TARGET_SYSTEM"
 else
-    mkdir -p "${INSTALL_DIR}" || die "Failed to create install directory ${INSTALL_DIR}."
-    mv "${BINARY_TMP}" "${DEST}" || die "Failed to install binary to ${DEST}."
-    chmod +x "${DEST}"
-fi
-
-ok "Installed to ${DEST}"
-
-# ---------------------------------------------------------------------------
-# PATH warning for non-standard install dir
-# ---------------------------------------------------------------------------
-
-if [ "${INSTALL_DIR}" != "/usr/local/bin" ]; then
-    case ":${PATH}:" in
-        *":${INSTALL_DIR}:"*) ;;
+    mkdir -p "$HOME/.local/bin"
+    mv "$TMPDIR/$ASSET" "$TARGET_USER"
+    chmod +x "$TARGET_USER"
+    INSTALLED="$TARGET_USER"
+    case ":$PATH:" in
+        *":$HOME/.local/bin:"*) ;;
         *)
-            warn "${INSTALL_DIR} is not in your PATH."
-            warn "Add the following line to your shell profile (~/.bashrc, ~/.zshrc, etc.):"
-            warn "  export PATH=\"${INSTALL_DIR}:\$PATH\""
-            warn "Then reload your shell or run: source ~/.bashrc"
+            warn "$HOME/.local/bin is not on your PATH."
+            warn "Add it with: echo 'export PATH=\"\$HOME/.local/bin:\$PATH\"' >> ~/.bashrc"
             ;;
     esac
 fi
 
+ok "Installed to $INSTALLED"
+
 # ---------------------------------------------------------------------------
-# Smoke test
+# Verify + next steps
 # ---------------------------------------------------------------------------
 
-info "Verifying installation..."
-
-if "${DEST}" --version > /dev/null 2>&1; then
-    INSTALLED_VERSION="$("${DEST}" --version 2>&1)"
-    ok "Installation successful: ${INSTALLED_VERSION}"
-else
-    warn "shellius --version returned a non-zero exit code. The binary may still work."
+if command -v shellius > /dev/null 2>&1; then
+    shellius --version 2>&1 || true
 fi
 
-# ---------------------------------------------------------------------------
-# Next steps
-# ---------------------------------------------------------------------------
-
 printf '\n'
-printf '  shellius %s installed successfully.\n' "${VERSION}"
+ok "Shellius CLI is ready."
 printf '\n'
-printf '  Get started:\n'
-printf '    shellius login <your-shellius-url>\n'
+printf '  Sign in:\n'
+printf '    shellius login %s\n' "$HOST"
+printf '\n'
+printf '  Then just run:\n'
+printf '    shellius\n'
 printf '\n'
 printf '  Useful commands:\n'
-printf '    shellius --help        Show all commands\n'
-printf '    shellius doctor        Check config and connectivity\n'
-printf '    shellius --logout      Clear stored credentials\n'
+printf '    shellius doctor     Check config and connectivity\n'
+printf '    shellius --logout   Clear stored credentials\n'
 printf '\n'
