@@ -177,25 +177,28 @@ function PolicyEvaluator({ open, onClose, policy }) {
               </div>
             )}
 
-            {result.policyId && (
+            {(result.policyName || result.policyId) && (
               <div>
                 <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground mb-1">
                   Matched Policy
                 </p>
-                <code className="text-xs font-mono text-foreground">{result.policyId}</code>
+                <span className="text-xs font-medium text-foreground">
+                  {result.policyName || 'Unnamed policy'}
+                </span>
               </div>
             )}
 
             {/* Render the rest of the row as a compact details list so any
                 future backend field is visible without further frontend
-                changes. */}
+                changes. policyId and policyName are handled above; the
+                internal resource ids are filtered out so they never leak. */}
             <div>
               <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground mb-1">
                 Details
               </p>
               <dl className="space-y-1">
                 {Object.entries(result)
-                  .filter(([k]) => !['reason', 'policyId', 'outcome'].includes(k))
+                  .filter(([k]) => !['reason', 'policyId', 'policyName', 'outcome'].includes(k))
                   .map(([k, v]) => (
                     <div key={k} className="flex items-start gap-2 text-xs">
                       <dt className="w-40 shrink-0 font-medium text-muted-foreground">{k}</dt>

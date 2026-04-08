@@ -17,6 +17,17 @@ const SESSION_INCLUDE = {
       ipAddress: true,
     },
   },
+  // Include the originating access request so the Sessions detail
+  // modal can render "alice → prod-db (reason)" instead of a raw id.
+  accessRequest: {
+    select: {
+      id: true,
+      reason: true,
+      requestedPrincipal: true,
+      requester: { select: { name: true, email: true } },
+      server: { select: { hostname: true, environment: true } },
+    },
+  },
 };
 
 // ---------------------------------------------------------------------------
