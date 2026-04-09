@@ -29,6 +29,8 @@ type hostsLoadedMsg struct {
 type hostsErrMsg struct{ err error }
 
 // hostSelectedMsg is sent when the user picks a host.
+// The parent app always routes through the intent/form flow — never directly
+// connecting without a form (Phase 2 invariant: connectDirect is removed).
 type hostSelectedMsg struct{ host api.Host }
 
 // HostListModel is the Bubble Tea model for the filterable host list.
@@ -123,8 +125,12 @@ func (m HostListModel) Update(msg tea.Msg) (HostListModel, tea.Cmd) {
 		case "enter":
 			if len(m.filtered) > 0 && m.cursor < len(m.filtered) {
 				host := m.filtered[m.cursor]
+				// Always emit hostSelectedMsg — the parent routes through
+				// intent / form regardless of environment. connectDirect
+				// has been removed in Phase 2.
 				return m, func() tea.Msg { return hostSelectedMsg{host: host} }
 			}
+			return m, nil
 
 		case "r", "ctrl+r":
 			m.state = hostListStateLoading
@@ -134,14 +140,21 @@ func (m HostListModel) Update(msg tea.Msg) (HostListModel, tea.Cmd) {
 			m.visibleStart = 0
 			return m, m.fetchHosts()
 		}
-	}
 
-	// Delegate to filter input.
-	if m.state == hostListStateReady {
+		// Editing/printable keys go to the filter; everything else is a
+		// no-op so we don't accidentally feed escape sequences or function
+		// keys into the textinput.
+		switch msg.String() {
+		case "backspace", "delete", "left", "right", "home", "end", "ctrl+u", "ctrl+w":
+			// editing keys — forward
+		default:
+			if len(msg.Runes) == 0 {
+				return m, nil
+			}
+		}
 		var cmd tea.Cmd
 		m.filter, cmd = m.filter.Update(msg)
 		m.applyFilter()
-		// Keep cursor in bounds after filter change.
 		if m.cursor >= len(m.filtered) {
 			m.cursor = max(0, len(m.filtered)-1)
 		}
@@ -219,33 +232,35 @@ func groupByCustomer(hosts []api.Host) ([]string, map[string][]api.Host) {
 func (m HostListModel) View() string {
 	var b strings.Builder
 
-	b.WriteString(TitleStyle.Render("Hosts"))
+	// Section title: "Hosts (N)" bold + count dim.
 	b.WriteString("  ")
-	b.WriteString(MutedStyle.Render(fmt.Sprintf("%d servers", len(m.allHosts))))
+	b.WriteString(SectionHeaderStyle.Render("Hosts"))
+	b.WriteString(DimStyle.Render(fmt.Sprintf(" (%d)", len(m.allHosts))))
 	b.WriteString("\n")
+	b.WriteString("  ")
 	b.WriteString(m.filter.View())
 	b.WriteString("\n\n")
 
 	switch m.state {
 	case hostListStateLoading:
-		b.WriteString(MutedStyle.Render("Loading hosts..."))
+		b.WriteString("  ")
+		b.WriteString(MutedStyle.Render("loading hosts..."))
 
 	case hostListStateError:
-		b.WriteString(ErrorStyle.Render("Error: "))
+		b.WriteString("  ")
+		b.WriteString(ErrorStyle.Render("error: "))
 		b.WriteString(MutedStyle.Render(m.errMsg))
-		b.WriteString("\n")
-		b.WriteString(HelpBarStyle.Render("press r to retry"))
+		b.WriteString("\n  ")
+		b.WriteString(HelpBarStyle.Render("r retry"))
 
 	case hostListStateReady:
 		if len(m.filtered) == 0 {
-			b.WriteString(MutedStyle.Render("No hosts match your filter."))
+			b.WriteString("  ")
+			b.WriteString(MutedStyle.Render("no hosts match your filter"))
 		} else {
 			b.WriteString(m.renderList())
 		}
 	}
-
-	b.WriteString("\n")
-	b.WriteString(HelpBarStyle.Render("↑/↓ navigate  •  enter select  •  r refresh  •  ctrl+c quit"))
 
 	return b.String()
 }
@@ -305,7 +320,9 @@ func (m HostListModel) renderList() string {
 			break
 		}
 		if item.isHeader {
-			b.WriteString(SectionHeaderStyle.Render("  " + item.customer))
+			// Customer group header — muted, not bold (section title above the list is bold).
+			b.WriteString("  ")
+			b.WriteString(DimStyle.Render(item.customer))
 			b.WriteString("\n")
 			rowsRendered++
 			continue
@@ -318,10 +335,14 @@ func (m HostListModel) renderList() string {
 		currentHostIdx++
 	}
 
-	// Scroll indicator
+	// Scroll indicator.
 	if len(m.filtered) > visible {
-		scrollInfo := fmt.Sprintf("%d-%d of %d", m.visibleStart+1, min(m.visibleStart+visible, len(m.filtered)), len(m.filtered))
-		b.WriteString(MutedStyle.Render("  " + scrollInfo))
+		scrollInfo := fmt.Sprintf("  %d-%d of %d",
+			m.visibleStart+1,
+			min(m.visibleStart+visible, len(m.filtered)),
+			len(m.filtered),
+		)
+		b.WriteString(MutedStyle.Render(scrollInfo))
 		b.WriteString("\n")
 	}
 
@@ -336,7 +357,7 @@ func (m HostListModel) renderHostRow(h api.Host, selected bool) string {
 	if h.AccessExpiry != nil {
 		d := h.AccessExpiry.Sub(nowFunc())
 		if d > 0 {
-			expiry = MutedStyle.Render(fmt.Sprintf(" (expires %s)", formatDuration(d)))
+			expiry = DimStyle.Render(fmt.Sprintf("  expires %s", formatDuration(d)))
 		}
 	}
 
@@ -345,17 +366,15 @@ func (m HostListModel) renderHostRow(h api.Host, selected bool) string {
 		name = h.Hostname
 	}
 
-	content := fmt.Sprintf("  %s  %s  %s%s",
-		badge,
-		lipgloss.NewStyle().Width(30).Render(name),
-		status,
-		expiry,
-	)
+	nameCol := lipgloss.NewStyle().Width(28).
+		Foreground(lipgloss.Color(colorPrimary)).
+		Render(name)
+	content := badge + "  " + nameCol + "  " + status + expiry
 
 	if selected {
-		return SelectedItemStyle.Render(content)
+		return renderSelectedRow(content)
 	}
-	return ListItemStyle.Render(content)
+	return renderNormalRow(content)
 }
 
 func max(a, b int) int {

@@ -41,6 +41,13 @@ var builtinCommands = []Command{
 		},
 	},
 	{
+		Name: "/myrequests",
+		Desc: "View all my access requests across statuses",
+		Run: func(app *AppModel) tea.Cmd {
+			return func() tea.Msg { return openMyRequestsMsg{} }
+		},
+	},
+	{
 		Name: "/sessions",
 		Desc: "Active and recent SSH sessions",
 		Run: func(app *AppModel) tea.Cmd {
@@ -84,6 +91,7 @@ var builtinCommands = []Command{
 type showHelpMsg struct{}
 type openHostListMsg struct{}
 type openRequestMsg struct{}
+type openMyRequestsMsg struct{}
 type showSessionsMsg struct{}
 type forceRefreshMsg struct{}
 type showProfileMsg struct{}

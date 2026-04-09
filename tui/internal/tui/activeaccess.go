@@ -208,6 +208,11 @@ func (m activeAccessModel) Update(msg tea.Msg) (activeAccessModel, tea.Cmd) {
 		return m, tea.Batch(cmds...)
 
 	case activeAccessErrMsg:
+		// Always capture the error text so the UI can show *why* the
+		// background fetch is failing — without it the user just sees
+		// "stale, network error" forever with no diagnostic.
+		m.errMsg = msg.err.Error()
+		logx.Warnf("activeaccess: fetch failed: %v", msg.err)
 		// If we already have data (from cache), don't switch to error state —
 		// just annotate with a stale hint.
 		if m.state == activeAccessReady {
@@ -215,7 +220,6 @@ func (m activeAccessModel) Update(msg tea.Msg) (activeAccessModel, tea.Cmd) {
 			return m, nil
 		}
 		m.state = activeAccessError
-		m.errMsg = msg.err.Error()
 		return m, nil
 
 	case activeAccessRefreshTick:
@@ -226,7 +230,8 @@ func (m activeAccessModel) Update(msg tea.Msg) (activeAccessModel, tea.Cmd) {
 		if m.state != activeAccessReady {
 			return m, nil
 		}
-		switch msg.String() {
+		key := msg.String()
+		switch key {
 		case "up", "k":
 			if m.cursor > 0 {
 				m.cursor--
@@ -250,10 +255,25 @@ func (m activeAccessModel) Update(msg tea.Msg) (activeAccessModel, tea.Cmd) {
 			m.state = activeAccessLoading
 			return m, tea.Batch(m.spinner.Tick, m.fetchCmd())
 		}
-	}
 
-	// Delegate to filter input.
-	if m.state == activeAccessReady {
+		// Anything else: only forward to the filter textinput if it's a
+		// printable character or a filter-editing key (backspace, delete,
+		// left, right). Crucially, we never let unrecognized navigation keys
+		// (esc, tab, page-up/down, function keys, etc.) reach the textinput,
+		// because the textinput's Update used to swallow them silently and
+		// make the whole screen feel "dead".
+		switch key {
+		case "backspace", "delete", "left", "right", "home", "end", "ctrl+u", "ctrl+w":
+			// editing keys — forward
+		default:
+			// Treat single printable runes as filter input. Anything else
+			// (esc, tab, function keys, multi-char escape sequences) is a
+			// no-op, so the user gets a clean dead-key instead of the
+			// textinput silently consuming the keystroke.
+			if len(msg.Runes) == 0 {
+				return m, nil
+			}
+		}
 		var cmd tea.Cmd
 		m.filter, cmd = m.filter.Update(msg)
 		m.applyFilter()
@@ -323,16 +343,16 @@ func (m activeAccessModel) View() string {
 	case activeAccessLoading:
 		b.WriteString("\n  ")
 		b.WriteString(m.spinner.View())
-		b.WriteString("  ")
-		b.WriteString(MutedStyle.Render("Loading active access..."))
+		b.WriteString(" ")
+		b.WriteString(MutedStyle.Render("loading active access..."))
 		b.WriteString("\n")
 
 	case activeAccessError:
 		b.WriteString("\n  ")
-		b.WriteString(ErrorStyle.Render("Error: "))
+		b.WriteString(ErrorStyle.Render("error: "))
 		b.WriteString(MutedStyle.Render(m.errMsg))
 		b.WriteString("\n\n  ")
-		b.WriteString(HelpBarStyle.Render("press r to retry  /  press / for commands"))
+		b.WriteString(HelpBarStyle.Render("r retry · / commands"))
 		b.WriteString("\n")
 
 	case activeAccessReady:
@@ -345,23 +365,25 @@ func (m activeAccessModel) View() string {
 func (m activeAccessModel) renderReady() string {
 	var b strings.Builder
 
-	// Section label
-	countLabel := fmt.Sprintf("%d active", len(m.requests))
-	if len(m.requests) == 0 {
-		countLabel = "none"
-	}
+	// Section title: "Active Access (N)" — bold, count in dim.
 	b.WriteString("  ")
-	b.WriteString(SectionHeaderStyle.Render("ACTIVE ACCESS"))
-	b.WriteString("  ")
-	b.WriteString(MutedStyle.Render(countLabel))
+	b.WriteString(SectionHeaderStyle.Render("Active Access"))
+	b.WriteString(DimStyle.Render(fmt.Sprintf(" (%d)", len(m.requests))))
 
-	// Cache hint (briefly shown after painting from cache, or on stale network).
+	// Cache / stale hint — brief, inline.
 	if m.cacheHint == "cached" {
-		b.WriteString("  ")
-		b.WriteString(MutedStyle.Render("[cached]"))
+		b.WriteString(DimStyle.Render("  cached"))
 	} else if m.cacheHint == "stale" {
+		short := m.errMsg
+		if len(short) > 60 {
+			short = short[:57] + "..."
+		}
+		hint := "stale"
+		if short != "" {
+			hint = "stale: " + short
+		}
 		b.WriteString("  ")
-		b.WriteString(lipgloss.NewStyle().Foreground(lipgloss.Color(colorStaging)).Render("[stale, network error]"))
+		b.WriteString(lipgloss.NewStyle().Foreground(lipgloss.Color(colorWarn)).Render(hint))
 	}
 	b.WriteString("\n")
 
@@ -373,10 +395,10 @@ func (m activeAccessModel) renderReady() string {
 	if len(m.filtered) == 0 {
 		if len(m.requests) == 0 {
 			b.WriteString("  ")
-			b.WriteString(MutedStyle.Render("No active access. Press / and choose /request."))
+			b.WriteString(MutedStyle.Render("no active access — press / and choose /request"))
 		} else {
 			b.WriteString("  ")
-			b.WriteString(MutedStyle.Render("No results for your filter."))
+			b.WriteString(MutedStyle.Render("no results for your filter"))
 		}
 		b.WriteString("\n")
 		return b.String()
@@ -433,30 +455,19 @@ func (m activeAccessModel) renderRow(r api.AccessRequest, selected bool) string 
 		}
 	}
 
-	// Build content: badge  name  principal  expiry  [enter] ssh
+	// Build content: badge  name  principal  expiry
 	nameCol := lipgloss.NewStyle().Width(22).Render(name)
 	principalCol := lipgloss.NewStyle().Width(12).
-		Foreground(lipgloss.Color(colorSubtle)).
+		Foreground(lipgloss.Color(colorMuted)).
 		Render(principal)
 	expiryCol := lipgloss.NewStyle().Width(18).
-		Foreground(lipgloss.Color(colorMuted)).
+		Foreground(lipgloss.Color(colorDim)).
 		Render(expiryStr)
 
-	hint := ""
-	if selected {
-		hint = HelpBarStyle.Render("  [enter] ssh")
-	}
-
-	content := fmt.Sprintf("  %-6s  %s  %s  %s%s",
-		badge,
-		nameCol,
-		principalCol,
-		expiryCol,
-		hint,
-	)
+	content := badge + "  " + nameCol + "  " + principalCol + "  " + expiryCol
 
 	if selected {
-		return SelectedItemStyle.Render(content)
+		return renderSelectedRow(content)
 	}
-	return ListItemStyle.Render(content)
+	return renderNormalRow(content)
 }

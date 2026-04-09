@@ -76,6 +76,34 @@ func main() {
 		os.Exit(1)
 	}
 
+	// "shellius login [URL]" — set the server URL, wipe any stale credentials,
+	// and drop straight into the device-auth login flow. This is the canonical
+	// way to (re-)authenticate from the command line. Without this subcommand
+	// the second positional arg was silently ignored, so users who ran
+	// `shellius login https://...` ended up at the URL prompt with no clue
+	// why their argument was discarded.
+	if subcmd == "login" {
+		if len(args) >= 2 {
+			cfg.ServerURL = strings.TrimRight(args[1], "/")
+		}
+		if cfg.ServerURL == "" {
+			fmt.Fprintln(os.Stderr, "shellius login: a Shellius URL is required")
+			fmt.Fprintln(os.Stderr, "  example: shellius login https://shellius.example.com")
+			os.Exit(2)
+		}
+		// Wipe any stale tokens so the TUI definitely routes to the login
+		// screen instead of trying to use creds left over from a prior session.
+		cfg.AccessToken = ""
+		cfg.RefreshToken = ""
+		cfg.TokenExpiresAt = time.Time{}
+		if err := cfg.Save(); err != nil {
+			fmt.Fprintf(os.Stderr, "shellius login: save config: %v\n", err)
+			os.Exit(1)
+		}
+		// Fall through to tui.Run, which will see the URL set + no refresh
+		// token and render the device-auth login screen automatically.
+	}
+
 	// Override server URL if provided on command line.
 	if serverURL != "" {
 		cfg.ServerURL = serverURL
