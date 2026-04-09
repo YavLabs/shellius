@@ -3,6 +3,7 @@ package auth
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"time"
@@ -10,6 +11,12 @@ import (
 	"github.com/shellius/tui/internal/config"
 	"github.com/shellius/tui/internal/logx"
 )
+
+// ErrSessionExpired is returned by RefreshIfNeeded when the refresh endpoint
+// rejects the stored refresh token with HTTP 401. The caller should treat this
+// as a non-recoverable session error and prompt the user to re-authenticate
+// (e.g. by routing back to the login screen).
+var ErrSessionExpired = errors.New("session expired: please run `shellius login` again")
 
 // SaveTokens persists token data returned from a successful device poll into
 // the config and writes it to disk.
@@ -62,6 +69,15 @@ func RefreshIfNeeded(cfg *config.Config) error {
 	}
 	defer resp.Body.Close()
 
+	if resp.StatusCode == http.StatusUnauthorized {
+		// The refresh token was rejected by the server — it has been
+		// rotated, revoked, or wiped by reuse detection. There is no
+		// recovery path other than re-authenticating, so signal that
+		// explicitly so the UI can route the user to the login screen
+		// instead of dead-ending in a generic "network error".
+		logx.Warnf("auth: refresh returned 401 — refresh token is invalid, user must re-login")
+		return ErrSessionExpired
+	}
 	if resp.StatusCode != http.StatusOK {
 		logx.Warnf("auth: refresh returned HTTP %d", resp.StatusCode)
 		return fmt.Errorf("token refresh: HTTP %d", resp.StatusCode)

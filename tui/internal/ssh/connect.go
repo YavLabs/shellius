@@ -46,12 +46,16 @@ func BuildCommand(host string, port int, user, keyPath, certPath string) *exec.C
 		portStr = "22"
 	}
 
+	// LogLevel is left at the default (INFO) so ssh actually emits a
+	// diagnostic message on connection failures. The TUI captures stderr
+	// via a tee writer in execSSH so the message survives Bubble Tea's
+	// alt-screen restore.
 	args := []string{
 		"-i", keyPath,
 		"-o", "CertificateFile=" + certPath,
 		"-o", "StrictHostKeyChecking=no",
 		"-o", "UserKnownHostsFile=/dev/null",
-		"-o", "LogLevel=ERROR",
+		"-o", "ConnectTimeout=10",
 		"-p", portStr,
 		user + "@" + host,
 	}
