@@ -13,8 +13,7 @@ import {
   ScrollText,
   Bell,
   Cloud,
-  Settings,
-  User,
+  ChevronUp,
   PanelLeft,
   PanelLeftClose,
   Menu,
@@ -24,6 +23,7 @@ import { useAuth } from '@/context/AuthContext';
 import { useNotifications } from '@/context/NotificationContext';
 import { cn } from '@/lib/utils';
 import BrandLogo, { BrandMark } from '@/components/common/BrandLogo';
+import UserMenu from '@/components/layout/UserMenu';
 import {
   Tooltip,
   TooltipContent,
@@ -91,10 +91,9 @@ const NAV_SECTIONS = [
   },
 ];
 
-const BOTTOM_NAV = [
-  { id: 'profile', label: 'Profile', icon: User, to: '/profile' },
-  { id: 'settings', label: 'Settings', icon: Settings, to: '/settings' },
-];
+// Phase 19: Profile + Settings moved into the shared UserMenu dropdown that
+// opens from both the topbar avatar AND the sidebar user section. The
+// sidebar no longer renders them as standalone nav items.
 
 // ---------------------------------------------------------------------------
 // SectionHeader
@@ -281,35 +280,53 @@ function SidebarBody({ collapsed, onToggle, onNavigate }) {
         })}
       </nav>
 
-      {/* Bottom: settings + user */}
-      <div className="shrink-0 border-t border-border px-2 py-3 space-y-0.5">
-        {BOTTOM_NAV.map(renderItem)}
+      {/* Bottom: user — clickable, opens the same UserMenu dropdown the
+          topbar avatar uses. Profile / Settings / Theme / Install CLI /
+          Sign out all live in the shared menu now. */}
+      <div className="shrink-0 border-t border-border px-2 py-3">
         {user && (
-          collapsed ? (
-            // Phase 18B: avatar visible in collapsed mode as a centered
-            // circle with tooltip, instead of vanishing entirely.
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <div className="mx-auto mt-2 flex h-9 w-9 cursor-default items-center justify-center rounded-full bg-primary text-xs font-semibold text-primary-foreground">
-                  {user.name?.[0]?.toUpperCase() || 'U'}
-                </div>
-              </TooltipTrigger>
-              <TooltipContent side="right">
-                <span className="font-medium">{user.name}</span>
-                {user.role && <span className="text-muted-foreground"> · {user.role}</span>}
-              </TooltipContent>
-            </Tooltip>
-          ) : (
-            <div className="mt-2 flex items-center gap-2 rounded-md px-3 py-2">
-              <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-primary text-xs font-medium text-primary-foreground">
-                {user.name?.[0]?.toUpperCase() || 'U'}
-              </div>
-              <div className="min-w-0 flex-1">
-                <p className="truncate text-xs font-medium text-foreground">{user.name}</p>
-                <p className="truncate text-[10px] text-muted-foreground">{user.role}</p>
-              </div>
-            </div>
-          )
+          <UserMenu
+            align="left"
+            verticalAlign="above"
+            trigger={({ open, onClick }) =>
+              collapsed ? (
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <button
+                      type="button"
+                      onClick={onClick}
+                      aria-haspopup="menu"
+                      aria-expanded={open}
+                      className="mx-auto flex h-9 w-9 items-center justify-center rounded-full bg-primary text-xs font-semibold text-primary-foreground hover:opacity-90 transition-opacity"
+                    >
+                      {user.name?.[0]?.toUpperCase() || 'U'}
+                    </button>
+                  </TooltipTrigger>
+                  <TooltipContent side="right">
+                    <span className="font-medium">{user.name}</span>
+                    {user.role && <span className="text-muted-foreground"> · {user.role}</span>}
+                  </TooltipContent>
+                </Tooltip>
+              ) : (
+                <button
+                  type="button"
+                  onClick={onClick}
+                  aria-haspopup="menu"
+                  aria-expanded={open}
+                  className="flex w-full items-center gap-2 rounded-md px-3 py-2 text-left hover:bg-accent transition-colors"
+                >
+                  <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-primary text-xs font-medium text-primary-foreground">
+                    {user.name?.[0]?.toUpperCase() || 'U'}
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <p className="truncate text-xs font-medium text-foreground">{user.name}</p>
+                    <p className="truncate text-[10px] text-muted-foreground">{user.role}</p>
+                  </div>
+                  <ChevronUp className="h-3.5 w-3.5 text-muted-foreground" />
+                </button>
+              )
+            }
+          />
         )}
       </div>
     </div>
