@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { useNavigate, Link, useSearchParams } from 'react-router-dom';
-import { Mail, Lock, Eye, EyeOff, KeyRound, Loader2, Terminal } from 'lucide-react';
+import { Mail, Lock, Eye, EyeOff, KeyRound, Loader2 } from 'lucide-react';
+import { BrandMark } from '@/components/common/BrandLogo';
 import { useAuth } from '@/context/AuthContext';
 import { getRegistrationStatus } from '@/services/registrationService';
 import api from '@/services/api';
@@ -45,6 +46,19 @@ function Login() {
   const [searchParams] = useSearchParams();
   const isDeleted = searchParams.get('deleted') === '1';
 
+  // Honor ?redirect=<path> after successful login. This is how the device-auth
+  // page (and any other page that gates on auth) preserves its destination
+  // across the login flow — without this, users who hit /device?user_code=XXX
+  // while logged out get bounced to /dashboard after login and have to
+  // manually navigate back, breaking the TUI device-login UX.
+  // Only same-origin relative paths are accepted to prevent open-redirect.
+  const safePostLoginDest = (() => {
+    const r = searchParams.get('redirect');
+    if (!r) return '/';
+    if (!r.startsWith('/') || r.startsWith('//')) return '/';
+    return r;
+  })();
+
   useEffect(() => {
     getRegistrationStatus()
       .then((enabled) => setRegistrationEnabled(enabled))
@@ -64,7 +78,7 @@ function Login() {
       setSsoSubmitting(false);
       if (msg.ok && msg.accessToken && msg.refreshToken) {
         loginWithTokens({ accessToken: msg.accessToken, refreshToken: msg.refreshToken })
-          .then(() => navigate('/', { replace: true }))
+          .then(() => navigate(safePostLoginDest, { replace: true }))
           .catch((err) => setError(err?.message || 'SSO login failed'));
       } else if (msg.error) {
         setError(`SSO failed: ${msg.error}`);
@@ -72,7 +86,7 @@ function Login() {
     }
     window.addEventListener('message', onMessage);
     return () => window.removeEventListener('message', onMessage);
-  }, [loginWithTokens, navigate]);
+  }, [loginWithTokens, navigate, safePostLoginDest]);
 
   const handleSsoLogin = () => {
     if (!ssoStatus.enabled || !ssoStatus.orgSlug) return;
@@ -111,7 +125,7 @@ function Login() {
     setSubmitting(true);
     try {
       await login(email, password);
-      navigate('/', { replace: true });
+      navigate(safePostLoginDest, { replace: true });
     } catch (err) {
       setError(err.message || 'Login failed');
     } finally {
@@ -130,10 +144,12 @@ function Login() {
         )}
 
         <div className="mb-8 text-center">
-          <div className="mx-auto mb-4 flex h-11 w-11 items-center justify-center rounded-lg bg-primary">
-            <Terminal className="h-6 w-6 text-primary-foreground" />
+          <div className="mx-auto mb-4 flex justify-center">
+            <BrandMark size="lg" />
           </div>
-          <h1 className="text-2xl font-bold tracking-tight text-foreground">Shellius</h1>
+          <h1 className="text-2xl font-bold tracking-tight text-foreground">
+            {import.meta.env.VITE_BRAND_NAME || 'Shellius'}
+          </h1>
           <p className="mt-1 text-sm text-muted-foreground">Sign in to your account</p>
         </div>
 

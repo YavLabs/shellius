@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
-import { Mail, Loader2, Terminal } from 'lucide-react';
+import { Mail, Loader2 } from 'lucide-react';
+import { BrandMark } from '@/components/common/BrandLogo';
 import { requestPasswordReset } from '@/services/userTokenService';
 
 function ForgotPassword() {
@@ -27,10 +28,12 @@ function ForgotPassword() {
     <div className="flex min-h-screen items-center justify-center bg-background px-4">
       <div className="w-full max-w-sm">
         <div className="mb-8 text-center">
-          <div className="mx-auto mb-4 flex h-11 w-11 items-center justify-center rounded-lg bg-primary">
-            <Terminal className="h-6 w-6 text-primary-foreground" />
+          <div className="mx-auto mb-4 flex justify-center">
+            <BrandMark size="lg" />
           </div>
-          <h1 className="text-2xl font-bold tracking-tight text-foreground">Shellius</h1>
+          <h1 className="text-2xl font-bold tracking-tight text-foreground">
+            {import.meta.env.VITE_BRAND_NAME || 'Shellius'}
+          </h1>
           <p className="mt-1 text-sm text-muted-foreground">Reset your password</p>
         </div>
 

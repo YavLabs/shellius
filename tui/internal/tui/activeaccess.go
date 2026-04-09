@@ -29,7 +29,7 @@ const (
 
 // activeAccessLoadedMsg carries the fetched access requests.
 type activeAccessLoadedMsg struct {
-	requests []api.AccessRequest
+	requests  []api.AccessRequest
 	fromCache bool
 }
 
@@ -38,9 +38,6 @@ type activeAccessErrMsg struct{ err error }
 
 // activeAccessRefreshTick signals it is time for a background refresh.
 type activeAccessRefreshTick struct{}
-
-// activeAccessCacheHintExpired hides the "cached" footer hint after ~5s.
-type activeAccessCacheHintExpired struct{}
 
 // activeAccessConnectMsg requests that the app exec SSH for this access request.
 type activeAccessConnectMsg struct {
@@ -52,25 +49,22 @@ const activeAccessRefreshInterval = 30 * time.Second
 // activeAccessModel is the default post-login view: my currently approved
 // access requests with an instant-SSH Enter key.
 type activeAccessModel struct {
-	client     *api.Client
-	state      activeAccessState
-	requests   []api.AccessRequest
-	filtered   []api.AccessRequest
-	cursor     int
-	filter     textinput.Model
-	spinner    spinner.Model
-	errMsg     string
-	width      int
-	height     int
-	// cacheHint is the footer annotation shown briefly after painting from cache.
-	// "" = no hint, "cached" = show cached badge, "stale" = network error
-	cacheHint string
+	client   *api.Client
+	state    activeAccessState
+	requests []api.AccessRequest
+	filtered []api.AccessRequest
+	cursor   int
+	filter   textinput.Model
+	spinner  spinner.Model
+	errMsg   string
+	width    int
+	height   int
 }
 
 // NewActiveAccessModel creates the active-access picker model.
 func NewActiveAccessModel(client *api.Client) activeAccessModel {
 	ti := textinput.New()
-	ti.Placeholder = "filter..."
+	ti.Placeholder = "filter active access..."
 	ti.CharLimit = 64
 	ti.Width = 32
 
@@ -97,11 +91,9 @@ func (m activeAccessModel) Init() tea.Cmd {
 		var reqs []api.AccessRequest
 		if err := json.Unmarshal(cachedData, &reqs); err == nil {
 			logx.Infof("activeaccess: painting from cache (%d entries)", len(reqs))
-			// Return a pre-populated loaded msg so the UI is instant.
 			cmds = append(cmds, func() tea.Msg {
 				return activeAccessLoadedMsg{requests: reqs, fromCache: true}
 			})
-			// Schedule a background reconciliation fetch.
 			cmds = append(cmds, m.backgroundFetchCmd())
 			return tea.Batch(cmds...)
 		}
@@ -120,7 +112,6 @@ func (m activeAccessModel) fetchCmd() tea.Cmd {
 		if err != nil {
 			return activeAccessErrMsg{err: err}
 		}
-		// Persist to cache.
 		if data, mErr := json.Marshal(reqs); mErr == nil {
 			_ = cache.Write(activeAccessCacheName, data, "")
 		}
@@ -129,15 +120,12 @@ func (m activeAccessModel) fetchCmd() tea.Cmd {
 }
 
 // backgroundFetchCmd performs a silent network fetch to reconcile cache.
-// It does NOT switch to the loading state even if it runs before the
-// cache-served message is processed.
 func (m activeAccessModel) backgroundFetchCmd() tea.Cmd {
 	client := m.client
 	return func() tea.Msg {
 		reqs, err := client.ListMyActiveAccessRequests()
 		if err != nil {
 			logx.Warnf("activeaccess: background refresh failed: %v", err)
-			// Signal stale-network so the UI can add a hint but keep the data.
 			return activeAccessErrMsg{err: err}
 		}
 		if data, mErr := json.Marshal(reqs); mErr == nil {
@@ -155,13 +143,6 @@ func (m activeAccessModel) scheduleRefresh() tea.Cmd {
 	})
 }
 
-// scheduleCacheHintExpiry hides the cache hint after 5 seconds.
-func scheduleCacheHintExpiry() tea.Cmd {
-	return tea.Tick(5*time.Second, func(_ time.Time) tea.Msg {
-		return activeAccessCacheHintExpired{}
-	})
-}
-
 func (m activeAccessModel) Update(msg tea.Msg) (activeAccessModel, tea.Cmd) {
 	switch msg := msg.(type) {
 
@@ -176,18 +157,10 @@ func (m activeAccessModel) Update(msg tea.Msg) (activeAccessModel, tea.Cmd) {
 			return m, cmd
 		}
 
-	case activeAccessCacheHintExpired:
-		// Only clear if we're still showing the "cached" hint — not "stale".
-		if m.cacheHint == "cached" {
-			m.cacheHint = ""
-		}
-		return m, nil
-
 	case activeAccessLoadedMsg:
 		m.requests = msg.requests
 		m.state = activeAccessReady
 		m.applyFilter()
-		// Keep cursor in bounds.
 		if m.cursor >= len(m.filtered) {
 			m.cursor = max(0, len(m.filtered)-1)
 		}
@@ -197,36 +170,26 @@ func (m activeAccessModel) Update(msg tea.Msg) (activeAccessModel, tea.Cmd) {
 
 		var cmds []tea.Cmd
 		cmds = append(cmds, m.scheduleRefresh())
-
-		if msg.fromCache {
-			m.cacheHint = "cached"
-			cmds = append(cmds, scheduleCacheHintExpiry())
-		} else {
-			// Fresh data arrived — clear any stale hint.
-			m.cacheHint = ""
-		}
 		return m, tea.Batch(cmds...)
 
 	case activeAccessErrMsg:
-		// If we already have data (from cache), don't switch to error state —
-		// just annotate with a stale hint.
+		m.errMsg = msg.err.Error()
+		logx.Warnf("activeaccess: fetch failed: %v", msg.err)
 		if m.state == activeAccessReady {
-			m.cacheHint = "stale"
 			return m, nil
 		}
 		m.state = activeAccessError
-		m.errMsg = msg.err.Error()
 		return m, nil
 
 	case activeAccessRefreshTick:
-		// Background refresh — don't switch back to loading state.
 		return m, m.fetchCmd()
 
 	case tea.KeyMsg:
 		if m.state != activeAccessReady {
 			return m, nil
 		}
-		switch msg.String() {
+		key := msg.String()
+		switch key {
 		case "up", "k":
 			if m.cursor > 0 {
 				m.cursor--
@@ -236,6 +199,16 @@ func (m activeAccessModel) Update(msg tea.Msg) (activeAccessModel, tea.Cmd) {
 		case "down", "j":
 			if m.cursor < len(m.filtered)-1 {
 				m.cursor++
+			}
+			return m, nil
+
+		case "g":
+			m.cursor = 0
+			return m, nil
+
+		case "G":
+			if len(m.filtered) > 0 {
+				m.cursor = len(m.filtered) - 1
 			}
 			return m, nil
 
@@ -250,10 +223,18 @@ func (m activeAccessModel) Update(msg tea.Msg) (activeAccessModel, tea.Cmd) {
 			m.state = activeAccessLoading
 			return m, tea.Batch(m.spinner.Tick, m.fetchCmd())
 		}
-	}
 
-	// Delegate to filter input.
-	if m.state == activeAccessReady {
+		// H21: Key fall-through guard — only editing/printable keys reach the textinput.
+		// Unrecognized navigation keys (esc, tab, page-up, function keys, etc.) are a
+		// no-op so the textinput can't silently swallow them.
+		switch key {
+		case "backspace", "delete", "left", "right", "home", "end", "ctrl+u", "ctrl+w":
+			// editing keys — forward
+		default:
+			if len(msg.Runes) == 0 {
+				return m, nil
+			}
+		}
 		var cmd tea.Cmd
 		m.filter, cmd = m.filter.Update(msg)
 		m.applyFilter()
@@ -305,116 +286,181 @@ func envFromAR(r api.AccessRequest) string {
 	return ""
 }
 
-// visibleRows returns how many list rows fit in the current terminal height.
+// customerFromAR returns the customer name for an access request.
+func customerFromAR(r api.AccessRequest) string {
+	if r.Server != nil {
+		return r.Server.Customer.Name
+	}
+	return ""
+}
+
+// innerWidth returns the usable panel inner width. The panel expands to
+// fill the full terminal width — no upper cap, so wide terminals don't
+// waste columns of empty padding to the right of the rounded border.
+func (m activeAccessModel) innerWidth() int {
+	w := m.width
+	if w < 60 {
+		w = 60
+	}
+	// subtract border(2) + padding(2)
+	return w - 4
+}
+
+// panelHeight returns how many lines the panel body can hold.
+// Reserve: header-line(1) + blank(1) + search(1) + sort(1) + blank(1) +
+//          colheader(1) + sep(1) + count(1) + border(2) + app-footer(1) = 11
+// Logo adds 7 lines (6 art + 1 blank) when shown.
 func (m activeAccessModel) visibleRows() int {
-	// Reserve: header(1) + blank(1) + section-label(1) + filter(1) + blank(1) + footer(1) + border(2) = 8
-	reserved := 8
-	v := m.height - reserved
+	overhead := 11
+	if m.height >= 28 {
+		overhead += 7 // logo
+	}
+	v := m.height - overhead
 	if v < 3 {
 		v = 3
 	}
 	return v
 }
 
+// View renders the active access screen with sshm-style panel.
 func (m activeAccessModel) View() string {
-	var b strings.Builder
+	iw := m.innerWidth()
+	var bodyLines []string
+
+	showLogo := m.height >= 28
 
 	switch m.state {
 	case activeAccessLoading:
-		b.WriteString("\n  ")
-		b.WriteString(m.spinner.View())
-		b.WriteString("  ")
-		b.WriteString(MutedStyle.Render("Loading active access..."))
-		b.WriteString("\n")
+		spinner := m.spinner.View() + " " + MutedStyle.Render("loading active access...")
+		bodyLines = append(bodyLines, spinner)
 
 	case activeAccessError:
-		b.WriteString("\n  ")
-		b.WriteString(ErrorStyle.Render("Error: "))
-		b.WriteString(MutedStyle.Render(m.errMsg))
-		b.WriteString("\n\n  ")
-		b.WriteString(HelpBarStyle.Render("press r to retry  /  press / for commands"))
-		b.WriteString("\n")
+		bodyLines = append(bodyLines,
+			ErrorStyle.Render("error:")+" "+MutedStyle.Render(m.errMsg),
+			HelpBarStyle.Render("r retry  ·  / commands"),
+		)
 
 	case activeAccessReady:
-		b.WriteString(m.renderReady())
-	}
-
-	return b.String()
-}
-
-func (m activeAccessModel) renderReady() string {
-	var b strings.Builder
-
-	// Section label
-	countLabel := fmt.Sprintf("%d active", len(m.requests))
-	if len(m.requests) == 0 {
-		countLabel = "none"
-	}
-	b.WriteString("  ")
-	b.WriteString(SectionHeaderStyle.Render("ACTIVE ACCESS"))
-	b.WriteString("  ")
-	b.WriteString(MutedStyle.Render(countLabel))
-
-	// Cache hint (briefly shown after painting from cache, or on stale network).
-	if m.cacheHint == "cached" {
-		b.WriteString("  ")
-		b.WriteString(MutedStyle.Render("[cached]"))
-	} else if m.cacheHint == "stale" {
-		b.WriteString("  ")
-		b.WriteString(lipgloss.NewStyle().Foreground(lipgloss.Color(colorStaging)).Render("[stale, network error]"))
-	}
-	b.WriteString("\n")
-
-	// Filter input
-	b.WriteString("  ")
-	b.WriteString(m.filter.View())
-	b.WriteString("\n\n")
-
-	if len(m.filtered) == 0 {
-		if len(m.requests) == 0 {
-			b.WriteString("  ")
-			b.WriteString(MutedStyle.Render("No active access. Press / and choose /request."))
-		} else {
-			b.WriteString("  ")
-			b.WriteString(MutedStyle.Render("No results for your filter."))
+		if showLogo {
+			// Logo lines (6 lines of art)
+			logoLines := strings.Split(strings.TrimRight(ShelliusLogo(), "\n"), "\n")
+			bodyLines = append(bodyLines, logoLines...)
+			bodyLines = append(bodyLines, "")
 		}
-		b.WriteString("\n")
-		return b.String()
+
+		// Search bar: "Search (/ to focus): › <input>"
+		searchLine := SearchBarLabel() + m.filter.View()
+		bodyLines = append(bodyLines, searchLine)
+
+		// Sort indicator
+		bodyLines = append(bodyLines, SortIndicator("expires"))
+		bodyLines = append(bodyLines, "")
+
+		// Column headers
+		hdr := m.renderHeaderRow(iw)
+		bodyLines = append(bodyLines, hdr)
+		bodyLines = append(bodyLines, TableHeaderSep(iw))
+
+		if len(m.filtered) == 0 {
+			if len(m.requests) == 0 {
+				bodyLines = append(bodyLines, DimStyle.Render("no active access — press / and choose /request"))
+			} else {
+				bodyLines = append(bodyLines, DimStyle.Render("no results for your filter"))
+			}
+		} else {
+			visible := m.visibleRows()
+			start := 0
+			if m.cursor >= visible {
+				start = m.cursor - visible + 1
+			}
+			end := start + visible
+			if end > len(m.filtered) {
+				end = len(m.filtered)
+			}
+
+			for i := start; i < end; i++ {
+				row := m.renderRow(m.filtered[i], i == m.cursor, iw)
+				bodyLines = append(bodyLines, row)
+			}
+		}
+
+		// Count line
+		countLine := DimStyle.Render(fmt.Sprintf("%d active access request", len(m.filtered)))
+		if len(m.filtered) != 1 {
+			countLine = DimStyle.Render(fmt.Sprintf("%d active access requests", len(m.filtered)))
+		}
+		bodyLines = append(bodyLines, "")
+		bodyLines = append(bodyLines, countLine)
 	}
 
-	// Rows
-	visible := m.visibleRows()
-	start := 0
-	if m.cursor >= visible {
-		start = m.cursor - visible + 1
+	body := strings.Join(bodyLines, "\n")
+	panelWidth := m.width - 4 // leave 2-space margin each side
+	if panelWidth < 56 {
+		panelWidth = 56
 	}
-	end := start + visible
-	if end > len(m.filtered) {
-		end = len(m.filtered)
-	}
-
-	for i := start; i < end; i++ {
-		r := m.filtered[i]
-		selected := i == m.cursor
-		b.WriteString(m.renderRow(r, selected))
-		b.WriteString("\n")
-	}
-
-	// Scroll indicator
-	if len(m.filtered) > visible {
-		scrollInfo := fmt.Sprintf("  %d-%d of %d", start+1, end, len(m.filtered))
-		b.WriteString(MutedStyle.Render(scrollInfo))
-		b.WriteString("\n")
-	}
-
-	return b.String()
+	return RoundedPanel(body, panelWidth)
 }
 
-func (m activeAccessModel) renderRow(r api.AccessRequest, selected bool) string {
-	env := envFromAR(r)
-	badge := EnvBadge(env)
+// activeAccessColumnWidths returns the per-column widths for the table.
+// Env / Principal / Expires are fixed; Customer and Server split the
+// remaining inner width 40/60 so the table actually fills wide terminals
+// instead of leaving a huge empty gutter on the right.
+func activeAccessColumnWidths(iw int) (envW, custW, srvW, princW, expW int) {
+	envW = 8
+	princW = 14
+	expW = 14
+	const seps = 4 // single space between each of the 5 columns
+	rest := iw - envW - princW - expW - seps - 1 // -1 for the leading space
+	if rest < 24 {
+		rest = 24
+	}
+	custW = rest * 40 / 100
+	if custW < 12 {
+		custW = 12
+	}
+	srvW = rest - custW
+	if srvW < 12 {
+		srvW = 12
+	}
+	return
+}
+
+func (m activeAccessModel) renderHeaderRow(iw int) string {
+	envW, custW, srvW, princW, _ := activeAccessColumnWidths(iw)
+	env := TableHeaderStyle.Width(envW).Render("Env")
+	cust := TableHeaderStyle.Width(custW).Render("Customer")
+	server := TableHeaderStyle.Width(srvW).Render("Server")
+	principal := TableHeaderStyle.Width(princW).Render("Principal")
+	expires := TableHeaderStyle.Render("Expires")
+	return env + " " + cust + " " + server + " " + principal + " " + expires
+}
+
+func (m activeAccessModel) renderRow(r api.AccessRequest, selected bool, iw int) string {
+	_, custW, srvW, princW, expW := activeAccessColumnWidths(iw)
+
+	// On selected rows we'd otherwise paint coral text on a coral
+	// background — invisible. Use white text uniformly across all cells
+	// when selected, with no per-column foregrounds, so the coral fill
+	// stays legible.
+	customerFg := colorMuted
+	serverFg := colorText
+	principalFg := colorMuted
+	expiryFg := colorMuted
+	envCell := EnvBadge(envFromAR(r))
+	if selected {
+		customerFg = colorText
+		serverFg = colorText
+		principalFg = colorText
+		expiryFg = colorText
+		envCell = EnvBadgePlain(envFromAR(r))
+	}
+
+	customer := customerFromAR(r)
+	custCol := lipgloss.NewStyle().Width(custW).Foreground(lipgloss.Color(customerFg)).Render(truncate(customer, custW-1))
 
 	name := serverNameFromAR(r)
+	serverCol := lipgloss.NewStyle().Width(srvW).Foreground(lipgloss.Color(serverFg)).Render(truncate(name, srvW-1))
+
 	principal := r.RequestedPrincipal
 	if principal == "" && r.Server != nil {
 		principal = r.Server.SshUser
@@ -422,41 +468,35 @@ func (m activeAccessModel) renderRow(r api.AccessRequest, selected bool) string 
 	if principal == "" {
 		principal = "ubuntu"
 	}
+	principalCol := lipgloss.NewStyle().Width(princW).Foreground(lipgloss.Color(principalFg)).Render(truncate(principal, princW-1))
 
 	var expiryStr string
 	if r.ExpiresAt != nil {
 		remaining := time.Until(*r.ExpiresAt)
 		if remaining > 0 {
-			expiryStr = "expires in " + formatDuration(remaining)
+			expiryStr = formatDuration(remaining)
 		} else {
 			expiryStr = "expired"
 		}
 	}
+	expiryCol := lipgloss.NewStyle().Width(expW).Foreground(lipgloss.Color(expiryFg)).Render(expiryStr)
 
-	// Build content: badge  name  principal  expiry  [enter] ssh
-	nameCol := lipgloss.NewStyle().Width(22).Render(name)
-	principalCol := lipgloss.NewStyle().Width(12).
-		Foreground(lipgloss.Color(colorSubtle)).
-		Render(principal)
-	expiryCol := lipgloss.NewStyle().Width(18).
-		Foreground(lipgloss.Color(colorMuted)).
-		Render(expiryStr)
-
-	hint := ""
-	if selected {
-		hint = HelpBarStyle.Render("  [enter] ssh")
-	}
-
-	content := fmt.Sprintf("  %-6s  %s  %s  %s%s",
-		badge,
-		nameCol,
-		principalCol,
-		expiryCol,
-		hint,
-	)
+	content := envCell + " " + custCol + " " + serverCol + " " + principalCol + " " + expiryCol
 
 	if selected {
-		return SelectedItemStyle.Render(content)
+		return renderSelectedRow(content, iw)
 	}
-	return ListItemStyle.Render(content)
+	return renderNormalRow(content)
+}
+
+// truncate cuts s to max runes, appending "…" if needed.
+func truncate(s string, max int) string {
+	runes := []rune(s)
+	if len(runes) <= max {
+		return s
+	}
+	if max <= 1 {
+		return "…"
+	}
+	return string(runes[:max-1]) + "…"
 }

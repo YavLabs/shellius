@@ -51,6 +51,35 @@ See `.env.prod.example` for a fully documented list. Required secrets:
 | `AGENT_SHARED_SECRET` | `openssl rand -base64 32` |
 | `METRICS_TOKEN` | `openssl rand -base64 32` |
 
+### Session lifetimes
+
+`JWT_EXPIRY` and `JWT_REFRESH_EXPIRY` control how long an access token
+and a refresh token are valid for. Defaults if unset are `15m` / `7d`.
+For self-hosted single-team deployments the recommended values are:
+
+```
+JWT_EXPIRY=8h
+JWT_REFRESH_EXPIRY=30d
+```
+
+Rationale: 8h matches a workday, so users only re-login once per day
+and the TUI doesn't fire a token refresh during normal use. 30d for
+the refresh token means the CLI stays signed in across a typical
+sprint without nagging. Tighten back to `15m` / `7d` if you're running
+a hosted multi-tenant instance where reducing the blast radius of a
+stolen token matters more than UX.
+
+After changing these, recreate the backend container so the new env
+vars are picked up:
+
+```
+docker compose -f docker-compose.prod.yml --env-file .env.prod \
+  up -d --force-recreate --no-deps backend
+```
+
+Existing tokens keep their original expiry — users need to re-login
+once for the new TTL to apply to their session.
+
 ## Named Volumes
 
 | Volume | Contents |

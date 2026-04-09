@@ -31,6 +31,7 @@ import Register from './pages/Register';
 import Legal from './pages/Legal';
 import AuthCallback from './pages/AuthCallback';
 import NotFound from './pages/NotFound';
+import InstallCli from './pages/InstallCli';
 
 function App() {
   return (
@@ -75,6 +76,7 @@ function App() {
                   <Route path="/audit-log" element={<AuditLog />} />
                   <Route path="/notifications" element={<Notifications />} />
                   <Route path="/profile" element={<Profile />} />
+                  <Route path="/install-cli" element={<InstallCli />} />
                 </Route>
               </Route>
               {/* 404 catch-all */}

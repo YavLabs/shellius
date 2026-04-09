@@ -15,10 +15,31 @@ import (
 )
 
 // ErrTokenRefreshFailed is returned by Client.do when the background token
-// refresh fails. The caller should surface this as a non-destructive warning
-// (toast) and NOT wipe the config — the existing tokens are left intact so the
-// user can retry without re-authenticating.
+// refresh fails for a transient reason. The caller should surface this as a
+// non-destructive warning (toast) and NOT wipe the config — the existing
+// tokens are left intact so the user can retry without re-authenticating.
 var ErrTokenRefreshFailed = errors.New("token refresh failed")
+
+// ErrSessionExpired is re-exported from the auth package and surfaced when
+// the refresh endpoint definitively rejects the stored refresh token (HTTP
+// 401). The TUI app should route the user to the login screen.
+var ErrSessionExpired = auth.ErrSessionExpired
+
+// HTTPError is returned by Client.do when the server responds with
+// success:false. It carries the HTTP status code plus the structured
+// error fields from the API envelope.
+type HTTPError struct {
+	Status  int
+	Code    string
+	Message string
+}
+
+func (e *HTTPError) Error() string {
+	if e.Code != "" {
+		return fmt.Sprintf("API error (HTTP %d, code %s): %s", e.Status, e.Code, e.Message)
+	}
+	return fmt.Sprintf("API error (HTTP %d): %s", e.Status, e.Message)
+}
 
 // Host represents a server entry returned by the Shellius API.
 type Host struct {
@@ -46,6 +67,8 @@ type AccessRequest struct {
 	RequestedPrincipal string     `json:"requestedPrincipal"`
 	RequestedDuration  int        `json:"requestedDuration"`
 	Reason             string     `json:"reason"`
+	DeniedReason       string     `json:"deniedReason"`
+	Protocol           string     `json:"protocol"`
 	ExpiresAt          *time.Time `json:"expiresAt,omitempty"`
 	CreatedAt          time.Time  `json:"createdAt"`
 	// Server is inlined when the backend supports it.
@@ -70,10 +93,37 @@ type SshCreds struct {
 	PrivateKey     string     `json:"privateKey"`
 	Certificate    string     `json:"certificate"`
 	Hostname       string     `json:"hostname"`
+	// Address is the IP address the backend resolved for the server. The
+	// TUI MUST prefer this over Hostname for the actual ssh -i target —
+	// the backend's DNS view of the world (inside docker) is canonical, and
+	// the user's local DNS may resolve the server's display hostname to a
+	// completely different machine that doesn't trust the Shellius CA.
+	// (This is exactly how prod-databases broke for the first user: their
+	// Mac resolved the name to an unrelated host and ssh got cert-rejected.)
+	Address        string     `json:"address"`
 	Port           int        `json:"port"`
 	Username       string     `json:"username"`
 	ExpiresAt      *time.Time `json:"expiresAt,omitempty"`
 	ConnectCommand string     `json:"connectCommand"`
+}
+
+// ConnectResult is returned by POST /api/access-requests/:id/connect.
+type ConnectResult struct {
+	URL       string     `json:"url"`
+	ExpiresAt *time.Time `json:"expiresAt,omitempty"`
+}
+
+// AccessIntent is returned by GET /api/access-requests/intent?serverId=...
+// It gives the TUI all the context it needs before showing the request form.
+type AccessIntent struct {
+	HasActiveAccess     bool     `json:"hasActiveAccess"`
+	HasPendingRequest   bool     `json:"hasPendingRequest"`
+	PreferredPrincipal  string   `json:"preferredPrincipal"`
+	AllowedPrincipals   []string `json:"allowedPrincipals"`
+	RequiresApproval    bool     `json:"requiresApproval"`
+	JitEnabled          bool     `json:"jitEnabled"`
+	Protocol            string   `json:"protocol"`
+	ActiveAccessRequest *AccessRequest `json:"activeAccessRequest,omitempty"`
 }
 
 // Client is the Shellius API HTTP client.
@@ -96,18 +146,29 @@ func New(cfg *config.Config) *Client {
 type apiEnvelope struct {
 	Success bool            `json:"success"`
 	Data    json.RawMessage `json:"data"`
-	Error   interface{}     `json:"error"`
+	Error   json.RawMessage `json:"error"`
+}
+
+// apiErrorPayload is the structured error object inside the envelope.
+type apiErrorPayload struct {
+	Code    string `json:"code"`
+	Message string `json:"message"`
 }
 
 func (c *Client) do(method, path string, body interface{}, result interface{}) error {
 	if err := auth.RefreshIfNeeded(c.Config); err != nil {
 		// Log the failure at WARN so it shows up in shellius doctor output.
-		// We deliberately do NOT wipe the config — only shellius logout may
-		// clear credentials. The caller receives ErrTokenRefreshFailed so it
-		// can surface a non-destructive toast and then proceed with whatever
-		// access token is currently cached (it may still be valid).
 		logx.Warnf("api: token refresh failed (oldExpiry=%s): %v",
 			c.Config.TokenExpiresAt.UTC().Format(time.RFC3339), err)
+		// A definitive 401 from /api/auth/refresh means the refresh token
+		// has been rotated, revoked, or wiped — there's no recovery path
+		// other than re-authenticating, so propagate the sentinel as-is
+		// so the app can route to the login screen.
+		if errors.Is(err, auth.ErrSessionExpired) {
+			return err
+		}
+		// Otherwise treat it as a transient failure — leave the existing
+		// tokens intact so the user can retry without re-authenticating.
 		return fmt.Errorf("%w: %v", ErrTokenRefreshFailed, err)
 	}
 
@@ -144,8 +205,22 @@ func (c *Client) do(method, path string, body interface{}, result interface{}) e
 	}
 
 	if !envelope.Success {
-		errMsg := fmt.Sprintf("%v", envelope.Error)
-		return fmt.Errorf("API error (HTTP %d): %s", resp.StatusCode, errMsg)
+		// Try to parse structured error payload.
+		httpErr := &HTTPError{Status: resp.StatusCode}
+		if len(envelope.Error) > 0 {
+			var payload apiErrorPayload
+			if json.Unmarshal(envelope.Error, &payload) == nil {
+				httpErr.Code = payload.Code
+				httpErr.Message = payload.Message
+			} else {
+				// Fallback: treat raw JSON as the message string.
+				httpErr.Message = string(envelope.Error)
+			}
+		}
+		if httpErr.Message == "" {
+			httpErr.Message = http.StatusText(resp.StatusCode)
+		}
+		return httpErr
 	}
 
 	if result != nil && len(envelope.Data) > 0 {
@@ -217,14 +292,14 @@ type accessRequestListData struct {
 	Items []AccessRequest `json:"items"`
 	// Some backends wrap in accessRequests instead of items.
 	AccessRequests []AccessRequest `json:"accessRequests"`
+	Total          int             `json:"total"`
 }
 
 // ListMyActiveAccessRequests fetches the caller's active (APPROVED, not expired)
-// access requests. It calls GET /api/access-requests and filters client-side
-// since older backends may not support mine/active query params.
+// access requests. Uses tab=mine&status=APPROVED per the API contract.
 func (c *Client) ListMyActiveAccessRequests() ([]AccessRequest, error) {
 	var raw json.RawMessage
-	if err := c.do("GET", "/api/access-requests?mine=true&status=APPROVED", nil, &raw); err != nil {
+	if err := c.do("GET", "/api/access-requests?tab=mine&status=APPROVED", nil, &raw); err != nil {
 		return nil, err
 	}
 
@@ -255,14 +330,39 @@ func (c *Client) ListMyActiveAccessRequests() ([]AccessRequest, error) {
 	return active, nil
 }
 
-// SubmitAccessRequest creates a new access request for a production server.
-func (c *Client) SubmitAccessRequest(serverID, reason string, durationSec int, principal string) (AccessRequest, error) {
+// ListMyAccessRequests fetches all access requests for the current user
+// across all statuses. Used by the /myrequests view.
+func (c *Client) ListMyAccessRequests() ([]AccessRequest, error) {
+	var raw json.RawMessage
+	if err := c.do("GET", "/api/access-requests?tab=mine&limit=50", nil, &raw); err != nil {
+		return nil, err
+	}
+
+	var requests []AccessRequest
+	if err := json.Unmarshal(raw, &requests); err != nil {
+		var data accessRequestListData
+		if err2 := json.Unmarshal(raw, &data); err2 != nil {
+			return nil, fmt.Errorf("decode access requests: %w", err2)
+		}
+		requests = data.Items
+		if len(requests) == 0 {
+			requests = data.AccessRequests
+		}
+	}
+	return requests, nil
+}
+
+// SubmitAccessRequest creates a new access request.
+func (c *Client) SubmitAccessRequest(serverID, reason string, durationSec int, principal, protocol string) (AccessRequest, error) {
+	if protocol == "" {
+		protocol = "SSH"
+	}
 	body := map[string]interface{}{
 		"serverId":           serverID,
 		"reason":             reason,
 		"requestedDuration":  durationSec,
 		"requestedPrincipal": principal,
-		"protocol":           "SSH",
+		"protocol":           protocol,
 	}
 	var data struct {
 		AccessRequest AccessRequest `json:"accessRequest"`
@@ -284,6 +384,28 @@ func (c *Client) GetAccessRequest(id string) (AccessRequest, error) {
 	return data.AccessRequest, nil
 }
 
+// GetAccessIntent calls GET /api/access-requests/intent?serverId=... and
+// returns structured context needed to pre-fill the request form.
+func (c *Client) GetAccessIntent(serverID string) (AccessIntent, error) {
+	var intent AccessIntent
+	if err := c.do("GET", "/api/access-requests/intent?serverId="+serverID, nil, &intent); err != nil {
+		return AccessIntent{}, err
+	}
+	return intent, nil
+}
+
+// GetActiveAccessForServer calls GET /api/access-requests/by-server/:id/active.
+// Returns nil, nil when there is no active access request.
+func (c *Client) GetActiveAccessForServer(serverID string) (*AccessRequest, error) {
+	var data struct {
+		AccessRequest *AccessRequest `json:"accessRequest"`
+	}
+	if err := c.do("GET", "/api/access-requests/by-server/"+serverID+"/active", nil, &data); err != nil {
+		return nil, err
+	}
+	return data.AccessRequest, nil
+}
+
 // GetSshCredentials fetches ephemeral SSH credentials for an approved access request.
 func (c *Client) GetSshCredentials(id string) (SshCreds, error) {
 	var data struct {
@@ -293,4 +415,15 @@ func (c *Client) GetSshCredentials(id string) (SshCreds, error) {
 		return SshCreds{}, err
 	}
 	return data.Credentials, nil
+}
+
+// StartWebTerminal calls POST /api/access-requests/:id/connect and returns
+// the web terminal URL. Used as a fallback when key download is disabled by
+// policy (HTTP 403 with code indicating key download disabled).
+func (c *Client) StartWebTerminal(id string) (ConnectResult, error) {
+	var result ConnectResult
+	if err := c.do("POST", "/api/access-requests/"+id+"/connect", nil, &result); err != nil {
+		return ConnectResult{}, err
+	}
+	return result, nil
 }

@@ -3,8 +3,10 @@ package tui
 import (
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
+	"runtime"
 	"strings"
 	"time"
 
@@ -26,6 +28,7 @@ const (
 	viewActiveAccess // default: my approved access requests
 	viewHostList     // /servers: full server browser
 	viewAccessRequest
+	viewMyRequests // /myrequests: all my requests across statuses
 	viewHelp
 	viewProfile
 	viewSessions
@@ -48,6 +51,7 @@ type AppModel struct {
 	activeAccess  activeAccessModel
 	hostList      HostListModel
 	accessRequest AccessRequestModel
+	myRequests    myRequestsModel
 	palette       paletteModel
 	selectedHost  api.Host
 	errMsg        string
@@ -109,6 +113,9 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.currentView == viewAccessRequest {
 			m.accessRequest, _ = m.accessRequest.Update(msg)
 		}
+		if m.currentView == viewMyRequests {
+			m.myRequests, _ = m.myRequests.Update(msg)
+		}
 		return m, nil
 
 	case tea.KeyMsg:
@@ -133,6 +140,13 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.prevView = m.currentView
 			m.currentView = viewHelp
 			return m, nil
+		}
+
+		// q quits from the top-level active-access view only.
+		// In sub-views (hostlist, accessrequest, myrequests, overlays) q is handled
+		// locally so it can mean "back" without exiting the whole app.
+		if msg.String() == "q" && m.currentView == viewActiveAccess {
+			return m, tea.Quit
 		}
 	}
 
@@ -162,18 +176,34 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.prevView = m.currentView
 		m.hostList = NewHostListModel(m.client)
+		// Seed the new sub-model with the current terminal size — without
+		// this it stays at width=0 until the user resizes the terminal,
+		// which causes column-widths to fall back to their minimums and
+		// the table content to wrap mid-row inside a tiny panel.
+		m.hostList, _ = m.hostList.Update(tea.WindowSizeMsg{Width: m.width, Height: m.height})
 		m.currentView = viewHostList
 		return m, m.hostList.Init()
 
 	case openRequestMsg:
-		// Stub: go to host list so user can pick a server for the request.
+		// Go to host list so user can pick a server for the request.
 		if m.client == nil {
 			m.client = api.New(m.cfg)
 		}
 		m.prevView = m.currentView
 		m.hostList = NewHostListModel(m.client)
+		m.hostList, _ = m.hostList.Update(tea.WindowSizeMsg{Width: m.width, Height: m.height})
 		m.currentView = viewHostList
 		return m, m.hostList.Init()
+
+	case openMyRequestsMsg:
+		if m.client == nil {
+			m.client = api.New(m.cfg)
+		}
+		m.prevView = m.currentView
+		m.myRequests = newMyRequestsModel(m.client)
+		m.myRequests, _ = m.myRequests.Update(tea.WindowSizeMsg{Width: m.width, Height: m.height})
+		m.currentView = viewMyRequests
+		return m, m.myRequests.Init()
 
 	case showSessionsMsg:
 		m.prevView = m.currentView
@@ -194,8 +224,59 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case viewHostList:
 			m.hostList.state = hostListStateLoading
 			return m, m.hostList.fetchHosts()
+		case viewMyRequests:
+			m.myRequests.state = myRequestsLoading
+			return m, m.myRequests.fetchCmd()
 		}
 		return m, nil
+	}
+
+	// Cross-cutting connection messages. These are produced asynchronously
+	// by connectFromAR / the access-request approval flow, and must be
+	// handled regardless of which view is currently active — otherwise they
+	// get delegated to a sub-model that doesn't know about them and silently
+	// dropped (which is exactly what made "Enter" appear to do nothing on
+	// the active-access screen in Phase 1).
+	switch msg := msg.(type) {
+	case sshConnectMsg:
+		return m, m.execSSH(msg.creds, msg.host)
+	case sshExitedMsg:
+		// SSH session has ended cleanly. Route the user back to the
+		// active-access view (their "home" screen) and refresh it so any
+		// new state from the session — e.g. an access request that just
+		// expired or was extended — is reflected immediately.
+		m.currentView = viewActiveAccess
+		if m.client != nil {
+			m.activeAccess = NewActiveAccessModel(m.client)
+			m.activeAccess, _ = m.activeAccess.Update(tea.WindowSizeMsg{Width: m.width, Height: m.height})
+			return m, m.activeAccess.Init()
+		}
+		return m, nil
+	case appErrMsg:
+		// A definitive session-expired error means the refresh token has
+		// been rejected by the server. There is no in-app recovery — wipe
+		// the local credentials and route the user to the login screen
+		// with a clear message instead of dumping them in a generic error
+		// view they can't escape from.
+		if errors.Is(msg.err, api.ErrSessionExpired) {
+			logx.Warnf("app: session expired, routing to login screen")
+			m.cfg.AccessToken = ""
+			m.cfg.RefreshToken = ""
+			m.cfg.TokenExpiresAt = time.Time{}
+			_ = m.cfg.Save()
+			m.client = nil
+			m.loginModel = NewLoginModel(m.cfg)
+			m.currentView = viewLogin
+			m.toastMsg = "Your session has expired — please sign in again."
+			return m, m.loginModel.Init()
+		}
+		m.prevView = m.currentView
+		m.currentView = viewError
+		m.errMsg = msg.err.Error()
+		return m, nil
+
+	case openWebTerminalMsg:
+		return m, m.openWebTerminal(msg.url, msg.requestID)
 	}
 
 	// Route to active view.
@@ -210,6 +291,8 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.updateHostList(msg)
 	case viewAccessRequest:
 		return m.updateAccessRequest(msg)
+	case viewMyRequests:
+		return m.updateMyRequests(msg)
 	case viewHelp, viewProfile, viewSessions:
 		return m.updateOverlay(msg)
 	case viewError:
@@ -256,6 +339,7 @@ func (m AppModel) updateLogin(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case loginSuccessMsg:
 		m.client = api.New(m.cfg)
 		m.activeAccess = NewActiveAccessModel(m.client)
+		m.activeAccess, _ = m.activeAccess.Update(tea.WindowSizeMsg{Width: m.width, Height: m.height})
 		m.currentView = viewActiveAccess
 		return m, m.activeAccess.Init()
 	}
@@ -269,6 +353,12 @@ func (m AppModel) updateActiveAccess(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case activeAccessConnectMsg:
 		return m, m.connectFromAR(msg.req)
+	case activeAccessErrMsg:
+		// Promote session-expired errors to a top-level appErrMsg so the
+		// root Update() can wipe creds and route to the login screen.
+		if errors.Is(msg.err, api.ErrSessionExpired) {
+			return m, func() tea.Msg { return appErrMsg{err: msg.err} }
+		}
 	}
 
 	var cmd tea.Cmd
@@ -279,13 +369,17 @@ func (m AppModel) updateActiveAccess(msg tea.Msg) (tea.Model, tea.Cmd) {
 func (m AppModel) updateHostList(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case hostSelectedMsg:
+		// Phase 2: ALWAYS route through the intent/form path regardless of
+		// environment. connectDirect has been removed. The form handles the
+		// case where hasActiveAccess is true (auto-skip) or hasPendingRequest
+		// is true (auto-poll). This ensures the user always sees the form and
+		// that no new request is submitted without their knowledge.
 		m.selectedHost = msg.host
-		if msg.host.AccessStatus == "requires_approval" || msg.host.Environment == "prod" {
-			m.currentView = viewAccessRequest
-			m.accessRequest = NewAccessRequestModel(m.client, msg.host)
-			return m, m.accessRequest.Init()
-		}
-		return m, m.connectDirect(msg.host)
+		m.prevView = m.currentView
+		m.currentView = viewAccessRequest
+		m.accessRequest = NewAccessRequestModel(m.client, msg.host)
+		m.accessRequest, _ = m.accessRequest.Update(tea.WindowSizeMsg{Width: m.width, Height: m.height})
+		return m, m.accessRequest.Init()
 
 	case tea.KeyMsg:
 		if msg.String() == "esc" {
@@ -315,6 +409,14 @@ func (m AppModel) updateAccessRequest(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, func() tea.Msg {
 			creds, err := client.GetSshCredentials(reqID)
 			if err != nil {
+				// If key download is disabled by policy, fall back to web terminal.
+				if isKeyDownloadDisabled(err) {
+					result, connectErr := client.StartWebTerminal(reqID)
+					if connectErr != nil {
+						return appErrMsg{err: fmt.Errorf("start web terminal: %w", connectErr)}
+					}
+					return openWebTerminalMsg{url: result.URL, requestID: reqID}
+				}
 				return appErrMsg{err: fmt.Errorf("get SSH credentials: %w", err)}
 			}
 			return sshConnectMsg{creds: creds, host: host}
@@ -331,6 +433,22 @@ func (m AppModel) updateAccessRequest(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	var cmd tea.Cmd
 	m.accessRequest, cmd = m.accessRequest.Update(msg)
+	return m, cmd
+}
+
+func (m AppModel) updateMyRequests(msg tea.Msg) (tea.Model, tea.Cmd) {
+	switch msg.(type) {
+	case navBackMsg:
+		back := m.prevView
+		if back == viewError || back == viewConnecting {
+			back = viewActiveAccess
+		}
+		m.currentView = back
+		return m, nil
+	}
+
+	var cmd tea.Cmd
+	m.myRequests, cmd = m.myRequests.Update(msg)
 	return m, cmd
 }
 
@@ -361,12 +479,51 @@ func (m AppModel) updateError(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+// openWebTerminalMsg signals that the web terminal should be opened in a browser.
+type openWebTerminalMsg struct {
+	url       string
+	requestID string
+}
+
+// openWebTerminal opens the web terminal URL in the system browser and updates
+// the access-request sub-model so it renders the confirmation screen.
+func (m AppModel) openWebTerminal(url, requestID string) tea.Cmd {
+	_ = requestID // reserved for future use (e.g. logging)
+	logx.Infof("app: opening web terminal URL: %s", url)
+
+	// Launch browser — fire-and-forget; errors are non-fatal since we still
+	// show the URL to the user.
+	switch runtime.GOOS {
+	case "darwin":
+		_ = exec.Command("open", url).Start()
+	case "windows":
+		_ = exec.Command("rundll32", "url.dll,FileProtocolHandler", url).Start()
+	default: // linux and others
+		_ = exec.Command("xdg-open", url).Start()
+	}
+
+	// Update the access-request sub-model to show the confirmation screen.
+	return func() tea.Msg {
+		return arWebTerminalMsg{url: url}
+	}
+}
+
 // connectFromAR fetches credentials for an approved access request and launches SSH.
+// If key download is disabled by policy (HTTP 403), falls back to opening the
+// web terminal URL in the system browser.
 func (m AppModel) connectFromAR(req api.AccessRequest) tea.Cmd {
 	client := m.client
 	return func() tea.Msg {
 		creds, err := client.GetSshCredentials(req.ID)
 		if err != nil {
+			// Key download disabled — fall back to web terminal.
+			if isKeyDownloadDisabled(err) {
+				result, connectErr := client.StartWebTerminal(req.ID)
+				if connectErr != nil {
+					return appErrMsg{err: fmt.Errorf("start web terminal: %w", connectErr)}
+				}
+				return openWebTerminalMsg{url: result.URL, requestID: req.ID}
+			}
 			return appErrMsg{err: fmt.Errorf("get SSH credentials: %w", err)}
 		}
 		// Build a synthetic Host from the inlined server info.
@@ -383,34 +540,6 @@ func (m AppModel) connectFromAR(req api.AccessRequest) tea.Cmd {
 			host.Principal = req.RequestedPrincipal
 		}
 		return sshConnectMsg{creds: creds, host: host}
-	}
-}
-
-// connectDirect fetches credentials for a non-prod host and connects.
-func (m AppModel) connectDirect(host api.Host) tea.Cmd {
-	client := m.client
-	return func() tea.Msg {
-		req, err := client.SubmitAccessRequest(host.ID, "Direct access via Shellius TUI", 3600, host.Principal)
-		if err != nil {
-			return appErrMsg{err: fmt.Errorf("request credentials: %w", err)}
-		}
-		for i := 0; i < 10; i++ {
-			updated, pollErr := client.GetAccessRequest(req.ID)
-			if pollErr != nil {
-				return appErrMsg{err: fmt.Errorf("poll access request: %w", pollErr)}
-			}
-			switch updated.Status {
-			case "APPROVED":
-				creds, credErr := client.GetSshCredentials(updated.ID)
-				if credErr != nil {
-					return appErrMsg{err: fmt.Errorf("get SSH credentials: %w", credErr)}
-				}
-				return sshConnectMsg{creds: creds, host: host}
-			case "DENIED", "REVOKED", "EXPIRED":
-				return appErrMsg{err: fmt.Errorf("access request %s", updated.Status)}
-			}
-		}
-		return appErrMsg{err: fmt.Errorf("access request timed out waiting for approval")}
 	}
 }
 
@@ -441,9 +570,25 @@ func (m AppModel) execSSH(creds api.SshCreds, host api.Host) tea.Cmd {
 	if user == "" {
 		user = "root"
 	}
-	hostname := creds.Hostname
+	// Prefer the IP address that the backend resolved when issuing the
+	// credentials. The user's local DNS for things like "prod-databases"
+	// may point at a completely different host that doesn't trust the
+	// Shellius CA — and we'd silently get "Permission denied (publickey)".
+	// Hostname is kept for display purposes (logging, error messages).
+	hostname := creds.Address
+	displayHost := creds.Hostname
+	if hostname == "" {
+		hostname = creds.Hostname
+	}
 	if hostname == "" {
 		hostname = host.Hostname
+	}
+	if displayHost == "" {
+		displayHost = host.Hostname
+	}
+	if displayHost != "" && displayHost != hostname {
+		logx.Infof("app: connecting to %s (resolved by backend) for display host %s",
+			hostname, displayHost)
 	}
 	port := creds.Port
 	if port == 0 {
@@ -471,18 +616,127 @@ func (m AppModel) execSSH(creds api.SshCreds, host api.Host) tea.Cmd {
 
 	sshCmd := sshpkg.BuildCommand(hostname, port, user, keyPath, certPath)
 
+	// Capture ssh's stderr in addition to letting it through to the terminal.
+	// Bubble Tea's alt-screen restore wipes whatever ssh printed before
+	// failing, so without this tee the user just sees "exit status 255" with
+	// no clue why. The buffer is bounded to keep memory predictable on long
+	// sessions that emit a lot of output.
+	stderrBuf := newBoundedBuffer(8 * 1024)
+	sshCmd.Stderr = io.MultiWriter(os.Stderr, stderrBuf)
+
+	logx.Infof("app: launching ssh: host=%s port=%d user=%s keyPath=%s",
+		hostname, port, user, keyPath)
+
 	return tea.ExecProcess(sshCmd, func(err error) tea.Msg {
-		cleanup()
 		closeSession()
 		if err != nil {
 			if exitErr, ok := err.(*exec.ExitError); ok && exitErr.ExitCode() == 1 {
-				return nil
+				cleanup()
+				// Exit 1 from ssh is a "normal" remote-command failure
+				// (e.g. running a command that returned non-zero before
+				// disconnect). Treat it like a successful session end so
+				// the user is routed back to the active-access view.
+				return sshExitedMsg{}
 			}
-			return appErrMsg{err: fmt.Errorf("SSH session: %w", err)}
+			captured := strings.TrimSpace(stderrBuf.String())
+			// Inspect the cert that was just rejected. The cert is still on
+			// disk because we deferred cleanup until AFTER diagnostics ran.
+			// `ssh-keygen -L -f cert` prints the principals, validity window,
+			// signing CA fingerprint, and extensions — exactly what we need
+			// to figure out *why* sshd refused it.
+			certInfo := inspectCert(certPath)
+			// Run a non-interactive ssh -vvv against the same host so we can
+			// see whether the cert was actually offered (publickey method) and
+			// what authentication methods sshd advertised. BatchMode prevents
+			// any password prompts.
+			diag := diagnoseSSH(hostname, port, user, keyPath, certPath)
+			logx.Warnf("app: ssh exited with error: %v; captured stderr: %s", err, captured)
+			logx.Infof("app: cert inspect:\n%s", certInfo)
+			logx.Infof("app: ssh -vvv diagnose:\n%s", diag)
+			cleanup()
+			details := captured
+			if certInfo != "" {
+				details += "\n\n--- cert ---\n" + certInfo
+			}
+			if diag != "" {
+				details += "\n\n--- ssh -vvv (last lines) ---\n" + diag
+			}
+			return appErrMsg{err: fmt.Errorf("SSH connection failed (%v):\n%s", err, details)}
 		}
-		return nil
+		cleanup()
+		// Successful SSH session ended (user typed exit / Ctrl-D / remote
+		// closed cleanly). Emit sshExitedMsg so the root Update can route
+		// back to the active-access view — without this the user is left
+		// staring at whichever screen launched the connection (typically
+		// the access-request "fetching credentials" screen).
+		return sshExitedMsg{}
 	})
 }
+
+// sshExitedMsg signals that an SSH session ended (success or normal exit).
+// The root Update handles it by returning the user to viewActiveAccess and
+// triggering a refresh of the active-access list.
+type sshExitedMsg struct{}
+
+// inspectCert runs `ssh-keygen -L -f <certPath>` and returns the output. Used
+// purely for diagnostics when an ssh connection fails — tells us what
+// principals the cert is signed for, what its validity window is, what CA
+// signed it, and which key it's bound to.
+func inspectCert(certPath string) string {
+	cmd := exec.Command("ssh-keygen", "-L", "-f", certPath)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Sprintf("(ssh-keygen -L failed: %v)\n%s", err, string(out))
+	}
+	return strings.TrimSpace(string(out))
+}
+
+// diagnoseSSH runs ssh in batch (non-interactive) mode with -vvv against the
+// same host/key/cert and returns the last ~2KB of stderr. This shows whether
+// ssh actually offered the cert ("Offering public key") and what sshd's
+// response was — far more informative than the bare "Permission denied".
+func diagnoseSSH(host string, port int, user, keyPath, certPath string) string {
+	args := []string{
+		"-vvv",
+		"-o", "BatchMode=yes",
+		"-o", "StrictHostKeyChecking=no",
+		"-o", "UserKnownHostsFile=/dev/null",
+		"-o", "ConnectTimeout=10",
+		"-o", "CertificateFile=" + certPath,
+		"-i", keyPath,
+		"-p", fmt.Sprintf("%d", port),
+		user + "@" + host,
+		"true",
+	}
+	cmd := exec.Command("ssh", args...)
+	out, _ := cmd.CombinedOutput()
+	s := string(out)
+	if len(s) > 2048 {
+		s = s[len(s)-2048:]
+	}
+	return strings.TrimSpace(s)
+}
+
+// boundedBuffer is a tiny ring-style writer that keeps only the last N bytes
+// written to it. Used to cap captured ssh stderr at a sane size.
+type boundedBuffer struct {
+	max int
+	buf []byte
+}
+
+func newBoundedBuffer(max int) *boundedBuffer {
+	return &boundedBuffer{max: max}
+}
+
+func (b *boundedBuffer) Write(p []byte) (int, error) {
+	b.buf = append(b.buf, p...)
+	if len(b.buf) > b.max {
+		b.buf = b.buf[len(b.buf)-b.max:]
+	}
+	return len(p), nil
+}
+
+func (b *boundedBuffer) String() string { return string(b.buf) }
 
 // serverDisplayName returns the best available display name for a host.
 func serverDisplayName(h api.Host) string {
@@ -494,98 +748,93 @@ func serverDisplayName(h api.Host) string {
 
 // View renders the currently active screen.
 func (m AppModel) View() string {
-	// Pre-login views have no outer border.
+	// Pre-login views: plain, no chrome.
 	if m.currentView == viewServerURL || m.currentView == viewLogin {
 		content := m.renderInner()
 		if m.toastMsg != "" {
-			content = ToastStyle.Render(m.toastMsg) + "\n" + content
+			content = ToastStyle.Render("› "+m.toastMsg) + "\n" + content
 		}
 		return content
 	}
 
-	// Authenticated views: build header + content + footer, then wrap in border.
+	// Authenticated views: dim header (1 line) + blank + panel content + footer hint.
 	header := m.renderHeader()
 	inner := m.renderInner()
 	footer := m.renderFooter()
 
 	// If palette is active, overlay it on top of the inner content.
 	if m.palette.Active() {
-		paletteView := m.palette.View()
-		inner = paletteView + "\n" + inner
+		inner = m.palette.View() + "\n" + inner
 	}
 
-	// Toast above everything.
+	// Toast inline, above content.
 	if m.toastMsg != "" {
-		inner = ToastStyle.Render(m.toastMsg) + "\n" + inner
+		inner = ToastStyle.Render("› "+m.toastMsg) + "\n" + inner
 	}
 
-	body := header + "\n" + inner + "\n" + footer
-
-	// Outer border sized to terminal width (minus 2 for the border itself).
-	borderWidth := m.width - 2
-	if borderWidth < 60 {
-		borderWidth = 60
-	}
-	return AppStyle.Width(borderWidth).Render(body)
+	return header + "\n" + inner + "\n" + footer
 }
 
-// renderHeader builds the one-line header: "shellius" left, "user@org · url" right.
-func (m AppModel) renderHeader() string {
-	left := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color(colorAccent)).Render("shellius")
+// innerWidth returns the usable content width.
+func (m AppModel) innerWidth() int {
+	w := m.width - 4
+	if w < 40 {
+		w = 40
+	}
+	return w
+}
 
-	var parts []string
+// renderHeader builds the one-line dim header above all authenticated screens.
+// Format: `shellius · user@org · server-url` (small, dim)
+func (m AppModel) renderHeader() string {
+	wordmark := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color(colorAccent)).Render("shellius")
+
+	var meta []string
 	if m.cfg != nil {
 		if m.cfg.Username != "" {
 			ident := m.cfg.Username
 			if m.cfg.OrgSlug != "" {
 				ident += "@" + m.cfg.OrgSlug
 			}
-			parts = append(parts, ident)
+			meta = append(meta, ident)
 		}
 		if m.cfg.ServerURL != "" {
-			parts = append(parts, m.cfg.ServerURL)
+			meta = append(meta, m.cfg.ServerURL)
 		}
 	}
 
-	right := MutedStyle.Render(strings.Join(parts, " · "))
-
-	// Fill gap between left and right.
-	leftW := lipgloss.Width(left)
-	rightW := lipgloss.Width(right)
-	// inner width = borderWidth - 2*padding(1) - 2*border(1) = m.width - 6
-	innerW := m.width - 6
-	if innerW < 20 {
-		innerW = 20
+	bullet := DimStyle.Render(" · ")
+	line := wordmark
+	if len(meta) > 0 {
+		line += bullet + DimStyle.Render(strings.Join(meta, bullet))
 	}
-	gap := innerW - leftW - rightW
-	if gap < 1 {
-		gap = 1
-	}
-	return left + strings.Repeat(" ", gap) + right
+	return " " + line
 }
 
-// renderFooter returns context-sensitive key hints for the current view.
+// renderFooter returns bullet-separated dim key hints for the current view.
 func (m AppModel) renderFooter() string {
 	var hints string
 	switch m.currentView {
 	case viewActiveAccess:
-		hints = "↑↓ select  enter connect  / commands  ? help  ctrl+c quit"
+		hints = "↑↓ navigate · enter connect · / palette · ? help · q quit"
 	case viewHostList:
-		hints = "↑↓ select  enter connect  esc back  r refresh  ctrl+c quit"
+		hints = "↑↓ navigate · enter request · esc back · r refresh · / palette"
 	case viewAccessRequest:
-		hints = "tab next  enter submit  esc back  ctrl+c quit"
+		hints = "Tab/Shift+Tab navigate · Enter submit · Esc back"
+	case viewMyRequests:
+		hints = "↑↓ navigate · r refresh · esc back"
 	case viewHelp:
-		hints = "esc / enter close"
+		hints = "esc close"
 	case viewProfile:
-		hints = "esc / enter close"
+		hints = "esc close"
 	case viewSessions:
-		hints = "esc / enter close"
+		hints = "esc close"
 	case viewError:
-		hints = "esc / enter back  ctrl+c quit"
+		hints = "esc back"
 	default:
 		hints = "ctrl+c quit"
 	}
-	return HelpBarStyle.Render(hints)
+	return " " + HelpBarStyle.Render(hints)
 }
 
 // renderInner delegates to the active view's content renderer.
@@ -600,7 +849,9 @@ func (m AppModel) renderInner() string {
 	case viewHostList:
 		return m.hostList.View()
 	case viewAccessRequest:
-		return m.accessRequest.View()
+		return m.renderAccessRequestWrapped()
+	case viewMyRequests:
+		return m.myRequests.View()
 	case viewHelp:
 		return m.renderHelp()
 	case viewProfile:
@@ -608,60 +859,102 @@ func (m AppModel) renderInner() string {
 	case viewSessions:
 		return m.renderSessions()
 	case viewConnecting:
-		return MutedStyle.Render("Connecting...")
+		return " " + MutedStyle.Render("Connecting...")
 	case viewError:
-		return fmt.Sprintf("%s\n\n%s",
-			ErrorStyle.Render("Error"),
-			MutedStyle.Render(m.errMsg),
-		)
+		return m.renderError()
 	}
 	return ""
 }
 
+// renderAccessRequestWrapped wraps the accessrequest view in a rounded panel.
+// Expands to fill the terminal so wide windows don't waste a right gutter.
+func (m AppModel) renderAccessRequestWrapped() string {
+	inner := m.accessRequest.View()
+	panelWidth := m.width - 4
+	if panelWidth < 56 {
+		panelWidth = 56
+	}
+	return RoundedPanel(inner, panelWidth)
+}
+
+// renderError renders the error view inside a rounded panel with a coral title.
+// Expands to fill the terminal — long ssh diagnostic dumps need every column.
+func (m AppModel) renderError() string {
+	var body strings.Builder
+	body.WriteString(ErrorStyle.Render("Error"))
+	body.WriteString("\n\n")
+	body.WriteString(MutedStyle.Render(m.errMsg))
+
+	panelWidth := m.width - 4
+	if panelWidth < 56 {
+		panelWidth = 56
+	}
+	return RoundedPanel(body.String(), panelWidth)
+}
+
 func (m AppModel) renderHelp() string {
-	var b strings.Builder
-	b.WriteString(TitleStyle.Render("Key bindings"))
-	b.WriteString("\n\n")
-
-	rows := [][2]string{
-		{"↑ / k", "move up"},
-		{"↓ / j", "move down"},
-		{"enter", "connect via SSH"},
-		{"/", "open command palette"},
-		{"?", "this help screen"},
-		{"ctrl+c", "quit"},
-		{"", ""},
-		{"Slash commands:", ""},
-		{"/servers", "browse all servers"},
-		{"/request", "submit an access request"},
-		{"/sessions", "recent sessions"},
-		{"/refresh", "force refresh"},
-		{"/profile", "identity & token info"},
-		{"/logout", "clear credentials & exit"},
-		{"/quit", "exit"},
+	// Two-column cheat sheet inside a rounded panel.
+	// Section headers in coral, rows: key (coral, w=18) · description (muted).
+	type row struct {
+		key  string
+		desc string
+		hdr  bool
+	}
+	rows := []row{
+		{key: "Navigation", hdr: true},
+		{key: "↑ / k", desc: "move up"},
+		{key: "↓ / j", desc: "move down"},
+		{key: "g", desc: "jump to top"},
+		{key: "G", desc: "jump to bottom"},
+		{key: "enter", desc: "connect / submit"},
+		{key: "esc", desc: "back / cancel"},
+		{key: "", desc: ""},
+		{key: "Global", hdr: true},
+		{key: "/", desc: "open command palette"},
+		{key: "?", desc: "this help screen"},
+		{key: "q", desc: "quit (home screen)"},
+		{key: "ctrl+c", desc: "force quit"},
+		{key: "r / ctrl+r", desc: "refresh current view"},
+		{key: "", desc: ""},
+		{key: "Commands", hdr: true},
+		{key: "/servers", desc: "browse all servers"},
+		{key: "/request", desc: "submit an access request"},
+		{key: "/myrequests", desc: "view all my requests"},
+		{key: "/sessions", desc: "recent sessions"},
+		{key: "/refresh", desc: "force refresh"},
+		{key: "/profile", desc: "identity and token info"},
+		{key: "/logout", desc: "clear credentials and exit"},
+		{key: "/quit", desc: "exit"},
 	}
 
-	nameStyle := lipgloss.NewStyle().Width(20).Foreground(lipgloss.Color(colorAccent))
-	for _, row := range rows {
-		if row[0] == "" && row[1] == "" {
-			b.WriteString("\n")
+	var body strings.Builder
+	keyStyle := lipgloss.NewStyle().Width(16).Foreground(lipgloss.Color(colorAccent))
+	for _, r := range rows {
+		if r.key == "" && r.desc == "" {
+			body.WriteString("\n")
 			continue
 		}
-		if row[1] == "" {
-			b.WriteString(SectionHeaderStyle.Render(row[0]))
-			b.WriteString("\n")
+		if r.hdr {
+			body.WriteString(TableHeaderStyle.Render(r.key))
+			body.WriteString("\n")
 			continue
 		}
-		b.WriteString("  ")
-		b.WriteString(nameStyle.Render(row[0]))
-		b.WriteString(MutedStyle.Render(row[1]))
-		b.WriteString("\n")
+		body.WriteString(" ")
+		body.WriteString(keyStyle.Render(r.key))
+		body.WriteString(MutedStyle.Render(r.desc))
+		body.WriteString("\n")
 	}
-	return b.String()
+
+	panelWidth := m.width - 4
+	if panelWidth < 56 {
+		panelWidth = 56
+	}
+	return RoundedPanel(body.String(), panelWidth)
 }
 
 func (m AppModel) renderProfile() string {
 	var b strings.Builder
+	b.WriteString("  ")
 	b.WriteString(TitleStyle.Render("Profile"))
 	b.WriteString("\n\n")
 
@@ -703,18 +996,19 @@ func (m AppModel) renderProfile() string {
 
 func (m AppModel) renderSessions() string {
 	var b strings.Builder
+	b.WriteString("  ")
 	b.WriteString(TitleStyle.Render("Sessions"))
 	b.WriteString("\n\n")
 
 	// --- Active ---
 	active, activeErr := sessions.List()
-	b.WriteString(SectionHeaderStyle.Render("ACTIVE"))
+	b.WriteString(SectionHeaderStyle.Render("Active"))
 	b.WriteString("\n")
 	if activeErr != nil {
 		b.WriteString(MutedStyle.Render("  (error reading session state: " + activeErr.Error() + ")"))
 		b.WriteString("\n")
 	} else if len(active) == 0 {
-		b.WriteString(MutedStyle.Render("  No active sessions."))
+		b.WriteString(MutedStyle.Render("  no active sessions"))
 		b.WriteString("\n")
 	} else {
 		for _, s := range active {
@@ -727,13 +1021,13 @@ func (m AppModel) renderSessions() string {
 
 	// --- Recent ---
 	hist, histErr := sessions.History()
-	b.WriteString(SectionHeaderStyle.Render("RECENT"))
+	b.WriteString(SectionHeaderStyle.Render("Recent"))
 	b.WriteString("\n")
 	if histErr != nil {
 		b.WriteString(MutedStyle.Render("  (error reading history: " + histErr.Error() + ")"))
 		b.WriteString("\n")
 	} else if len(hist) == 0 {
-		b.WriteString(MutedStyle.Render("  No recent sessions."))
+		b.WriteString(MutedStyle.Render("  no recent sessions"))
 		b.WriteString("\n")
 	} else {
 		for _, s := range hist {
@@ -748,7 +1042,7 @@ func (m AppModel) renderSessions() string {
 func (m AppModel) renderSessionRow(s sessions.Session, isActive bool) string {
 	nameCol := lipgloss.NewStyle().Width(22).Render(s.ServerName)
 	principalCol := lipgloss.NewStyle().Width(12).
-		Foreground(lipgloss.Color(colorSubtle)).
+		Foreground(lipgloss.Color(colorMuted)).
 		Render(s.Principal)
 
 	var timeCol string

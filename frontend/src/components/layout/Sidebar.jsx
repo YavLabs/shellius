@@ -23,6 +23,7 @@ import {
 import { useAuth } from '@/context/AuthContext';
 import { useNotifications } from '@/context/NotificationContext';
 import { cn } from '@/lib/utils';
+import BrandLogo, { BrandMark } from '@/components/common/BrandLogo';
 import {
   Tooltip,
   TooltipContent,
@@ -228,23 +229,18 @@ function SidebarBody({ collapsed, onToggle, onNavigate }) {
               <button
                 type="button"
                 onClick={onToggle}
-                className="flex h-9 w-9 items-center justify-center rounded-lg bg-primary hover:opacity-90 transition-opacity"
+                className="hover:opacity-90 transition-opacity"
                 aria-label="Expand sidebar"
               >
-                <Terminal className="h-5 w-5 text-primary-foreground" />
+                <BrandMark size="md" />
               </button>
             </TooltipTrigger>
             <TooltipContent side="right">Expand</TooltipContent>
           </Tooltip>
         ) : (
           <>
-            <Link to="/" className="flex items-center gap-2">
-              <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-primary">
-                <Terminal className="h-4 w-4 text-primary-foreground" />
-              </div>
-              <span className="text-sm font-semibold tracking-tight text-foreground">
-                Shellius
-              </span>
+            <Link to="/">
+              <BrandLogo size="sm" />
             </Link>
             <Tooltip>
               <TooltipTrigger asChild>

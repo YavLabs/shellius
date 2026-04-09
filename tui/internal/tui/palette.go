@@ -41,6 +41,13 @@ var builtinCommands = []Command{
 		},
 	},
 	{
+		Name: "/myrequests",
+		Desc: "View all my access requests across statuses",
+		Run: func(app *AppModel) tea.Cmd {
+			return func() tea.Msg { return openMyRequestsMsg{} }
+		},
+	},
+	{
 		Name: "/sessions",
 		Desc: "Active and recent SSH sessions",
 		Run: func(app *AppModel) tea.Cmd {
@@ -84,6 +91,7 @@ var builtinCommands = []Command{
 type showHelpMsg struct{}
 type openHostListMsg struct{}
 type openRequestMsg struct{}
+type openMyRequestsMsg struct{}
 type showSessionsMsg struct{}
 type forceRefreshMsg struct{}
 type showProfileMsg struct{}
@@ -234,29 +242,55 @@ func (p paletteModel) View() string {
 		b.WriteString(MutedStyle.Render("  no matching commands"))
 		b.WriteString("\n")
 	} else {
+		// Sliding window: keep the cursor inside the visible range so the
+		// user can actually navigate to the last command. Previously the
+		// render hard-sliced [0:maxShow] which left "/quit" forever hidden
+		// behind a "… 1 more" placeholder no matter where the cursor was.
 		maxShow := 8
-		for i, c := range p.commands {
-			if i >= maxShow {
-				more := len(p.commands) - maxShow
-				b.WriteString(MutedStyle.Render(fmt.Sprintf("  … %d more", more)))
-				b.WriteString("\n")
-				break
+		start := 0
+		if p.cursor >= maxShow {
+			start = p.cursor - maxShow + 1
+		}
+		end := start + maxShow
+		if end > len(p.commands) {
+			end = len(p.commands)
+		}
+		if start > 0 {
+			b.WriteString(MutedStyle.Render(fmt.Sprintf("  ↑ %d more\n", start)))
+		}
+		for i := start; i < end; i++ {
+			c := p.commands[i]
+			selected := i == p.cursor
+
+			// On selected rows the row background is coral, so the command
+			// name (normally coral) and description (normally muted gray)
+			// would render coral-on-coral and muted-on-coral, both nearly
+			// invisible. Use uniform white text on selected rows so the
+			// cursor is unambiguously legible.
+			nameFg := colorAccent
+			descFg := colorMuted
+			if selected {
+				nameFg = colorText
+				descFg = colorText
 			}
 			nameStyle := lipgloss.NewStyle().
 				Bold(true).
-				Foreground(lipgloss.Color(colorAccent)).
-				Width(12)
+				Foreground(lipgloss.Color(nameFg)).
+				Width(14)
 			descStyle := lipgloss.NewStyle().
-				Foreground(lipgloss.Color(colorMuted))
+				Foreground(lipgloss.Color(descFg))
 
 			row := nameStyle.Render(c.Name) + "  " + descStyle.Render(c.Desc)
 
-			if i == p.cursor {
-				b.WriteString(PaletteItemSelected.Render(row))
+			if selected {
+				b.WriteString(renderSelectedRow(row, width-2))
 			} else {
-				b.WriteString(PaletteItemNormal.Render(row))
+				b.WriteString(" " + row)
 			}
 			b.WriteString("\n")
+		}
+		if end < len(p.commands) {
+			b.WriteString(MutedStyle.Render(fmt.Sprintf("  ↓ %d more\n", len(p.commands)-end)))
 		}
 	}
 
