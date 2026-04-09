@@ -260,20 +260,29 @@ func (p paletteModel) View() string {
 		}
 		for i := start; i < end; i++ {
 			c := p.commands[i]
+			selected := i == p.cursor
+
+			// On selected rows the row background is coral, so the command
+			// name (normally coral) and description (normally muted gray)
+			// would render coral-on-coral and muted-on-coral, both nearly
+			// invisible. Use uniform white text on selected rows so the
+			// cursor is unambiguously legible.
+			nameFg := colorAccent
+			descFg := colorMuted
+			if selected {
+				nameFg = colorText
+				descFg = colorText
+			}
 			nameStyle := lipgloss.NewStyle().
 				Bold(true).
-				Foreground(lipgloss.Color(colorAccent)).
+				Foreground(lipgloss.Color(nameFg)).
 				Width(14)
 			descStyle := lipgloss.NewStyle().
-				Foreground(lipgloss.Color(colorMuted))
+				Foreground(lipgloss.Color(descFg))
 
 			row := nameStyle.Render(c.Name) + "  " + descStyle.Render(c.Desc)
 
-			// Background-fill selection: the whole row gets a coral background
-			// so the cursor is unambiguous (replaces the old ▎ marker).
-			// The sliding window above keeps ↑ N more / ↓ N more indicators
-			// so all commands are reachable.
-			if i == p.cursor {
+			if selected {
 				b.WriteString(renderSelectedRow(row, width-2))
 			} else {
 				b.WriteString(" " + row)

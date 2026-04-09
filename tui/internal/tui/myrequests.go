@@ -144,9 +144,6 @@ func (m myRequestsModel) innerWidth() int {
 	if w < 56 {
 		w = 56
 	}
-	if w > 116 {
-		w = 116
-	}
 	return w
 }
 
@@ -212,45 +209,78 @@ func (m myRequestsModel) View() string {
 	if panelWidth < 56 {
 		panelWidth = 56
 	}
-	if panelWidth > 116 {
-		panelWidth = 116
-	}
 	return RoundedPanel(body, panelWidth)
 }
 
+// myRequestsColumnWidths splits the inner width across the 6 columns.
+func myRequestsColumnWidths(iw int) (statusW, envW, srvW, princW, subW, noteW int) {
+	statusW = 12
+	envW = 8
+	princW = 14
+	subW = 14
+	const seps = 5
+	rest := iw - statusW - envW - princW - subW - seps - 1
+	if rest < 30 {
+		rest = 30
+	}
+	srvW = rest * 50 / 100
+	if srvW < 16 {
+		srvW = 16
+	}
+	noteW = rest - srvW
+	if noteW < 14 {
+		noteW = 14
+	}
+	return
+}
+
 func (m myRequestsModel) renderHeaderRow(iw int) string {
-	status := TableHeaderStyle.Width(10).Render("Status")
-	env := TableHeaderStyle.Width(8).Render("Env")
-	server := TableHeaderStyle.Width(20).Render("Server")
-	principal := TableHeaderStyle.Width(12).Render("Principal")
-	submitted := TableHeaderStyle.Width(14).Render("Submitted")
+	statusW, envW, srvW, princW, subW, _ := myRequestsColumnWidths(iw)
+	status := TableHeaderStyle.Width(statusW).Render("Status")
+	env := TableHeaderStyle.Width(envW).Render("Env")
+	server := TableHeaderStyle.Width(srvW).Render("Server")
+	principal := TableHeaderStyle.Width(princW).Render("Principal")
+	submitted := TableHeaderStyle.Width(subW).Render("Submitted")
 	note := TableHeaderStyle.Render("Expires/Reason")
-	_ = iw
 	return status + " " + env + " " + server + " " + principal + " " + submitted + " " + note
 }
 
 func (m myRequestsModel) renderRow(r api.AccessRequest, selected bool, iw int) string {
-	// Status: glyph + text
-	glyph := StatusBadge(r.Status)
-	statusText := lipgloss.NewStyle().Width(8).Foreground(lipgloss.Color(colorMuted)).Render(statusLabel(r.Status))
-	statusCol := glyph + " " + statusText
+	statusW, _, srvW, princW, subW, noteW := myRequestsColumnWidths(iw)
 
-	env := mrEnv(r)
-	envCol := EnvBadge(env)
+	// Selection-aware foregrounds — uniform white when selected so the
+	// coral background fill stays legible.
+	textFg := colorText
+	mutedFg := colorMuted
+	dimFg := colorDim
+	envCol := EnvBadge(mrEnv(r))
+	if selected {
+		mutedFg = colorText
+		dimFg = colorText
+		envCol = EnvBadgePlain(mrEnv(r))
+	}
+
+	var statusCol string
+	if selected {
+		// Plain text status when selected — no glyph color override.
+		statusCol = lipgloss.NewStyle().Width(statusW).Foreground(lipgloss.Color(colorText)).Render(statusLabel(r.Status))
+	} else {
+		glyph := StatusBadge(r.Status)
+		statusText := lipgloss.NewStyle().Width(statusW - 2).Foreground(lipgloss.Color(colorMuted)).Render(statusLabel(r.Status))
+		statusCol = glyph + " " + statusText
+	}
 
 	serverName := mrServerName(r)
-	serverCol := lipgloss.NewStyle().Width(20).Foreground(lipgloss.Color(colorText)).Render(truncate(serverName, 19))
+	serverCol := lipgloss.NewStyle().Width(srvW).Foreground(lipgloss.Color(textFg)).Render(truncate(serverName, srvW-1))
 
-	principalCol := lipgloss.NewStyle().Width(12).Foreground(lipgloss.Color(colorMuted)).Render(truncate(r.RequestedPrincipal, 11))
+	principalCol := lipgloss.NewStyle().Width(princW).Foreground(lipgloss.Color(mutedFg)).Render(truncate(r.RequestedPrincipal, princW-1))
 
-	// Submitted time
 	var submittedStr string
 	if !r.CreatedAt.IsZero() {
 		submittedStr = r.CreatedAt.Local().Format("01-02 15:04")
 	}
-	submittedCol := lipgloss.NewStyle().Width(14).Foreground(lipgloss.Color(colorDim)).Render(submittedStr)
+	submittedCol := lipgloss.NewStyle().Width(subW).Foreground(lipgloss.Color(dimFg)).Render(submittedStr)
 
-	// Expires / reason column
 	var noteStr string
 	switch r.Status {
 	case "APPROVED":
@@ -266,10 +296,10 @@ func (m myRequestsModel) renderRow(r api.AccessRequest, selected bool, iw int) s
 		noteStr = formatDuration(time.Since(r.CreatedAt)) + " ago"
 	case "DENIED":
 		if r.DeniedReason != "" {
-			noteStr = truncate(r.DeniedReason, 24)
+			noteStr = truncate(r.DeniedReason, noteW-1)
 		}
 	}
-	noteCol := lipgloss.NewStyle().Foreground(lipgloss.Color(colorDim)).Render(noteStr)
+	noteCol := lipgloss.NewStyle().Width(noteW).Foreground(lipgloss.Color(dimFg)).Render(noteStr)
 
 	content := statusCol + " " + envCol + " " + serverCol + " " + principalCol + " " + submittedCol + " " + noteCol
 

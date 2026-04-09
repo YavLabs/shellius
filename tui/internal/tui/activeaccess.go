@@ -294,14 +294,13 @@ func customerFromAR(r api.AccessRequest) string {
 	return ""
 }
 
-// innerWidth returns the usable panel inner width.
+// innerWidth returns the usable panel inner width. The panel expands to
+// fill the full terminal width — no upper cap, so wide terminals don't
+// waste columns of empty padding to the right of the rounded border.
 func (m activeAccessModel) innerWidth() int {
 	w := m.width
 	if w < 60 {
 		w = 60
-	}
-	if w > 120 {
-		w = 120
 	}
 	// subtract border(2) + padding(2)
 	return w - 4
@@ -399,32 +398,68 @@ func (m activeAccessModel) View() string {
 	if panelWidth < 56 {
 		panelWidth = 56
 	}
-	if panelWidth > 116 {
-		panelWidth = 116
-	}
 	return RoundedPanel(body, panelWidth)
 }
 
+// activeAccessColumnWidths returns the per-column widths for the table.
+// Env / Principal / Expires are fixed; Customer and Server split the
+// remaining inner width 40/60 so the table actually fills wide terminals
+// instead of leaving a huge empty gutter on the right.
+func activeAccessColumnWidths(iw int) (envW, custW, srvW, princW, expW int) {
+	envW = 8
+	princW = 14
+	expW = 14
+	const seps = 4 // single space between each of the 5 columns
+	rest := iw - envW - princW - expW - seps - 1 // -1 for the leading space
+	if rest < 24 {
+		rest = 24
+	}
+	custW = rest * 40 / 100
+	if custW < 12 {
+		custW = 12
+	}
+	srvW = rest - custW
+	if srvW < 12 {
+		srvW = 12
+	}
+	return
+}
+
 func (m activeAccessModel) renderHeaderRow(iw int) string {
-	// Columns: Env(8) Customer(18) Server(18) Principal(12) Expires(10)
-	env := TableHeaderStyle.Width(8).Render("Env")
-	cust := TableHeaderStyle.Width(18).Render("Customer")
-	server := TableHeaderStyle.Width(18).Render("Server")
-	principal := TableHeaderStyle.Width(12).Render("Principal")
+	envW, custW, srvW, princW, _ := activeAccessColumnWidths(iw)
+	env := TableHeaderStyle.Width(envW).Render("Env")
+	cust := TableHeaderStyle.Width(custW).Render("Customer")
+	server := TableHeaderStyle.Width(srvW).Render("Server")
+	principal := TableHeaderStyle.Width(princW).Render("Principal")
 	expires := TableHeaderStyle.Render("Expires")
-	_ = iw
 	return env + " " + cust + " " + server + " " + principal + " " + expires
 }
 
 func (m activeAccessModel) renderRow(r api.AccessRequest, selected bool, iw int) string {
-	env := envFromAR(r)
-	envStr := EnvBadge(env)
+	_, custW, srvW, princW, expW := activeAccessColumnWidths(iw)
+
+	// On selected rows we'd otherwise paint coral text on a coral
+	// background — invisible. Use white text uniformly across all cells
+	// when selected, with no per-column foregrounds, so the coral fill
+	// stays legible.
+	customerFg := colorMuted
+	serverFg := colorText
+	principalFg := colorMuted
+	expiryFg := colorMuted
+	envCell := EnvBadge(envFromAR(r))
+	if selected {
+		customerFg = colorText
+		serverFg = colorText
+		principalFg = colorText
+		expiryFg = colorText
+		envCell = EnvBadgePlain(envFromAR(r))
+	}
 
 	customer := customerFromAR(r)
-	custCol := lipgloss.NewStyle().Width(18).Foreground(lipgloss.Color(colorMuted)).Render(truncate(customer, 17))
+	custCol := lipgloss.NewStyle().Width(custW).Foreground(lipgloss.Color(customerFg)).Render(truncate(customer, custW-1))
 
 	name := serverNameFromAR(r)
-	serverCol := lipgloss.NewStyle().Width(18).Foreground(lipgloss.Color(colorText)).Render(truncate(name, 17))
+	serverCol := lipgloss.NewStyle().Width(srvW).Foreground(lipgloss.Color(serverFg)).Render(truncate(name, srvW-1))
 
 	principal := r.RequestedPrincipal
 	if principal == "" && r.Server != nil {
@@ -433,7 +468,7 @@ func (m activeAccessModel) renderRow(r api.AccessRequest, selected bool, iw int)
 	if principal == "" {
 		principal = "ubuntu"
 	}
-	principalCol := lipgloss.NewStyle().Width(12).Foreground(lipgloss.Color(colorMuted)).Render(truncate(principal, 11))
+	principalCol := lipgloss.NewStyle().Width(princW).Foreground(lipgloss.Color(principalFg)).Render(truncate(principal, princW-1))
 
 	var expiryStr string
 	if r.ExpiresAt != nil {
@@ -444,9 +479,9 @@ func (m activeAccessModel) renderRow(r api.AccessRequest, selected bool, iw int)
 			expiryStr = "expired"
 		}
 	}
-	expiryCol := lipgloss.NewStyle().Width(10).Foreground(lipgloss.Color(colorMuted)).Render(expiryStr)
+	expiryCol := lipgloss.NewStyle().Width(expW).Foreground(lipgloss.Color(expiryFg)).Render(expiryStr)
 
-	content := envStr + " " + custCol + " " + serverCol + " " + principalCol + " " + expiryCol
+	content := envCell + " " + custCol + " " + serverCol + " " + principalCol + " " + expiryCol
 
 	if selected {
 		return renderSelectedRow(content, iw)

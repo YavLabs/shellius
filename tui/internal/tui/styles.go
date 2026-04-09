@@ -34,22 +34,31 @@ const (
 const SelectionMarker = "▎ "
 
 // EnvBadge returns the lowercase env name in its semantic color, width-padded to 8 chars.
-func EnvBadge(env string) string {
-	var col string
-	switch env {
-	case "prod":
-		col = colorEnvProd
-	case "staging":
-		col = colorEnvStaging
-	case "dev":
-		col = colorEnvDev
-	case "demo":
-		col = colorEnvDemo
-	default:
-		col = colorDim
-	}
+func EnvBadge(env string) string { return envBadgeFg(env, "") }
+
+// EnvBadgePlain returns the env name padded to 8 chars with NO foreground
+// color applied. Used by selected list rows where the row's coral background
+// would otherwise hide the env's semantic color.
+func EnvBadgePlain(env string) string { return envBadgeFg(env, colorText) }
+
+func envBadgeFg(env, override string) string {
 	if env == "" {
 		return "        "
+	}
+	col := override
+	if col == "" {
+		switch env {
+		case "prod":
+			col = colorEnvProd
+		case "staging":
+			col = colorEnvStaging
+		case "dev":
+			col = colorEnvDev
+		case "demo":
+			col = colorEnvDemo
+		default:
+			col = colorDim
+		}
 	}
 	return lipgloss.NewStyle().
 		Foreground(lipgloss.Color(col)).

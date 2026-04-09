@@ -219,14 +219,12 @@ func (m HostListModel) visibleRows() int {
 	return v
 }
 
-// innerWidth returns the usable panel content width.
+// innerWidth returns the usable panel content width. Expands to fill the
+// terminal — no upper cap, so wide windows don't waste right-side gutter.
 func (m HostListModel) innerWidth() int {
 	w := m.width - 4
 	if w < 56 {
 		w = 56
-	}
-	if w > 116 {
-		w = 116
 	}
 	return w
 }
@@ -293,21 +291,43 @@ func (m HostListModel) View() string {
 	if panelWidth < 56 {
 		panelWidth = 56
 	}
-	if panelWidth > 116 {
-		panelWidth = 116
-	}
 	return RoundedPanel(body, panelWidth)
 }
 
+// hostlistColumnWidths splits the inner width across the 6 columns. Env,
+// User, Access are fixed; Customer, Server, Hostname split the rest.
+func hostlistColumnWidths(iw int) (envW, custW, srvW, hostW, userW, accessW int) {
+	envW = 8
+	userW = 12
+	accessW = 16
+	const seps = 5 // 6 columns → 5 separators
+	rest := iw - envW - userW - accessW - seps - 1
+	if rest < 36 {
+		rest = 36
+	}
+	custW = rest * 25 / 100
+	if custW < 12 {
+		custW = 12
+	}
+	srvW = rest * 35 / 100
+	if srvW < 14 {
+		srvW = 14
+	}
+	hostW = rest - custW - srvW
+	if hostW < 12 {
+		hostW = 12
+	}
+	return
+}
+
 func (m HostListModel) renderHeaderRow(iw int) string {
-	// Columns: Env(8) Customer(16) Server(18) Hostname(20) User(10) Access(rest)
-	env := TableHeaderStyle.Width(8).Render("Env")
-	cust := TableHeaderStyle.Width(16).Render("Customer")
-	server := TableHeaderStyle.Width(18).Render("Server")
-	hostname := TableHeaderStyle.Width(20).Render("Hostname")
-	user := TableHeaderStyle.Width(10).Render("User")
+	envW, custW, srvW, hostW, userW, _ := hostlistColumnWidths(iw)
+	env := TableHeaderStyle.Width(envW).Render("Env")
+	cust := TableHeaderStyle.Width(custW).Render("Customer")
+	server := TableHeaderStyle.Width(srvW).Render("Server")
+	hostname := TableHeaderStyle.Width(hostW).Render("Hostname")
+	user := TableHeaderStyle.Width(userW).Render("User")
 	access := TableHeaderStyle.Render("Access")
-	_ = iw
 	return env + " " + cust + " " + server + " " + hostname + " " + user + " " + access
 }
 
@@ -391,25 +411,55 @@ func (m HostListModel) renderList(iw int) []string {
 }
 
 func (m HostListModel) renderHostRow(h api.Host, selected bool, iw int) string {
-	badge := EnvBadge(h.Environment)
+	_, custW, srvW, hostW, userW, _ := hostlistColumnWidths(iw)
 
-	custCol := lipgloss.NewStyle().Width(16).Foreground(lipgloss.Color(colorMuted)).Render(truncate(h.CustomerName, 15))
+	// On selected rows, use uniform white text so the coral background fill
+	// stays legible. Inner ANSI foreground colors would otherwise win and
+	// some columns would render coral-on-coral (invisible).
+	custFg := colorMuted
+	srvFg := colorText
+	hostFg := colorMuted
+	userFg := colorMuted
+	badge := EnvBadge(h.Environment)
+	if selected {
+		custFg = colorText
+		srvFg = colorText
+		hostFg = colorText
+		userFg = colorText
+		badge = EnvBadgePlain(h.Environment)
+	}
+
+	custCol := lipgloss.NewStyle().Width(custW).Foreground(lipgloss.Color(custFg)).Render(truncate(h.CustomerName, custW-1))
 
 	name := h.Name
 	if name == "" {
 		name = h.Hostname
 	}
-	serverCol := lipgloss.NewStyle().Width(18).Foreground(lipgloss.Color(colorText)).Render(truncate(name, 17))
+	serverCol := lipgloss.NewStyle().Width(srvW).Foreground(lipgloss.Color(srvFg)).Render(truncate(name, srvW-1))
 
-	hostnameCol := lipgloss.NewStyle().Width(20).Foreground(lipgloss.Color(colorMuted)).Render(truncate(h.Hostname, 19))
+	hostnameCol := lipgloss.NewStyle().Width(hostW).Foreground(lipgloss.Color(hostFg)).Render(truncate(h.Hostname, hostW-1))
 
-	userCol := lipgloss.NewStyle().Width(10).Foreground(lipgloss.Color(colorMuted)).Render(truncate(h.Principal, 9))
+	userCol := lipgloss.NewStyle().Width(userW).Foreground(lipgloss.Color(userFg)).Render(truncate(h.Principal, userW-1))
 
-	accessStr := AccessStatusStyle(h.AccessStatus)
+	var accessStr string
+	if selected {
+		// Plain access label without per-status colors so the coral fill
+		// can read uniformly.
+		accessStr = h.AccessStatus
+		if accessStr == "" {
+			accessStr = "—"
+		}
+	} else {
+		accessStr = AccessStatusStyle(h.AccessStatus)
+	}
 	if h.AccessExpiry != nil {
 		d := h.AccessExpiry.Sub(nowFunc())
 		if d > 0 {
-			accessStr += DimStyle.Render(" "+formatDuration(d))
+			if selected {
+				accessStr += " " + formatDuration(d)
+			} else {
+				accessStr += DimStyle.Render(" "+formatDuration(d))
+			}
 		}
 	}
 
