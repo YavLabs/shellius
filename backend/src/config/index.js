@@ -51,8 +51,11 @@ const config = {
   jwt: {
     secret: process.env.JWT_SECRET || 'dev-jwt-secret-change-me',
     refreshSecret: process.env.JWT_REFRESH_SECRET || 'dev-refresh-secret-change-me',
-    expiry: '15m',
-    refreshExpiry: '7d',
+    // Read from env so operators can extend session lifetimes without
+    // patching the source. Defaults match the original hardcoded values
+    // so existing deployments don't shift behavior on upgrade.
+    expiry: process.env.JWT_EXPIRY || '15m',
+    refreshExpiry: process.env.JWT_REFRESH_EXPIRY || '7d',
   },
 
   encryption: {
