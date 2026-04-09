@@ -76,19 +76,22 @@ func main() {
 		os.Exit(1)
 	}
 
-	// "shellius login [URL]" — set the server URL, wipe any stale credentials,
-	// and drop straight into the device-auth login flow. This is the canonical
-	// way to (re-)authenticate from the command line. Without this subcommand
-	// the second positional arg was silently ignored, so users who ran
-	// `shellius login https://...` ended up at the URL prompt with no clue
-	// why their argument was discarded.
+	// "shellius login <URL> [ORG_SLUG]" — set the server URL (and optionally
+	// the org slug), wipe any stale credentials, and drop straight into the
+	// device-auth login flow. This is the canonical way to (re-)authenticate
+	// from the command line. When the org slug is supplied here the TUI will
+	// skip the interactive org-slug prompt and start the device flow
+	// immediately, so the entire login is one command + browser approval.
 	if subcmd == "login" {
 		if len(args) >= 2 {
 			cfg.ServerURL = strings.TrimRight(args[1], "/")
 		}
+		if len(args) >= 3 {
+			cfg.OrgSlug = strings.TrimSpace(args[2])
+		}
 		if cfg.ServerURL == "" {
 			fmt.Fprintln(os.Stderr, "shellius login: a Shellius URL is required")
-			fmt.Fprintln(os.Stderr, "  example: shellius login https://shellius.example.com")
+			fmt.Fprintln(os.Stderr, "  example: shellius login https://shellius.example.com [org-slug]")
 			os.Exit(2)
 		}
 		// Wipe any stale tokens so the TUI definitely routes to the login
@@ -100,8 +103,9 @@ func main() {
 			fmt.Fprintf(os.Stderr, "shellius login: save config: %v\n", err)
 			os.Exit(1)
 		}
-		// Fall through to tui.Run, which will see the URL set + no refresh
-		// token and render the device-auth login screen automatically.
+		// Fall through to tui.Run. Without an org slug the TUI will render
+		// the org prompt first; with one it skips straight to the device
+		// flow and the verification URL.
 	}
 
 	// Override server URL if provided on command line.

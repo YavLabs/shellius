@@ -50,27 +50,44 @@ type deviceAuthErrMsg struct {
 	err error
 }
 
-// NewLoginModel creates the initial login model.
+// NewLoginModel creates the initial login model. When the config already
+// carries an org slug (e.g. supplied via `shellius login <url> <org-slug>`),
+// the model skips the interactive prompt and jumps straight to fetching the
+// device-auth code. This makes the CLI login a single command + browser
+// approval, no in-TUI typing required.
 func NewLoginModel(cfg *config.Config) LoginModel {
 	ti := textinput.New()
 	ti.Placeholder = "your-org-slug"
 	ti.Focus()
 	ti.CharLimit = 64
 	ti.Width = 32
+	if cfg != nil && cfg.OrgSlug != "" {
+		ti.SetValue(cfg.OrgSlug)
+	}
 
 	s := spinner.New()
 	s.Spinner = spinner.Dot
 	s.Style = lipgloss.NewStyle().Foreground(lipgloss.Color(colorAccent))
 
+	initialState := loginStateEnterOrg
+	if cfg != nil && cfg.OrgSlug != "" {
+		initialState = loginStateFetchingCode
+	}
+
 	return LoginModel{
 		cfg:      cfg,
-		state:    loginStateEnterOrg,
+		state:    initialState,
 		orgInput: ti,
 		spinner:  s,
 	}
 }
 
 func (m LoginModel) Init() tea.Cmd {
+	// If the org slug was supplied on the command line, kick off the
+	// device flow immediately and skip the interactive prompt.
+	if m.state == loginStateFetchingCode && m.cfg != nil && m.cfg.OrgSlug != "" {
+		return tea.Batch(m.spinner.Tick, m.startDeviceFlow(m.cfg.OrgSlug))
+	}
 	return tea.Batch(m.orgInput.Focus(), m.spinner.Tick)
 }
 

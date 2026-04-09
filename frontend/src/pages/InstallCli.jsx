@@ -7,6 +7,7 @@ import {
   ExternalLink,
 } from 'lucide-react';
 import PageHeader from '@/components/common/PageHeader';
+import { useAuth } from '@/context/AuthContext';
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -96,6 +97,7 @@ function KeyRow({ keys, label }) {
 // ---------------------------------------------------------------------------
 
 function InstallCli() {
+  const { user } = useAuth();
   const publicUrl =
     typeof window !== 'undefined' ? window.location.origin : 'https://shellius.yavlabs.com';
 
@@ -105,7 +107,14 @@ function InstallCli() {
   // but the entry point stays on-prem.
   const installScriptUrl = `${publicUrl}/api/cli/install.sh`;
   const oneLiner = `curl -fsSL ${installScriptUrl} | sh`;
-  const loginCmd = `shellius login ${publicUrl}`;
+  // Build the login command with the user's org slug pre-filled when
+  // available. The CLI accepts an optional second positional arg for
+  // the org slug — supplying it here means the user copy/pastes one
+  // command and skips the interactive org-slug prompt entirely.
+  const orgSlug = user?.organization?.slug || '';
+  const loginCmd = orgSlug
+    ? `shellius login ${publicUrl} ${orgSlug}`
+    : `shellius login ${publicUrl}`;
   const brewCmd = `brew install ${GITHUB_REPO.split('/')[1]}  # (planned)`;
 
   const uninstallSteps = [
