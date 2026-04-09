@@ -27,6 +27,13 @@ COPY --from=builder /app/package*.json ./
 COPY --from=builder /app/node_modules/.prisma ./node_modules/.prisma
 COPY --from=builder /app/scripts ./scripts
 
+# Entrypoint runs `prisma migrate deploy` then the idempotent seed
+# (org, super admin, baseline groups + policies) before exec'ing the
+# node server. The seed is soft-fail so missing SEED_* env vars don't
+# block the API from coming up on existing deployments.
+COPY docker/entrypoint-backend.sh /app/entrypoint.sh
+RUN chmod +x /app/entrypoint.sh
+
 # Pre-built TUI binaries served at /api/cli/bin/<name>. The tui-bin/
 # directory is committed (with a .gitkeep sentinel) so the COPY
 # always succeeds; populate it by running scripts/build-tui-binaries.sh
@@ -43,4 +50,4 @@ EXPOSE 3001
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
   CMD wget -q --spider http://localhost:3001/api/health || exit 1
 
-CMD ["node", "src/server.js"]
+ENTRYPOINT ["/app/entrypoint.sh"]
