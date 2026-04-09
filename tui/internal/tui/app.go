@@ -857,19 +857,18 @@ func (m AppModel) renderInner() string {
 }
 
 // renderAccessRequestWrapped wraps the accessrequest view in a rounded panel.
+// Expands to fill the terminal so wide windows don't waste a right gutter.
 func (m AppModel) renderAccessRequestWrapped() string {
 	inner := m.accessRequest.View()
 	panelWidth := m.width - 4
 	if panelWidth < 56 {
 		panelWidth = 56
 	}
-	if panelWidth > 90 {
-		panelWidth = 90
-	}
 	return RoundedPanel(inner, panelWidth)
 }
 
 // renderError renders the error view inside a rounded panel with a coral title.
+// Expands to fill the terminal — long ssh diagnostic dumps need every column.
 func (m AppModel) renderError() string {
 	var body strings.Builder
 	body.WriteString(ErrorStyle.Render("Error"))
@@ -879,9 +878,6 @@ func (m AppModel) renderError() string {
 	panelWidth := m.width - 4
 	if panelWidth < 56 {
 		panelWidth = 56
-	}
-	if panelWidth > 100 {
-		panelWidth = 100
 	}
 	return RoundedPanel(body.String(), panelWidth)
 }
@@ -942,9 +938,6 @@ func (m AppModel) renderHelp() string {
 	panelWidth := m.width - 4
 	if panelWidth < 56 {
 		panelWidth = 56
-	}
-	if panelWidth > 80 {
-		panelWidth = 80
 	}
 	return RoundedPanel(body.String(), panelWidth)
 }

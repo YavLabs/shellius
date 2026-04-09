@@ -421,14 +421,12 @@ func (m AccessRequestModel) pollRequest() tea.Cmd {
 	})
 }
 
-// formWidth returns the preferred form panel inner width.
+// formWidth returns the preferred form panel inner width. Expands to fill
+// the terminal — no upper cap, so wide windows don't waste a right gutter.
 func (m AccessRequestModel) formWidth() int {
 	w := m.width - 8
 	if w < 52 {
 		w = 52
-	}
-	if w > 80 {
-		w = 80
 	}
 	return w
 }
