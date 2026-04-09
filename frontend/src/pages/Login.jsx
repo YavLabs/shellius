@@ -45,6 +45,19 @@ function Login() {
   const [searchParams] = useSearchParams();
   const isDeleted = searchParams.get('deleted') === '1';
 
+  // Honor ?redirect=<path> after successful login. This is how the device-auth
+  // page (and any other page that gates on auth) preserves its destination
+  // across the login flow — without this, users who hit /device?user_code=XXX
+  // while logged out get bounced to /dashboard after login and have to
+  // manually navigate back, breaking the TUI device-login UX.
+  // Only same-origin relative paths are accepted to prevent open-redirect.
+  const safePostLoginDest = (() => {
+    const r = searchParams.get('redirect');
+    if (!r) return '/';
+    if (!r.startsWith('/') || r.startsWith('//')) return '/';
+    return r;
+  })();
+
   useEffect(() => {
     getRegistrationStatus()
       .then((enabled) => setRegistrationEnabled(enabled))
@@ -64,7 +77,7 @@ function Login() {
       setSsoSubmitting(false);
       if (msg.ok && msg.accessToken && msg.refreshToken) {
         loginWithTokens({ accessToken: msg.accessToken, refreshToken: msg.refreshToken })
-          .then(() => navigate('/', { replace: true }))
+          .then(() => navigate(safePostLoginDest, { replace: true }))
           .catch((err) => setError(err?.message || 'SSO login failed'));
       } else if (msg.error) {
         setError(`SSO failed: ${msg.error}`);
@@ -72,7 +85,7 @@ function Login() {
     }
     window.addEventListener('message', onMessage);
     return () => window.removeEventListener('message', onMessage);
-  }, [loginWithTokens, navigate]);
+  }, [loginWithTokens, navigate, safePostLoginDest]);
 
   const handleSsoLogin = () => {
     if (!ssoStatus.enabled || !ssoStatus.orgSlug) return;
@@ -111,7 +124,7 @@ function Login() {
     setSubmitting(true);
     try {
       await login(email, password);
-      navigate('/', { replace: true });
+      navigate(safePostLoginDest, { replace: true });
     } catch (err) {
       setError(err.message || 'Login failed');
     } finally {
