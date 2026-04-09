@@ -70,21 +70,6 @@ function ExpiryPill({ validBefore }) {
   return null;
 }
 
-function validUntilLabel(validBefore) {
-  if (!validBefore) return '-';
-  const d = new Date(validBefore);
-  if (Number.isNaN(d.getTime())) return '-';
-  const diff = d.getTime() - Date.now();
-  if (diff <= 0) return 'Expired';
-  const s = Math.floor(diff / 1000);
-  if (s < 60) return `in ${s}s`;
-  const m = Math.floor(s / 60);
-  if (m < 60) return `in ${m}m`;
-  const h = Math.floor(m / 60);
-  if (h < 24) return `in ${h}h`;
-  const days = Math.floor(h / 24);
-  return `in ${days}d`;
-}
 
 function DetailRow({ label, value }) {
   return (
@@ -298,18 +283,7 @@ function Certificates() {
       key: 'validBefore',
       label: 'Valid Until',
       sortable: true,
-      render: (r) => {
-        const label = validUntilLabel(r.validBefore);
-        const isExpiredLabel = label === 'Expired';
-        return (
-          <span className="flex items-center">
-            <span className={isExpiredLabel ? 'text-xs text-muted-foreground' : 'text-xs text-foreground'}>
-              {label}
-            </span>
-            <ExpiryPill validBefore={r.validBefore} />
-          </span>
-        );
-      },
+      render: (r) => <ExpiryPill validBefore={r.validBefore} />,
     },
     {
       key: 'status',
