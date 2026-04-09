@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
-import { Loader2, Check, X, Terminal } from 'lucide-react';
+import { Loader2, Check, X } from 'lucide-react';
+import { BrandMark } from '@/components/common/BrandLogo';
 import api from '@/services/api';
 import { useAuth } from '@/context/AuthContext';
 
@@ -34,8 +35,8 @@ function Device() {
     <div className="flex min-h-screen items-center justify-center bg-background px-4">
       <div className="w-full max-w-sm">
         <div className="mb-8 text-center">
-          <div className="mx-auto mb-4 flex h-11 w-11 items-center justify-center rounded-lg bg-primary">
-            <Terminal className="h-6 w-6 text-primary-foreground" />
+          <div className="mx-auto mb-4 flex justify-center">
+            <BrandMark size="lg" />
           </div>
           <h1 className="text-2xl font-bold tracking-tight text-foreground">Device Login</h1>
           <p className="mt-1 text-sm text-muted-foreground">
