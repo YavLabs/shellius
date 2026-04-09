@@ -176,6 +176,11 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.prevView = m.currentView
 		m.hostList = NewHostListModel(m.client)
+		// Seed the new sub-model with the current terminal size — without
+		// this it stays at width=0 until the user resizes the terminal,
+		// which causes column-widths to fall back to their minimums and
+		// the table content to wrap mid-row inside a tiny panel.
+		m.hostList, _ = m.hostList.Update(tea.WindowSizeMsg{Width: m.width, Height: m.height})
 		m.currentView = viewHostList
 		return m, m.hostList.Init()
 
@@ -186,6 +191,7 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.prevView = m.currentView
 		m.hostList = NewHostListModel(m.client)
+		m.hostList, _ = m.hostList.Update(tea.WindowSizeMsg{Width: m.width, Height: m.height})
 		m.currentView = viewHostList
 		return m, m.hostList.Init()
 
@@ -195,6 +201,7 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.prevView = m.currentView
 		m.myRequests = newMyRequestsModel(m.client)
+		m.myRequests, _ = m.myRequests.Update(tea.WindowSizeMsg{Width: m.width, Height: m.height})
 		m.currentView = viewMyRequests
 		return m, m.myRequests.Init()
 
@@ -241,6 +248,7 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.currentView = viewActiveAccess
 		if m.client != nil {
 			m.activeAccess = NewActiveAccessModel(m.client)
+			m.activeAccess, _ = m.activeAccess.Update(tea.WindowSizeMsg{Width: m.width, Height: m.height})
 			return m, m.activeAccess.Init()
 		}
 		return m, nil
@@ -331,6 +339,7 @@ func (m AppModel) updateLogin(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case loginSuccessMsg:
 		m.client = api.New(m.cfg)
 		m.activeAccess = NewActiveAccessModel(m.client)
+		m.activeAccess, _ = m.activeAccess.Update(tea.WindowSizeMsg{Width: m.width, Height: m.height})
 		m.currentView = viewActiveAccess
 		return m, m.activeAccess.Init()
 	}
@@ -369,6 +378,7 @@ func (m AppModel) updateHostList(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.prevView = m.currentView
 		m.currentView = viewAccessRequest
 		m.accessRequest = NewAccessRequestModel(m.client, msg.host)
+		m.accessRequest, _ = m.accessRequest.Update(tea.WindowSizeMsg{Width: m.width, Height: m.height})
 		return m, m.accessRequest.Init()
 
 	case tea.KeyMsg:
