@@ -259,8 +259,17 @@ func (p paletteModel) View() string {
 
 			row := nameStyle.Render(c.Name) + "  " + descStyle.Render(c.Desc)
 
+			// Use the same selection-marker pattern as the rest of the TUI
+			// (▎ in accent color + bold) so the cursor is unambiguously
+			// visible. The previous styling only differed by text weight,
+			// which was effectively invisible on most terminals — that's
+			// why "up/down doesn't work" was the user's report when in
+			// fact the cursor was moving silently.
 			if i == p.cursor {
-				b.WriteString(PaletteItemSelected.Render(row))
+				marker := lipgloss.NewStyle().
+					Foreground(lipgloss.Color(colorAccent)).
+					Render(SelectionMarker)
+				b.WriteString(marker + SelectedItemStyle.Render(row))
 			} else {
 				b.WriteString(PaletteItemNormal.Render(row))
 			}
