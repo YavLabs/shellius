@@ -29,22 +29,20 @@ type hostsLoadedMsg struct {
 type hostsErrMsg struct{ err error }
 
 // hostSelectedMsg is sent when the user picks a host.
-// The parent app always routes through the intent/form flow — never directly
-// connecting without a form (Phase 2 invariant: connectDirect is removed).
+// The parent app always routes through the intent/form flow.
 type hostSelectedMsg struct{ host api.Host }
 
 // HostListModel is the Bubble Tea model for the filterable host list.
 type HostListModel struct {
-	client    *api.Client
-	state     hostListState
-	allHosts  []api.Host
-	filtered  []api.Host
-	cursor    int
-	filter    textinput.Model
-	errMsg    string
-	width     int
-	height    int
-	// visibleStart is the index of the first visible item (for scrolling).
+	client       *api.Client
+	state        hostListState
+	allHosts     []api.Host
+	filtered     []api.Host
+	cursor       int
+	filter       textinput.Model
+	errMsg       string
+	width        int
+	height       int
 	visibleStart int
 }
 
@@ -62,7 +60,6 @@ func NewHostListModel(client *api.Client) HostListModel {
 	}
 }
 
-// Init kicks off the host fetch.
 func (m HostListModel) Init() tea.Cmd {
 	return m.fetchHosts()
 }
@@ -122,12 +119,24 @@ func (m HostListModel) Update(msg tea.Msg) (HostListModel, tea.Cmd) {
 			}
 			return m, nil
 
+		case "g":
+			m.cursor = 0
+			m.visibleStart = 0
+			return m, nil
+
+		case "G":
+			if len(m.filtered) > 0 {
+				m.cursor = len(m.filtered) - 1
+				visible := m.visibleRows()
+				if m.cursor >= visible {
+					m.visibleStart = m.cursor - visible + 1
+				}
+			}
+			return m, nil
+
 		case "enter":
 			if len(m.filtered) > 0 && m.cursor < len(m.filtered) {
 				host := m.filtered[m.cursor]
-				// Always emit hostSelectedMsg — the parent routes through
-				// intent / form regardless of environment. connectDirect
-				// has been removed in Phase 2.
 				return m, func() tea.Msg { return hostSelectedMsg{host: host} }
 			}
 			return m, nil
@@ -141,9 +150,7 @@ func (m HostListModel) Update(msg tea.Msg) (HostListModel, tea.Cmd) {
 			return m, m.fetchHosts()
 		}
 
-		// Editing/printable keys go to the filter; everything else is a
-		// no-op so we don't accidentally feed escape sequences or function
-		// keys into the textinput.
+		// H22: Key fall-through guard — editing/printable keys only reach the textinput.
 		switch msg.String() {
 		case "backspace", "delete", "left", "right", "home", "end", "ctrl+u", "ctrl+w":
 			// editing keys — forward
@@ -202,8 +209,9 @@ func fuzzyMatch(needle, haystack string) bool {
 }
 
 func (m HostListModel) visibleRows() int {
-	// Reserve rows: title(2) + filter(2) + help(2) + statusbar(1) + padding(2).
-	reserved := 9
+	// Reserve: search(1) + sort(1) + blank(1) + colheader(1) + sep(1) + count(1) +
+	//          border(2) + app-header(2) + app-footer(1) = 11
+	reserved := 11
 	v := m.height - reserved
 	if v < 5 {
 		v = 5
@@ -211,8 +219,19 @@ func (m HostListModel) visibleRows() int {
 	return v
 }
 
-// groupByCustomer groups the hosts by CustomerName, preserving insertion order
-// of first occurrence.
+// innerWidth returns the usable panel content width.
+func (m HostListModel) innerWidth() int {
+	w := m.width - 4
+	if w < 56 {
+		w = 56
+	}
+	if w > 116 {
+		w = 116
+	}
+	return w
+}
+
+// groupByCustomer groups the hosts by CustomerName.
 func groupByCustomer(hosts []api.Host) ([]string, map[string][]api.Host) {
 	order := []string{}
 	seen := map[string]bool{}
@@ -230,48 +249,75 @@ func groupByCustomer(hosts []api.Host) ([]string, map[string][]api.Host) {
 }
 
 func (m HostListModel) View() string {
-	var b strings.Builder
+	iw := m.innerWidth()
+	var bodyLines []string
 
-	// Section title: "Hosts (N)" bold + count dim.
-	b.WriteString("  ")
-	b.WriteString(SectionHeaderStyle.Render("Hosts"))
-	b.WriteString(DimStyle.Render(fmt.Sprintf(" (%d)", len(m.allHosts))))
-	b.WriteString("\n")
-	b.WriteString("  ")
-	b.WriteString(m.filter.View())
-	b.WriteString("\n\n")
+	// Search bar
+	searchLine := SearchBarLabel() + m.filter.View()
+	bodyLines = append(bodyLines, searchLine)
+	bodyLines = append(bodyLines, SortIndicator("name"))
+	bodyLines = append(bodyLines, "")
 
 	switch m.state {
 	case hostListStateLoading:
-		b.WriteString("  ")
-		b.WriteString(MutedStyle.Render("loading hosts..."))
+		bodyLines = append(bodyLines, MutedStyle.Render("loading hosts..."))
 
 	case hostListStateError:
-		b.WriteString("  ")
-		b.WriteString(ErrorStyle.Render("error: "))
-		b.WriteString(MutedStyle.Render(m.errMsg))
-		b.WriteString("\n  ")
-		b.WriteString(HelpBarStyle.Render("r retry"))
+		bodyLines = append(bodyLines,
+			ErrorStyle.Render("error: ")+MutedStyle.Render(m.errMsg),
+			HelpBarStyle.Render("r retry"),
+		)
 
 	case hostListStateReady:
+		// Column headers
+		bodyLines = append(bodyLines, m.renderHeaderRow(iw))
+		bodyLines = append(bodyLines, TableHeaderSep(iw))
+
 		if len(m.filtered) == 0 {
-			b.WriteString("  ")
-			b.WriteString(MutedStyle.Render("no hosts match your filter"))
+			bodyLines = append(bodyLines, MutedStyle.Render("no hosts match your filter"))
 		} else {
-			b.WriteString(m.renderList())
+			bodyLines = append(bodyLines, m.renderList(iw)...)
 		}
+
+		// Count line
+		countStr := fmt.Sprintf("%d host", len(m.filtered))
+		if len(m.filtered) != 1 {
+			countStr = fmt.Sprintf("%d hosts", len(m.filtered))
+		}
+		bodyLines = append(bodyLines, "")
+		bodyLines = append(bodyLines, DimStyle.Render(countStr))
 	}
 
-	return b.String()
+	body := strings.Join(bodyLines, "\n")
+	panelWidth := m.width - 4
+	if panelWidth < 56 {
+		panelWidth = 56
+	}
+	if panelWidth > 116 {
+		panelWidth = 116
+	}
+	return RoundedPanel(body, panelWidth)
 }
 
-func (m HostListModel) renderList() string {
-	var b strings.Builder
+func (m HostListModel) renderHeaderRow(iw int) string {
+	// Columns: Env(8) Customer(16) Server(18) Hostname(20) User(10) Access(rest)
+	env := TableHeaderStyle.Width(8).Render("Env")
+	cust := TableHeaderStyle.Width(16).Render("Customer")
+	server := TableHeaderStyle.Width(18).Render("Server")
+	hostname := TableHeaderStyle.Width(20).Render("Hostname")
+	user := TableHeaderStyle.Width(10).Render("User")
+	access := TableHeaderStyle.Render("Access")
+	_ = iw
+	return env + " " + cust + " " + server + " " + hostname + " " + user + " " + access
+}
+
+func (m HostListModel) renderList(iw int) []string {
+	var lines []string
 
 	customerOrder, groups := groupByCustomer(m.filtered)
 	visible := m.visibleRows()
 
-	// Build a flat index of all items so we can map global cursor to items.
+	// Build flat index to map global cursor (host-only) to flat items.
 	type flatItem struct {
 		isHeader bool
 		customer string
@@ -285,10 +331,8 @@ func (m HostListModel) renderList() string {
 		}
 	}
 
-	// Determine which flat items contain actual hosts (for cursor tracking).
-	// m.cursor tracks position in m.filtered (host-only list).
-	// We need to figure out which flat index corresponds to cursor host.
-	hostFlatIdx := map[int]int{} // filtered index → flat index
+	// Map filtered-host-index → flat-index.
+	hostFlatIdx := map[int]int{}
 	fi := 0
 	hi := 0
 	for _, item := range flat {
@@ -299,7 +343,7 @@ func (m HostListModel) renderList() string {
 		fi++
 	}
 
-	// Compute first visible flat index from visibleStart (host index).
+	// Compute first visible flat index from visibleStart.
 	firstFlatVisible := 0
 	if m.visibleStart > 0 {
 		if idx, ok := hostFlatIdx[m.visibleStart]; ok {
@@ -320,59 +364,59 @@ func (m HostListModel) renderList() string {
 			break
 		}
 		if item.isHeader {
-			// Customer group header — muted, not bold (section title above the list is bold).
-			b.WriteString("  ")
-			b.WriteString(DimStyle.Render(item.customer))
-			b.WriteString("\n")
+			// Customer group subheader — dim, separating groups visually
+			headerLine := DimStyle.Render("── " + item.customer + " ──")
+			lines = append(lines, headerLine)
 			rowsRendered++
 			continue
 		}
 
 		selected := currentHostIdx == m.cursor
-		b.WriteString(m.renderHostRow(item.host, selected))
-		b.WriteString("\n")
+		lines = append(lines, m.renderHostRow(item.host, selected, iw))
 		rowsRendered++
 		currentHostIdx++
 	}
 
-	// Scroll indicator.
+	// Scroll indicator if needed.
 	if len(m.filtered) > visible {
-		scrollInfo := fmt.Sprintf("  %d-%d of %d",
+		scrollInfo := fmt.Sprintf("%d-%d of %d",
 			m.visibleStart+1,
 			min(m.visibleStart+visible, len(m.filtered)),
 			len(m.filtered),
 		)
-		b.WriteString(MutedStyle.Render(scrollInfo))
-		b.WriteString("\n")
+		lines = append(lines, DimStyle.Render(scrollInfo))
 	}
 
-	return b.String()
+	return lines
 }
 
-func (m HostListModel) renderHostRow(h api.Host, selected bool) string {
+func (m HostListModel) renderHostRow(h api.Host, selected bool, iw int) string {
 	badge := EnvBadge(h.Environment)
-	status := AccessStatusStyle(h.AccessStatus)
 
-	var expiry string
-	if h.AccessExpiry != nil {
-		d := h.AccessExpiry.Sub(nowFunc())
-		if d > 0 {
-			expiry = DimStyle.Render(fmt.Sprintf("  expires %s", formatDuration(d)))
-		}
-	}
+	custCol := lipgloss.NewStyle().Width(16).Foreground(lipgloss.Color(colorMuted)).Render(truncate(h.CustomerName, 15))
 
 	name := h.Name
 	if name == "" {
 		name = h.Hostname
 	}
+	serverCol := lipgloss.NewStyle().Width(18).Foreground(lipgloss.Color(colorText)).Render(truncate(name, 17))
 
-	nameCol := lipgloss.NewStyle().Width(28).
-		Foreground(lipgloss.Color(colorText)).
-		Render(name)
-	content := badge + "  " + nameCol + "  " + status + expiry
+	hostnameCol := lipgloss.NewStyle().Width(20).Foreground(lipgloss.Color(colorMuted)).Render(truncate(h.Hostname, 19))
+
+	userCol := lipgloss.NewStyle().Width(10).Foreground(lipgloss.Color(colorMuted)).Render(truncate(h.Principal, 9))
+
+	accessStr := AccessStatusStyle(h.AccessStatus)
+	if h.AccessExpiry != nil {
+		d := h.AccessExpiry.Sub(nowFunc())
+		if d > 0 {
+			accessStr += DimStyle.Render(" "+formatDuration(d))
+		}
+	}
+
+	content := badge + " " + custCol + " " + serverCol + " " + hostnameCol + " " + userCol + " " + accessStr
 
 	if selected {
-		return renderSelectedRow(content)
+		return renderSelectedRow(content, iw)
 	}
 	return renderNormalRow(content)
 }

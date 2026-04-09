@@ -747,8 +747,7 @@ func (m AppModel) View() string {
 		return content
 	}
 
-	// Authenticated views: header (1 line) + blank + content + footer.
-	// No outer border, no separator bar. Content starts at column 0 + 2-space margin.
+	// Authenticated views: dim header (1 line) + blank + panel content + footer hint.
 	header := m.renderHeader()
 	inner := m.renderInner()
 	footer := m.renderFooter()
@@ -763,20 +762,20 @@ func (m AppModel) View() string {
 		inner = ToastStyle.Render("› "+m.toastMsg) + "\n" + inner
 	}
 
-	return header + "\n\n" + inner + "\n" + footer
+	return header + "\n" + inner + "\n" + footer
 }
 
 // innerWidth returns the usable content width.
 func (m AppModel) innerWidth() int {
-	w := m.width - 4 // 2-space left margin + 2 right buffer
+	w := m.width - 4
 	if w < 40 {
 		w = 40
 	}
 	return w
 }
 
-// renderHeader builds the one-line header.
-// Format: `shellius · user@org host` — one line, no box, no separator.
+// renderHeader builds the one-line dim header above all authenticated screens.
+// Format: `shellius · user@org · server-url` (small, dim)
 func (m AppModel) renderHeader() string {
 	wordmark := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color(colorAccent)).Render("shellius")
 
@@ -797,23 +796,23 @@ func (m AppModel) renderHeader() string {
 	bullet := DimStyle.Render(" · ")
 	line := wordmark
 	if len(meta) > 0 {
-		line += bullet + DimStyle.Render(strings.Join(meta, " "))
+		line += bullet + DimStyle.Render(strings.Join(meta, bullet))
 	}
-	return "  " + line
+	return " " + line
 }
 
-// renderFooter returns a single line of dim key hints for the current view.
+// renderFooter returns bullet-separated dim key hints for the current view.
 func (m AppModel) renderFooter() string {
 	var hints string
 	switch m.currentView {
 	case viewActiveAccess:
-		hints = "↑↓ select · enter connect · / commands · ? help · q quit"
+		hints = "↑↓ navigate · enter connect · / palette · ? help · q quit"
 	case viewHostList:
-		hints = "↑↓ select · enter request · esc back · r refresh · / commands"
+		hints = "↑↓ navigate · enter request · esc back · r refresh · / palette"
 	case viewAccessRequest:
-		hints = "tab next field · enter submit · esc back"
+		hints = "Tab/Shift+Tab navigate · Enter submit · Esc back"
 	case viewMyRequests:
-		hints = "↑↓ select · r refresh · esc back"
+		hints = "↑↓ navigate · r refresh · esc back"
 	case viewHelp:
 		hints = "esc close"
 	case viewProfile:
@@ -825,7 +824,7 @@ func (m AppModel) renderFooter() string {
 	default:
 		hints = "ctrl+c quit"
 	}
-	return "  " + HelpBarStyle.Render(hints)
+	return " " + HelpBarStyle.Render(hints)
 }
 
 // renderInner delegates to the active view's content renderer.
@@ -840,7 +839,7 @@ func (m AppModel) renderInner() string {
 	case viewHostList:
 		return m.hostList.View()
 	case viewAccessRequest:
-		return m.accessRequest.View()
+		return m.renderAccessRequestWrapped()
 	case viewMyRequests:
 		return m.myRequests.View()
 	case viewHelp:
@@ -850,58 +849,104 @@ func (m AppModel) renderInner() string {
 	case viewSessions:
 		return m.renderSessions()
 	case viewConnecting:
-		return "  " + MutedStyle.Render("Connecting...")
+		return " " + MutedStyle.Render("Connecting...")
 	case viewError:
-		return fmt.Sprintf("  %s\n\n  %s",
-			ErrorStyle.Render("Error"),
-			MutedStyle.Render(m.errMsg),
-		)
+		return m.renderError()
 	}
 	return ""
 }
 
+// renderAccessRequestWrapped wraps the accessrequest view in a rounded panel.
+func (m AppModel) renderAccessRequestWrapped() string {
+	inner := m.accessRequest.View()
+	panelWidth := m.width - 4
+	if panelWidth < 56 {
+		panelWidth = 56
+	}
+	if panelWidth > 90 {
+		panelWidth = 90
+	}
+	return RoundedPanel(inner, panelWidth)
+}
+
+// renderError renders the error view inside a rounded panel with a coral title.
+func (m AppModel) renderError() string {
+	var body strings.Builder
+	body.WriteString(ErrorStyle.Render("Error"))
+	body.WriteString("\n\n")
+	body.WriteString(MutedStyle.Render(m.errMsg))
+
+	panelWidth := m.width - 4
+	if panelWidth < 56 {
+		panelWidth = 56
+	}
+	if panelWidth > 100 {
+		panelWidth = 100
+	}
+	return RoundedPanel(body.String(), panelWidth)
+}
+
 func (m AppModel) renderHelp() string {
-	var b strings.Builder
-	b.WriteString("  ")
-	b.WriteString(TitleStyle.Render("Key Bindings"))
-	b.WriteString("\n\n")
-
-	rows := [][2]string{
-		{"↑ / k", "move up"},
-		{"↓ / j", "move down"},
-		{"enter", "connect / submit"},
-		{"/", "open command palette"},
-		{"?", "this help screen"},
-		{"ctrl+c", "quit"},
-		{"", ""},
-		{"Commands", ""},
-		{"/servers", "browse all servers"},
-		{"/request", "submit an access request"},
-		{"/myrequests", "view all my requests"},
-		{"/sessions", "recent sessions"},
-		{"/refresh", "force refresh"},
-		{"/profile", "identity and token info"},
-		{"/logout", "clear credentials and exit"},
-		{"/quit", "exit"},
+	// Two-column cheat sheet inside a rounded panel.
+	// Section headers in coral, rows: key (coral, w=18) · description (muted).
+	type row struct {
+		key  string
+		desc string
+		hdr  bool
+	}
+	rows := []row{
+		{key: "Navigation", hdr: true},
+		{key: "↑ / k", desc: "move up"},
+		{key: "↓ / j", desc: "move down"},
+		{key: "g", desc: "jump to top"},
+		{key: "G", desc: "jump to bottom"},
+		{key: "enter", desc: "connect / submit"},
+		{key: "esc", desc: "back / cancel"},
+		{key: "", desc: ""},
+		{key: "Global", hdr: true},
+		{key: "/", desc: "open command palette"},
+		{key: "?", desc: "this help screen"},
+		{key: "q", desc: "quit (home screen)"},
+		{key: "ctrl+c", desc: "force quit"},
+		{key: "r / ctrl+r", desc: "refresh current view"},
+		{key: "", desc: ""},
+		{key: "Commands", hdr: true},
+		{key: "/servers", desc: "browse all servers"},
+		{key: "/request", desc: "submit an access request"},
+		{key: "/myrequests", desc: "view all my requests"},
+		{key: "/sessions", desc: "recent sessions"},
+		{key: "/refresh", desc: "force refresh"},
+		{key: "/profile", desc: "identity and token info"},
+		{key: "/logout", desc: "clear credentials and exit"},
+		{key: "/quit", desc: "exit"},
 	}
 
-	nameStyle := lipgloss.NewStyle().Width(20).Foreground(lipgloss.Color(colorAccent))
-	for _, row := range rows {
-		if row[0] == "" && row[1] == "" {
-			b.WriteString("\n")
+	var body strings.Builder
+	keyStyle := lipgloss.NewStyle().Width(16).Foreground(lipgloss.Color(colorAccent))
+	for _, r := range rows {
+		if r.key == "" && r.desc == "" {
+			body.WriteString("\n")
 			continue
 		}
-		if row[1] == "" {
-			b.WriteString(SectionHeaderStyle.Render(row[0]))
-			b.WriteString("\n")
+		if r.hdr {
+			body.WriteString(TableHeaderStyle.Render(r.key))
+			body.WriteString("\n")
 			continue
 		}
-		b.WriteString("  ")
-		b.WriteString(nameStyle.Render(row[0]))
-		b.WriteString(MutedStyle.Render(row[1]))
-		b.WriteString("\n")
+		body.WriteString(" ")
+		body.WriteString(keyStyle.Render(r.key))
+		body.WriteString(MutedStyle.Render(r.desc))
+		body.WriteString("\n")
 	}
-	return b.String()
+
+	panelWidth := m.width - 4
+	if panelWidth < 56 {
+		panelWidth = 56
+	}
+	if panelWidth > 80 {
+		panelWidth = 80
+	}
+	return RoundedPanel(body.String(), panelWidth)
 }
 
 func (m AppModel) renderProfile() string {

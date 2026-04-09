@@ -421,29 +421,41 @@ func (m AccessRequestModel) pollRequest() tea.Cmd {
 	})
 }
 
+// formWidth returns the preferred form panel inner width.
+func (m AccessRequestModel) formWidth() int {
+	w := m.width - 8
+	if w < 52 {
+		w = 52
+	}
+	if w > 80 {
+		w = 80
+	}
+	return w
+}
+
 func (m AccessRequestModel) View() string {
 	var b strings.Builder
 
-	b.WriteString(TitleStyle.Render("Request Access"))
-	b.WriteString("\n")
-
-	// Host summary line.
 	serverName := m.host.Name
 	if serverName == "" {
 		serverName = m.host.Hostname
 	}
-	hostLine := fmt.Sprintf("%s  %s  %s",
+
+	// Title in coral: "Request Access — <server>"
+	title := FocusedInputStyle.Render(fmt.Sprintf("Request Access — %s", serverName))
+	b.WriteString(title)
+	b.WriteString("\n")
+
+	// Host summary line (env badge + customer)
+	hostLine := fmt.Sprintf("%s  %s",
 		EnvBadge(m.host.Environment),
-		lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color(colorText)).Render(serverName),
 		MutedStyle.Render(m.host.CustomerName),
 	)
 	b.WriteString(hostLine)
-	b.WriteString("\n")
-	b.WriteString("\n")
+	b.WriteString("\n\n")
 
 	switch m.state {
 	case arStateLoadingIntent:
-		b.WriteString("  ")
 		b.WriteString(m.spinner.View())
 		b.WriteString("  ")
 		b.WriteString(MutedStyle.Render("Loading access context..."))
@@ -452,55 +464,67 @@ func (m AccessRequestModel) View() string {
 		b.WriteString(m.renderForm())
 
 	case arStateSubmitting:
-		b.WriteString("  ")
 		b.WriteString(m.spinner.View())
 		b.WriteString(MutedStyle.Render("  Submitting access request..."))
 
 	case arStatePolling:
-		b.WriteString("  ")
-		b.WriteString(m.spinner.View())
-		b.WriteString(MutedStyle.Render("  Waiting for approval..."))
-		b.WriteString("\n\n")
-		b.WriteString(MutedStyle.Render("  Request: "))
-		b.WriteString(CodeStyle.Render(m.request.ID))
-		b.WriteString("\n")
-		b.WriteString(MutedStyle.Render("  Status:  "))
-		b.WriteString(StatusBadge(m.request.Status))
-		b.WriteString("\n\n")
-		b.WriteString(DimStyle.Render("  › Your manager will receive an approval notification. Polling every 3s..."))
+		// Status card — centered layout inside a simple panel
+		var card strings.Builder
+		card.WriteString(m.spinner.View())
+		card.WriteString("  ")
+		card.WriteString(MutedStyle.Render("Waiting for approval..."))
+		card.WriteString("\n\n")
+		card.WriteString(MutedStyle.Render("Request:  "))
+		card.WriteString(CodeStyle.Render(m.request.ID))
+		card.WriteString("\n")
+		card.WriteString(MutedStyle.Render("Status:   "))
+		card.WriteString(StatusBadge(m.request.Status))
+		card.WriteString("\n\n")
+		card.WriteString(DimStyle.Render("Your manager will receive an approval notification."))
+		card.WriteString("\n")
+		card.WriteString(DimStyle.Render("Polling every 3s..."))
+		b.WriteString(RoundedPanel(card.String(), m.formWidth()))
 
 	case arStateApproved:
-		b.WriteString(SuccessStyle.Render("  Access approved!"))
-		b.WriteString("\n")
-		b.WriteString(MutedStyle.Render("  Fetching credentials and connecting..."))
+		var card strings.Builder
+		card.WriteString(SuccessStyle.Render("Access approved!"))
+		card.WriteString("\n")
+		card.WriteString(MutedStyle.Render("Fetching credentials and connecting..."))
+		b.WriteString(RoundedPanel(card.String(), m.formWidth()))
 
 	case arStateDenied:
-		b.WriteString(ErrorStyle.Render("  Access denied"))
-		b.WriteString("\n")
 		reason := m.request.DeniedReason
 		if reason == "" {
 			reason = m.request.Status
 		}
-		b.WriteString(MutedStyle.Render("  Reason: " + reason))
-		b.WriteString("\n\n")
-		b.WriteString(HelpBarStyle.Render("  press esc to go back"))
+		var card strings.Builder
+		card.WriteString(ErrorStyle.Render("Access denied"))
+		card.WriteString("\n")
+		card.WriteString(MutedStyle.Render("Reason: " + reason))
+		card.WriteString("\n\n")
+		card.WriteString(HelpBarStyle.Render("esc go back"))
+		b.WriteString(RoundedPanel(card.String(), m.formWidth()))
 
 	case arStateWebTerminal:
-		b.WriteString(SuccessStyle.Render("  Web terminal opened in your browser."))
-		b.WriteString("\n\n")
-		b.WriteString(MutedStyle.Render("  URL: "))
-		b.WriteString(CodeStyle.Render(m.webURL))
-		b.WriteString("\n\n")
-		b.WriteString(DimStyle.Render("  › Key download is disabled by policy. Use the web terminal to connect."))
-		b.WriteString("\n\n")
-		b.WriteString(HelpBarStyle.Render("  press esc to go back"))
+		var card strings.Builder
+		card.WriteString(SuccessStyle.Render("Web terminal opened in your browser."))
+		card.WriteString("\n\n")
+		card.WriteString(MutedStyle.Render("URL: "))
+		card.WriteString(CodeStyle.Render(m.webURL))
+		card.WriteString("\n\n")
+		card.WriteString(DimStyle.Render("Key download is disabled by policy. Use the web terminal to connect."))
+		card.WriteString("\n\n")
+		card.WriteString(HelpBarStyle.Render("esc go back"))
+		b.WriteString(RoundedPanel(card.String(), m.formWidth()))
 
 	case arStateError:
-		b.WriteString(ErrorStyle.Render("  Error"))
-		b.WriteString("\n")
-		b.WriteString(MutedStyle.Render("  " + m.errMsg))
-		b.WriteString("\n\n")
-		b.WriteString(HelpBarStyle.Render("  press esc to go back"))
+		var card strings.Builder
+		card.WriteString(ErrorStyle.Render("Error"))
+		card.WriteString("\n")
+		card.WriteString(MutedStyle.Render(m.errMsg))
+		card.WriteString("\n\n")
+		card.WriteString(HelpBarStyle.Render("esc go back"))
+		b.WriteString(RoundedPanel(card.String(), m.formWidth()))
 	}
 
 	return b.String()
@@ -508,83 +532,67 @@ func (m AccessRequestModel) View() string {
 
 func (m AccessRequestModel) renderForm() string {
 	var b strings.Builder
+	fw := m.formWidth()
 
-	// Protocol radio (SSH / RDP) — shown at the top.
-	b.WriteString(InputLabelStyle.Render("Protocol"))
+	// Protocol radio (SSH / RDP)
+	b.WriteString(FormFieldLabel("Protocol", false, false))
 	b.WriteString("\n")
-	sshLabel := "  SSH"
-	rdpLabel := "  RDP"
+	var protoStr string
 	if m.protocolSSH {
-		b.WriteString(lipgloss.NewStyle().Foreground(lipgloss.Color(colorAccent)).Bold(true).Render("  ● SSH"))
-		b.WriteString(MutedStyle.Render("  ○ RDP"))
+		protoStr = lipgloss.NewStyle().Foreground(lipgloss.Color(colorAccent)).Bold(true).Render("● SSH") +
+			"  " + MutedStyle.Render("○ RDP") +
+			"  " + DimStyle.Render("(p to toggle)")
 	} else {
-		b.WriteString(MutedStyle.Render("  ○ SSH"))
-		b.WriteString(lipgloss.NewStyle().Foreground(lipgloss.Color(colorAccent)).Bold(true).Render("  ● RDP"))
+		protoStr = MutedStyle.Render("○ SSH") +
+			"  " + lipgloss.NewStyle().Foreground(lipgloss.Color(colorAccent)).Bold(true).Render("● RDP") +
+			"  " + DimStyle.Render("(p to toggle)")
 	}
-	_ = sshLabel
-	_ = rdpLabel
-	b.WriteString(DimStyle.Render("  (p to toggle)"))
+	b.WriteString(protoStr)
 	b.WriteString("\n\n")
 
-	// Reason field.
-	reasonLabel := InputLabelStyle.Render("Reason")
-	if m.focusIdx == arFieldReason {
-		reasonLabel = FocusedInputStyle.Render("Reason")
-	}
-	b.WriteString(reasonLabel)
+	// Reason field — label above a rounded-border box
+	b.WriteString(FormFieldLabel("Reason", m.focusIdx == arFieldReason, true))
 	b.WriteString("\n")
-	b.WriteString(m.inputs[arFieldReason].View())
+	b.WriteString(FormInputBox(m.inputs[arFieldReason].View(), m.focusIdx == arFieldReason, fw))
 	b.WriteString("\n\n")
 
-	// Duration: amount + unit selector on one line.
-	amountLabel := InputLabelStyle.Render("Duration")
-	if m.focusIdx == arFieldAmount {
-		amountLabel = FocusedInputStyle.Render("Duration")
-	}
-	b.WriteString(amountLabel)
+	// Duration field
+	b.WriteString(FormFieldLabel("Duration", m.focusIdx == arFieldAmount, true))
 	b.WriteString("\n")
-	b.WriteString(m.inputs[arFieldAmount].View())
-	b.WriteString("  ")
 	unit := durationUnits[m.durationUnitIdx]
-	b.WriteString(lipgloss.NewStyle().Foreground(lipgloss.Color(colorAccent)).Render(unit.label))
-	b.WriteString(DimStyle.Render("  (←/→ to change unit)"))
+	durationContent := m.inputs[arFieldAmount].View() +
+		"  " + lipgloss.NewStyle().Foreground(lipgloss.Color(colorAccent)).Render(unit.label) +
+		"  " + DimStyle.Render("(←/→ change unit)")
+	b.WriteString(FormInputBox(durationContent, m.focusIdx == arFieldAmount, fw))
 	b.WriteString("\n\n")
 
-	// Principal field.
-	principalLabel := InputLabelStyle.Render("Principal (SSH username)")
-	if m.focusIdx == arFieldPrincipal {
-		principalLabel = FocusedInputStyle.Render("Principal (SSH username)")
-	}
-	b.WriteString(principalLabel)
+	// Principal field
+	b.WriteString(FormFieldLabel("Principal (SSH username)", m.focusIdx == arFieldPrincipal, true))
 	b.WriteString("\n")
-
 	if len(m.principals) > 1 {
-		// Cycle selector for multiple allowed principals.
 		prev := (m.principalIdx - 1 + len(m.principals)) % len(m.principals)
 		next := (m.principalIdx + 1) % len(m.principals)
-		b.WriteString(MutedStyle.Render("  ← "))
-		b.WriteString(MutedStyle.Render(m.principals[prev]))
-		b.WriteString("  ")
-		b.WriteString(lipgloss.NewStyle().Foreground(lipgloss.Color(colorAccent)).Bold(true).Render(m.principals[m.principalIdx]))
-		b.WriteString("  ")
-		b.WriteString(MutedStyle.Render(m.principals[next]))
-		b.WriteString(MutedStyle.Render(" →"))
-		b.WriteString(DimStyle.Render("  (←/→ to cycle)"))
-		b.WriteString("\n")
+		cycleContent := MutedStyle.Render("← "+m.principals[prev]+"  ") +
+			lipgloss.NewStyle().Foreground(lipgloss.Color(colorAccent)).Bold(true).Render(m.principals[m.principalIdx]) +
+			MutedStyle.Render("  "+m.principals[next]+" →") +
+			DimStyle.Render("  (←/→ cycle)")
+		b.WriteString(FormInputBox(cycleContent, m.focusIdx == arFieldPrincipal, fw))
 	} else {
-		b.WriteString(m.inputs[arFieldPrincipal].View())
-		b.WriteString("\n")
+		b.WriteString(FormInputBox(m.inputs[arFieldPrincipal].View(), m.focusIdx == arFieldPrincipal, fw))
 	}
+	b.WriteString("\n")
 
-	// Inline form validation error.
+	// Inline form validation error
 	if m.formErr != "" {
 		b.WriteString("\n")
-		b.WriteString(ErrorStyle.Render("  ! " + m.formErr))
+		b.WriteString(ErrorStyle.Render("! " + m.formErr))
 		b.WriteString("\n")
 	}
 
 	b.WriteString("\n")
-	b.WriteString(HelpBarStyle.Render("tab/shift+tab navigate · enter submit · esc cancel · ←/→ cycle options"))
+	b.WriteString(HelpBarStyle.Render("Tab/Shift+Tab navigate · Enter submit · Esc cancel · ←/→ cycle options"))
+	b.WriteString("\n")
+	b.WriteString(DimStyle.Render("* Required fields"))
 	return b.String()
 }
 

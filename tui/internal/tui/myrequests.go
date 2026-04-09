@@ -26,8 +26,7 @@ type myRequestsLoadedMsg struct{ requests []api.AccessRequest }
 // myRequestsErrMsg carries a fetch error.
 type myRequestsErrMsg struct{ err error }
 
-// myRequestsModel is a read-only list of all the user's access requests
-// across all statuses. Accessible via /myrequests from the command palette.
+// myRequestsModel is a read-only list of all the user's access requests.
 type myRequestsModel struct {
 	client   *api.Client
 	state    myRequestsState
@@ -107,6 +106,16 @@ func (m myRequestsModel) Update(msg tea.Msg) (myRequestsModel, tea.Cmd) {
 			}
 			return m, nil
 
+		case "g":
+			m.cursor = 0
+			return m, nil
+
+		case "G":
+			if len(m.requests) > 0 {
+				m.cursor = len(m.requests) - 1
+			}
+			return m, nil
+
 		case "r", "ctrl+r":
 			m.state = myRequestsLoading
 			m.requests = nil
@@ -120,7 +129,9 @@ func (m myRequestsModel) Update(msg tea.Msg) (myRequestsModel, tea.Cmd) {
 }
 
 func (m myRequestsModel) visibleRows() int {
-	reserved := 8 // title + separator + header + footer + padding
+	// Reserve: search(1) + sort(1) + blank(1) + colheader(1) + sep(1) + count(1) +
+	//          border(2) + app-header(2) + app-footer(1) = 11
+	reserved := 11
 	v := m.height - reserved
 	if v < 3 {
 		v = 3
@@ -128,33 +139,44 @@ func (m myRequestsModel) visibleRows() int {
 	return v
 }
 
-func (m myRequestsModel) View() string {
-	var b strings.Builder
+func (m myRequestsModel) innerWidth() int {
+	w := m.width - 4
+	if w < 56 {
+		w = 56
+	}
+	if w > 116 {
+		w = 116
+	}
+	return w
+}
 
-	// Section title.
-	b.WriteString("  ")
-	b.WriteString(SectionHeaderStyle.Render("My Access Requests"))
-	b.WriteString(DimStyle.Render(fmt.Sprintf(" (%d)", len(m.requests))))
-	b.WriteString("\n\n")
+func (m myRequestsModel) View() string {
+	iw := m.innerWidth()
+	var bodyLines []string
+
+	// No search bar for myrequests — just sort indicator
+	bodyLines = append(bodyLines, SortIndicator("submitted"))
+	bodyLines = append(bodyLines, "")
 
 	switch m.state {
 	case myRequestsLoading:
-		b.WriteString("  ")
-		b.WriteString(m.spinner.View())
-		b.WriteString(" ")
-		b.WriteString(MutedStyle.Render("loading requests..."))
+		bodyLines = append(bodyLines,
+			m.spinner.View()+" "+MutedStyle.Render("loading requests..."),
+		)
 
 	case myRequestsError:
-		b.WriteString("  ")
-		b.WriteString(ErrorStyle.Render("error: "))
-		b.WriteString(MutedStyle.Render(m.errMsg))
-		b.WriteString("\n  ")
-		b.WriteString(HelpBarStyle.Render("r retry · esc back"))
+		bodyLines = append(bodyLines,
+			ErrorStyle.Render("error: ")+MutedStyle.Render(m.errMsg),
+			HelpBarStyle.Render("r retry · esc back"),
+		)
 
 	case myRequestsReady:
+		// Column headers
+		bodyLines = append(bodyLines, m.renderHeaderRow(iw))
+		bodyLines = append(bodyLines, TableHeaderSep(iw))
+
 		if len(m.requests) == 0 {
-			b.WriteString("  ")
-			b.WriteString(MutedStyle.Render("no access requests — use /request to submit one"))
+			bodyLines = append(bodyLines, MutedStyle.Render("no access requests — use /request to submit one"))
 		} else {
 			visible := m.visibleRows()
 			start := 0
@@ -168,65 +190,110 @@ func (m myRequestsModel) View() string {
 
 			for i := start; i < end; i++ {
 				r := m.requests[i]
-				selected := i == m.cursor
-				b.WriteString(m.renderRow(r, selected))
-				b.WriteString("\n")
+				bodyLines = append(bodyLines, m.renderRow(r, i == m.cursor, iw))
 			}
 
 			if len(m.requests) > visible {
-				info := fmt.Sprintf("  %d-%d of %d", start+1, end, len(m.requests))
-				b.WriteString(DimStyle.Render(info))
-				b.WriteString("\n")
+				info := fmt.Sprintf("%d-%d of %d", start+1, end, len(m.requests))
+				bodyLines = append(bodyLines, DimStyle.Render(info))
 			}
 		}
+
+		countStr := fmt.Sprintf("%d request", len(m.requests))
+		if len(m.requests) != 1 {
+			countStr = fmt.Sprintf("%d requests", len(m.requests))
+		}
+		bodyLines = append(bodyLines, "")
+		bodyLines = append(bodyLines, DimStyle.Render(countStr))
 	}
 
-	return b.String()
+	body := strings.Join(bodyLines, "\n")
+	panelWidth := m.width - 4
+	if panelWidth < 56 {
+		panelWidth = 56
+	}
+	if panelWidth > 116 {
+		panelWidth = 116
+	}
+	return RoundedPanel(body, panelWidth)
 }
 
-func (m myRequestsModel) renderRow(r api.AccessRequest, selected bool) string {
-	serverName := mrServerName(r)
+func (m myRequestsModel) renderHeaderRow(iw int) string {
+	status := TableHeaderStyle.Width(10).Render("Status")
+	env := TableHeaderStyle.Width(8).Render("Env")
+	server := TableHeaderStyle.Width(20).Render("Server")
+	principal := TableHeaderStyle.Width(12).Render("Principal")
+	submitted := TableHeaderStyle.Width(14).Render("Submitted")
+	note := TableHeaderStyle.Render("Expires/Reason")
+	_ = iw
+	return status + " " + env + " " + server + " " + principal + " " + submitted + " " + note
+}
+
+func (m myRequestsModel) renderRow(r api.AccessRequest, selected bool, iw int) string {
+	// Status: glyph + text
+	glyph := StatusBadge(r.Status)
+	statusText := lipgloss.NewStyle().Width(8).Foreground(lipgloss.Color(colorMuted)).Render(statusLabel(r.Status))
+	statusCol := glyph + " " + statusText
+
 	env := mrEnv(r)
+	envCol := EnvBadge(env)
 
-	badge := EnvBadge(env)
-	statusGlyph := StatusBadge(r.Status)
+	serverName := mrServerName(r)
+	serverCol := lipgloss.NewStyle().Width(20).Foreground(lipgloss.Color(colorText)).Render(truncate(serverName, 19))
 
-	nameCol := lipgloss.NewStyle().Width(22).
-		Foreground(lipgloss.Color(colorText)).
-		Render(serverName)
-	principalCol := lipgloss.NewStyle().Width(12).
-		Foreground(lipgloss.Color(colorMuted)).
-		Render(r.RequestedPrincipal)
+	principalCol := lipgloss.NewStyle().Width(12).Foreground(lipgloss.Color(colorMuted)).Render(truncate(r.RequestedPrincipal, 11))
 
-	// Age / expiry.
-	var timeCol string
+	// Submitted time
+	var submittedStr string
+	if !r.CreatedAt.IsZero() {
+		submittedStr = r.CreatedAt.Local().Format("01-02 15:04")
+	}
+	submittedCol := lipgloss.NewStyle().Width(14).Foreground(lipgloss.Color(colorDim)).Render(submittedStr)
+
+	// Expires / reason column
+	var noteStr string
 	switch r.Status {
 	case "APPROVED":
 		if r.ExpiresAt != nil {
 			remaining := time.Until(*r.ExpiresAt)
 			if remaining > 0 {
-				timeCol = "expires " + formatDuration(remaining)
+				noteStr = "expires " + formatDuration(remaining)
 			} else {
-				timeCol = "expired"
+				noteStr = "expired"
 			}
 		}
 	case "PENDING":
-		timeCol = formatDuration(time.Since(r.CreatedAt)) + " ago"
-	default:
-		if !r.CreatedAt.IsZero() {
-			timeCol = r.CreatedAt.Local().Format("01-02 15:04")
+		noteStr = formatDuration(time.Since(r.CreatedAt)) + " ago"
+	case "DENIED":
+		if r.DeniedReason != "" {
+			noteStr = truncate(r.DeniedReason, 24)
 		}
 	}
-	timeStr := lipgloss.NewStyle().Width(16).
-		Foreground(lipgloss.Color(colorDim)).
-		Render(timeCol)
+	noteCol := lipgloss.NewStyle().Foreground(lipgloss.Color(colorDim)).Render(noteStr)
 
-	content := badge + "  " + nameCol + "  " + principalCol + "  " + statusGlyph + "  " + timeStr
+	content := statusCol + " " + envCol + " " + serverCol + " " + principalCol + " " + submittedCol + " " + noteCol
 
 	if selected {
-		return renderSelectedRow(content)
+		return renderSelectedRow(content, iw)
 	}
 	return renderNormalRow(content)
+}
+
+func statusLabel(s string) string {
+	switch s {
+	case "APPROVED":
+		return "approved"
+	case "PENDING":
+		return "pending"
+	case "DENIED":
+		return "denied"
+	case "EXPIRED":
+		return "expired"
+	case "REVOKED":
+		return "revoked"
+	default:
+		return strings.ToLower(s)
+	}
 }
 
 func mrServerName(r api.AccessRequest) string {

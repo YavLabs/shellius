@@ -1,54 +1,39 @@
 package tui
 
-import "github.com/charmbracelet/lipgloss"
+import (
+	"strings"
 
-// Color palette — eight named constants, section B of the spec.
-// All hex strings live here; all views import by name.
+	"github.com/charmbracelet/lipgloss"
+)
+
+// Color palette — eight named constants.
+// colorAccent is the coral identity color (replaces sshm's cyan).
 const (
-	// colorAccent: warm coral — selection marker ▎, focused field label,
-	// wordmark "shellius", login user-code, request-ID code blocks.
-	colorAccent = "#d97757"
+	colorAccent = "#d97757" // warm coral
+	colorText   = "#e6e6e6" // default body text
+	colorMuted  = "#8a8a8a" // secondary metadata
+	colorDim    = "#5a5a5a" // tertiary
+	colorOK     = "#7eb87e" // approved / live
+	colorWarn   = "#d4b85a" // pending / stale
+	colorErr    = "#cf6a6a" // denied / error
+	colorBorder = "#3a3a3a" // panel / overlay borders
 
-	// colorText: default body text, primary list-item names, bold titles.
-	colorText = "#e6e6e6"
-
-	// colorMuted: secondary metadata — principal, customer name, footer hints.
-	colorMuted = "#8a8a8a"
-
-	// colorDim: tertiary — customer group headers, count parens, scroll indicator.
-	colorDim = "#5a5a5a"
-
-	// colorOK: approved status glyph, live session, success state.
-	colorOK = "#7eb87e"
-
-	// colorWarn: pending status glyph, stale-cache hint, toast.
-	colorWarn = "#d4b85a"
-
-	// colorErr: denied/error status glyph, validation errors, error screen.
-	colorErr = "#cf6a6a"
-
-	// colorBorder: palette overlay border — the ONLY place a border is drawn.
-	colorBorder = "#2a2a2a"
-
-	// colorHighlight: used ONLY in login.go user-code background block.
-	// This is the one background fill in the whole TUI and it earns its place.
+	// colorHighlight: ONLY used in login user-code background block.
 	colorHighlight = "#1a1a1a"
 )
 
-// Environment colors (three reusable semantic + one extra for dev).
-// These are not in the named-8 because they are not global — used only in EnvBadge.
+// Environment colors.
 const (
-	colorEnvProd    = colorErr  // prod → red
-	colorEnvStaging = colorWarn // staging → yellow
-	colorEnvDev     = "#6e9aa6" // dev → cool slate (the one extra hue)
-	colorEnvDemo    = colorDim  // demo → dim
+	colorEnvProd    = colorErr
+	colorEnvStaging = colorWarn
+	colorEnvDev     = "#6e9aa6"
+	colorEnvDemo    = colorDim
 )
 
-// SelectionMarker is the left-edge marker for the selected row (U+258E + space).
+// SelectionMarker is kept for palette compatibility.
 const SelectionMarker = "▎ "
 
-// EnvBadge returns the lowercase env name in its color, width-padded to 8 chars.
-// No box, no ALL-CAPS — just a colored label. Empty env renders as 8 spaces.
+// EnvBadge returns the lowercase env name in its semantic color, width-padded to 8 chars.
 func EnvBadge(env string) string {
 	var col string
 	switch env {
@@ -63,20 +48,16 @@ func EnvBadge(env string) string {
 	default:
 		col = colorDim
 	}
-	label := env
-	if label == "" {
-		// Render eight spaces so the column still lines up, but "unknown"
-		// doesn't appear — silence is less intrusive than a wrong label.
+	if env == "" {
 		return "        "
 	}
 	return lipgloss.NewStyle().
 		Foreground(lipgloss.Color(col)).
 		Width(8).
-		Render(label)
+		Render(env)
 }
 
 // StatusBadge returns a one-character glyph + color for request status.
-// No boxed pill — just a colored symbol.
 func StatusBadge(status string) string {
 	switch status {
 	case "APPROVED":
@@ -98,9 +79,9 @@ func StatusBadge(status string) string {
 func AccessStatusStyle(status string) string {
 	switch status {
 	case "direct":
-		return lipgloss.NewStyle().Foreground(lipgloss.Color(colorOK)).Render("ready")
+		return lipgloss.NewStyle().Foreground(lipgloss.Color(colorOK)).Render("available")
 	case "requires_approval":
-		return lipgloss.NewStyle().Foreground(lipgloss.Color(colorWarn)).Render("needs approval")
+		return lipgloss.NewStyle().Foreground(lipgloss.Color(colorWarn)).Render("requires approval")
 	case "approved":
 		return lipgloss.NewStyle().Foreground(lipgloss.Color(colorOK)).Render("approved")
 	default:
@@ -108,94 +89,192 @@ func AccessStatusStyle(status string) string {
 	}
 }
 
-// --- Shared component styles ---
+// --- Base styles ---
 
 var (
-	// TitleStyle: bold + colorText — section titles, screen titles.
 	TitleStyle = lipgloss.NewStyle().
 			Bold(true).
 			Foreground(lipgloss.Color(colorText))
 
-	// SectionHeaderStyle: same as TitleStyle; alias for clarity at call sites.
 	SectionHeaderStyle = TitleStyle
 
-	// SubtitleStyle: dim subtitle under the wordmark on login.
 	SubtitleStyle = lipgloss.NewStyle().
 			Foreground(lipgloss.Color(colorMuted))
 
-	// ErrorStyle: bold colorErr — "Error" prefix word.
 	ErrorStyle = lipgloss.NewStyle().
 			Bold(true).
 			Foreground(lipgloss.Color(colorErr))
 
-	// MutedStyle: regular colorMuted — metadata, descriptions.
 	MutedStyle = lipgloss.NewStyle().
 			Foreground(lipgloss.Color(colorMuted))
 
-	// DimStyle: regular colorDim — tertiary info, scroll indicators.
 	DimStyle = lipgloss.NewStyle().
 			Foreground(lipgloss.Color(colorDim))
 
-	// CodeStyle: bold colorAccent — request IDs, user codes, URLs.
 	CodeStyle = lipgloss.NewStyle().
 			Bold(true).
 			Foreground(lipgloss.Color(colorAccent))
 
-	// HelpBarStyle: footer hints, dim regular.
 	HelpBarStyle = lipgloss.NewStyle().
 			Foreground(lipgloss.Color(colorDim))
 
-	// InputLabelStyle: field label — muted normally.
 	InputLabelStyle = lipgloss.NewStyle().
 			Foreground(lipgloss.Color(colorMuted))
 
-	// FocusedInputStyle: field label — accent + bold when focused.
 	FocusedInputStyle = lipgloss.NewStyle().
 				Bold(true).
 				Foreground(lipgloss.Color(colorAccent))
 
-	// HighlightStyle: used ONLY in login.go user-code block background.
 	HighlightStyle = lipgloss.NewStyle().
 			Bold(true).
 			Foreground(lipgloss.Color(colorText)).
 			Background(lipgloss.Color(colorHighlight)).
 			Padding(0, 1)
 
-	// ToastStyle: one-line warning/info message — muted, no decoration.
 	ToastStyle = lipgloss.NewStyle().
+			Italic(true).
 			Foreground(lipgloss.Color(colorWarn))
 
 	// PaletteStyle: the rounded border frame for the command palette.
-	// This is the ONLY border drawn in the entire TUI.
 	PaletteStyle = lipgloss.NewStyle().
 			Border(lipgloss.RoundedBorder()).
 			BorderForeground(lipgloss.Color(colorBorder)).
 			Padding(0, 1)
 
-	// SuccessStyle: accent for success messages (login OK, approved).
 	SuccessStyle = lipgloss.NewStyle().
 			Bold(true).
 			Foreground(lipgloss.Color(colorAccent))
 
-	// SelectedItemStyle: bold + colorText for selected row content.
+	// SelectedItemStyle: for content on a selected row.
 	SelectedItemStyle = lipgloss.NewStyle().
 				Bold(true).
 				Foreground(lipgloss.Color(colorText))
 
-	// ListItemStyle: unselected row — 2-space left indent (marker replaced by spaces).
 	ListItemStyle = lipgloss.NewStyle().PaddingLeft(2)
 )
 
-// renderSelectedRow wraps a row with the accent-colored left marker + bold text.
-// No background fill, no trailing hints. 2-space margin is provided by the marker.
-func renderSelectedRow(content string) string {
-	marker := lipgloss.NewStyle().
-		Foreground(lipgloss.Color(colorAccent)).
-		Render(SelectionMarker)
-	return marker + SelectedItemStyle.Render(content)
+// --- sshm-style panel helpers ---
+
+// RoundedPanel wraps content in a rounded border panel using colorBorder.
+// width is the total outer width (border included). Pass 0 for auto.
+func RoundedPanel(content string, width int) string {
+	s := lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(lipgloss.Color(colorBorder)).
+		Padding(0, 1)
+	if width > 0 {
+		s = s.Width(width - 2) // lipgloss width is inner
+	}
+	return s.Render(content)
 }
 
-// renderNormalRow wraps a row with the standard unselected left indent (2 spaces).
+// TableHeaderSep returns a dim horizontal rule for separating header from rows.
+// width is the inner content width.
+func TableHeaderSep(width int) string {
+	if width < 1 {
+		width = 1
+	}
+	return DimStyle.Render(strings.Repeat("─", width))
+}
+
+// TableHeaderStyle returns a style for column headers: accent + bold.
+var TableHeaderStyle = lipgloss.NewStyle().
+	Bold(true).
+	Foreground(lipgloss.Color(colorAccent))
+
+// renderSelectedRow fills the entire row with a coral background.
+// content should be the full padded row string (no trailing newline).
+func renderSelectedRow(content string, rowWidth int) string {
+	s := lipgloss.NewStyle().
+		Bold(true).
+		Foreground(lipgloss.Color(colorText)).
+		Background(lipgloss.Color(colorAccent))
+	if rowWidth > 0 {
+		s = s.Width(rowWidth)
+	}
+	return s.Render(content)
+}
+
+// renderNormalRow wraps an unselected row with a 1-space left indent inside the panel.
 func renderNormalRow(content string) string {
-	return ListItemStyle.Render(content)
+	return " " + content
+}
+
+// SearchBarLabel renders the "Search (/ to focus): › " prefix in accent color.
+func SearchBarLabel() string {
+	return lipgloss.NewStyle().
+		Foreground(lipgloss.Color(colorAccent)).
+		Render("Search (/ to focus): › ")
+}
+
+// SortIndicator renders "Sort: ↓<field>" in muted gray.
+func SortIndicator(field string) string {
+	return DimStyle.Render("Sort: ↓" + field)
+}
+
+// FormFieldLabel renders a form field label. If focused, uses accent+bold.
+// Required fields get a " *" suffix.
+func FormFieldLabel(label string, focused bool, required bool) string {
+	if required {
+		label += " *"
+	}
+	if focused {
+		return FocusedInputStyle.Render(label)
+	}
+	return InputLabelStyle.Render(label)
+}
+
+// FormInputBox wraps a textinput View() in a rounded border.
+// focused controls whether to use the accent border color or dim.
+func FormInputBox(inputView string, focused bool, width int) string {
+	borderColor := colorBorder
+	if focused {
+		borderColor = colorAccent
+	}
+	s := lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(lipgloss.Color(borderColor)).
+		Padding(0, 1)
+	if width > 0 {
+		s = s.Width(width - 4) // account for border(2) + padding(2)
+	}
+	return s.Render(inputView)
+}
+
+// ShelliusLogo returns the ASCII art logo in coral (colorAccent).
+// Returns empty string if termHeight < 28 (caller is responsible for this check).
+func ShelliusLogo() string {
+	// Block-letter "SHELLIUS" — 6 lines tall, ~46 chars wide.
+	// Designed to fit in an 80-col terminal inside a bordered panel.
+	lines := []string{
+		" ███████╗██╗  ██╗███████╗██╗     ██╗     ██╗██╗   ██╗███████╗",
+		" ██╔════╝██║  ██║██╔════╝██║     ██║     ██║██║   ██║██╔════╝",
+		" ███████╗███████║█████╗  ██║     ██║     ██║██║   ██║███████╗",
+		" ╚════██║██╔══██║██╔══╝  ██║     ██║     ██║██║   ██║╚════██║",
+		" ███████║██║  ██║███████╗███████╗███████╗██║╚██████╔╝███████║",
+		" ╚══════╝╚═╝  ╚═╝╚══════╝╚══════╝╚══════╝╚═╝ ╚═════╝ ╚══════╝",
+	}
+	style := lipgloss.NewStyle().Foreground(lipgloss.Color(colorAccent))
+	var b strings.Builder
+	for _, l := range lines {
+		b.WriteString(style.Render(l))
+		b.WriteString("\n")
+	}
+	return b.String()
+}
+
+// ShelliusLogoSmall returns a compact 3-line "SHL" mark for narrow contexts.
+func ShelliusLogoSmall() string {
+	lines := []string{
+		" ███████╗██╗  ██╗██╗     ",
+		" ██╔════╝██║  ██║██║     ",
+		" ███████╗███████║███████╗",
+	}
+	style := lipgloss.NewStyle().Foreground(lipgloss.Color(colorAccent))
+	var b strings.Builder
+	for _, l := range lines {
+		b.WriteString(style.Render(l))
+		b.WriteString("\n")
+	}
+	return b.String()
 }

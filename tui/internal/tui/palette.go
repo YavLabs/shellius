@@ -242,38 +242,46 @@ func (p paletteModel) View() string {
 		b.WriteString(MutedStyle.Render("  no matching commands"))
 		b.WriteString("\n")
 	} else {
+		// Sliding window: keep the cursor inside the visible range so the
+		// user can actually navigate to the last command. Previously the
+		// render hard-sliced [0:maxShow] which left "/quit" forever hidden
+		// behind a "… 1 more" placeholder no matter where the cursor was.
 		maxShow := 8
-		for i, c := range p.commands {
-			if i >= maxShow {
-				more := len(p.commands) - maxShow
-				b.WriteString(MutedStyle.Render(fmt.Sprintf("  … %d more", more)))
-				b.WriteString("\n")
-				break
-			}
+		start := 0
+		if p.cursor >= maxShow {
+			start = p.cursor - maxShow + 1
+		}
+		end := start + maxShow
+		if end > len(p.commands) {
+			end = len(p.commands)
+		}
+		if start > 0 {
+			b.WriteString(MutedStyle.Render(fmt.Sprintf("  ↑ %d more\n", start)))
+		}
+		for i := start; i < end; i++ {
+			c := p.commands[i]
 			nameStyle := lipgloss.NewStyle().
 				Bold(true).
 				Foreground(lipgloss.Color(colorAccent)).
-				Width(12)
+				Width(14)
 			descStyle := lipgloss.NewStyle().
 				Foreground(lipgloss.Color(colorMuted))
 
 			row := nameStyle.Render(c.Name) + "  " + descStyle.Render(c.Desc)
 
-			// Use the same selection-marker pattern as the rest of the TUI
-			// (▎ in accent color + bold) so the cursor is unambiguously
-			// visible. The previous styling only differed by text weight,
-			// which was effectively invisible on most terminals — that's
-			// why "up/down doesn't work" was the user's report when in
-			// fact the cursor was moving silently.
+			// Background-fill selection: the whole row gets a coral background
+			// so the cursor is unambiguous (replaces the old ▎ marker).
+			// The sliding window above keeps ↑ N more / ↓ N more indicators
+			// so all commands are reachable.
 			if i == p.cursor {
-				marker := lipgloss.NewStyle().
-					Foreground(lipgloss.Color(colorAccent)).
-					Render(SelectionMarker)
-				b.WriteString(marker + SelectedItemStyle.Render(row))
+				b.WriteString(renderSelectedRow(row, width-2))
 			} else {
-				b.WriteString("  " + row)
+				b.WriteString(" " + row)
 			}
 			b.WriteString("\n")
+		}
+		if end < len(p.commands) {
+			b.WriteString(MutedStyle.Render(fmt.Sprintf("  ↓ %d more\n", len(p.commands)-end)))
 		}
 	}
 
