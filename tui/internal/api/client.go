@@ -93,6 +93,14 @@ type SshCreds struct {
 	PrivateKey     string     `json:"privateKey"`
 	Certificate    string     `json:"certificate"`
 	Hostname       string     `json:"hostname"`
+	// Address is the IP address the backend resolved for the server. The
+	// TUI MUST prefer this over Hostname for the actual ssh -i target —
+	// the backend's DNS view of the world (inside docker) is canonical, and
+	// the user's local DNS may resolve the server's display hostname to a
+	// completely different machine that doesn't trust the Shellius CA.
+	// (This is exactly how prod-databases broke for the first user: their
+	// Mac resolved the name to an unrelated host and ssh got cert-rejected.)
+	Address        string     `json:"address"`
 	Port           int        `json:"port"`
 	Username       string     `json:"username"`
 	ExpiresAt      *time.Time `json:"expiresAt,omitempty"`

@@ -549,9 +549,25 @@ func (m AppModel) execSSH(creds api.SshCreds, host api.Host) tea.Cmd {
 	if user == "" {
 		user = "root"
 	}
-	hostname := creds.Hostname
+	// Prefer the IP address that the backend resolved when issuing the
+	// credentials. The user's local DNS for things like "prod-databases"
+	// may point at a completely different host that doesn't trust the
+	// Shellius CA — and we'd silently get "Permission denied (publickey)".
+	// Hostname is kept for display purposes (logging, error messages).
+	hostname := creds.Address
+	displayHost := creds.Hostname
+	if hostname == "" {
+		hostname = creds.Hostname
+	}
 	if hostname == "" {
 		hostname = host.Hostname
+	}
+	if displayHost == "" {
+		displayHost = host.Hostname
+	}
+	if displayHost != "" && displayHost != hostname {
+		logx.Infof("app: connecting to %s (resolved by backend) for display host %s",
+			hostname, displayHost)
 	}
 	port := creds.Port
 	if port == 0 {
