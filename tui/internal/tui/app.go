@@ -233,6 +233,17 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case sshConnectMsg:
 		return m, m.execSSH(msg.creds, msg.host)
+	case sshExitedMsg:
+		// SSH session has ended cleanly. Route the user back to the
+		// active-access view (their "home" screen) and refresh it so any
+		// new state from the session — e.g. an access request that just
+		// expired or was extended — is reflected immediately.
+		m.currentView = viewActiveAccess
+		if m.client != nil {
+			m.activeAccess = NewActiveAccessModel(m.client)
+			return m, m.activeAccess.Init()
+		}
+		return m, nil
 	case appErrMsg:
 		// A definitive session-expired error means the refresh token has
 		// been rejected by the server. There is no in-app recovery — wipe
@@ -611,7 +622,11 @@ func (m AppModel) execSSH(creds api.SshCreds, host api.Host) tea.Cmd {
 		if err != nil {
 			if exitErr, ok := err.(*exec.ExitError); ok && exitErr.ExitCode() == 1 {
 				cleanup()
-				return nil
+				// Exit 1 from ssh is a "normal" remote-command failure
+				// (e.g. running a command that returned non-zero before
+				// disconnect). Treat it like a successful session end so
+				// the user is routed back to the active-access view.
+				return sshExitedMsg{}
 			}
 			captured := strings.TrimSpace(stderrBuf.String())
 			// Inspect the cert that was just rejected. The cert is still on
@@ -639,9 +654,19 @@ func (m AppModel) execSSH(creds api.SshCreds, host api.Host) tea.Cmd {
 			return appErrMsg{err: fmt.Errorf("SSH connection failed (%v):\n%s", err, details)}
 		}
 		cleanup()
-		return nil
+		// Successful SSH session ended (user typed exit / Ctrl-D / remote
+		// closed cleanly). Emit sshExitedMsg so the root Update can route
+		// back to the active-access view — without this the user is left
+		// staring at whichever screen launched the connection (typically
+		// the access-request "fetching credentials" screen).
+		return sshExitedMsg{}
 	})
 }
+
+// sshExitedMsg signals that an SSH session ended (success or normal exit).
+// The root Update handles it by returning the user to viewActiveAccess and
+// triggering a refresh of the active-access list.
+type sshExitedMsg struct{}
 
 // inspectCert runs `ssh-keygen -L -f <certPath>` and returns the output. Used
 // purely for diagnostics when an ssh connection fails — tells us what
