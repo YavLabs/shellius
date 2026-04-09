@@ -1,5 +1,5 @@
-import { useLocation } from 'react-router-dom';
-import { Sun, Moon, Monitor, ChevronDown, LogOut } from 'lucide-react';
+import { useLocation, useNavigate } from 'react-router-dom';
+import { Sun, Moon, Monitor, ChevronDown, LogOut, Terminal } from 'lucide-react';
 import { useState } from 'react';
 import { useTheme } from '@/context/ThemeContext';
 import { useAuth } from '@/context/AuthContext';
@@ -19,10 +19,12 @@ const routeNames = {
   '/audit-log': 'Audit Log',
   '/cloud-connectors': 'Cloud Connectors',
   '/settings': 'Settings',
+  '/install-cli': 'Install CLI',
 };
 
 function Topbar() {
   const location = useLocation();
+  const navigate = useNavigate();
   const { theme, toggleTheme } = useTheme();
   const { user, logout } = useAuth();
   const [userMenuOpen, setUserMenuOpen] = useState(false);
@@ -78,6 +80,16 @@ function Topbar() {
                   <p className="text-sm font-medium text-foreground">{user?.name}</p>
                   <p className="text-xs text-muted-foreground">{user?.email}</p>
                 </div>
+                <button
+                  onClick={() => {
+                    setUserMenuOpen(false);
+                    navigate('/install-cli');
+                  }}
+                  className="flex w-full items-center gap-2 px-3 py-2 text-sm text-muted-foreground hover:bg-accent hover:text-foreground transition-colors"
+                >
+                  <Terminal className="h-4 w-4" />
+                  Install CLI
+                </button>
                 <button
                   onClick={() => {
                     setUserMenuOpen(false);
