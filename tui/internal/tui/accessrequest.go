@@ -439,9 +439,7 @@ func (m AccessRequestModel) View() string {
 	)
 	b.WriteString(hostLine)
 	b.WriteString("\n")
-	// Thin separator.
-	b.WriteString(SeparatorStyle.Render(strings.Repeat("─", 48)))
-	b.WriteString("\n\n")
+	b.WriteString("\n")
 
 	switch m.state {
 	case arStateLoadingIntent:

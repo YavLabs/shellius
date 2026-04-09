@@ -2,49 +2,53 @@ package tui
 
 import "github.com/charmbracelet/lipgloss"
 
-// Color palette — centralized. All hex strings live here; views import named constants.
+// Color palette — eight named constants, section B of the spec.
+// All hex strings live here; all views import by name.
 const (
-	// Primary accent: warm coral — selection marker, spinner, section titles, app name.
+	// colorAccent: warm coral — selection marker ▎, focused field label,
+	// wordmark "shellius", login user-code, request-ID code blocks.
 	colorAccent = "#d97757"
 
-	// Typography.
-	colorPrimary = "#e6e6e6" // primary text (off-white)
-	colorMuted   = "#8a8a8a" // secondary text, footer hints, metadata
-	colorDim     = "#5a5a5a" // tertiary text, separator rules, bullets
+	// colorText: default body text, primary list-item names, bold titles.
+	colorText = "#e6e6e6"
 
-	// Semantic.
-	colorOK  = "#7eb87e" // approved / live
-	colorWarn = "#d4b85a" // pending / warning
-	colorErr  = "#cf6a6a" // denied / error
+	// colorMuted: secondary metadata — principal, customer name, footer hints.
+	colorMuted = "#8a8a8a"
 
-	// Environment badges — desaturated, not neon.
-	colorEnvDev     = "#6e9aa6"
-	colorEnvStaging = "#c0a060"
-	colorEnvProd    = "#c47a7a"
-	colorEnvDemo    = "#888888"
+	// colorDim: tertiary — customer group headers, count parens, scroll indicator.
+	colorDim = "#5a5a5a"
 
-	// Legacy aliases — kept so existing code that references these compiles.
-	// Do not add new references; use the canonical names above.
-	colorText      = colorPrimary
-	colorSubtle    = colorMuted
-	colorBorder    = "#2a2a2a"
-	colorSeparator = "#3a3a3a"
-	colorHighlight = "#1a1a1a" // used in login.go user-code block background
-	colorSurface   = "#0f0f0f"
-	colorBg        = colorSurface
+	// colorOK: approved status glyph, live session, success state.
+	colorOK = "#7eb87e"
 
-	// Kept for old badge references inside styles.go only.
-	colorProd    = colorEnvProd
-	colorStaging = colorEnvStaging
-	colorDev     = colorEnvDev
-	colorDemo    = colorEnvDemo
+	// colorWarn: pending status glyph, stale-cache hint, toast.
+	colorWarn = "#d4b85a"
 
-	// Selection marker.
-	colorSelectMarker = colorAccent
+	// colorErr: denied/error status glyph, validation errors, error screen.
+	colorErr = "#cf6a6a"
+
+	// colorBorder: palette overlay border — the ONLY place a border is drawn.
+	colorBorder = "#2a2a2a"
+
+	// colorHighlight: used ONLY in login.go user-code background block.
+	// This is the one background fill in the whole TUI and it earns its place.
+	colorHighlight = "#1a1a1a"
 )
 
+// Environment colors (three reusable semantic + one extra for dev).
+// These are not in the named-8 because they are not global — used only in EnvBadge.
+const (
+	colorEnvProd    = colorErr  // prod → red
+	colorEnvStaging = colorWarn // staging → yellow
+	colorEnvDev     = "#6e9aa6" // dev → cool slate (the one extra hue)
+	colorEnvDemo    = colorDim  // demo → dim
+)
+
+// SelectionMarker is the left-edge marker for the selected row (U+258E + space).
+const SelectionMarker = "▎ "
+
 // EnvBadge returns the lowercase env name in its color, width-padded to 8 chars.
-// No box, no all-caps — just a colored label.
+// No box, no ALL-CAPS — just a colored label. Empty env renders as 8 spaces.
 func EnvBadge(env string) string {
 	var col string
 	switch env {
@@ -61,7 +65,9 @@ func EnvBadge(env string) string {
 	}
 	label := env
 	if label == "" {
-		label = "unknown"
+		// Render eight spaces so the column still lines up, but "unknown"
+		// doesn't appear — silence is less intrusive than a wrong label.
+		return "        "
 	}
 	return lipgloss.NewStyle().
 		Foreground(lipgloss.Color(col)).
@@ -102,108 +108,86 @@ func AccessStatusStyle(status string) string {
 	}
 }
 
-// SelectionMarker is the left-edge marker for the selected row.
-const SelectionMarker = "▎ "
+// --- Shared component styles ---
 
-// Layout / component styles.
 var (
-	// AppStyle: NO outer border. Left margin only.
-	AppStyle = lipgloss.NewStyle().PaddingLeft(2)
-
-	// TitleStyle: bold, primary color — section titles, screen titles.
+	// TitleStyle: bold + colorText — section titles, screen titles.
 	TitleStyle = lipgloss.NewStyle().
 			Bold(true).
-			Foreground(lipgloss.Color(colorPrimary))
+			Foreground(lipgloss.Color(colorText))
 
+	// SectionHeaderStyle: same as TitleStyle; alias for clarity at call sites.
+	SectionHeaderStyle = TitleStyle
+
+	// SubtitleStyle: dim subtitle under the wordmark on login.
 	SubtitleStyle = lipgloss.NewStyle().
 			Foreground(lipgloss.Color(colorMuted))
 
+	// ErrorStyle: bold colorErr — "Error" prefix word.
 	ErrorStyle = lipgloss.NewStyle().
 			Bold(true).
 			Foreground(lipgloss.Color(colorErr))
 
-	// SuccessStyle uses the accent coral.
-	SuccessStyle = lipgloss.NewStyle().
-			Bold(true).
-			Foreground(lipgloss.Color(colorAccent))
-
+	// MutedStyle: regular colorMuted — metadata, descriptions.
 	MutedStyle = lipgloss.NewStyle().
 			Foreground(lipgloss.Color(colorMuted))
 
+	// DimStyle: regular colorDim — tertiary info, scroll indicators.
 	DimStyle = lipgloss.NewStyle().
 			Foreground(lipgloss.Color(colorDim))
 
-	// HighlightStyle: kept for backward compat with login.go user-code block.
-	HighlightStyle = lipgloss.NewStyle().
-			Bold(true).
-			Foreground(lipgloss.Color(colorPrimary)).
-			Background(lipgloss.Color(colorHighlight)).
-			Padding(0, 1)
-
+	// CodeStyle: bold colorAccent — request IDs, user codes, URLs.
 	CodeStyle = lipgloss.NewStyle().
 			Bold(true).
 			Foreground(lipgloss.Color(colorAccent))
 
-	// BorderStyle for sub-overlays that need their own frame.
-	BorderStyle = lipgloss.NewStyle().
-			Border(lipgloss.RoundedBorder()).
-			BorderForeground(lipgloss.Color(colorBorder)).
-			Padding(0, 1)
-
-	// StatusBarStyle — one-line header, dim.
-	StatusBarStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color(colorMuted))
-
-	// HelpBarStyle — footer hints, dim.
+	// HelpBarStyle: footer hints, dim regular.
 	HelpBarStyle = lipgloss.NewStyle().
 			Foreground(lipgloss.Color(colorDim))
 
-	// SectionHeaderStyle: bold primary — section titles like "Active Access (3)".
-	SectionHeaderStyle = lipgloss.NewStyle().
-				Bold(true).
-				Foreground(lipgloss.Color(colorPrimary))
-
+	// InputLabelStyle: field label — muted normally.
 	InputLabelStyle = lipgloss.NewStyle().
 			Foreground(lipgloss.Color(colorMuted))
 
-	// FocusedInputStyle: accent color for the focused field label.
+	// FocusedInputStyle: field label — accent + bold when focused.
 	FocusedInputStyle = lipgloss.NewStyle().
+				Bold(true).
 				Foreground(lipgloss.Color(colorAccent))
 
-	// ListItemStyle: normal row — small left padding (no marker).
-	ListItemStyle = lipgloss.NewStyle().PaddingLeft(2)
+	// HighlightStyle: used ONLY in login.go user-code block background.
+	HighlightStyle = lipgloss.NewStyle().
+			Bold(true).
+			Foreground(lipgloss.Color(colorText)).
+			Background(lipgloss.Color(colorHighlight)).
+			Padding(0, 1)
 
-	// SelectedItemStyle: bold, no background fill.
-	SelectedItemStyle = lipgloss.NewStyle().
-				Bold(true).
-				Foreground(lipgloss.Color(colorPrimary))
-
-	// ToastStyle: warning/info inline message.
+	// ToastStyle: one-line warning/info message — muted, no decoration.
 	ToastStyle = lipgloss.NewStyle().
 			Foreground(lipgloss.Color(colorWarn))
 
-	// PaletteStyle frames the command-palette overlay.
+	// PaletteStyle: the rounded border frame for the command palette.
+	// This is the ONLY border drawn in the entire TUI.
 	PaletteStyle = lipgloss.NewStyle().
 			Border(lipgloss.RoundedBorder()).
 			BorderForeground(lipgloss.Color(colorBorder)).
 			Padding(0, 1)
 
-	PaletteItemSelected = lipgloss.NewStyle().
+	// SuccessStyle: accent for success messages (login OK, approved).
+	SuccessStyle = lipgloss.NewStyle().
+			Bold(true).
+			Foreground(lipgloss.Color(colorAccent))
+
+	// SelectedItemStyle: bold + colorText for selected row content.
+	SelectedItemStyle = lipgloss.NewStyle().
 				Bold(true).
-				Foreground(lipgloss.Color(colorAccent)).
-				PaddingLeft(1)
+				Foreground(lipgloss.Color(colorText))
 
-	PaletteItemNormal = lipgloss.NewStyle().
-				Foreground(lipgloss.Color(colorMuted)).
-				PaddingLeft(1)
-
-	// SeparatorStyle: very dim horizontal rule.
-	SeparatorStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color(colorDim))
+	// ListItemStyle: unselected row — 2-space left indent (marker replaced by spaces).
+	ListItemStyle = lipgloss.NewStyle().PaddingLeft(2)
 )
 
 // renderSelectedRow wraps a row with the accent-colored left marker + bold text.
-// NO background fill, NO trailing hints.
+// No background fill, no trailing hints. 2-space margin is provided by the marker.
 func renderSelectedRow(content string) string {
 	marker := lipgloss.NewStyle().
 		Foreground(lipgloss.Color(colorAccent)).
@@ -211,7 +195,7 @@ func renderSelectedRow(content string) string {
 	return marker + SelectedItemStyle.Render(content)
 }
 
-// renderNormalRow wraps a row with the standard unselected left indent.
+// renderNormalRow wraps a row with the standard unselected left indent (2 spaces).
 func renderNormalRow(content string) string {
 	return ListItemStyle.Render(content)
 }

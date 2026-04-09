@@ -271,7 +271,7 @@ func (p paletteModel) View() string {
 					Render(SelectionMarker)
 				b.WriteString(marker + SelectedItemStyle.Render(row))
 			} else {
-				b.WriteString(PaletteItemNormal.Render(row))
+				b.WriteString("  " + row)
 			}
 			b.WriteString("\n")
 		}

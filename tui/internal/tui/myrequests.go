@@ -192,7 +192,7 @@ func (m myRequestsModel) renderRow(r api.AccessRequest, selected bool) string {
 	statusGlyph := StatusBadge(r.Status)
 
 	nameCol := lipgloss.NewStyle().Width(22).
-		Foreground(lipgloss.Color(colorPrimary)).
+		Foreground(lipgloss.Color(colorText)).
 		Render(serverName)
 	principalCol := lipgloss.NewStyle().Width(12).
 		Foreground(lipgloss.Color(colorMuted)).

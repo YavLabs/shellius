@@ -994,7 +994,7 @@ func (m AppModel) renderSessions() string {
 func (m AppModel) renderSessionRow(s sessions.Session, isActive bool) string {
 	nameCol := lipgloss.NewStyle().Width(22).Render(s.ServerName)
 	principalCol := lipgloss.NewStyle().Width(12).
-		Foreground(lipgloss.Color(colorSubtle)).
+		Foreground(lipgloss.Color(colorMuted)).
 		Render(s.Principal)
 
 	var timeCol string

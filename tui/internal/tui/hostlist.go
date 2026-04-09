@@ -367,7 +367,7 @@ func (m HostListModel) renderHostRow(h api.Host, selected bool) string {
 	}
 
 	nameCol := lipgloss.NewStyle().Width(28).
-		Foreground(lipgloss.Color(colorPrimary)).
+		Foreground(lipgloss.Color(colorText)).
 		Render(name)
 	content := badge + "  " + nameCol + "  " + status + expiry
 
