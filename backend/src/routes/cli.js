@@ -93,7 +93,32 @@ router.get('/install.sh', async (req, res, next) => {
         );
       return;
     }
-    const body = await fs.readFile(scriptPath, 'utf8');
+    const rawBody = await fs.readFile(scriptPath, 'utf8');
+
+    // Inject SHELLIUS_HOST so the one-liner `curl ... | sh` works without
+    // the user having to set the env var manually. When piped into sh,
+    // the script otherwise has no way to know which deployment served it.
+    // We honor X-Forwarded-* (Express `trust proxy` must be enabled) so
+    // the URL matches what the browser sees behind nginx/Traefik.
+    const host = req.get('x-forwarded-host') || req.get('host');
+    // Force https for any non-local host. The Cloudflare → Traefik → nginx
+    // → backend chain doesn't reliably preserve X-Forwarded-Proto (some
+    // inner hops rewrite it to http), but production traffic is always
+    // TLS-terminated at the edge. Localhost stays http for dev.
+    const isLocal = host && /^(localhost|127\.|0\.0\.0\.0|\[::1\])/.test(host);
+    const proto = isLocal ? 'http' : 'https';
+    let body = rawBody;
+    if (host) {
+      const injected = `${proto}://${host}`.replace(/\/+$/, '');
+      // Insert immediately after the shebang so `set -e` and everything
+      // else still runs in order. Use single quotes — the URL never
+      // contains them and we don't want shell expansion.
+      body = rawBody.replace(
+        /^(#![^\n]*\n)/,
+        `$1SHELLIUS_HOST='${injected}'\nexport SHELLIUS_HOST\n`
+      );
+    }
+
     res.set({
       'Content-Type': 'text/x-shellscript; charset=utf-8',
       'Cache-Control': 'no-store',
