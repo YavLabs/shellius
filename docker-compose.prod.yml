@@ -1,8 +1,8 @@
 # =============================================================================
 # Shellius — Production Compose
 #
-# Uses pre-built images from Docker Hub (yavlabs/shellius-backend and
-# yavlabs/shellius-frontend). These are built and pushed by the GitHub Actions
+# Uses pre-built images from Docker Hub (yavadmin/shellius-backend and
+# yavadmin/shellius-frontend). These are built and pushed by the GitHub Actions
 # workflow at .github/workflows/docker-build-push.yml.
 #
 # Image version is controlled by SHELLIUS_VERSION (default: latest).
@@ -109,7 +109,7 @@ services:
   # ── Backend API ───────────────────────────────────────────────────────────
   # Built by CI and pushed to Docker Hub. No local build context here.
   backend:
-    image: yavlabs/shellius-backend:${SHELLIUS_VERSION:-latest}
+    image: yavadmin/shellius-backend:${SHELLIUS_VERSION:-latest}
     container_name: shellius-api
     restart: unless-stopped
     env_file: .env.prod
@@ -139,7 +139,7 @@ services:
   # ── Frontend SPA (nginx-served) ───────────────────────────────────────────
   # Built by CI and pushed to Docker Hub. No local build context here.
   frontend:
-    image: yavlabs/shellius-frontend:${SHELLIUS_VERSION:-latest}
+    image: yavadmin/shellius-frontend:${SHELLIUS_VERSION:-latest}
     container_name: shellius-web
     restart: unless-stopped
     healthcheck:

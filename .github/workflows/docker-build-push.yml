@@ -18,9 +18,12 @@ on:
 permissions:
   contents: read
 
+# Opt into Node.js 24 now — Node.js 20 actions are deprecated and will
+# be force-removed from GitHub runners on September 16th, 2026.
 env:
-  BACKEND_IMAGE: yavlabs/shellius-backend
-  FRONTEND_IMAGE: yavlabs/shellius-frontend
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+  BACKEND_IMAGE: yavadmin/shellius-backend
+  FRONTEND_IMAGE: yavadmin/shellius-frontend
 
 jobs:
   build-and-push:
