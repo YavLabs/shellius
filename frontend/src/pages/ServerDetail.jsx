@@ -1,12 +1,13 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
-import { ArrowLeft, Pencil, Trash2, Activity, Download, Eraser } from 'lucide-react';
+import { ArrowLeft, Pencil, Trash2, Activity, Download, Eraser, Terminal } from 'lucide-react';
 import Modal from '@/components/shared/Modal';
 import ConfirmDialog from '@/components/shared/ConfirmDialog';
 import EnvironmentBadge from '@/components/shared/EnvironmentBadge';
 import HealthStatusDot from '@/components/shared/HealthStatusDot';
 import ServerForm from '@/components/servers/ServerForm';
 import BootstrapModal from '@/components/servers/BootstrapModal';
+import ProvisionModal from '@/components/servers/ProvisionModal';
 import UninstallHostModal from '@/components/servers/UninstallHostModal';
 import QuickConnectButton from '@/components/servers/QuickConnectButton';
 import PrivateIPWarning from '@/components/servers/PrivateIPWarning';
@@ -56,6 +57,7 @@ function ServerDetail() {
   const [checking, setChecking] = useState(false);
   const [bootstrapOpen, setBootstrapOpen] = useState(false);
   const [uninstallOpen, setUninstallOpen] = useState(false);
+  const [provisionOpen, setProvisionOpen] = useState(false);
 
   const fetch = useCallback(async () => {
     setLoading(true);
@@ -96,6 +98,12 @@ function ServerDetail() {
       setChecking(false);
     }
   };
+
+  const canProvision =
+    server &&
+    (server.protocol === 'ssh' || server.protocol === 'both') &&
+    server.osType !== 'windows' &&
+    (currentUser?.role === 'admin' || currentUser?.role === 'super_admin');
 
   if (loading) {
     return (
@@ -154,6 +162,17 @@ function ServerDetail() {
           <Button variant="outline" size="sm" onClick={() => setBootstrapOpen(true)}>
             <Download className="mr-2 h-4 w-4" /> Bootstrap Host
           </Button>
+          {canProvision && (
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => setProvisionOpen(true)}
+              className="gap-1.5"
+            >
+              <Terminal className="h-4 w-4" />
+              Auto-Provision
+            </Button>
+          )}
           <Button variant="outline" size="sm" onClick={() => setUninstallOpen(true)}>
             <Eraser className="mr-2 h-4 w-4" /> Uninstall Agent
           </Button>
@@ -177,7 +196,15 @@ function ServerDetail() {
           <Field label="IP Address" value={server.ipAddress} mono />
           <Field label="Port" value={server.port} mono />
           <Field label="Protocol" value={server.protocol?.toUpperCase()} />
-          <Field label="SSH User" value={server.sshUser} />
+          {(server.protocol === 'ssh' || server.protocol === 'both') && (
+            <Field label="SSH User" value={server.sshUser} />
+          )}
+          {(server.protocol === 'rdp' || server.protocol === 'both') && (
+            <Field label="RDP User" value={server.rdpUsername || '-'} />
+          )}
+          {(server.protocol === 'rdp' || server.protocol === 'both') && (
+            <Field label="RDP Password" value={server.hasRdpPassword ? '••••••••' : 'Not set'} />
+          )}
         </Card>
 
         <Card title="System">
@@ -249,6 +276,16 @@ function ServerDetail() {
         server={server}
         onClose={() => setBootstrapOpen(false)}
       />
+
+      {provisionOpen && (
+        <ProvisionModal
+          server={server}
+          onClose={() => {
+            setProvisionOpen(false);
+            fetch();
+          }}
+        />
+      )}
 
       <UninstallHostModal
         open={uninstallOpen}

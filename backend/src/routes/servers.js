@@ -1,12 +1,15 @@
 import express from 'express';
 import Joi from 'joi';
+import jwt from 'jsonwebtoken';
 import asyncHandler from '../utils/asyncHandler.js';
 import ApiError from '../utils/ApiError.js';
 import authenticate from '../middleware/auth.js';
 import tenant from '../middleware/tenant.js';
 import requireRole from '../middleware/rbac.js';
+import config from '../config/index.js';
 import * as serverService from '../services/serverService.js';
 import * as healthCheckService from '../services/healthCheckService.js';
+import { provisionServer } from '../services/provisionService.js';
 
 const router = express.Router();
 
@@ -39,6 +42,8 @@ const createSchema = Joi.object({
   cloudAccountId: Joi.string().allow('', null),
   sshUser: Joi.string().default('root'),
   sshKeyPath: Joi.string().allow('', null),
+  rdpUsername: Joi.string().allow('', null).max(255),
+  rdpPassword: Joi.string().allow('', null),
   isActive: Joi.boolean(),
 });
 
@@ -59,6 +64,8 @@ const updateSchema = Joi.object({
   cloudAccountId: Joi.string().allow('', null),
   sshUser: Joi.string(),
   sshKeyPath: Joi.string().allow('', null),
+  rdpUsername: Joi.string().allow('', null).max(255),
+  rdpPassword: Joi.string().allow('', null),
   isActive: Joi.boolean(),
 }).min(1);
 
@@ -147,6 +154,74 @@ router.post(
     const server = await healthCheckService.runHealthCheckForServer(req.orgId, req.params.id);
     if (!server) throw new ApiError(404, 'Server not found');
     res.json({ success: true, data: { server } });
+  })
+);
+
+// POST /api/servers/:id/provision
+// SSE endpoint — streams bootstrap output to admin in real time.
+// The private key and sudo password are used once in memory and never stored.
+router.post(
+  '/:id/provision',
+  requireRole('super_admin', 'admin'),
+  asyncHandler(async (req, res) => {
+    const { privateKey, sshUser, sudoPassword } = req.body;
+    if (!privateKey) throw new ApiError(400, 'privateKey is required');
+    if (!sshUser) throw new ApiError(400, 'sshUser is required');
+
+    // Set SSE headers before any async work so the client starts receiving
+    res.setHeader('Content-Type', 'text/event-stream');
+    res.setHeader('Cache-Control', 'no-cache');
+    res.setHeader('Connection', 'keep-alive');
+    res.flushHeaders();
+
+    const send = (type, data) => {
+      res.write(`event: ${type}\ndata: ${JSON.stringify(data)}\n\n`);
+    };
+
+    try {
+      // Generate a short-lived bootstrap token using the same signing approach
+      // as bootstrap.js — no separate service layer exists for this yet.
+      const bootstrapToken = jwt.sign(
+        { kind: 'bootstrap', serverId: req.params.id, orgId: req.orgId },
+        config.jwt.secret,
+        { expiresIn: 30 * 60 }
+      );
+
+      // Resolve the backend URL the target host will reach to fetch install.sh.
+      // In prod the TRAEFIK_HOST env var is always set; fall back to PUBLIC_API_URL,
+      // VITE_API_URL, then the incoming request headers.
+      let backendUrl;
+      if (process.env.TRAEFIK_HOST) {
+        backendUrl = `https://${process.env.TRAEFIK_HOST}`;
+      } else if (process.env.PUBLIC_API_URL) {
+        backendUrl = String(process.env.PUBLIC_API_URL).replace(/\/$/, '').replace(/\/api$/, '');
+      } else if (process.env.VITE_API_URL) {
+        backendUrl = String(process.env.VITE_API_URL).replace(/\/$/, '').replace(/\/api$/, '');
+      } else {
+        const proto = (req.headers['x-forwarded-proto'] || req.protocol || 'http').split(',')[0];
+        const host = req.headers['x-forwarded-host'] || req.get('host');
+        backendUrl = `${proto}://${host}`;
+      }
+
+      const bootstrapUrl = `${backendUrl}/api/bootstrap/install.sh?token=${bootstrapToken}`;
+
+      send('log', { message: `[shellius] Starting provisioning for server ${req.params.id}` });
+      send('log', { message: '[shellius] Bootstrap token generated' });
+
+      await provisionServer(req.orgId, req.params.id, {
+        privateKey,
+        sshUser,
+        sudoPassword: sudoPassword || '',
+        bootstrapUrl,
+        onOutput: (line) => send('log', { message: line }),
+      });
+
+      send('done', { success: true });
+    } catch (err) {
+      send('error', { message: err.message || 'Provisioning failed' });
+    } finally {
+      res.end();
+    }
   })
 );
 

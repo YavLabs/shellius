@@ -19,6 +19,65 @@ export const bulkUpdateEnvironment = (serverIds, environment) =>
 export const triggerHealthCheck = (id) =>
   api.post(`/servers/${id}/health-check`).then(unwrapServer);
 
+export async function provisionServer(serverId, { privateKey, sshUser, sudoPassword, onLog }) {
+  return new Promise((resolve, reject) => {
+    fetch(`/api/servers/${serverId}/provision`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'include',
+      body: JSON.stringify({ privateKey, sshUser, sudoPassword }),
+    }).then(async (response) => {
+      if (!response.ok) {
+        const data = await response.json().catch(() => ({}));
+        return reject(new Error(data?.error?.message || `HTTP ${response.status}`));
+      }
+
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = '';
+
+      const processLines = (text) => {
+        buffer += text;
+        const parts = buffer.split('\n\n');
+        buffer = parts.pop();
+
+        for (const block of parts) {
+          const blockLines = block.split('\n');
+          let type = '';
+          let data = '';
+          for (const bl of blockLines) {
+            if (bl.startsWith('event: ')) type = bl.slice(7).trim();
+            else if (bl.startsWith('data: ')) data = bl.slice(6).trim();
+          }
+          if (type === 'log' && data) {
+            try {
+              const p = JSON.parse(data);
+              if (p.message && onLog) onLog(p.message);
+            } catch { /* ignore */ }
+          } else if (type === 'done') {
+            resolve();
+          } else if (type === 'error' && data) {
+            try {
+              const p = JSON.parse(data);
+              reject(new Error(p.message || 'Provisioning failed'));
+            } catch {
+              reject(new Error('Provisioning failed'));
+            }
+          }
+        }
+      };
+
+      (async () => {
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) { resolve(); break; }
+          processLines(decoder.decode(value, { stream: true }));
+        }
+      })();
+    }).catch(reject);
+  });
+}
+
 /**
  * getServerStats — returns total count and per-environment breakdown.
  * TODO: Replace with a dedicated /api/servers/stats endpoint once backend

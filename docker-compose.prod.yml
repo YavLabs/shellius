@@ -1,33 +1,47 @@
+# =============================================================================
+# Shellius — Production Compose
+#
+# Uses pre-built images from Docker Hub (yavlabs/shellius-backend and
+# yavlabs/shellius-frontend). These are built and pushed by the GitHub Actions
+# workflow at .github/workflows/docker-build-push.yml.
+#
+# Image version is controlled by SHELLIUS_VERSION (default: latest).
+# Pin to a specific release: SHELLIUS_VERSION=1.2.3 docker compose ... up -d
+#
+# Required env file: .env.prod  (see .env.prod.example)
+# =============================================================================
+
 services:
 
+  # ── Reverse proxy (Traefik-aware) ─────────────────────────────────────────
   nginx:
     image: nginx:alpine
+    container_name: shellius-nginx
     restart: unless-stopped
     volumes:
       - ./docker/nginx-proxy.conf:/etc/nginx/nginx.conf:ro
     depends_on:
-      - backend
-      - frontend
+      backend:
+        condition: service_healthy
+      frontend:
+        condition: service_healthy
     labels:
-      # --- Traefik reverse proxy (optional — ignored when Traefik is not running) ---
       - "traefik.enable=true"
       - "traefik.docker.network=homelab"
-
-      # HTTP router — plain HTTP, TLS termination handled by Cloudflare upstream
       - "traefik.http.routers.shellius.entrypoints=http"
       - "traefik.http.routers.shellius.rule=Host(`${TRAEFIK_HOST}`)"
       - "traefik.http.routers.shellius.service=shellius"
       - "traefik.http.routers.shellius.priority=10"
-
-      # Service — nginx listens on port 80 inside Docker
       - "traefik.http.services.shellius.loadbalancer.server.port=80"
       - "traefik.http.services.shellius.loadbalancer.passHostHeader=true"
     networks:
       - internal
       - homelab
 
+  # ── PostgreSQL ─────────────────────────────────────────────────────────────
   postgres:
     image: postgres:16-alpine
+    container_name: shellius-postgres
     restart: unless-stopped
     env_file: .env.prod
     environment:
@@ -45,8 +59,10 @@ services:
     networks:
       - internal
 
+  # ── Redis ──────────────────────────────────────────────────────────────────
   redis:
     image: redis:7-alpine
+    container_name: shellius-redis
     restart: unless-stopped
     command: redis-server --appendonly yes
     volumes:
@@ -60,14 +76,18 @@ services:
     networks:
       - internal
 
+  # ── Guacamole daemon (RDP gateway) ────────────────────────────────────────
   guacd:
     image: guacamole/guacd:1.5.5
+    container_name: shellius-guacd
     restart: unless-stopped
     networks:
       - internal
 
+  # ── MinIO (session recordings) ────────────────────────────────────────────
   minio:
     image: minio/minio:latest
+    container_name: shellius-minio
     command: server /data --console-address ":9001"
     restart: unless-stopped
     env_file: .env.prod
@@ -85,12 +105,11 @@ services:
       start_period: 15s
     networks:
       - internal
-      - homelab
 
+  # ── Backend API ───────────────────────────────────────────────────────────
+  # Built by CI and pushed to Docker Hub. No local build context here.
   backend:
-    build:
-      context: .
-      dockerfile: docker/Dockerfile.backend
+    image: yavlabs/shellius-backend:${SHELLIUS_VERSION:-latest}
     container_name: shellius-api
     restart: unless-stopped
     env_file: .env.prod
@@ -106,18 +125,29 @@ services:
         condition: service_started
       minio:
         condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:3001/api/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
     networks:
       internal:
         aliases:
           - shellius-api
-      public: {}
 
+  # ── Frontend SPA (nginx-served) ───────────────────────────────────────────
+  # Built by CI and pushed to Docker Hub. No local build context here.
   frontend:
-    build:
-      context: .
-      dockerfile: docker/Dockerfile.frontend
+    image: yavlabs/shellius-frontend:${SHELLIUS_VERSION:-latest}
     container_name: shellius-web
     restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:80/"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
     networks:
       internal:
         aliases:
@@ -125,8 +155,6 @@ services:
 
 networks:
   internal:
-    driver: bridge
-  public:
     driver: bridge
   homelab:
     external: true

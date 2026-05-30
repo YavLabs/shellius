@@ -63,7 +63,7 @@ Shellius replaces static SSH keys and shared RDP passwords with **short-lived, s
 ### 1. Clone the repository
 
 ```bash
-git clone https://github.com/yavlabs/shellius.git
+git clone https://github.com/YavLabs/shellius.git
 cd shellius
 ```
 
@@ -149,11 +149,11 @@ The script detects your OS (`darwin`/`linux`) and architecture
 (`amd64`/`arm64`), pulls the matching binary from the latest GitHub release,
 verifies its SHA256 checksum, and installs to `/usr/local/bin/shellius`
 (or `~/.local/bin/shellius` if not root). Windows users should download the
-`.exe` directly from [Releases](https://github.com/vaidyayash8/shellius/releases/latest).
+`.exe` directly from [Releases](https://github.com/YavLabs/shellius/releases/latest).
 
 ### Manual download
 
-Grab the binary matching your platform from the [latest release](https://github.com/vaidyayash8/shellius/releases/latest):
+Grab the binary matching your platform from the [latest release](https://github.com/YavLabs/shellius/releases/latest):
 
 | Platform | Asset |
 |---|---|

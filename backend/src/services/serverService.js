@@ -1,6 +1,17 @@
 import net from 'net';
 import prisma from '../config/db.js';
 import ApiError from '../utils/ApiError.js';
+import { encrypt } from '../utils/crypto.js';
+
+const RDP_SENSITIVE_FIELDS = ['rdpPasswordEncrypted', 'rdpPasswordIv', 'rdpPasswordTag'];
+
+function stripRdpSecrets(server) {
+  if (!server) return server;
+  const result = { ...server };
+  result.hasRdpPassword = !!result.rdpPasswordEncrypted;
+  for (const f of RDP_SENSITIVE_FIELDS) delete result[f];
+  return result;
+}
 
 const READ_ONLY = [
   'healthStatus',
@@ -28,6 +39,7 @@ const MUTABLE_FIELDS = [
   'cloudAccountId',
   'sshUser',
   'sshKeyPath',
+  'rdpUsername',
   'isActive',
 ];
 
@@ -74,7 +86,7 @@ export async function listServers(orgId, {
     prisma.server.count({ where }),
   ]);
 
-  return { items, total, page, pageSize };
+  return { items: items.map(stripRdpSecrets), total, page, pageSize };
 }
 
 export async function getServer(orgId, serverId) {
@@ -83,7 +95,7 @@ export async function getServer(orgId, serverId) {
     include: { customer: { select: { id: true, name: true, slug: true } } },
   });
   if (!server) throw new ApiError(404, 'Server not found');
-  return server;
+  return stripRdpSecrets(server);
 }
 
 export async function createServer(orgId, customerId, data = {}) {
@@ -106,12 +118,15 @@ export async function createServer(orgId, customerId, data = {}) {
       payload[f] = data[f];
     }
   }
+  if (data.rdpPassword) {
+    payload.rdpPasswordEncrypted = encrypt(data.rdpPassword);
+  }
 
   const server = await prisma.server.create({
     data: payload,
     include: { customer: { select: { id: true, name: true, slug: true } } },
   });
-  return server;
+  return stripRdpSecrets(server);
 }
 
 export async function updateServer(orgId, serverId, data = {}) {
@@ -128,13 +143,16 @@ export async function updateServer(orgId, serverId, data = {}) {
   if (updateData.ipAddress !== undefined && !validateIp(updateData.ipAddress)) {
     throw new ApiError(400, 'ipAddress must be a valid IPv4 or IPv6 address');
   }
+  if (data.rdpPassword) {
+    updateData.rdpPasswordEncrypted = encrypt(data.rdpPassword);
+  }
 
   const server = await prisma.server.update({
     where: { id: serverId },
     data: updateData,
     include: { customer: { select: { id: true, name: true, slug: true } } },
   });
-  return server;
+  return stripRdpSecrets(server);
 }
 
 export async function deleteServer(orgId, serverId) {
