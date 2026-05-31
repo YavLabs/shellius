@@ -28,9 +28,42 @@ export function isConfigured() {
 
 /**
  * Returns the default recordings bucket name.
+ *
+ * Accepts MINIO_RECORDINGS_BUCKET (preferred) or MINIO_BUCKET (used by the
+ * prod compose / .env.prod.example) before falling back to the default.
  */
 export function recordingsBucket() {
-  return process.env.MINIO_RECORDINGS_BUCKET || 'shellius-recordings';
+  return (
+    process.env.MINIO_RECORDINGS_BUCKET || process.env.MINIO_BUCKET || 'shellius-recordings'
+  );
+}
+
+/**
+ * Normalise MINIO_ENDPOINT into the { endPoint, port, useSSL } shape the
+ * MinIO SDK expects. The SDK's `endPoint` must be a bare host (no scheme),
+ * so accept either form:
+ *   - a full URL    e.g. "http://minio:9000" / "https://s3.example.com"
+ *   - a bare host   e.g. "minio" (with MINIO_PORT / MINIO_USE_SSL alongside)
+ * URL form wins for scheme/port; explicit MINIO_PORT / MINIO_USE_SSL are
+ * honoured for the bare-host form.
+ */
+export function resolveEndpoint() {
+  const raw = (process.env.MINIO_ENDPOINT || '').trim();
+  let endPoint = raw;
+  let port = process.env.MINIO_PORT ? parseInt(process.env.MINIO_PORT, 10) : undefined;
+  let useSSL = process.env.MINIO_USE_SSL === 'true';
+
+  if (/^https?:\/\//i.test(raw)) {
+    const url = new URL(raw);
+    endPoint = url.hostname;
+    useSSL = url.protocol === 'https:';
+    if (url.port) port = parseInt(url.port, 10);
+  }
+
+  if (port === undefined || Number.isNaN(port)) {
+    port = useSSL ? 443 : 9000;
+  }
+  return { endPoint, port, useSSL };
 }
 
 /**
@@ -45,17 +78,19 @@ export function getClient() {
     throw err;
   }
   if (!_client) {
-    const { MINIO_ENDPOINT, MINIO_PORT, MINIO_USE_SSL, MINIO_ACCESS_KEY, MINIO_SECRET_KEY } =
-      process.env;
+    const { MINIO_ACCESS_KEY, MINIO_SECRET_KEY } = process.env;
+    const { endPoint, port, useSSL } = resolveEndpoint();
     _client = new MinioClient({
-      endPoint: MINIO_ENDPOINT,
-      port: parseInt(MINIO_PORT || '9000', 10),
-      useSSL: MINIO_USE_SSL === 'true',
+      endPoint,
+      port,
+      useSSL,
       accessKey: MINIO_ACCESS_KEY,
       secretKey: MINIO_SECRET_KEY,
     });
     logger.info('storageService: MinIO client initialized', {
-      endpoint: MINIO_ENDPOINT,
+      endpoint: endPoint,
+      port,
+      useSSL,
     });
   }
   return _client;
