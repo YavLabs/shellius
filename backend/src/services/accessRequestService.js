@@ -19,6 +19,17 @@ import { renderTemplate } from '../email/index.js';
 
 const execFileAsync = promisify(execFile);
 
+// A server is "onboarded" (and therefore requestable/connectable) once the
+// agent + CA trust is in place: either auto-provisioning succeeded, or the host
+// has checked in via heartbeat / health check. Servers merely added to the
+// inventory (onboard=false in bulk import, or failed onboarding) are not.
+export function isServerOnboarded(server) {
+  if (!server) return false;
+  if (server.provisionStatus === 'provisioned') return true;
+  if (server.lastHealthCheck) return true;
+  return !!server.healthStatus && server.healthStatus !== 'unknown';
+}
+
 // ---------------------------------------------------------------------------
 // Role rank helper for revoke authorization
 // ---------------------------------------------------------------------------
@@ -210,6 +221,9 @@ export async function submit({
   // Load server scoped to org
   const server = await prisma.server.findFirst({ where: { id: serverId, orgId } });
   if (!server) throw new ApiError(404, 'Server not found');
+  if (!isServerOnboarded(server)) {
+    throw new ApiError(400, 'This server has not been onboarded yet, so access cannot be requested.');
+  }
 
   // Load requester with manager relation
   const requester = await prisma.user.findFirst({

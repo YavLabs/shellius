@@ -19,13 +19,13 @@ export const bulkUpdateEnvironment = (serverIds, environment) =>
 export const triggerHealthCheck = (id) =>
   api.post(`/servers/${id}/health-check`).then(unwrapServer);
 
-export async function provisionServer(serverId, { privateKey, sshUser, sudoPassword, onLog }) {
+export async function provisionServer(serverId, { privateKey, passphrase, password, sshUser, sudoPassword, onLog }) {
   return new Promise((resolve, reject) => {
     fetch(`/api/servers/${serverId}/provision`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       credentials: 'include',
-      body: JSON.stringify({ privateKey, sshUser, sudoPassword }),
+      body: JSON.stringify({ privateKey, passphrase, password, sshUser, sudoPassword }),
     }).then(async (response) => {
       if (!response.ok) {
         const data = await response.json().catch(() => ({}));

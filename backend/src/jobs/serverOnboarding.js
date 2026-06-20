@@ -66,15 +66,27 @@ async function processOnboard(job) {
   }
 
   try {
-    const secret = decrypt(cred.secretEncrypted);
+    // Decrypt whichever credentials were staged. Legacy rows stored the password
+    // in secretEncrypted with authMethod 'password' — handle that fallback.
+    const privateKey =
+      cred.secretEncrypted && cred.authMethod !== 'password'
+        ? decrypt(cred.secretEncrypted)
+        : undefined;
+    let password = cred.passwordEncrypted ? decrypt(cred.passwordEncrypted) : undefined;
+    if (!password && !privateKey && cred.secretEncrypted) {
+      password = decrypt(cred.secretEncrypted); // legacy password-in-secret rows
+    }
+    const passphrase = cred.passphraseEncrypted ? decrypt(cred.passphraseEncrypted) : undefined;
     const sudoPassword = cred.sudoPasswordEncrypted ? decrypt(cred.sudoPasswordEncrypted) : undefined;
     const bootstrapUrl = await bootstrapService.buildBootstrapUrl(server.orgId, server.id);
 
     // provisionService updates Server.provisionStatus itself.
     await provisionService.provisionServer(server.orgId, server.id, {
-      privateKey: cred.authMethod === 'key' ? secret : undefined,
+      privateKey,
+      passphrase,
+      password,
       sshUser: cred.sshUser || server.sshUser || 'root',
-      sudoPassword: cred.authMethod === 'password' ? secret : sudoPassword,
+      sudoPassword,
       bootstrapUrl,
       onOutput: () => {},
     });
@@ -108,7 +120,13 @@ async function finalize(credentialId, jobId, status, serverId) {
   await prisma.onboardingCredential
     .update({
       where: { id: credentialId },
-      data: { status, secretEncrypted: null, sudoPasswordEncrypted: null },
+      data: {
+        status,
+        secretEncrypted: null,
+        passwordEncrypted: null,
+        passphraseEncrypted: null,
+        sudoPasswordEncrypted: null,
+      },
     })
     .catch(() => {});
   if (status === 'failed' && serverId) {

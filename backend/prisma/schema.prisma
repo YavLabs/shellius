@@ -702,8 +702,10 @@ model OnboardingCredential {
   serverRef             String   @map("server_ref") // hostname used to match the server row
   serverId              String?  @map("server_id")
   sshUser               String?  @map("ssh_user")
-  authMethod            String   @map("auth_method") // password | key
-  secretEncrypted       String?  @map("secret_encrypted") @db.Text // encrypted password or private key
+  authMethod            String   @map("auth_method") // password | key | key+password
+  secretEncrypted       String?  @map("secret_encrypted") @db.Text // encrypted private key (legacy: or password)
+  passwordEncrypted     String?  @map("password_encrypted") @db.Text // encrypted SSH login password
+  passphraseEncrypted   String?  @map("passphrase_encrypted") @db.Text // encrypted private-key passphrase
   sudoPasswordEncrypted String?  @map("sudo_password_encrypted") @db.Text
   status                String   @default("pending") // pending | running | done | failed
   attempts              Int      @default(0)

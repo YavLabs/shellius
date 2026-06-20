@@ -166,8 +166,8 @@ router.post(
   '/:id/provision',
   requireRole('super_admin', 'admin', 'manager'),
   asyncHandler(async (req, res) => {
-    const { privateKey, sshUser, sudoPassword } = req.body;
-    if (!privateKey) throw new ApiError(400, 'privateKey is required');
+    const { privateKey, passphrase, password, sshUser, sudoPassword } = req.body;
+    if (!privateKey && !password) throw new ApiError(400, 'Provide an SSH private key or a password');
     if (!sshUser) throw new ApiError(400, 'sshUser is required');
 
     // Set SSE headers before any async work so the client starts receiving
@@ -211,7 +211,9 @@ router.post(
       send('log', { message: '[shellius] Bootstrap token generated' });
 
       await provisionServer(req.orgId, req.params.id, {
-        privateKey,
+        privateKey: privateKey || undefined,
+        passphrase: passphrase || undefined,
+        password: password || undefined,
         sshUser,
         sudoPassword: sudoPassword || '',
         bootstrapUrl,

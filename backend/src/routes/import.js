@@ -110,8 +110,24 @@ router.post(
 const TEMPLATES = {
   customers: 'name,slug,description\nAcme Corp,acme,Primary client\n',
   servers:
-    'hostname,displayName,ipAddress,customer,environment,protocol,osType,osVersion,sshUser,password,keyFile,sudoPassword,rdpUsername,rdpPassword,labels,cloudProvider,cloudInstanceId,cloudRegion\n' +
-    'web-01,Acme Prod Web,10.0.0.10,acme,prod,ssh,linux,Ubuntu 22.04,ubuntu,,keys/web-01.pem,,,,team:web;tier:frontend,aws,i-0abc123def,ap-south-1\n',
+    // `onboard` (true/false, default true): set false to import the server into
+    // the inventory WITHOUT running agent onboarding. Not-onboarded servers
+    // cannot be requested/connected until they are onboarded later.
+    'hostname,displayName,ipAddress,customer,environment,onboard,protocol,osType,osVersion,sshUser,password,keyFile,passphrase,sudoPassword,rdpUsername,rdpPassword,labels,cloudProvider,cloudInstanceId,cloudRegion\n' +
+    // root login with a key (no sudo needed)
+    'web-01,Acme Prod Web,10.0.0.10,acme,prod,true,ssh,linux,Ubuntu 22.04,root,,keys/web-01.pem,,,,,team:web;tier:frontend,aws,i-0abc123def,ap-south-1\n' +
+    // sudo user with a key + sudo password
+    'app-01,Acme App,10.0.0.11,acme,staging,true,ssh,linux,Ubuntu 22.04,ubuntu,,keys/app-01.pem,,SudoP@ss,,,tier:app,aws,i-0app111,ap-south-1\n' +
+    // password-only login + sudo password (no key)
+    'db-01,Acme DB,10.0.0.12,acme,prod,true,ssh,linux,Debian 12,ubuntu,LoginP@ss,,,SudoP@ss,,,tier:db,,,\n' +
+    // host that requires BOTH a key and a password to log in
+    'bastion-01,Bastion,10.0.0.13,acme,prod,true,ssh,linux,Ubuntu 22.04,ubuntu,LoginP@ss,keys/bastion-01.pem,,SudoP@ss,,,tier:bastion,,,\n' +
+    // encrypted private key (needs a passphrase) + sudo password
+    'cache-01,Cache,10.0.0.14,acme,dev,true,ssh,linux,Ubuntu 22.04,ubuntu,,keys/cache-01.pem,KeyPassphrase,SudoP@ss,,,tier:cache,,,\n' +
+    // Windows host onboarded for RDP (no SSH fields)
+    'win-01,Win Host,10.0.0.20,acme,prod,true,rdp,windows,Windows Server 2022,,,,,,Administrator,Rdp!Pass,role:rdp,azure,vm-win-01,eastus\n' +
+    // inventory only — added but NOT onboarded (no credentials needed)
+    'inventory-01,Unmanaged Box,10.0.0.30,acme,dev,false,ssh,linux,Ubuntu 22.04,ubuntu,,,,,,,note:not-onboarded,,,\n',
   users: 'email,name,role,manager,sendInvite\njane@acme.com,Jane Doe,operator,,true\n',
   groups: 'name,description\nMembers,Standard members\n',
   policies:

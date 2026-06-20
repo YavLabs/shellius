@@ -527,7 +527,13 @@ async function stageCredentialAtUpload(jobId, raw, files) {
   const hostname = str(raw.hostname);
   if (!hostname) return;
 
+  // `onboard=false` → import into inventory only, do not stage credentials or
+  // run onboarding. The server can be onboarded later from Server Details.
+  const onboard = str(raw.onboard).trim().toLowerCase();
+  if (onboard && ['false', 'no', '0', 'n', 'off'].includes(onboard)) return;
+
   const password = str(raw.password);
+  const passphrase = str(raw.passphrase || raw.keyPassphrase);
   let privateKey = raw.privateKey || raw.sshPrivateKey || '';
   const keyFile = str(raw.keyFile);
   if (!privateKey && keyFile && files) {
@@ -537,8 +543,9 @@ async function stageCredentialAtUpload(jobId, raw, files) {
   const sudoPassword = str(raw.sudoPassword);
   if (!password && !privateKey) return; // nothing to onboard with
 
-  const authMethod = privateKey ? 'key' : 'password';
-  const secret = privateKey ? String(privateKey) : password;
+  // Store key and password independently so a host that needs BOTH (or a
+  // passphrase-protected key) can be onboarded.
+  const authMethod = privateKey && password ? 'key+password' : privateKey ? 'key' : 'password';
   const ttlMs = 6 * 60 * 60 * 1000; // 6h to complete onboarding
 
   await prisma.onboardingCredential.create({
@@ -548,7 +555,9 @@ async function stageCredentialAtUpload(jobId, raw, files) {
       serverId: null,
       sshUser: str(raw.sshUser) || 'root',
       authMethod,
-      secretEncrypted: encrypt(secret),
+      secretEncrypted: privateKey ? encrypt(String(privateKey)) : null,
+      passwordEncrypted: password ? encrypt(password) : null,
+      passphraseEncrypted: passphrase ? encrypt(passphrase) : null,
       sudoPasswordEncrypted: sudoPassword ? encrypt(sudoPassword) : null,
       status: 'staged',
       expiresAt: new Date(Date.now() + ttlMs),

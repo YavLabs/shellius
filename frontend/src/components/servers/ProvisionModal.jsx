@@ -5,6 +5,8 @@ import { provisionServer } from '@/services/serverService';
 function ProvisionModal({ server, onClose }) {
   const [step, setStep] = useState('form'); // 'form' | 'running' | 'done' | 'error'
   const [privateKey, setPrivateKey] = useState('');
+  const [passphrase, setPassphrase] = useState('');
+  const [password, setPassword] = useState('');
   const [sshUser, setSshUser] = useState(server?.sshUser || 'root');
   const [sudoPassword, setSudoPassword] = useState('');
   const [needsSudo, setNeedsSudo] = useState(false);
@@ -22,13 +24,15 @@ function ProvisionModal({ server, onClose }) {
   };
 
   const handleStart = async () => {
-    if (!privateKey.trim()) return;
+    if (!privateKey.trim() && !password) return;
     setStep('running');
     setLogs([]);
 
     try {
       await provisionServer(server.id, {
-        privateKey: privateKey.trim(),
+        privateKey: privateKey.trim() || undefined,
+        passphrase: passphrase || undefined,
+        password: password || undefined,
         sshUser,
         sudoPassword: needsSudo ? sudoPassword : '',
         onLog: (msg) => {
@@ -77,7 +81,10 @@ function ProvisionModal({ server, onClose }) {
               <div className="space-y-2">
                 <label className="block text-sm font-medium text-foreground">
                   <Key className="mr-1.5 inline h-3.5 w-3.5" />
-                  SSH Private Key <span className="text-destructive">*</span>
+                  SSH Private Key
+                  <span className="ml-1 font-normal text-muted-foreground">
+                    (key and/or password required)
+                  </span>
                 </label>
                 <textarea
                   rows={8}
@@ -105,6 +112,14 @@ function ProvisionModal({ server, onClose }) {
                   />
                   <span className="text-xs text-muted-foreground">or paste above</span>
                 </div>
+                <input
+                  type="password"
+                  className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring"
+                  value={passphrase}
+                  onChange={(e) => setPassphrase(e.target.value)}
+                  placeholder="Key passphrase (if the key is encrypted)"
+                  autoComplete="new-password"
+                />
               </div>
 
               <div className="grid grid-cols-2 gap-4">
@@ -114,6 +129,20 @@ function ProvisionModal({ server, onClose }) {
                     className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
                     value={sshUser}
                     onChange={(e) => setSshUser(e.target.value)}
+                  />
+                </div>
+                <div className="space-y-2">
+                  <label className="block text-sm font-medium text-foreground">
+                    <Lock className="mr-1.5 inline h-3.5 w-3.5" />
+                    SSH Password
+                  </label>
+                  <input
+                    type="password"
+                    className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring"
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
+                    placeholder="login password (if no key)"
+                    autoComplete="new-password"
                   />
                 </div>
               </div>
@@ -205,7 +234,7 @@ function ProvisionModal({ server, onClose }) {
               </button>
               <button
                 onClick={handleStart}
-                disabled={!privateKey.trim()}
+                disabled={!privateKey.trim() && !password}
                 className="inline-flex h-9 items-center gap-2 rounded-md bg-primary px-4 text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
               >
                 <Terminal className="h-4 w-4" />

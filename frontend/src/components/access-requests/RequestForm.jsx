@@ -3,6 +3,7 @@ import Modal from '@/components/shared/Modal';
 import EnvironmentBadge from '@/components/shared/EnvironmentBadge';
 import { createAccessRequest, getAccessIntent } from '@/services/accessRequestService';
 import { listServers } from '@/services/serverService';
+import { isServerOnboarded } from '@/lib/serverStatus';
 import { useAuth } from '@/context/AuthContext';
 import { LINUX_USER_RE, defaultPrincipal } from '@/utils/principal';
 import PrivateIPWarning from '@/components/servers/PrivateIPWarning';
@@ -43,7 +44,8 @@ function RequestForm({ open, onClose, onSuccess, initialServerId = '' }) {
     try {
       const data = await listServers({ limit: 200 });
       const items = data?.items || data || [];
-      setServers(items);
+      // Only onboarded servers can be requested — hide the rest.
+      setServers(items.filter(isServerOnboarded));
     } catch {
       setServers([]);
     } finally {

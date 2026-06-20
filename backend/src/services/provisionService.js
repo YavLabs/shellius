@@ -16,7 +16,11 @@ import logger from '../utils/logger.js';
  * @param {function} opts.onOutput     - callback(line: string) for each output line
  * @returns {Promise<void>}
  */
-export async function provisionServer(orgId, serverId, { privateKey, sshUser, sudoPassword, bootstrapUrl, onOutput }) {
+export async function provisionServer(
+  orgId,
+  serverId,
+  { privateKey, passphrase, password, sshUser, sudoPassword, bootstrapUrl, onOutput }
+) {
   const server = await prisma.server.findFirst({ where: { id: serverId, orgId } });
   if (!server) throw new ApiError(404, 'Server not found');
 
@@ -111,11 +115,34 @@ export async function provisionServer(orgId, serverId, { privateKey, sshUser, su
       settleErr(new ApiError(500, `SSH connection failed: ${err.message}`));
     });
 
+    // Answer keyboard-interactive prompts (many sshd setups present the login
+    // password this way) with the supplied password.
+    if (password) {
+      conn.on('keyboard-interactive', (name, instructions, lang, prompts, finish) => {
+        finish(prompts.map(() => password));
+      });
+    }
+
+    // Offer whichever methods we have credentials for, in order. ssh2 will try
+    // each and also continue through multi-factor servers that require more than
+    // one (e.g. AuthenticationMethods "publickey,password").
+    const authMethods = [];
+    if (privateKey) {
+      authMethods.push({ type: 'publickey', username: sshUser, key: privateKey, passphrase });
+    }
+    if (password) {
+      authMethods.push({ type: 'password', username: sshUser, password });
+      authMethods.push({ type: 'keyboard-interactive', username: sshUser });
+    }
+
     conn.connect({
       host: server.ipAddress,
       port: 22,
       username: sshUser,
-      privateKey,
+      ...(privateKey ? { privateKey, passphrase } : {}),
+      ...(password ? { password } : {}),
+      tryKeyboard: !!password,
+      ...(authMethods.length ? { authHandler: authMethods } : {}),
       readyTimeout: 20000,
     });
   });
