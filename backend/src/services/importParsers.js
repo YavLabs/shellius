@@ -29,6 +29,21 @@ function stripBom(s) {
   return s.charCodeAt(0) === 0xfeff ? s.slice(1) : s;
 }
 
+/**
+ * Determine the entity bucket from a file stem inside a ZIP. Tolerant of
+ * descriptive names: an exact match wins; otherwise any token (split on
+ * non-letters) that names an entity is used — so "servers-ithena-onprem",
+ * "servers_prod", "01-servers" all map to "servers".
+ */
+function entityFromStem(stem) {
+  const s = String(stem).toLowerCase();
+  if (SINGULAR_TO_PLURAL[s]) return SINGULAR_TO_PLURAL[s];
+  for (const token of s.split(/[^a-z]+/).filter(Boolean)) {
+    if (SINGULAR_TO_PLURAL[token]) return SINGULAR_TO_PLURAL[token];
+  }
+  return undefined;
+}
+
 /** Parse CSV text into an array of plain objects (string values, trimmed headers). */
 export function parseCsv(text) {
   const clean = stripBom(String(text));
@@ -135,17 +150,28 @@ function parseZip(buffer, warnings) {
     }
     const base = name.split('/').pop().toLowerCase();
     const stem = base.replace(/\.(csv|json)$/i, '');
-    const bucket = SINGULAR_TO_PLURAL[stem];
+    const bucket = entityFromStem(stem);
+    const isCsv = /\.csv$/i.test(base);
+    const isJson = /\.json$/i.test(base);
 
-    if (bucket && /\.csv$/i.test(base)) {
+    if (bucket && isCsv) {
       entities[bucket] = parseCsv(entry.getData().toString('utf8'));
-    } else if (bucket && /\.json$/i.test(base)) {
+    } else if (bucket && isJson) {
       try {
         const data = JSON.parse(stripBom(entry.getData().toString('utf8')));
         entities[bucket] = Array.isArray(data) ? data : [];
       } catch (err) {
         warnings.push(`Invalid JSON in ${name}: ${err.message}`);
       }
+    } else if (isCsv || isJson) {
+      // A data file we couldn't map to an entity — tell the user instead of
+      // silently dropping it (this is the usual "0 rows parsed" cause).
+      warnings.push(
+        `Could not determine the entity for "${name}". Name it so a token matches one of: ${ENTITIES.join(', ')} (e.g. servers-prod.csv).`
+      );
+      const data = entry.getData();
+      files.set(name.replace(/\\/g, '/').toLowerCase(), data);
+      files.set(base, data);
     } else {
       // Treat everything else (e.g. keys/*.pem, *.ppk) as a referenceable file.
       // Index under several normalized keys so a CSV reference resolves
