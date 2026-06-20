@@ -31,7 +31,7 @@ import {
   createServer,
   updateServer,
   deleteServer,
-  bulkUpdateEnvironment,
+  bulkUpdateServers,
   triggerHealthCheck,
 } from '@/services/serverService';
 import { listCustomers } from '@/services/customerService';
@@ -62,7 +62,8 @@ function Servers() {
   const [customers, setCustomers] = useState([]);
 
   const [selected, setSelected] = useState([]);
-  const [bulkEnv, setBulkEnv] = useState('');
+  const [bulkField, setBulkField] = useState('');
+  const [bulkValue, setBulkValue] = useState('');
   const [bulkConfirm, setBulkConfirm] = useState(false);
 
   const [formOpen, setFormOpen] = useState(false);
@@ -146,12 +147,44 @@ function Servers() {
   };
 
   const handleBulkUpdate = async () => {
-    await bulkUpdateEnvironment(selected, bulkEnv);
+    let value = bulkValue;
+    if (bulkField === 'isActive') value = bulkValue === 'true';
+    await bulkUpdateServers(selected, { [bulkField]: value });
     setBulkConfirm(false);
-    setBulkEnv('');
+    setBulkField('');
+    setBulkValue('');
     setSelected([]);
     fetch();
   };
+
+  // Options for the bulk "value" control, keyed by the chosen field.
+  const BULK_FIELDS = [
+    { value: 'environment', label: 'Environment' },
+    { value: 'customerId', label: 'Customer' },
+    { value: 'protocol', label: 'Protocol' },
+    { value: 'osType', label: 'OS Type' },
+    { value: 'isActive', label: 'Status' },
+    { value: 'sshUser', label: 'SSH User' },
+  ];
+  const bulkValueOptions = {
+    environment: ENVIRONMENTS.map((e) => ({ value: e, label: e })),
+    customerId: customers.map((c) => ({ value: c.id, label: c.name })),
+    protocol: [
+      { value: 'ssh', label: 'SSH' },
+      { value: 'rdp', label: 'RDP' },
+      { value: 'both', label: 'Both' },
+    ],
+    osType: [
+      { value: 'linux', label: 'Linux' },
+      { value: 'windows', label: 'Windows' },
+      { value: 'other', label: 'Other' },
+    ],
+    isActive: [
+      { value: 'true', label: 'Active' },
+      { value: 'false', label: 'Inactive' },
+    ],
+  };
+  const bulkFieldLabel = BULK_FIELDS.find((f) => f.value === bulkField)?.label || '';
 
   const filterSlot = (
     <>
@@ -198,19 +231,54 @@ function Servers() {
     selected.length > 0 ? (
       <div className="flex flex-col gap-2 rounded-lg border border-border bg-accent/30 px-4 py-2.5 sm:flex-row sm:items-center sm:justify-between">
         <span className="text-sm text-foreground">{selected.length} selected</span>
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
           <SearchableSelect
-            className="w-[180px]"
-            value={bulkEnv}
-            onChange={setBulkEnv}
-            options={ENVIRONMENTS.map((e) => ({ value: e, label: e }))}
-            placeholder="Change environment..."
+            className="w-[160px]"
+            value={bulkField}
+            onChange={(v) => {
+              setBulkField(v);
+              setBulkValue('');
+            }}
+            options={BULK_FIELDS}
+            placeholder="Change field..."
             searchable={false}
+            clearable={false}
           />
-          <Button size="sm" onClick={() => bulkEnv && setBulkConfirm(true)} disabled={!bulkEnv}>
+          {bulkField && bulkField !== 'sshUser' && (
+            <SearchableSelect
+              className="w-[180px]"
+              value={bulkValue}
+              onChange={setBulkValue}
+              options={bulkValueOptions[bulkField] || []}
+              placeholder={`Select ${bulkFieldLabel.toLowerCase()}...`}
+              searchable={bulkField === 'customerId'}
+              clearable={false}
+            />
+          )}
+          {bulkField === 'sshUser' && (
+            <input
+              className="h-9 w-[180px] rounded-md border border-input bg-background px-3 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring"
+              value={bulkValue}
+              onChange={(e) => setBulkValue(e.target.value)}
+              placeholder="SSH user (e.g. ubuntu)"
+            />
+          )}
+          <Button
+            size="sm"
+            onClick={() => bulkField && bulkValue !== '' && setBulkConfirm(true)}
+            disabled={!bulkField || bulkValue === ''}
+          >
             Apply
           </Button>
-          <Button variant="outline" size="sm" onClick={() => setSelected([])}>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => {
+              setSelected([]);
+              setBulkField('');
+              setBulkValue('');
+            }}
+          >
             <X className="mr-1 h-4 w-4" /> Clear
           </Button>
         </div>
@@ -443,8 +511,10 @@ function Servers() {
 
       <ConfirmDialog
         open={bulkConfirm}
-        title="Change environment"
-        message={`Change environment to "${bulkEnv}" for ${selected.length} server(s)?`}
+        title={`Update ${bulkFieldLabel}`}
+        message={`Set ${bulkFieldLabel} to "${
+          (bulkValueOptions[bulkField] || []).find((o) => o.value === bulkValue)?.label || bulkValue
+        }" for ${selected.length} server(s)?`}
         confirmLabel="Apply"
         onConfirm={handleBulkUpdate}
         onCancel={() => setBulkConfirm(false)}

@@ -74,6 +74,21 @@ const bulkEnvSchema = Joi.object({
   environment: Joi.string().valid(...ENVIRONMENTS).required(),
 });
 
+const bulkUpdateSchema = Joi.object({
+  serverIds: Joi.array().items(Joi.string()).min(1).required(),
+  patch: Joi.object({
+    environment: Joi.string().valid(...ENVIRONMENTS),
+    protocol: Joi.string().valid(...PROTOCOLS),
+    osType: Joi.string().valid('linux', 'windows', 'other'),
+    osVersion: Joi.string().allow(''),
+    sshUser: Joi.string().allow(''),
+    isActive: Joi.boolean(),
+    customerId: Joi.string(),
+  })
+    .min(1)
+    .required(),
+});
+
 router.use(authenticate, tenant);
 
 router.get(
@@ -106,6 +121,17 @@ router.post(
       req.body.serverIds,
       req.body.environment
     );
+    res.json({ success: true, data: result });
+  })
+);
+
+// Generalized bulk update — change any of a set of fields on many servers.
+router.post(
+  '/bulk',
+  requireRole('super_admin', 'admin', 'manager'),
+  validate(bulkUpdateSchema),
+  asyncHandler(async (req, res) => {
+    const result = await serverService.bulkUpdate(req.orgId, req.body.serverIds, req.body.patch);
     res.json({ success: true, data: result });
   })
 );

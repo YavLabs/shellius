@@ -167,12 +167,31 @@ export async function deleteServer(orgId, serverId) {
 }
 
 export async function bulkUpdateEnvironment(orgId, serverIds, environment) {
+  return bulkUpdate(orgId, serverIds, { environment });
+}
+
+// Fields that can be changed in bulk. customerId is validated below.
+const BULK_FIELDS = ['environment', 'protocol', 'osType', 'osVersion', 'sshUser', 'isActive', 'customerId'];
+
+export async function bulkUpdate(orgId, serverIds, patch = {}) {
   if (!Array.isArray(serverIds) || serverIds.length === 0) {
     throw new ApiError(400, 'serverIds must be a non-empty array');
   }
+  const data = {};
+  for (const f of BULK_FIELDS) {
+    if (patch[f] !== undefined) data[f] = patch[f];
+  }
+  if (Object.keys(data).length === 0) {
+    throw new ApiError(400, 'No updatable fields provided');
+  }
+  // If reassigning the customer, ensure it belongs to this org.
+  if (data.customerId) {
+    const customer = await prisma.customer.findFirst({ where: { id: data.customerId, orgId } });
+    if (!customer) throw new ApiError(400, 'Customer not found in organization');
+  }
   const result = await prisma.server.updateMany({
     where: { id: { in: serverIds }, orgId },
-    data: { environment },
+    data,
   });
   return { updated: result.count };
 }
