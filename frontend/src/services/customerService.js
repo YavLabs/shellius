@@ -12,7 +12,9 @@ export const createCustomer = (data) =>
   api.post('/customers', data).then(unwrapCustomer);
 export const updateCustomer = (id, data) =>
   api.put(`/customers/${id}`, data).then(unwrapCustomer);
-export const deleteCustomer = (id) =>
-  api.delete(`/customers/${id}`).then((r) => r.data?.data ?? r.data);
+export const getCustomerDeleteImpact = (id) =>
+  api.get(`/customers/${id}/delete-impact`).then((r) => r.data?.data ?? r.data);
+export const deleteCustomer = (id, options = {}) =>
+  api.delete(`/customers/${id}`, { data: options }).then((r) => r.data?.data ?? r.data);
 export const getCustomerStats = (id) =>
   api.get(`/customers/${id}/stats`).then((r) => r.data?.data ?? r.data);

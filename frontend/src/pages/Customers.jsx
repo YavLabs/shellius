@@ -10,7 +10,8 @@ import PageHeader from '@/components/common/PageHeader';
 import { Button } from '@/components/ui/button';
 import { useAuth } from '@/context/AuthContext';
 import { roleAtLeast } from '@/lib/permissions';
-import { listCustomers, createCustomer, updateCustomer, deleteCustomer } from '@/services/customerService';
+import { listCustomers, createCustomer, updateCustomer } from '@/services/customerService';
+import DeleteCustomerDialog from '@/components/customers/DeleteCustomerDialog';
 
 function Customers() {
   const navigate = useNavigate();
@@ -23,6 +24,7 @@ function Customers() {
   const [createOpen, setCreateOpen] = useState(false);
   const [editing, setEditing] = useState(null);
   const [confirm, setConfirm] = useState(null);
+  const [deleteTarget, setDeleteTarget] = useState(null);
 
   const fetch = useCallback(async () => {
     setLoading(true);
@@ -53,19 +55,7 @@ function Customers() {
     fetch();
   };
 
-  const handleDelete = (c) => {
-    setConfirm({
-      title: 'Delete customer',
-      message: `Permanently delete "${c.name}"? This cannot be undone.`,
-      variant: 'destructive',
-      confirmLabel: 'Delete',
-      onConfirm: async () => {
-        await deleteCustomer(c.id);
-        setConfirm(null);
-        fetch();
-      },
-    });
-  };
+  const handleDelete = (c) => setDeleteTarget(c);
 
   const columns = [
     {
@@ -193,6 +183,16 @@ function Customers() {
         variant={confirm?.variant}
         onConfirm={confirm?.onConfirm}
         onCancel={() => setConfirm(null)}
+      />
+
+      <DeleteCustomerDialog
+        customer={deleteTarget}
+        open={!!deleteTarget}
+        onClose={() => setDeleteTarget(null)}
+        onDeleted={() => {
+          setDeleteTarget(null);
+          fetch();
+        }}
       />
     </div>
   );

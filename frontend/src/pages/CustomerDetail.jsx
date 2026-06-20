@@ -24,6 +24,7 @@ import {
 import DataTable from '@/components/shared/DataTable';
 import Modal from '@/components/shared/Modal';
 import ConfirmDialog from '@/components/shared/ConfirmDialog';
+import DeleteCustomerDialog from '@/components/customers/DeleteCustomerDialog';
 import EnvironmentBadge from '@/components/shared/EnvironmentBadge';
 import HealthStatusDot from '@/components/shared/HealthStatusDot';
 import CustomerForm from '@/components/customers/CustomerForm';
@@ -713,14 +714,11 @@ function CustomerDetail() {
         />
       </Modal>
 
-      <ConfirmDialog
+      <DeleteCustomerDialog
+        customer={customer}
         open={confirmDelete}
-        title="Delete customer"
-        message={`Permanently delete "${customer.name}"? All associated servers and their audit history will be affected. This cannot be undone.`}
-        confirmLabel="Delete"
-        variant="destructive"
-        onConfirm={handleDelete}
-        onCancel={() => setConfirmDelete(false)}
+        onClose={() => setConfirmDelete(false)}
+        onDeleted={() => navigate('/customers')}
       />
     </div>
   );

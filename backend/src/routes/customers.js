@@ -79,11 +79,20 @@ router.put(
   })
 );
 
+router.get(
+  '/:id/delete-impact',
+  requireRole('super_admin', 'admin'),
+  asyncHandler(async (req, res) => {
+    const impact = await customerService.getDeleteImpact(req.orgId, req.params.id);
+    res.json({ success: true, data: impact });
+  })
+);
+
 router.delete(
   '/:id',
   requireRole('super_admin'),
   asyncHandler(async (req, res) => {
-    await customerService.deleteCustomer(req.orgId, req.params.id);
+    await customerService.deleteCustomer(req.orgId, req.params.id, req.body || {});
     res.json({ success: true, data: { success: true } });
   })
 );
