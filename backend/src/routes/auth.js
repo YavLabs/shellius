@@ -9,6 +9,8 @@ import { authLimiter, tokenActionLimiter } from '../middleware/rateLimiter.js';
 import * as authService from '../services/authService.js';
 import * as inviteService from '../services/inviteService.js';
 import * as userService from '../services/userService.js';
+import * as ssoService from '../services/ssoService.js';
+import * as mfaService from '../services/mfaService.js';
 import { sendMail } from '../services/mailer.js';
 import { renderTemplate } from '../email/index.js';
 import { log as auditLog } from '../services/auditService.js';
@@ -144,6 +146,68 @@ router.post(
     const ua = req.get('user-agent') || '';
     const result = await authService.login(email, password, ip, ua);
     res.json({ success: true, data: result });
+  })
+);
+
+// POST /login-options — public; drives the email-first login UI. Given an
+// email, tells the frontend whether to show a password field, start SSO, or
+// offer a set-password (invite) path. Returns a small, low-enumeration shape.
+const loginOptionsSchema = Joi.object({ email: Joi.string().email().required() });
+router.post(
+  '/login-options',
+  authLimiter,
+  validate(loginOptionsSchema),
+  asyncHandler(async (req, res) => {
+    const { email } = req.body;
+    const org = await resolvePublicOrg(req);
+    const sso = org ? await ssoService.getPublicSsoStatus(org.id) : { enabled: false, presetId: null };
+    const state = await authService.getLoginState(email);
+    res.json({
+      success: true,
+      data: {
+        hasPassword: state.hasPassword,
+        ssoEnabled: !!sso.enabled,
+        ssoPresetId: sso.presetId || null,
+        orgSlug: org?.slug || null,
+      },
+    });
+  })
+);
+
+// POST /mfa/verify — complete a password login's second factor
+const mfaVerifySchema = Joi.object({
+  mfaToken: Joi.string().required(),
+  method: Joi.string().valid('totp', 'email', 'backup').required(),
+  code: Joi.string().required(),
+});
+router.post(
+  '/mfa/verify',
+  authLimiter,
+  validate(mfaVerifySchema),
+  asyncHandler(async (req, res) => {
+    const result = await authService.completeMfaLogin({
+      mfaToken: req.body.mfaToken,
+      method: req.body.method,
+      code: req.body.code,
+      ipAddress: req.ip,
+      userAgent: req.get('user-agent') || '',
+    });
+    res.json({ success: true, data: result });
+  })
+);
+
+// POST /mfa/send-otp — email an OTP during a login challenge
+const mfaSendOtpSchema = Joi.object({ mfaToken: Joi.string().required() });
+router.post(
+  '/mfa/send-otp',
+  authLimiter,
+  validate(mfaSendOtpSchema),
+  asyncHandler(async (req, res) => {
+    const payload = mfaService.verifyMfaToken(req.body.mfaToken);
+    if (!payload) throw new ApiError(401, 'MFA session expired — sign in again');
+    const user = await prisma.user.findUnique({ where: { id: payload.userId } });
+    if (user && user.mfaEmailEnabled) await mfaService.sendEmailOtp(user);
+    res.json({ success: true, data: { sent: true } });
   })
 );
 

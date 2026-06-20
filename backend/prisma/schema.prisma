@@ -91,8 +91,16 @@ model User {
   deviceAuthRequests DeviceAuthRequest[]
   certificatesIssued  Certificate[] @relation("CertificatesIssuedTo")
   certificatesRevoked Certificate[] @relation("CertificatesRevokedBy")
+  // MFA (per-user). Disabled by default; enrollment is self-service.
+  mfaTotpSecretEnc String?   @map("mfa_totp_secret_enc") @db.Text // AES-256-GCM TOTP secret
+  mfaTotpEnabled   Boolean   @default(false) @map("mfa_totp_enabled")
+  mfaEmailEnabled  Boolean   @default(false) @map("mfa_email_enabled")
+  mfaBackupCodes   String[]  @default([]) @map("mfa_backup_codes") // sha256 hashes
+  mfaEnrolledAt    DateTime? @map("mfa_enrolled_at")
+
   accessRequestsRequested AccessRequest[] @relation("AccessRequestsRequested")
   accessRequestsToReview  AccessRequest[] @relation("AccessRequestsToReview")
+  accessRequestApprovals  AccessRequestApprover[]
   notifications           Notification[]
   sessions                Session[]
 
@@ -174,6 +182,14 @@ model Server {
   rdpPasswordIv          String?        @map("rdp_password_iv")
   rdpPasswordTag         String?        @map("rdp_password_tag")
   isActive               Boolean        @default(true) @map("is_active")
+  // Onboarding / provisioning state. provisionStatus tracks where the server
+  // is in the bootstrap lifecycle so the UI can show progress and bulk-import
+  // can detect already-onboarded hosts for idempotent re-onboarding.
+  // Values: pending | provisioning | provisioned | failed
+  provisionStatus        String         @default("pending") @map("provision_status")
+  provisionError         String?        @map("provision_error")
+  provisionedAt          DateTime?      @map("provisioned_at")
+  lastProvisionAt        DateTime?      @map("last_provision_at")
   createdAt       DateTime       @default(now()) @map("created_at")
   updatedAt       DateTime       @updatedAt @map("updated_at")
 
@@ -187,6 +203,7 @@ model Server {
   @@index([orgId, environment])
   @@index([healthStatus])
   @@index([agentId])
+  @@index([orgId, provisionStatus])
   @@map("servers")
 }
 
@@ -422,6 +439,12 @@ model AccessPolicy {
   osProvisioning      Json         @default("{}") @map("os_provisioning")
   allowKeyDownload    Boolean      @default(false) @map("allow_key_download")
   isBreakGlass        Boolean      @default(false) @map("is_break_glass")
+  // Approver routing: when a request matched by this policy needs approval,
+  // these define WHO may approve. Empty across all three = fall back to the
+  // requester's manager (legacy behaviour). Any one resolved approver can act.
+  approverGroupId     String?      @map("approver_group_id")
+  approverRoles       String[]     @default([]) @map("approver_roles")     // OrgRole values
+  approverUserIds     String[]     @default([]) @map("approver_user_ids")
   createdAt           DateTime     @default(now()) @map("created_at")
   updatedAt           DateTime     @updatedAt @map("updated_at")
 
@@ -478,6 +501,7 @@ model AccessRequest {
   server       Server       @relation(fields: [serverId], references: [id], onDelete: Cascade)
   certificate  Certificate? @relation(fields: [certificateId], references: [id], onDelete: SetNull)
   sessions     Session[]
+  approvers    AccessRequestApprover[]
 
   @@index([requesterId])
   @@index([reviewerId, status])
@@ -485,6 +509,23 @@ model AccessRequest {
   @@index([status, expiresAt])
   @@index([orgId])
   @@map("access_requests")
+}
+
+/// The set of users eligible to approve a pending AccessRequest. Populated at
+/// submit() time from the matched policy's approver routing (group / roles /
+/// users) or the requester's manager. Any one of them may approve or deny.
+model AccessRequestApprover {
+  id        String   @id @default(cuid())
+  requestId String   @map("request_id")
+  userId    String   @map("user_id")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  request AccessRequest @relation(fields: [requestId], references: [id], onDelete: Cascade)
+  user    User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([requestId, userId])
+  @@index([userId])
+  @@map("access_request_approvers")
 }
 
 enum SessionType {
@@ -555,6 +596,9 @@ model UserToken {
   userId    String    @map("user_id")
   type      String
   tokenHash String    @unique @map("token_hash")
+  // Optional binding to a domain object (e.g. the AccessRequest an approval
+  // token is for). Null for plain invite / password-reset tokens.
+  resourceId String?  @map("resource_id")
   expiresAt DateTime  @map("expires_at")
   usedAt    DateTime? @map("used_at")
   createdAt DateTime  @default(now()) @map("created_at")
@@ -582,4 +626,109 @@ model SmtpConfig {
   organization Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
 
   @@map("smtp_configs")
+}
+
+/// Per-org MFA policy. enabled = MFA available; enforced = all users must
+/// enroll. Methods toggle which factors are offered. Overrides env defaults.
+model MfaConfig {
+  id            String   @id @default(cuid())
+  orgId         String   @unique @map("org_id")
+  enabled       Boolean  @default(false)
+  enforced      Boolean  @default(false)
+  allowTotp     Boolean  @default(true) @map("allow_totp")
+  allowEmailOtp Boolean  @default(true) @map("allow_email_otp")
+  createdAt     DateTime @default(now()) @map("created_at")
+  updatedAt     DateTime @updatedAt @map("updated_at")
+
+  @@map("mfa_configs")
+}
+
+/// Bulk-import staging: one upload (csv/json/zip). Drives the preview →
+/// conflict-resolution → commit → onboarding pipeline.
+model ImportJob {
+  id        String   @id @default(cuid())
+  orgId     String   @map("org_id")
+  actorId   String?  @map("actor_id")
+  // uploaded | preview_ready | committing | onboarding | completed | failed
+  status    String   @default("preview_ready")
+  source    String   @default("csv") // csv | json | zip
+  summary   Json     @default("{}")  // per-entity create/update/skip/conflict/error counts
+  error     String?
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  rows        ImportRow[]
+  credentials OnboardingCredential[]
+
+  @@index([orgId, status])
+  @@map("import_jobs")
+}
+
+/// One parsed record in an import. Holds the raw + resolved data, the planned
+/// action, the user's conflict decision, and the outcome.
+model ImportRow {
+  id             String  @id @default(cuid())
+  jobId          String  @map("job_id")
+  entity         String  // customer | server | user | group | policy | membership
+  rowIndex       Int     @map("row_index")
+  raw            Json
+  resolved       Json    @default("{}")
+  action         String  @default("create") // create | update | skip | conflict | error
+  decision       String? // overwrite | skip (user choice for conflicts)
+  conflictReason String? @map("conflict_reason")
+  status         String  @default("pending") // pending | imported | skipped | failed
+  error          String?
+  resultId       String? @map("result_id")
+
+  job ImportJob @relation(fields: [jobId], references: [id], onDelete: Cascade)
+
+  @@index([jobId, entity])
+  @@map("import_rows")
+}
+
+/// Ephemeral, AES-256-GCM-encrypted bootstrap credentials for background server
+/// onboarding. Hard-deleted by the onboarding worker on completion and by a TTL
+/// reaper. Documented exception to the "never store keys" rule, scoped to an
+/// active import job.
+model OnboardingCredential {
+  id                    String   @id @default(cuid())
+  jobId                 String   @map("job_id")
+  serverRef             String   @map("server_ref") // hostname used to match the server row
+  serverId              String?  @map("server_id")
+  sshUser               String?  @map("ssh_user")
+  authMethod            String   @map("auth_method") // password | key
+  secretEncrypted       String?  @map("secret_encrypted") @db.Text // encrypted password or private key
+  sudoPasswordEncrypted String?  @map("sudo_password_encrypted") @db.Text
+  status                String   @default("pending") // pending | running | done | failed
+  attempts              Int      @default(0)
+  expiresAt             DateTime @map("expires_at")
+  createdAt             DateTime @default(now()) @map("created_at")
+
+  job ImportJob @relation(fields: [jobId], references: [id], onDelete: Cascade)
+
+  @@index([jobId])
+  @@index([expiresAt])
+  @@map("onboarding_credentials")
+}
+
+/// Application-wide object storage configuration (MinIO / AWS S3 / Azure Blob).
+/// Global singleton (scope = "global") rather than per-org: object storage is
+/// configured once by a super_admin and is used at boot (ensureBucket) where no
+/// org context exists. DB row overrides env vars; absence falls back to env.
+model StorageConfig {
+  id                 String   @id @default(cuid())
+  scope              String   @unique @default("global")
+  provider           String   @default("minio") // minio | s3 | azure
+  endpoint           String?  // full URL or bare host (minio/custom s3); blank = AWS regional / Azure default
+  region             String?  // s3 region
+  bucket             String?  // bucket name (s3/minio) or container name (azure)
+  accessKey          String?  @map("access_key") // access key id (s3/minio) or account name (azure) — not secret
+  secretKeyEncrypted String?  @map("secret_key_encrypted") @db.Text // AES-256-GCM
+  useSsl             Boolean  @default(false) @map("use_ssl")
+  forcePathStyle     Boolean  @default(true) @map("force_path_style") // true for minio-style path addressing
+  isActive           Boolean  @default(true) @map("is_active")
+  createdAt          DateTime @default(now()) @map("created_at")
+  updatedAt          DateTime @updatedAt @map("updated_at")
+
+  @@map("storage_configs")
 }

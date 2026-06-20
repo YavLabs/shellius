@@ -55,8 +55,8 @@ import * as storageService from './storageService.js';
  * @returns {Promise<object|null>}
  */
 async function openRecordingWriter(sessionId, orgId, { rows, cols }) {
-  if (!storageService.isConfigured()) {
-    logger.warn('terminalService: MinIO not configured; recording disabled', { sessionId });
+  if (!(await storageService.isConfigured())) {
+    logger.warn('terminalService: object storage not configured; recording disabled', { sessionId });
     return null;
   }
 

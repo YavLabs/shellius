@@ -72,6 +72,9 @@ const policyBodySchema = Joi.object({
   osProvisioning: osProvisioningSchema,
   allowKeyDownload: Joi.boolean().default(false),
   isBreakGlass: Joi.boolean().default(false),
+  approverGroupId: Joi.string().allow(null, ''),
+  approverRoles: Joi.array().items(Joi.string().valid(...ORG_ROLES)).default([]),
+  approverUserIds: Joi.array().items(Joi.string()).default([]),
   subjects: Joi.array().items(subjectSchema).default([]),
 });
 
@@ -92,6 +95,9 @@ const policyUpdateSchema = Joi.object({
   osProvisioning: osProvisioningSchema,
   allowKeyDownload: Joi.boolean(),
   isBreakGlass: Joi.boolean(),
+  approverGroupId: Joi.string().allow(null, ''),
+  approverRoles: Joi.array().items(Joi.string().valid(...ORG_ROLES)),
+  approverUserIds: Joi.array().items(Joi.string()),
   subjects: Joi.array().items(subjectSchema),
 }).min(1);
 

@@ -20,6 +20,10 @@ const READ_ONLY = [
   'agentId',
   'agentVersion',
   'agentLastSeen',
+  'provisionStatus',
+  'provisionError',
+  'provisionedAt',
+  'lastProvisionAt',
 ];
 
 const MUTABLE_FIELDS = [

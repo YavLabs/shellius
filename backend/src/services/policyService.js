@@ -326,6 +326,37 @@ export async function evaluate({ orgId, userId, serverId, requestedPrincipal, po
 }
 
 /**
+ * Find the best-matching ALLOW policy for a user+server purely to read its
+ * approver routing (approverGroupId / approverRoles / approverUserIds).
+ *
+ * Unlike evaluate(), this does NOT short-circuit on the prod hard-rule — prod
+ * requests still need approver routing even though the invariant forces
+ * approval. Returns the policy row (or null when nothing matches).
+ *
+ * @param {object} params
+ * @param {string} params.orgId
+ * @param {string} params.userId
+ * @param {string} params.serverId
+ * @param {string} [params.requestedPrincipal]
+ * @returns {Promise<object|null>}
+ */
+export async function findApproverPolicy({ orgId, userId, serverId, requestedPrincipal }) {
+  const server = await prisma.server.findFirst({ where: { id: serverId, orgId } });
+  if (!server) return null;
+
+  const [userGroupIds, userRecord] = await Promise.all([
+    resolveUserGroupIds(userId, orgId),
+    prisma.user.findUnique({ where: { id: userId }, select: { role: true } }),
+  ]);
+  const rawPolicies = await loadMatchingPolicies(orgId, userId, userGroupIds, userRecord?.role || null);
+  const matching = filterPolicies(rawPolicies, server, serverId, requestedPrincipal);
+  const allow = matching
+    .filter((p) => p.effect === 'ALLOW')
+    .sort((a, b) => a.priority - b.priority);
+  return allow[0] || null;
+}
+
+/**
  * Return all servers the user can access (allowed=true OR requiresApproval=true),
  * enriched with policy evaluation results.
  *
@@ -444,6 +475,9 @@ export async function create(orgId, data) {
     osProvisioning = {},
     allowKeyDownload = false,
     isBreakGlass = false,
+    approverGroupId = null,
+    approverRoles = [],
+    approverUserIds = [],
   } = data;
 
   if (!name) throw new ApiError(400, 'name is required');
@@ -478,6 +512,9 @@ export async function create(orgId, data) {
         osProvisioning,
         allowKeyDownload,
         isBreakGlass,
+        approverGroupId: approverGroupId || null,
+        approverRoles,
+        approverUserIds,
       },
     });
 
@@ -535,6 +572,9 @@ export async function update(orgId, id, data) {
     osProvisioning,
     allowKeyDownload,
     isBreakGlass,
+    approverGroupId,
+    approverRoles,
+    approverUserIds,
   } = data;
 
   // Verify customerId belongs to org if changing it
@@ -560,6 +600,9 @@ export async function update(orgId, id, data) {
   if (osProvisioning !== undefined) updateData.osProvisioning = osProvisioning;
   if (allowKeyDownload !== undefined) updateData.allowKeyDownload = allowKeyDownload;
   if (isBreakGlass !== undefined) updateData.isBreakGlass = isBreakGlass;
+  if (approverGroupId !== undefined) updateData.approverGroupId = approverGroupId || null;
+  if (approverRoles !== undefined) updateData.approverRoles = approverRoles;
+  if (approverUserIds !== undefined) updateData.approverUserIds = approverUserIds;
 
   const policy = await prisma.$transaction(async (tx) => {
     await tx.accessPolicy.update({ where: { id }, data: updateData });

@@ -29,6 +29,7 @@
 import 'dotenv/config';
 import { PrismaClient } from '@prisma/client';
 import bcrypt from 'bcryptjs';
+import { seedRolesAndPolicies } from '../src/services/defaultSeedService.js';
 
 const prisma = new PrismaClient();
 
@@ -84,8 +85,9 @@ async function main() {
     where: { orgId_email: { orgId: org.id, email: ADMIN_EMAIL } },
   });
 
+  let admin;
   if (!existing) {
-    const admin = await prisma.user.create({
+    admin = await prisma.user.create({
       data: {
         orgId: org.id,
         email: ADMIN_EMAIL,
@@ -107,7 +109,7 @@ async function main() {
     };
     if (FORCE_PASSWORD) update.passwordHash = passwordHash;
 
-    const admin = await prisma.user.update({
+    admin = await prisma.user.update({
       where: { orgId_email: { orgId: org.id, email: ADMIN_EMAIL } },
       data: update,
     });
@@ -117,189 +119,24 @@ async function main() {
     );
   }
 
-  await seedGroupsAndPolicies(org.id);
-}
-
-// ---------------------------------------------------------------------------
-// Groups + access policies
-// ---------------------------------------------------------------------------
-//
-// Seeds a small, opinionated baseline of groups and access policies so a
-// freshly deployed Shellius instance is immediately useful (Engineers can
-// SSH into dev/staging without an admin manually wiring up policies first).
-//
-// Idempotent contract:
-//
-//   - Groups are upserted by (orgId, name).
-//   - Policies are looked up by (orgId, name); if found, the existing row
-//     is left UNTOUCHED — operators frequently tune things like
-//     maxSessionDuration / allowedPrincipals via the UI and we must not
-//     stomp those edits on every redeploy. The seed only writes when
-//     creating from scratch.
-//   - PolicySubject links use the @@unique constraint to skipDuplicates
-//     on insert.
-//
-// Adjust the BASELINE_* constants below if you want different defaults
-// for new deployments. Existing deployments are unaffected because the
-// seed never updates an existing policy.
-
-const BASELINE_GROUPS = [
-  {
-    name: 'All Users',
-    description: 'Default catch-all group — every user in the org.',
-  },
-  {
-    name: 'Engineers',
-    description: 'Developers with self-serve access to dev and staging hosts.',
-  },
-  {
-    name: 'Operators',
-    description: 'On-call / SRE — production access with manager approval.',
-  },
-  {
-    name: 'Read Only',
-    description: 'Viewer-tier audience — no SSH access by default.',
-  },
-];
-
-// A reasonable default set of Linux usernames the SSH cert will be valid
-// for, covering the major cloud-image conventions plus a generic admin.
-const DEFAULT_PRINCIPALS = ['ubuntu', 'ec2-user', 'azureuser', 'root', 'admin'];
-
-const BASELINE_POLICIES = [
-  {
-    name: 'Default Dev Access',
-    description:
-      'Self-serve SSH into dev hosts. Auto-approves requests, 8 hour cert lifetime, key download enabled so the TUI can connect natively.',
-    effect: 'ALLOW',
-    targetEnvironments: ['dev'],
-    allowedPrincipals: DEFAULT_PRINCIPALS,
-    maxSessionDuration: 8 * 3600,
-    requireApproval: false,
-    autoApprove: true,
-    allowKeyDownload: true,
-    isBreakGlass: false,
-    priority: 100,
-    subjectGroups: ['Engineers', 'All Users'],
-  },
-  {
-    name: 'Staging Access',
-    description:
-      'Self-serve SSH into staging hosts for engineers. 4 hour cert lifetime.',
-    effect: 'ALLOW',
-    targetEnvironments: ['staging'],
-    allowedPrincipals: DEFAULT_PRINCIPALS,
-    maxSessionDuration: 4 * 3600,
-    requireApproval: false,
-    autoApprove: true,
-    allowKeyDownload: true,
-    isBreakGlass: false,
-    priority: 100,
-    subjectGroups: ['Engineers'],
-  },
-  {
-    name: 'Production Approval',
-    description:
-      'Production access for on-call operators. Requires manager approval. 2 hour cert lifetime.',
-    effect: 'ALLOW',
-    targetEnvironments: ['prod'],
-    allowedPrincipals: DEFAULT_PRINCIPALS,
-    maxSessionDuration: 2 * 3600,
-    requireApproval: true,
-    autoApprove: false,
-    allowKeyDownload: true,
-    isBreakGlass: false,
-    priority: 50,
-    subjectGroups: ['Operators'],
-  },
-  {
-    name: 'Break-glass Production',
-    description:
-      'Emergency production access without approval. 1 hour cert lifetime. Audited as a high-severity event. Use sparingly.',
-    effect: 'ALLOW',
-    targetEnvironments: ['prod'],
-    allowedPrincipals: DEFAULT_PRINCIPALS,
-    maxSessionDuration: 1 * 3600,
-    requireApproval: false,
-    autoApprove: true,
-    allowKeyDownload: true,
-    isBreakGlass: true,
-    priority: 10,
-    subjectGroups: ['Operators'],
-  },
-];
-
-async function seedGroupsAndPolicies(orgId) {
-  // ---------- Groups ----------
-  const groupsByName = {};
-  for (const g of BASELINE_GROUPS) {
-    const row = await prisma.group.upsert({
-      where: { orgId_name: { orgId, name: g.name } },
-      update: { description: g.description },
-      create: { orgId, name: g.name, description: g.description },
-    });
-    groupsByName[g.name] = row;
-  }
-  console.log(
-    `[seed] Groups: ${Object.keys(groupsByName).join(', ')}`
+  // Groups + approval-aware policies (shared with the boot-time seed job).
+  const { groupsByName, created, preserved } = await seedRolesAndPolicies(
+    prisma,
+    org.id,
+    (msg) => console.log(`[seed] ${msg}`)
   );
+  console.log(`[seed] Policies: ${created} created, ${preserved} preserved (existing rows are never overwritten)`);
 
-  // ---------- Policies ----------
-  let created = 0;
-  let preserved = 0;
-  for (const p of BASELINE_POLICIES) {
-    const existingPolicy = await prisma.accessPolicy.findFirst({
-      where: { orgId, name: p.name },
+  // Put the super admin in the Admins group so the approver routing has at
+  // least one member to fall back on. Idempotent via the unique constraint.
+  const adminsGroup = groupsByName['Admins'];
+  if (adminsGroup) {
+    await prisma.groupMembership.upsert({
+      where: { groupId_userId: { groupId: adminsGroup.id, userId: admin.id } },
+      update: {},
+      create: { groupId: adminsGroup.id, userId: admin.id },
     });
-
-    if (existingPolicy) {
-      // Never overwrite an operator-tuned policy on re-run.
-      preserved++;
-      continue;
-    }
-
-    const policy = await prisma.accessPolicy.create({
-      data: {
-        orgId,
-        name: p.name,
-        description: p.description,
-        effect: p.effect,
-        targetEnvironments: p.targetEnvironments,
-        targetServerIds: [],
-        allowedPrincipals: p.allowedPrincipals,
-        maxSessionDuration: p.maxSessionDuration,
-        requireApproval: p.requireApproval,
-        autoApprove: p.autoApprove,
-        allowKeyDownload: p.allowKeyDownload,
-        isBreakGlass: p.isBreakGlass,
-        priority: p.priority,
-        isActive: true,
-      },
-    });
-
-    // Link the policy to its subject groups via PolicySubject. Use
-    // skipDuplicates so a partial-create on a previous run doesn't
-    // crash the next one.
-    const subjects = (p.subjectGroups || [])
-      .map((groupName) => groupsByName[groupName])
-      .filter(Boolean)
-      .map((g) => ({
-        policyId: policy.id,
-        subjectType: 'GROUP',
-        subjectId: g.id,
-      }));
-    if (subjects.length > 0) {
-      await prisma.policySubject.createMany({
-        data: subjects,
-        skipDuplicates: true,
-      });
-    }
-
-    created++;
   }
-  console.log(
-    `[seed] Policies: ${created} created, ${preserved} preserved (existing rows are never overwritten)`
-  );
 }
 
 main()

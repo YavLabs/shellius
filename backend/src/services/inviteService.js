@@ -24,6 +24,7 @@ export const TOKEN_TYPES = {
   INVITE: 'invite',
   PASSWORD_RESET: 'password_reset',
   EMAIL_VERIFY: 'email_verify',
+  ACCESS_APPROVAL: 'access_approval',
 };
 
 // ---------------------------------------------------------------------------
@@ -73,10 +74,72 @@ export function buildTokenUrl(type, rawToken, req = null) {
     path = 'invite';
   } else if (type === TOKEN_TYPES.EMAIL_VERIFY) {
     path = 'verify-email';
+  } else if (type === TOKEN_TYPES.ACCESS_APPROVAL) {
+    path = 'approve';
   } else {
     path = 'password-reset';
   }
   return `${base}/${path}/${rawToken}`;
+}
+
+// ---------------------------------------------------------------------------
+// Resource-bound tokens (e.g. one-click access-request approval)
+// ---------------------------------------------------------------------------
+
+/**
+ * Create a one-time token bound to both a user (the approver) and a resource
+ * (e.g. the AccessRequest id). Unlike createInvite this does NOT revoke the
+ * user's other tokens of the same type — multiple approvers / requests each
+ * need an independent token.
+ *
+ * @param {string} userId
+ * @param {string} type       - a TOKEN_TYPES value
+ * @param {string} resourceId
+ * @param {number} ttlHours
+ * @returns {Promise<{ rawToken: string, expiresAt: Date }>}
+ */
+export async function createResourceToken(userId, type, resourceId, ttlHours) {
+  const rawToken = crypto.randomBytes(32).toString('hex');
+  const tokenHash = sha256(rawToken);
+  const expiresAt = new Date(Date.now() + ttlHours * 60 * 60 * 1000);
+  await prisma.userToken.create({
+    data: { userId, type, tokenHash, resourceId, expiresAt },
+  });
+  return { rawToken, expiresAt };
+}
+
+/**
+ * Validate a resource-bound token. Returns { user, resourceId, record }.
+ * When { consume: true }, atomically marks it used (single-use).
+ *
+ * @param {string} rawToken
+ * @param {string} type
+ * @param {{ consume?: boolean }} [opts]
+ */
+export async function getResourceToken(rawToken, type, { consume = false } = {}) {
+  if (!rawToken || rawToken.length !== 64) {
+    throw new ApiError(400, 'Invalid or expired link');
+  }
+  const tokenHash = sha256(rawToken);
+  const record = await prisma.userToken.findUnique({
+    where: { tokenHash },
+    include: { user: { include: { organization: true } } },
+  });
+
+  if (!record || record.type !== type) throw new ApiError(400, 'Invalid or expired link');
+  if (record.usedAt !== null) throw new ApiError(409, 'This link has already been used');
+  if (record.expiresAt < new Date()) throw new ApiError(410, 'This link has expired');
+
+  if (consume) {
+    // Atomic single-use: only the first caller flips usedAt from null.
+    const res = await prisma.userToken.updateMany({
+      where: { id: record.id, usedAt: null },
+      data: { usedAt: new Date() },
+    });
+    if (res.count === 0) throw new ApiError(409, 'This link has already been used');
+  }
+
+  return { user: record.user, resourceId: record.resourceId, record };
 }
 
 // ---------------------------------------------------------------------------

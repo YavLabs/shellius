@@ -13,6 +13,9 @@ import * as policyService from './policyService.js';
 import * as jitManifestService from './jitManifestService.js';
 import * as notificationService from './notificationService.js';
 import * as rdpService from './rdpService.js';
+import * as mailer from './mailer.js';
+import * as inviteService from './inviteService.js';
+import { renderTemplate } from '../email/index.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -23,6 +26,60 @@ const ROLE_RANK = { super_admin: 4, admin: 3, operator: 2, viewer: 1 };
 
 function isAdminOrAbove(role) {
   return (ROLE_RANK[role] ?? 0) >= ROLE_RANK.admin;
+}
+
+function formatDurationLabel(seconds) {
+  const mins = Math.round((seconds || 0) / 60);
+  if (mins >= 60) {
+    const h = Math.round((mins / 60) * 10) / 10;
+    return `${h} hour${h === 1 ? '' : 's'}`;
+  }
+  return `${mins} minute${mins === 1 ? '' : 's'}`;
+}
+
+/**
+ * Best-effort: email every approver a one-click (token → confirm page) approval
+ * link. Never throws — email failures must not block request submission.
+ */
+async function sendApprovalEmails({ orgId, accessRequest, requester, server, reason, approvers }) {
+  const durationLabel = formatDurationLabel(accessRequest.requestedDuration);
+  for (const approver of approvers) {
+    if (!approver.email) continue;
+    try {
+      const { rawToken } = await inviteService.createResourceToken(
+        approver.id,
+        inviteService.TOKEN_TYPES.ACCESS_APPROVAL,
+        accessRequest.id,
+        24
+      );
+      const base = inviteService.buildTokenUrl(
+        inviteService.TOKEN_TYPES.ACCESS_APPROVAL,
+        rawToken
+      );
+      const tpl = renderTemplate('accessRequestApprovalNeeded', {
+        approverName: approver.name,
+        requesterName: requester.name,
+        serverHostname: server.hostname,
+        environment: server.environment,
+        reason,
+        durationLabel,
+        approveUrl: `${base}?intent=approve`,
+        rejectUrl: `${base}?intent=reject`,
+      });
+      await mailer.sendMail({
+        orgId,
+        to: approver.email,
+        subject: tpl.subject,
+        html: tpl.html,
+        text: tpl.text,
+      });
+    } catch (err) {
+      logger.warn('accessRequestService: approval email failed', {
+        approverId: approver.id,
+        error: err.message,
+      });
+    }
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -43,6 +100,49 @@ async function writeAudit(orgId, actorId, action, resourceId, metadata = {}) {
   } catch (err) {
     logger.error('accessRequestService: audit log write failed', { action, error: err.message });
   }
+}
+
+// ---------------------------------------------------------------------------
+// Approver resolution
+// ---------------------------------------------------------------------------
+/**
+ * Resolve the set of users eligible to approve a request, from the matched
+ * policy's approver routing (explicit users + roles + group), excluding the
+ * requester. Falls back to the requester's manager when the policy specifies
+ * no approvers. Returns a deduped array of { id, name, email }.
+ *
+ * @param {object} params
+ * @param {string} params.orgId
+ * @param {string} params.requesterId
+ * @param {object|null} params.policy   - matched AccessPolicy (approver fields)
+ * @param {object|null} params.manager  - requester's manager { id, name, email }
+ */
+async function resolveApprovers({ orgId, requesterId, policy, manager }) {
+  const byId = new Map();
+  const add = (u) => {
+    if (u && u.id && u.id !== requesterId) byId.set(u.id, u);
+  };
+
+  if (policy) {
+    const orFilters = [];
+    if (policy.approverUserIds?.length) orFilters.push({ id: { in: policy.approverUserIds } });
+    if (policy.approverRoles?.length) orFilters.push({ role: { in: policy.approverRoles } });
+    if (policy.approverGroupId) {
+      orFilters.push({ groupMemberships: { some: { groupId: policy.approverGroupId } } });
+    }
+    if (orFilters.length) {
+      const users = await prisma.user.findMany({
+        where: { orgId, status: 'active', deletedAt: null, OR: orFilters },
+        select: { id: true, name: true, email: true },
+      });
+      users.forEach(add);
+    }
+  }
+
+  // Fallback: the requester's direct manager.
+  if (byId.size === 0 && manager) add(manager);
+
+  return [...byId.values()];
 }
 
 // ---------------------------------------------------------------------------
@@ -169,43 +269,65 @@ export async function submit({
   const needsApproval = server.environment === 'prod' || policyResult.requiresApproval;
 
   if (needsApproval) {
-    // Prod or policy-requires-approval path → PENDING
-    if (!requester.manager) {
-      throw new Error('A manager must be assigned to request access to this server');
-    }
-
-    requestData = {
+    // Resolve who may approve from the matched policy's approver routing
+    // (group / roles / users), falling back to the requester's manager.
+    const approverPolicy = await policyService.findApproverPolicy({
+      orgId,
+      userId: requesterId,
+      serverId,
+      requestedPrincipal,
+    });
+    const approvers = await resolveApprovers({
       orgId,
       requesterId,
-      serverId,
-      reason,
-      requestedDuration,
-      requestedPrincipal,
-      protocol,
-      status: 'PENDING',
-      reviewerId: requester.manager.id,
-    };
+      policy: approverPolicy,
+      manager: requester.manager,
+    });
+    if (approvers.length === 0) {
+      throw new ApiError(
+        400,
+        'No approver is configured for this server. Assign the requester a manager, or set an approver group/role on the matching policy.'
+      );
+    }
 
+    // reviewerId holds the primary approver for backward compatibility; any of
+    // the AccessRequestApprover rows may act (enforced in review()).
     const accessRequest = await prisma.accessRequest.create({
-      data: requestData,
+      data: {
+        orgId,
+        requesterId,
+        serverId,
+        reason,
+        requestedDuration,
+        requestedPrincipal,
+        protocol,
+        status: 'PENDING',
+        reviewerId: approvers[0].id,
+        approvers: { create: approvers.map((a) => ({ userId: a.id })) },
+      },
       include: REQUEST_INCLUDE,
     });
 
-    // Notify the reviewer (manager)
-    await notificationService.create({
-      orgId,
-      userId: requester.manager.id,
-      type: 'ACCESS_REQUEST_SUBMITTED',
-      title: 'New access request requires your review',
-      body: `${requester.name} is requesting ${protocol} access to ${server.hostname} (${server.environment}). Reason: ${reason}`,
-      metadata: { accessRequestId: accessRequest.id, requesterId, serverId },
-    });
+    // Notify every eligible approver (in-app) and email a one-click link.
+    for (const approver of approvers) {
+      await notificationService.create({
+        orgId,
+        userId: approver.id,
+        type: 'ACCESS_REQUEST_SUBMITTED',
+        title: 'New access request requires your review',
+        body: `${requester.name} is requesting ${protocol} access to ${server.hostname} (${server.environment}). Reason: ${reason}`,
+        metadata: { accessRequestId: accessRequest.id, requesterId, serverId },
+      });
+    }
+    await sendApprovalEmails({ orgId, accessRequest, requester, server, reason, approvers });
 
     await writeAudit(orgId, requesterId, 'access_request.submitted', accessRequest.id, {
       serverId,
       environment: server.environment,
       protocol,
       status: 'PENDING',
+      approverCount: approvers.length,
+      approverPolicyId: approverPolicy?.id || null,
     });
 
     logger.info('accessRequestService.submit: request created PENDING', {
@@ -214,8 +336,11 @@ export async function submit({
       requesterId,
       serverId,
       environment: server.environment,
+      approverCount: approvers.length,
     });
 
+    // Expose resolved approvers so the email layer (F5) can address each.
+    accessRequest._approvers = approvers;
     return accessRequest;
   }
 
@@ -307,12 +432,18 @@ export async function review({ requestId, reviewerId, decision, approvedDuration
     include: {
       ...REQUEST_INCLUDE,
       requester: { select: { id: true, name: true, email: true } },
+      approvers: { select: { userId: true } },
     },
   });
 
   if (!accessRequest) throw new ApiError(404, 'Access request not found');
-  if (accessRequest.reviewerId !== reviewerId) {
-    throw new ApiError(403, 'You are not the assigned reviewer for this request');
+  // Any eligible approver (the legacy primary reviewerId OR a member of the
+  // resolved approver set) may act on the request.
+  const isEligibleApprover =
+    accessRequest.reviewerId === reviewerId ||
+    accessRequest.approvers.some((a) => a.userId === reviewerId);
+  if (!isEligibleApprover) {
+    throw new ApiError(403, 'You are not an eligible approver for this request');
   }
   if (accessRequest.status !== 'PENDING') {
     throw new ApiError(409, `Request is not pending (current status: ${accessRequest.status})`);
@@ -332,6 +463,8 @@ export async function review({ requestId, reviewerId, decision, approvedDuration
       where: { id: requestId },
       data: {
         status: 'APPROVED',
+        // Record the actual decider (may differ from the primary reviewer).
+        reviewerId,
         approvedDuration: duration,
         approvedAt: now,
         expiresAt,
@@ -367,6 +500,7 @@ export async function review({ requestId, reviewerId, decision, approvedDuration
       where: { id: requestId },
       data: {
         status: 'DENIED',
+        reviewerId,
         deniedAt: now,
         deniedReason: deniedReason ?? null,
       },
@@ -877,7 +1011,13 @@ export async function list({ orgId, userId, role, tab = 'mine', page = 1, limit 
     }
     where = { orgId };
   } else if (tab === 'to-review') {
-    where = { orgId, reviewerId: userId, status: 'PENDING' };
+    // Surface requests where the user is the primary reviewer OR a member of
+    // the resolved approver set.
+    where = {
+      orgId,
+      status: 'PENDING',
+      OR: [{ reviewerId: userId }, { approvers: { some: { userId } } }],
+    };
   } else {
     // 'mine' (default)
     where = { orgId, requesterId: userId };
@@ -1353,7 +1493,7 @@ export async function createBreakGlass({
         orgId,
         userId: admin.id,
         type: 'BREAK_GLASS_INVOKED',
-        title: `⚠️ Break-glass access invoked on ${server.hostname}`,
+        title: `[Break-glass] access invoked on ${server.hostname}`,
         body: `${invoker.name} invoked break-glass access to ${server.hostname} (${server.environment}). Reason: ${reason.trim().slice(0, 160)}`,
         metadata: {
           accessRequestId: ar.id,

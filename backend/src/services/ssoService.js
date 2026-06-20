@@ -159,13 +159,20 @@ export async function handleOidcUserInfo(userinfo, orgId) {
       },
     });
   } else {
+    if (user.status === 'deleted' || user.status === 'suspended' || user.status === 'deactivated') {
+      throw new ApiError(403, 'Account is not active');
+    }
     user = await prisma.user.update({
       where: { id: user.id },
       data: {
-        name,
+        // Keep the user's existing display name if they've already set one.
+        name: user.name || name,
         avatarUrl: avatarUrl || user.avatarUrl,
         ssoProvider: user.ssoProvider || 'oidc',
         ssoSub: user.ssoSub || ssoSub,
+        // First SSO sign-in for an invited / pending user activates the account
+        // (linking by email — no separate password step required).
+        status: 'active',
         lastLoginAt: new Date(),
       },
     });

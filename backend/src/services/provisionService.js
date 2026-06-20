@@ -20,12 +20,34 @@ export async function provisionServer(orgId, serverId, { privateKey, sshUser, su
   const server = await prisma.server.findFirst({ where: { id: serverId, orgId } });
   if (!server) throw new ApiError(404, 'Server not found');
 
+  // Mark provisioning in progress. lastProvisionAt records every attempt;
+  // provisionedAt is only stamped on success below. This makes re-onboarding
+  // idempotent and observable from the UI / bulk-import flow.
+  await prisma.server.update({
+    where: { id: serverId },
+    data: { provisionStatus: 'provisioning', provisionError: null, lastProvisionAt: new Date() },
+  }).catch((e) => logger.warn({ err: e.message, serverId }, 'failed to set provisioning state'));
+
+  const markProvisioned = () =>
+    prisma.server
+      .update({ where: { id: serverId }, data: { provisionStatus: 'provisioned', provisionError: null, provisionedAt: new Date() } })
+      .catch((e) => logger.warn({ err: e.message, serverId }, 'failed to set provisioned state'));
+
+  const markFailed = (message) =>
+    prisma.server
+      .update({ where: { id: serverId }, data: { provisionStatus: 'failed', provisionError: String(message || 'unknown error').slice(0, 500) } })
+      .catch((e) => logger.warn({ err: e.message, serverId }, 'failed to set failed state'));
+
   return new Promise((resolve, reject) => {
     const conn = new Client();
 
     const emit = (line) => {
       if (onOutput) onOutput(line);
     };
+
+    // Wrap resolve/reject so provisioning state is persisted before settling.
+    const settleOk = () => markProvisioned().finally(() => resolve());
+    const settleErr = (err) => markFailed(err?.message).finally(() => reject(err));
 
     conn.on('ready', () => {
       emit('[shellius] SSH connection established');
@@ -54,7 +76,7 @@ export async function provisionServer(orgId, serverId, { privateKey, sshUser, su
       conn.exec(cmd, { pty: true }, (err, stream) => {
         if (err) {
           conn.end();
-          return reject(new ApiError(500, `SSH exec failed: ${err.message}`));
+          return settleErr(new ApiError(500, `SSH exec failed: ${err.message}`));
         }
 
         stream.on('data', (data) => {
@@ -75,9 +97,9 @@ export async function provisionServer(orgId, serverId, { privateKey, sshUser, su
           conn.end();
           if (code === 0 || code === null) {
             emit('[shellius] Provisioning completed successfully');
-            resolve();
+            settleOk();
           } else {
-            reject(new ApiError(500, `Bootstrap script exited with code ${code}`));
+            settleErr(new ApiError(500, `Bootstrap script exited with code ${code}`));
           }
         });
       });
@@ -86,7 +108,7 @@ export async function provisionServer(orgId, serverId, { privateKey, sshUser, su
     conn.on('error', (err) => {
       // Log serverId only — never log the private key or credentials
       logger.error({ err: err.message, serverId }, 'SSH provision connection error');
-      reject(new ApiError(500, `SSH connection failed: ${err.message}`));
+      settleErr(new ApiError(500, `SSH connection failed: ${err.message}`));
     });
 
     conn.connect({
