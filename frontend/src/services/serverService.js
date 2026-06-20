@@ -21,9 +21,15 @@ export const triggerHealthCheck = (id) =>
 
 export async function provisionServer(serverId, { privateKey, passphrase, password, sshUser, sudoPassword, onLog }) {
   return new Promise((resolve, reject) => {
+    // This is a raw fetch (SSE stream), so it bypasses the axios interceptor —
+    // attach the bearer token manually.
+    const token = localStorage.getItem('accessToken');
     fetch(`/api/servers/${serverId}/provision`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: {
+        'Content-Type': 'application/json',
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      },
       credentials: 'include',
       body: JSON.stringify({ privateKey, passphrase, password, sshUser, sudoPassword }),
     }).then(async (response) => {

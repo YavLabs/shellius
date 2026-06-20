@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { listUsers } from '@/services/userService';
 import api from '@/services/api';
+import PasswordInput from '@/components/ui/PasswordInput';
 import SearchableSelect from '@/components/ui/SearchableSelect';
 import Avatar from '@/components/ui/Avatar';
 
@@ -146,8 +147,7 @@ function UserForm({ user, onSubmit, onCancel }) {
             {pwMode === 'set' && (
               <div>
                 <label className="mb-1.5 block text-sm font-medium text-foreground">Password <span className="text-destructive">*</span></label>
-                <input
-                  type="password"
+                <PasswordInput
                   className={inputCls}
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}

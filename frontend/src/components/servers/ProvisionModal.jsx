@@ -1,6 +1,7 @@
 import { useState, useRef } from 'react';
 import { X, Terminal, Upload, Key, Lock, CheckCircle2, AlertCircle, Loader2 } from 'lucide-react';
 import { provisionServer } from '@/services/serverService';
+import PasswordInput from '@/components/ui/PasswordInput';
 
 function ProvisionModal({ server, onClose }) {
   const [step, setStep] = useState('form'); // 'form' | 'running' | 'done' | 'error'
@@ -112,8 +113,7 @@ function ProvisionModal({ server, onClose }) {
                   />
                   <span className="text-xs text-muted-foreground">or paste above</span>
                 </div>
-                <input
-                  type="password"
+                <PasswordInput
                   className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring"
                   value={passphrase}
                   onChange={(e) => setPassphrase(e.target.value)}
@@ -136,8 +136,7 @@ function ProvisionModal({ server, onClose }) {
                     <Lock className="mr-1.5 inline h-3.5 w-3.5" />
                     SSH Password
                   </label>
-                  <input
-                    type="password"
+                  <PasswordInput
                     className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring"
                     value={password}
                     onChange={(e) => setPassword(e.target.value)}
@@ -159,8 +158,7 @@ function ProvisionModal({ server, onClose }) {
                   Sudo requires a password
                 </label>
                 {needsSudo && (
-                  <input
-                    type="password"
+                  <PasswordInput
                     className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring"
                     value={sudoPassword}
                     onChange={(e) => setSudoPassword(e.target.value)}

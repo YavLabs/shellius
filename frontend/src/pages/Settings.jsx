@@ -26,6 +26,7 @@ import PageHeader from '@/components/common/PageHeader';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import SearchableSelect from '@/components/ui/SearchableSelect';
+import PasswordInput from '@/components/ui/PasswordInput';
 import { getPublicKey, getStatus, rotate } from '@/services/caService';
 import { getOrg, updateOrg } from '@/services/orgService';
 import { getSsoConfig, getSsoEffective, saveSsoConfig, testSsoConnection } from '@/services/ssoConfigService';
@@ -51,6 +52,10 @@ const ROLE_RANK = { super_admin: 4, admin: 3, manager: 2, member: 1 };
 function isAtLeast(user, role) {
   return (ROLE_RANK[user?.role] || 0) >= (ROLE_RANK[role] || 0);
 }
+
+// Mirrors the shadcn <Input> default styling so PasswordInput (raw input) matches.
+const SHADCN_INPUT_CLS =
+  'flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50';
 
 // ---------------------------------------------------------------------------
 // Shared sub-components
@@ -751,14 +756,22 @@ function SsoTab() {
                 <label className="mb-1.5 block text-sm font-medium text-foreground">
                   {label} <span className="text-destructive">*</span>
                 </label>
-                <Input
-                  value={formData[field] || ''}
-                  onChange={(e) => handleFieldChange(field, e.target.value)}
-                  type={isSecret ? 'password' : 'text'}
-                  autoComplete={isSecret ? 'new-password' : undefined}
-                  placeholder={placeholder}
-                  className={isSecret ? 'font-mono' : undefined}
-                />
+                {isSecret ? (
+                  <PasswordInput
+                    value={formData[field] || ''}
+                    onChange={(e) => handleFieldChange(field, e.target.value)}
+                    autoComplete="new-password"
+                    placeholder={placeholder}
+                    className={`${SHADCN_INPUT_CLS} font-mono`}
+                  />
+                ) : (
+                  <Input
+                    value={formData[field] || ''}
+                    onChange={(e) => handleFieldChange(field, e.target.value)}
+                    type="text"
+                    placeholder={placeholder}
+                  />
+                )}
               </div>
             );
           })}
@@ -1127,8 +1140,8 @@ function SmtpCard() {
               <label className="mb-1 flex items-center text-xs font-medium text-muted-foreground">
                 Password {sourceBadge('password')}
               </label>
-              <Input
-                type="password"
+              <PasswordInput
+                className={SHADCN_INPUT_CLS}
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
                 placeholder={config?.hasPassword ? 'Stored — leave blank to keep' : ''}
@@ -1520,8 +1533,8 @@ function StorageTab() {
               <label className="mb-1 flex items-center text-xs font-medium text-muted-foreground">
                 {isAzure ? 'Account key' : 'Secret key'}
               </label>
-              <Input
-                type="password"
+              <PasswordInput
+                className={SHADCN_INPUT_CLS}
                 value={secretKey}
                 onChange={(e) => setSecretKey(e.target.value)}
                 placeholder={config?.hasSecretKey ? 'Stored — leave blank to keep' : ''}

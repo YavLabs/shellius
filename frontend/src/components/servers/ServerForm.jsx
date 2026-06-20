@@ -3,6 +3,7 @@ import { X, ChevronDown, ChevronRight, Info } from 'lucide-react';
 import { listCustomers } from '@/services/customerService';
 import PrivateIPWarning from './PrivateIPWarning';
 import SearchableSelect from '@/components/ui/SearchableSelect';
+import PasswordInput from '@/components/ui/PasswordInput';
 
 const ENVIRONMENTS = ['demo', 'dev', 'staging', 'prod'];
 const OS_TYPES = ['', 'linux', 'windows', 'macos', 'other'];
@@ -364,8 +365,7 @@ function ServerForm({ server, customerId: initialCustomerId, onSubmit, onCancel 
                   <span className="font-normal text-muted-foreground">(blank = keep current)</span>
                 )}
               </label>
-              <input
-                type="password"
+              <PasswordInput
                 className={inputCls}
                 value={rdpPassword}
                 onChange={(e) => setRdpPassword(e.target.value)}
