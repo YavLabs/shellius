@@ -92,7 +92,10 @@ function buildEnvCallbackUrl(orgSlug, req) {
   const publicBase =
     ssoConfig.publicBaseUrl ||
     (req ? `${req.protocol}://${req.get('host')}` : 'http://localhost:3001');
-  return `${publicBase.replace(/\/$/, '')}/api/auth/sso/${orgSlug}/callback`;
+  // Single org-agnostic callback (org is carried in `state`). Matches the
+  // GET /api/auth/sso/callback route and the saved-row default redirect URI.
+  void orgSlug;
+  return `${publicBase.replace(/\/$/, '')}/api/auth/sso/callback`;
 }
 
 export async function getDecryptedConfig(orgId, { orgSlug = null, req = null } = {}) {

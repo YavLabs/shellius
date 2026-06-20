@@ -276,6 +276,7 @@ function BulkImport() {
                     </td>
                     <td className="px-3 py-2 text-xs text-muted-foreground">
                       {r.action === 'error' && r.error}
+                      {r.action === 'create' && r.conflictReason}
                       {r.action === 'conflict' && (
                         <span className="flex items-center gap-2">
                           {r.conflictReason}

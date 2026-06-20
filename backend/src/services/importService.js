@@ -14,7 +14,7 @@
 import prisma from '../config/db.js';
 import logger from '../utils/logger.js';
 import { encrypt, decrypt } from '../utils/crypto.js';
-import { parseUpload } from './importParsers.js';
+import { parseUpload, resolveFile } from './importParsers.js';
 import * as customerService from './customerService.js';
 import * as serverService from './serverService.js';
 import * as userService from './userService.js';
@@ -124,7 +124,8 @@ export async function createImportJob({ orgId, actorId, actorRole, buffer, filen
         raw: sanitizeRaw(rows[i]),
         resolved: planned.resolved || {},
         action: planned.action,
-        conflictReason: planned.conflictReason || null,
+        // conflictReason doubles as a free-text note (e.g. "imported without onboarding").
+        conflictReason: planned.conflictReason || planned.note || null,
         // Default conflict decision = skip (safe). create/error left null.
         decision: planned.action === 'conflict' ? 'skip' : null,
         status: 'pending',
@@ -233,20 +234,23 @@ async function planServer(orgId, row, inImport, files) {
     if (!cust) return { action: 'error', error: `Customer "${custRef}" not found` };
   }
 
-  // Key-file reference (zip) must resolve.
+  // Key-file reference (zip): if unresolved, the server still imports — only
+  // the optional background onboarding for this host is skipped (warned below).
   const keyFile = str(row.keyFile);
-  if (keyFile && files && !files.has(keyFile) && !files.has(keyFile.split('/').pop().toLowerCase())) {
-    return { action: 'error', error: `Key file "${keyFile}" not found in archive` };
-  }
+  const keyMissing = keyFile && !resolveFile(files, keyFile);
+
+  const note = keyMissing
+    ? `Imported without onboarding — key file "${keyFile}" not found in the archive`
+    : null;
 
   const existing = await prisma.server.findFirst({ where: { orgId, hostname } });
   if (existing) {
     const reason = existing.provisionStatus === 'provisioned'
       ? 'Server already exists and is onboarded (overwrite re-runs the idempotent bootstrap)'
       : 'A server with this hostname already exists';
-    return { action: 'conflict', conflictReason: reason };
+    return { action: 'conflict', conflictReason: note ? `${reason}. ${note}` : reason };
   }
-  return { action: 'create', resolved: { hostname, custRef } };
+  return { action: 'create', resolved: { hostname, custRef }, note };
 }
 
 async function planPolicy(orgId, row) {
@@ -522,7 +526,7 @@ async function stageCredentialAtUpload(jobId, raw, files) {
   let privateKey = raw.privateKey || raw.sshPrivateKey || '';
   const keyFile = str(raw.keyFile);
   if (!privateKey && keyFile && files) {
-    const buf = files.get(keyFile) || files.get(keyFile.split('/').pop().toLowerCase());
+    const buf = resolveFile(files, keyFile);
     if (buf) privateKey = buf.toString('utf8');
   }
   const sudoPassword = str(raw.sudoPassword);

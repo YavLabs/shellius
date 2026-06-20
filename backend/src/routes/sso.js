@@ -172,6 +172,79 @@ async function discover(issuerUrl) {
   return doc;
 }
 
+// Shared OIDC callback: exchange code, fetch userinfo, link/provision the user,
+// and redirect back to the frontend. The org is resolved by the caller.
+async function runOidcCallback(req, res, org, code) {
+  const cfg = await ssoService.getDecryptedConfig(org.id, { orgSlug: org.slug, req });
+  if (!cfg) throw new ApiError(400, 'SSO not configured');
+
+  const discovery = await discover(cfg.issuerUrl);
+  const tokenRes = await fetch(discovery.token_endpoint, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: new URLSearchParams({
+      grant_type: 'authorization_code',
+      code,
+      redirect_uri: cfg.redirectUri,
+      client_id: cfg.clientId,
+      client_secret: cfg.clientSecret,
+    }),
+  });
+  if (!tokenRes.ok) {
+    const text = await tokenRes.text();
+    logger.error('OIDC token exchange failed', { text });
+    throw new ApiError(401, 'Token exchange failed');
+  }
+  const tokens = await tokenRes.json();
+
+  const userinfoRes = await fetch(discovery.userinfo_endpoint, {
+    headers: { Authorization: `Bearer ${tokens.access_token}` },
+  });
+  if (!userinfoRes.ok) throw new ApiError(401, 'Userinfo fetch failed');
+  const userinfo = await userinfoRes.json();
+
+  let user;
+  try {
+    user = await ssoService.handleOidcUserInfo(userinfo, org.id);
+  } catch (err) {
+    const msg = err?.statusCode === 403 || err?.errorCode === 'SSO_NOT_PROVISIONED'
+      ? err.message
+      : 'Sign-in failed. Please contact your administrator.';
+    logger.warn('SSO sign-in rejected', { orgId: org.id, error: err.message });
+    return res.redirect(`${FRONTEND_URL}/auth/callback#${new URLSearchParams({ error: msg }).toString()}`);
+  }
+
+  const accessToken = generateAccessToken({ userId: user.id, orgId: user.orgId, role: user.role, email: user.email });
+  const refreshToken = generateRefreshToken({ userId: user.id, tokenId: crypto.randomUUID() });
+  await prisma.refreshToken.create({
+    data: {
+      userId: user.id,
+      tokenHash: hashToken(refreshToken),
+      clientType: 'web',
+      ipAddress: req.ip,
+      userAgent: req.get('user-agent') || '',
+      expiresAt: new Date(Date.now() + REFRESH_TTL_MS),
+    },
+  });
+  res.redirect(`${FRONTEND_URL}/auth/callback#${new URLSearchParams({ access_token: accessToken, refresh_token: refreshToken }).toString()}`);
+}
+
+// No-orgSlug callback — the single redirect URI registered with the IdP. The
+// org is derived from the signed `state`. MUST be registered before /:orgSlug.
+router.get(
+  '/callback',
+  asyncHandler(async (req, res) => {
+    const { code, state } = req.query;
+    if (!code || !state) throw new ApiError(400, 'Missing code or state');
+    const stateData = stateStore.get(state);
+    if (!stateData) throw new ApiError(400, 'Invalid or expired state');
+    stateStore.delete(state);
+    const org = await prisma.organization.findUnique({ where: { id: stateData.orgId } });
+    if (!org) throw new ApiError(400, 'Organization not found');
+    return runOidcCallback(req, res, org, code);
+  })
+);
+
 router.get(
   '/:orgSlug',
   asyncHandler(async (req, res) => {

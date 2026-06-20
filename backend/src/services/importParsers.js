@@ -148,13 +148,41 @@ function parseZip(buffer, warnings) {
       }
     } else {
       // Treat everything else (e.g. keys/*.pem, *.ppk) as a referenceable file.
-      files.set(name, entry.getData());
-      // Also index by basename for convenience.
-      files.set(base, entry.getData());
+      // Index under several normalized keys so a CSV reference resolves
+      // regardless of folder nesting, case, or path separator.
+      const data = entry.getData();
+      const norm = name.replace(/\\/g, '/').toLowerCase();
+      files.set(norm, data); // full normalized path
+      files.set(norm.split('/').pop(), data); // basename
+      files.set(name, data); // original (back-compat)
+      files.set(base, data); // original basename lower
     }
   }
 
   return { source: 'zip', entities, files, warnings };
 }
 
-export default { parseUpload, parseCsv, ENTITIES };
+/**
+ * Resolve a CSV-referenced file (e.g. "keys/foo.pem") against the zip's file
+ * map. Tolerant of backslashes, leading "./", case, and folder nesting — a
+ * basename or path-suffix match wins.
+ *
+ * @param {Map<string, Buffer>} files
+ * @param {string} ref
+ * @returns {Buffer|null}
+ */
+export function resolveFile(files, ref) {
+  if (!ref || !files) return null;
+  const r = String(ref).replace(/\\/g, '/').replace(/^\.\//, '').toLowerCase();
+  if (files.has(r)) return files.get(r);
+  const base = r.split('/').pop();
+  if (files.has(base)) return files.get(base);
+  // Suffix / basename match against any stored entry.
+  for (const [k, v] of files) {
+    const kn = k.replace(/\\/g, '/').toLowerCase();
+    if (kn === r || kn.endsWith('/' + r) || kn === base || kn.endsWith('/' + base)) return v;
+  }
+  return null;
+}
+
+export default { parseUpload, parseCsv, resolveFile, ENTITIES };
