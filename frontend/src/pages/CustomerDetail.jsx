@@ -53,6 +53,8 @@ import { listServers, createServer } from '@/services/serverService';
 import { listSessions } from '@/services/sessionService';
 import { relativeTime, formatDateTime } from '@/utils/time';
 import Skeleton from '@/components/ui/Skeleton';
+import { useAuth } from '@/context/AuthContext';
+import { roleAtLeast } from '@/lib/permissions';
 
 // ---------------------------------------------------------------------------
 // Sub-components
@@ -151,6 +153,9 @@ const ENV_DOT_COLORS = {
 function CustomerDetail() {
   const { id } = useParams();
   const navigate = useNavigate();
+  const { user } = useAuth();
+  const canManage = roleAtLeast(user, 'manager'); // add/edit servers + customer
+  const canDelete = roleAtLeast(user, 'admin');
 
   const [customer, setCustomer] = useState(null);
   const [stats, setStats] = useState(null);
@@ -448,31 +453,41 @@ function CustomerDetail() {
 
         {/* Action group */}
         <div className="flex shrink-0 items-center gap-2">
-          <Button size="sm" onClick={() => setAddServerOpen(true)}>
-            <Plus className="mr-1.5 h-3.5 w-3.5" />
-            Add Server
-          </Button>
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <Button variant="outline" size="icon" className="h-9 w-9">
-                <MoreHorizontal className="h-4 w-4" />
-              </Button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="end" className="w-44">
-              <DropdownMenuItem onClick={() => setEditOpen(true)}>
-                <Pencil className="mr-2 h-4 w-4" />
-                Edit Customer
-              </DropdownMenuItem>
-              <DropdownMenuSeparator />
-              <DropdownMenuItem
-                onClick={() => setConfirmDelete(true)}
-                className="text-destructive focus:text-destructive"
-              >
-                <Trash2 className="mr-2 h-4 w-4" />
-                Delete Customer
-              </DropdownMenuItem>
-            </DropdownMenuContent>
-          </DropdownMenu>
+          {canManage && (
+            <Button size="sm" onClick={() => setAddServerOpen(true)}>
+              <Plus className="mr-1.5 h-3.5 w-3.5" />
+              Add Server
+            </Button>
+          )}
+          {(canManage || canDelete) && (
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button variant="outline" size="icon" className="h-9 w-9">
+                  <MoreHorizontal className="h-4 w-4" />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" className="w-44">
+                {canManage && (
+                  <DropdownMenuItem onClick={() => setEditOpen(true)}>
+                    <Pencil className="mr-2 h-4 w-4" />
+                    Edit Customer
+                  </DropdownMenuItem>
+                )}
+                {canDelete && (
+                  <>
+                    <DropdownMenuSeparator />
+                    <DropdownMenuItem
+                      onClick={() => setConfirmDelete(true)}
+                      className="text-destructive focus:text-destructive"
+                    >
+                      <Trash2 className="mr-2 h-4 w-4" />
+                      Delete Customer
+                    </DropdownMenuItem>
+                  </>
+                )}
+              </DropdownMenuContent>
+            </DropdownMenu>
+          )}
         </div>
       </div>
 
@@ -517,10 +532,12 @@ function CustomerDetail() {
                   ({filteredServers.length}{envFilter ? ` of ${servers.length}` : ''})
                 </span>
               </h3>
-              <Button size="sm" variant="outline" onClick={() => setAddServerOpen(true)}>
-                <Plus className="mr-1.5 h-3.5 w-3.5" />
-                Add Server
-              </Button>
+              {canManage && (
+                <Button size="sm" variant="outline" onClick={() => setAddServerOpen(true)}>
+                  <Plus className="mr-1.5 h-3.5 w-3.5" />
+                  Add Server
+                </Button>
+              )}
             </div>
             {/* Padding around the DataTable so the inner content (search,
                 filters, rows, pagination) never butts up against the card
@@ -637,15 +654,17 @@ function CustomerDetail() {
           {/* Quick Actions card */}
           <SectionCard title="Quick Actions">
             <div className="flex flex-col gap-2">
-              <Button
-                variant="outline"
-                size="sm"
-                className="w-full justify-start gap-2"
-                onClick={() => setAddServerOpen(true)}
-              >
-                <Plus className="h-4 w-4" />
-                Add Server
-              </Button>
+              {canManage && (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="w-full justify-start gap-2"
+                  onClick={() => setAddServerOpen(true)}
+                >
+                  <Plus className="h-4 w-4" />
+                  Add Server
+                </Button>
+              )}
               <Button
                 variant="outline"
                 size="sm"
@@ -664,15 +683,17 @@ function CustomerDetail() {
                 <ExternalLink className="h-4 w-4" />
                 View in Servers
               </Button>
-              <Button
-                variant="ghost"
-                size="sm"
-                className="w-full justify-start gap-2 text-muted-foreground hover:text-foreground"
-                onClick={() => setEditOpen(true)}
-              >
-                <Pencil className="h-4 w-4" />
-                Edit Customer
-              </Button>
+              {canManage && (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="w-full justify-start gap-2 text-muted-foreground hover:text-foreground"
+                  onClick={() => setEditOpen(true)}
+                >
+                  <Pencil className="h-4 w-4" />
+                  Edit Customer
+                </Button>
+              )}
             </div>
           </SectionCard>
 
