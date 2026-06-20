@@ -13,13 +13,7 @@ import Modal from '@/components/shared/Modal';
 import ConfirmDialog from '@/components/shared/ConfirmDialog';
 import SessionPlayer from '@/components/sessions/SessionPlayer';
 import PageHeader from '@/components/common/PageHeader';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select';
+import SearchableSelect from '@/components/ui/SearchableSelect';
 import { listSessions, listActiveSessions, getSession, terminateSession, downloadRecording } from '@/services/sessionService';
 import { useAuth } from '@/context/AuthContext';
 import { relativeTime, formatDateTime } from '@/utils/time';
@@ -272,16 +266,18 @@ function Sessions() {
   };
 
   const filterSlot = activeTab === 'all' ? (
-    <Select
-      value={statusFilter || '_all'}
-      onValueChange={(v) => { setStatusFilter(v === '_all' ? '' : v); setPage(1); }}
-    >
-      <SelectTrigger className="w-[160px]"><SelectValue placeholder="All statuses" /></SelectTrigger>
-      <SelectContent>
-        <SelectItem value="_all">All statuses</SelectItem>
-        {SESSION_STATUSES.map((s) => <SelectItem key={s} value={s}>{s}</SelectItem>)}
-      </SelectContent>
-    </Select>
+    <SearchableSelect
+      className="w-[160px]"
+      value={statusFilter}
+      onChange={(v) => { setStatusFilter(v); setPage(1); }}
+      options={[
+        { value: '', label: 'All statuses' },
+        ...SESSION_STATUSES.map((s) => ({ value: s, label: s })),
+      ]}
+      placeholder="All statuses"
+      searchable={false}
+      clearable={false}
+    />
   ) : null;
 
   const columns = [

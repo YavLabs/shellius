@@ -6,6 +6,7 @@ import { listServers } from '@/services/serverService';
 import { useAuth } from '@/context/AuthContext';
 import { LINUX_USER_RE, defaultPrincipal } from '@/utils/principal';
 import PrivateIPWarning from '@/components/servers/PrivateIPWarning';
+import SearchableSelect from '@/components/ui/SearchableSelect';
 
 const DURATION_UNITS = [
   { label: 'minutes', value: 'minutes', factor: 60 },
@@ -20,8 +21,6 @@ function toSeconds(amount, unit) {
 const inputCls =
   'w-full rounded-md border border-input bg-background px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring disabled:opacity-50';
 const labelCls = 'block text-xs font-medium text-muted-foreground mb-1';
-const selectCls =
-  'rounded-md border border-input bg-background px-3 py-2 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-ring';
 
 function RequestForm({ open, onClose, onSuccess, initialServerId = '' }) {
   const { user } = useAuth();
@@ -137,21 +136,19 @@ function RequestForm({ open, onClose, onSuccess, initialServerId = '' }) {
         {/* Server */}
         <div>
           <label className={labelCls}>Server <span className="text-destructive">*</span></label>
-          <select
-            className={`${selectCls} w-full`}
+          <SearchableSelect
             value={serverId}
-            onChange={(e) => setServerId(e.target.value)}
+            onChange={(v) => setServerId(v)}
+            options={servers.map((s) => ({
+              value: s.id,
+              label: s.displayName || s.hostname || s.name,
+              sublabel: s.hostname,
+              environment: s.environment,
+            }))}
+            placeholder={loadingServers ? 'Loading servers...' : 'Select a server'}
             disabled={loadingServers}
-          >
-            <option value="">
-              {loadingServers ? 'Loading servers...' : 'Select a server'}
-            </option>
-            {servers.map((s) => (
-              <option key={s.id} value={s.id}>
-                {s.hostname || s.name} ({s.environment || 'unknown'})
-              </option>
-            ))}
-          </select>
+            clearable={false}
+          />
           {serverId && (() => {
             const sel = servers.find((s) => s.id === serverId);
             return sel ? (
@@ -205,17 +202,13 @@ function RequestForm({ open, onClose, onSuccess, initialServerId = '' }) {
               value={durationAmount}
               onChange={(e) => setDurationAmount(e.target.value)}
             />
-            <select
-              className={selectCls}
+            <SearchableSelect
               value={durationUnit}
-              onChange={(e) => setDurationUnit(e.target.value)}
-            >
-              {DURATION_UNITS.map((u) => (
-                <option key={u.value} value={u.value}>
-                  {u.label}
-                </option>
-              ))}
-            </select>
+              onChange={(v) => setDurationUnit(v)}
+              options={DURATION_UNITS.map((u) => ({ value: u.value, label: u.label }))}
+              searchable={false}
+              clearable={false}
+            />
           </div>
         </div>
 

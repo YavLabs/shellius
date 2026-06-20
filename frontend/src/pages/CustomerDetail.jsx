@@ -36,13 +36,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select';
+import SearchableSelect from '@/components/ui/SearchableSelect';
 import {
   getCustomer,
   updateCustomer,
@@ -331,22 +325,18 @@ function CustomerDetail() {
 
   // Environment filter slot for DataTable
   const filterSlot = (
-    <Select
-      value={envFilter || '_all'}
-      onValueChange={(v) => setEnvFilter(v === '_all' ? '' : v)}
-    >
-      <SelectTrigger className="w-[160px]">
-        <SelectValue placeholder="All environments" />
-      </SelectTrigger>
-      <SelectContent>
-        <SelectItem value="_all">All environments</SelectItem>
-        {ENVIRONMENTS.map((e) => (
-          <SelectItem key={e} value={e}>
-            {e}
-          </SelectItem>
-        ))}
-      </SelectContent>
-    </Select>
+    <SearchableSelect
+      className="w-[160px]"
+      value={envFilter || ''}
+      onChange={(v) => setEnvFilter(v)}
+      placeholder="All environments"
+      searchable={false}
+      clearable={false}
+      options={[
+        { value: '', label: 'All environments' },
+        ...ENVIRONMENTS.map((e) => ({ value: e, label: e })),
+      ]}
+    />
   );
 
   // ---------------------------------------------------------------------------

@@ -7,6 +7,7 @@ import { listServers } from '@/services/serverService';
 import { listGroups } from '@/services/groupService';
 import PolicyEvaluator from '@/components/policies/PolicyEvaluator';
 import SubjectsPicker from '@/components/policies/SubjectsPicker';
+import SearchableSelect from '@/components/ui/SearchableSelect';
 
 const ENVIRONMENTS = ['demo', 'dev', 'staging', 'prod'];
 
@@ -325,21 +326,16 @@ function Step3({ form, onChange, errors }) {
     <div className="space-y-5">
       <div>
         <label className={labelCls}>Customer Scope</label>
-        <select
-          className={inputCls}
+        <SearchableSelect
           value={form.customerId || ''}
-          onChange={(e) => {
-            onChange('customerId', e.target.value || null);
+          onChange={(v) => {
+            onChange('customerId', v || null);
             onChange('targetServerIds', []);
           }}
-        >
-          <option value="">Org-wide (all customers)</option>
-          {customers.map((c) => (
-            <option key={c.id} value={c.id}>
-              {c.name}
-            </option>
-          ))}
-        </select>
+          options={customers.map((c) => ({ value: c.id, label: c.name }))}
+          placeholder="Org-wide (all customers)"
+          clearable={true}
+        />
       </div>
 
       <div>
@@ -567,18 +563,14 @@ function Step4({ form, onChange, errors }) {
 
         <div>
           <label className={labelCls}>Approver group</label>
-          <select
-            className={inputCls}
+          <SearchableSelect
             value={form.approverGroupId || ''}
-            onChange={(e) => onChange('approverGroupId', e.target.value || null)}
-          >
-            <option value="">— None —</option>
-            {groups.map((g) => (
-              <option key={g.id} value={g.id}>
-                {g.name}
-              </option>
-            ))}
-          </select>
+            onChange={(v) => onChange('approverGroupId', v || null)}
+            options={groups.map((g) => ({ value: g.id, label: g.name }))}
+            placeholder="— None —"
+            searchable={false}
+            clearable={true}
+          />
         </div>
 
         <div>

@@ -1,6 +1,8 @@
 import { useState, useEffect } from 'react';
 import { listUsers } from '@/services/userService';
 import api from '@/services/api';
+import SearchableSelect from '@/components/ui/SearchableSelect';
+import Avatar from '@/components/ui/Avatar';
 
 const ROLES = ['super_admin', 'admin', 'manager', 'member'];
 const STATUSES = ['active', 'invited', 'suspended', 'deactivated'];
@@ -160,25 +162,25 @@ function UserForm({ user, onSubmit, onCancel }) {
 
       <div>
         <label className="mb-1.5 block text-sm font-medium text-foreground">Role <span className="text-destructive">*</span></label>
-        <select className={inputCls} value={role} onChange={(e) => setRole(e.target.value)}>
-          {ROLES.map((r) => (
-            <option key={r} value={r}>
-              {r}
-            </option>
-          ))}
-        </select>
+        <SearchableSelect
+          value={role}
+          onChange={(v) => setRole(v)}
+          options={ROLES.map((r) => ({ value: r, label: r }))}
+          searchable={false}
+          clearable={false}
+        />
       </div>
 
       {isEdit && (
         <div>
           <label className="mb-1.5 block text-sm font-medium text-foreground">Status</label>
-          <select className={inputCls} value={status} onChange={(e) => setStatus(e.target.value)}>
-            {STATUSES.map((s) => (
-              <option key={s} value={s}>
-                {s}
-              </option>
-            ))}
-          </select>
+          <SearchableSelect
+            value={status}
+            onChange={(v) => setStatus(v)}
+            options={STATUSES.map((s) => ({ value: s, label: s }))}
+            searchable={false}
+            clearable={false}
+          />
         </div>
       )}
 
@@ -186,14 +188,33 @@ function UserForm({ user, onSubmit, onCancel }) {
         <label className="mb-1.5 block text-sm font-medium text-foreground">
           Manager <span className="text-muted-foreground">(optional)</span>
         </label>
-        <select className={inputCls} value={managerId} onChange={(e) => setManagerId(e.target.value)}>
-          <option value="">— None —</option>
-          {managers.map((m) => (
-            <option key={m.id} value={m.id}>
-              {m.name} ({m.email})
-            </option>
-          ))}
-        </select>
+        <SearchableSelect
+          value={managerId}
+          onChange={(v) => setManagerId(v)}
+          options={managers.map((m) => ({
+            value: m.id,
+            label: m.name || m.email,
+            sublabel: m.email,
+            avatarUrl: m.avatarUrl,
+          }))}
+          placeholder="— None —"
+          clearable={true}
+          renderOption={(o) => (
+            <span className="flex items-center gap-2">
+              <Avatar size="xs" name={o.label} email={o.sublabel} src={o.avatarUrl} />
+              <span className="min-w-0">
+                <span className="block truncate">{o.label}</span>
+                <span className="block truncate text-xs text-muted-foreground">{o.sublabel}</span>
+              </span>
+            </span>
+          )}
+          renderValue={(o) => (
+            <span className="flex items-center gap-2">
+              <Avatar size="xs" name={o.label} email={o.sublabel} src={o.avatarUrl} />
+              <span className="truncate">{o.label}</span>
+            </span>
+          )}
+        />
       </div>
 
       <div className="flex justify-end gap-2 pt-2">

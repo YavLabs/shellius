@@ -25,13 +25,7 @@ import ConfirmDialog from '@/components/shared/ConfirmDialog';
 import PageHeader from '@/components/common/PageHeader';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select';
+import SearchableSelect from '@/components/ui/SearchableSelect';
 import { getPublicKey, getStatus, rotate } from '@/services/caService';
 import { getOrg, updateOrg } from '@/services/orgService';
 import { getSsoConfig, getSsoEffective, saveSsoConfig, testSsoConnection } from '@/services/ssoConfigService';
@@ -826,28 +820,32 @@ function SsoTab() {
             <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
               <div>
                 <label className="mb-1 block text-xs font-medium text-muted-foreground">Default role</label>
-                <select
-                  className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm"
+                <SearchableSelect
+                  className="w-full"
                   value={defaultRole}
-                  onChange={(e) => setDefaultRole(e.target.value)}
-                >
-                  <option value="member">Member</option>
-                  <option value="manager">Manager</option>
-                  <option value="admin">Admin</option>
-                </select>
+                  onChange={(v) => setDefaultRole(v)}
+                  searchable={false}
+                  clearable={false}
+                  options={[
+                    { value: 'member', label: 'Member' },
+                    { value: 'manager', label: 'Manager' },
+                    { value: 'admin', label: 'Admin' },
+                  ]}
+                />
               </div>
               <div>
                 <label className="mb-1 block text-xs font-medium text-muted-foreground">Default group (optional)</label>
-                <select
-                  className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm"
+                <SearchableSelect
+                  className="w-full"
                   value={defaultGroupId}
-                  onChange={(e) => setDefaultGroupId(e.target.value)}
-                >
-                  <option value="">— None —</option>
-                  {orgGroups.map((g) => (
-                    <option key={g.id} value={g.id}>{g.name}</option>
-                  ))}
-                </select>
+                  onChange={(v) => setDefaultGroupId(v)}
+                  searchable={true}
+                  clearable={false}
+                  options={[
+                    { value: '', label: '— None —' },
+                    ...orgGroups.map((g) => ({ value: g.id, label: g.name })),
+                  ]}
+                />
               </div>
             </div>
           </div>
@@ -1467,18 +1465,13 @@ function StorageTab() {
             <label className="mb-1 flex items-center text-xs font-medium text-muted-foreground">
               Provider <span className="text-destructive">*</span>
             </label>
-            <Select value={provider} onValueChange={setProvider}>
-              <SelectTrigger>
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                {STORAGE_PROVIDERS.map((p) => (
-                  <SelectItem key={p.value} value={p.value}>
-                    {p.label}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+            <SearchableSelect
+              value={provider}
+              onChange={(v) => setProvider(v)}
+              searchable={false}
+              clearable={false}
+              options={STORAGE_PROVIDERS.map((p) => ({ value: p.value, label: p.label }))}
+            />
           </div>
 
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">

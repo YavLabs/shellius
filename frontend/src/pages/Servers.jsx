@@ -25,13 +25,7 @@ import UninstallHostModal from '@/components/servers/UninstallHostModal';
 import QuickConnectButton from '@/components/servers/QuickConnectButton';
 import PageHeader from '@/components/common/PageHeader';
 import { Button } from '@/components/ui/button';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select';
+import SearchableSelect from '@/components/ui/SearchableSelect';
 import {
   listServers,
   createServer,
@@ -161,63 +155,42 @@ function Servers() {
 
   const filterSlot = (
     <>
-      <Select
-        value={environment || '_all'}
-        onValueChange={(v) => {
-          setEnvironment(v === '_all' ? '' : v);
-          setPage(1);
-        }}
-      >
-        <SelectTrigger className="w-[160px]">
-          <SelectValue placeholder="All environments" />
-        </SelectTrigger>
-        <SelectContent>
-          <SelectItem value="_all">All environments</SelectItem>
-          {ENVIRONMENTS.map((e) => (
-            <SelectItem key={e} value={e}>
-              {e}
-            </SelectItem>
-          ))}
-        </SelectContent>
-      </Select>
-      <Select
-        value={healthStatus || '_all'}
-        onValueChange={(v) => {
-          setHealthStatus(v === '_all' ? '' : v);
-          setPage(1);
-        }}
-      >
-        <SelectTrigger className="w-[150px]">
-          <SelectValue placeholder="All health" />
-        </SelectTrigger>
-        <SelectContent>
-          <SelectItem value="_all">All health</SelectItem>
-          {HEALTH_STATUSES.map((h) => (
-            <SelectItem key={h} value={h}>
-              {h}
-            </SelectItem>
-          ))}
-        </SelectContent>
-      </Select>
-      <Select
-        value={customerFilter || '_all'}
-        onValueChange={(v) => {
-          setCustomerFilter(v === '_all' ? '' : v);
-          setPage(1);
-        }}
-      >
-        <SelectTrigger className="w-[180px]">
-          <SelectValue placeholder="All customers" />
-        </SelectTrigger>
-        <SelectContent>
-          <SelectItem value="_all">All customers</SelectItem>
-          {customers.map((c) => (
-            <SelectItem key={c.id} value={c.id}>
-              {c.name}
-            </SelectItem>
-          ))}
-        </SelectContent>
-      </Select>
+      <SearchableSelect
+        className="w-[160px]"
+        value={environment}
+        onChange={(v) => { setEnvironment(v); setPage(1); }}
+        options={[
+          { value: '', label: 'All environments' },
+          ...ENVIRONMENTS.map((e) => ({ value: e, label: e })),
+        ]}
+        placeholder="All environments"
+        searchable={false}
+        clearable={false}
+      />
+      <SearchableSelect
+        className="w-[150px]"
+        value={healthStatus}
+        onChange={(v) => { setHealthStatus(v); setPage(1); }}
+        options={[
+          { value: '', label: 'All health' },
+          ...HEALTH_STATUSES.map((h) => ({ value: h, label: h })),
+        ]}
+        placeholder="All health"
+        searchable={false}
+        clearable={false}
+      />
+      <SearchableSelect
+        className="w-[180px]"
+        value={customerFilter}
+        onChange={(v) => { setCustomerFilter(v); setPage(1); }}
+        options={[
+          { value: '', label: 'All customers' },
+          ...customers.map((c) => ({ value: c.id, label: c.name })),
+        ]}
+        placeholder="All customers"
+        searchable={true}
+        clearable={false}
+      />
     </>
   );
 
@@ -226,18 +199,14 @@ function Servers() {
       <div className="flex flex-col gap-2 rounded-lg border border-border bg-accent/30 px-4 py-2.5 sm:flex-row sm:items-center sm:justify-between">
         <span className="text-sm text-foreground">{selected.length} selected</span>
         <div className="flex items-center gap-2">
-          <Select value={bulkEnv} onValueChange={setBulkEnv}>
-            <SelectTrigger className="w-[180px]">
-              <SelectValue placeholder="Change environment..." />
-            </SelectTrigger>
-            <SelectContent>
-              {ENVIRONMENTS.map((e) => (
-                <SelectItem key={e} value={e}>
-                  {e}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
+          <SearchableSelect
+            className="w-[180px]"
+            value={bulkEnv}
+            onChange={setBulkEnv}
+            options={ENVIRONMENTS.map((e) => ({ value: e, label: e }))}
+            placeholder="Change environment..."
+            searchable={false}
+          />
           <Button size="sm" onClick={() => bulkEnv && setBulkConfirm(true)} disabled={!bulkEnv}>
             Apply
           </Button>

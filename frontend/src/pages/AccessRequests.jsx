@@ -20,13 +20,7 @@ import ApprovalCard from '@/components/access-requests/ApprovalCard';
 import CredentialDownload from '@/components/access-requests/CredentialDownload';
 import PageHeader from '@/components/common/PageHeader';
 import { Button } from '@/components/ui/button';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select';
+import SearchableSelect from '@/components/ui/SearchableSelect';
 import {
   listAccessRequests,
   getAccessRequest,
@@ -308,16 +302,18 @@ function AccessRequests() {
   };
 
   const filterSlot = (
-    <Select
-      value={statusFilter || '_all'}
-      onValueChange={(v) => { setStatusFilter(v === '_all' ? '' : v); setPage(1); }}
-    >
-      <SelectTrigger className="w-[160px]"><SelectValue placeholder="All statuses" /></SelectTrigger>
-      <SelectContent>
-        <SelectItem value="_all">All statuses</SelectItem>
-        {STATUSES.map((s) => <SelectItem key={s} value={s}>{s}</SelectItem>)}
-      </SelectContent>
-    </Select>
+    <SearchableSelect
+      className="w-[160px]"
+      value={statusFilter}
+      onChange={(v) => { setStatusFilter(v); setPage(1); }}
+      options={[
+        { value: '', label: 'All statuses' },
+        ...STATUSES.map((s) => ({ value: s, label: s })),
+      ]}
+      placeholder="All statuses"
+      searchable={false}
+      clearable={false}
+    />
   );
 
   const columns = [

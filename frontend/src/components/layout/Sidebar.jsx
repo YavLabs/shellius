@@ -25,6 +25,7 @@ import { useNotifications } from '@/context/NotificationContext';
 import { cn } from '@/lib/utils';
 import BrandLogo, { BrandMark } from '@/components/common/BrandLogo';
 import UserMenu from '@/components/layout/UserMenu';
+import Avatar from '@/components/ui/Avatar';
 import {
   Tooltip,
   TooltipContent,
@@ -299,14 +300,14 @@ function SidebarBody({ collapsed, onToggle, onNavigate }) {
                       onClick={onClick}
                       aria-haspopup="menu"
                       aria-expanded={open}
-                      className="mx-auto flex h-9 w-9 items-center justify-center rounded-full bg-primary text-xs font-semibold text-primary-foreground hover:opacity-90 transition-opacity"
+                      className="mx-auto flex items-center justify-center rounded-full hover:opacity-90 transition-opacity"
                     >
-                      {user.name?.[0]?.toUpperCase() || 'U'}
+                      <Avatar name={user.name} email={user.email} src={user.avatarUrl} size="md" />
                     </button>
                   </TooltipTrigger>
                   <TooltipContent side="right">
                     <span className="font-medium">{user.name}</span>
-                    {user.role && <span className="text-muted-foreground"> · {user.role}</span>}
+                    {user.email && <span className="text-muted-foreground"> · {user.email}</span>}
                   </TooltipContent>
                 </Tooltip>
               ) : (
@@ -317,12 +318,10 @@ function SidebarBody({ collapsed, onToggle, onNavigate }) {
                   aria-expanded={open}
                   className="flex w-full items-center gap-2 rounded-md px-3 py-2 text-left hover:bg-accent transition-colors"
                 >
-                  <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-primary text-xs font-medium text-primary-foreground">
-                    {user.name?.[0]?.toUpperCase() || 'U'}
-                  </div>
+                  <Avatar name={user.name} email={user.email} src={user.avatarUrl} size="sm" />
                   <div className="min-w-0 flex-1">
                     <p className="truncate text-xs font-medium text-foreground">{user.name}</p>
-                    <p className="truncate text-[10px] text-muted-foreground">{user.role}</p>
+                    <p className="truncate text-[10px] text-muted-foreground">{user.email}</p>
                   </div>
                   <ChevronUp className="h-3.5 w-3.5 text-muted-foreground" />
                 </button>

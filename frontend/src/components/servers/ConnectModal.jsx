@@ -6,6 +6,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import PrivateIPWarning from './PrivateIPWarning';
 import { LINUX_USER_RE } from '@/utils/principal';
+import SearchableSelect from '@/components/ui/SearchableSelect';
 
 /**
  * ConnectModal
@@ -118,18 +119,17 @@ function ConnectModal({ open, onClose, server, intent, currentUser }) {
                 }
               />
             ) : (
-              <select
+              <SearchableSelect
                 value={principal}
-                onChange={(e) => setPrincipal(e.target.value)}
-                className="flex h-9 w-full rounded-md border border-input bg-background px-3 py-2 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
-              >
-                {allowed.map((p) => (
-                  <option key={p} value={p}>
-                    {p}
-                    {p === intent?.preferredPrincipal ? '  (preferred)' : ''}
-                  </option>
-                ))}
-              </select>
+                onChange={(v) => setPrincipal(v)}
+                options={allowed.map((p) => ({
+                  value: p,
+                  label: p,
+                  sublabel: p === intent?.preferredPrincipal ? 'preferred' : undefined,
+                }))}
+                searchable={false}
+                clearable={false}
+              />
             )}
 
             {jitBadge && (

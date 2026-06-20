@@ -2,6 +2,8 @@ import { useState, useEffect } from 'react';
 import { X } from 'lucide-react';
 import { listUsers } from '@/services/userService';
 import { listServers } from '@/services/serverService';
+import SearchableSelect from '@/components/ui/SearchableSelect';
+import Avatar from '@/components/ui/Avatar';
 
 function IssueCertForm({ onSubmit, onCancel }) {
   const [users, setUsers] = useState([]);
@@ -87,37 +89,50 @@ function IssueCertForm({ onSubmit, onCancel }) {
         <label className="mb-1 block text-sm font-medium text-foreground">
           User <span className="text-destructive">*</span>
         </label>
-        <select
-          className={inputCls}
+        <SearchableSelect
           value={userId}
-          onChange={(e) => setUserId(e.target.value)}
-          required
-        >
-          <option value="">Select a user...</option>
-          {users.map((u) => (
-            <option key={u.id} value={u.id}>
-              {u.name} ({u.email})
-            </option>
-          ))}
-        </select>
+          onChange={(v) => setUserId(v)}
+          options={users.map((u) => ({
+            value: u.id,
+            label: u.name || u.email,
+            sublabel: u.email,
+            avatarUrl: u.avatarUrl,
+          }))}
+          placeholder="Select a user..."
+          clearable={false}
+          renderOption={(o) => (
+            <span className="flex items-center gap-2">
+              <Avatar size="xs" name={o.label} email={o.sublabel} src={o.avatarUrl} />
+              <span className="min-w-0">
+                <span className="block truncate">{o.label}</span>
+                <span className="block truncate text-xs text-muted-foreground">{o.sublabel}</span>
+              </span>
+            </span>
+          )}
+          renderValue={(o) => (
+            <span className="flex items-center gap-2">
+              <Avatar size="xs" name={o.label} email={o.sublabel} src={o.avatarUrl} />
+              <span className="truncate">{o.label}</span>
+            </span>
+          )}
+        />
       </div>
 
       <div>
         <label className="mb-1 block text-sm font-medium text-foreground">
           Server (optional)
         </label>
-        <select
-          className={inputCls}
+        <SearchableSelect
           value={serverId}
-          onChange={(e) => setServerId(e.target.value)}
-        >
-          <option value="">None</option>
-          {servers.map((s) => (
-            <option key={s.id} value={s.id}>
-              {s.hostname}
-            </option>
-          ))}
-        </select>
+          onChange={(v) => setServerId(v)}
+          options={servers.map((s) => ({
+            value: s.id,
+            label: s.displayName || s.hostname,
+            sublabel: s.hostname,
+          }))}
+          placeholder="None"
+          clearable={true}
+        />
       </div>
 
       <div>

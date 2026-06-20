@@ -14,13 +14,7 @@ import PolicyForm from '@/components/policies/PolicyForm';
 import PolicyEvaluator from '@/components/policies/PolicyEvaluator';
 import PageHeader from '@/components/common/PageHeader';
 import { Button } from '@/components/ui/button';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select';
+import SearchableSelect from '@/components/ui/SearchableSelect';
 import { listPolicies, createPolicy, updatePolicy, deletePolicy } from '@/services/policyService';
 import { listCustomers } from '@/services/customerService';
 import { useAuth } from '@/context/AuthContext';
@@ -120,38 +114,44 @@ function Policies() {
 
   const filterSlot = (
     <>
-      <Select
-        value={effectFilter || '_all'}
-        onValueChange={(v) => { setEffectFilter(v === '_all' ? '' : v); setPage(1); }}
-      >
-        <SelectTrigger className="w-[140px]"><SelectValue placeholder="All effects" /></SelectTrigger>
-        <SelectContent>
-          <SelectItem value="_all">All effects</SelectItem>
-          <SelectItem value="ALLOW">ALLOW</SelectItem>
-          <SelectItem value="DENY">DENY</SelectItem>
-        </SelectContent>
-      </Select>
-      <Select
-        value={customerFilter || '_all'}
-        onValueChange={(v) => { setCustomerFilter(v === '_all' ? '' : v); setPage(1); }}
-      >
-        <SelectTrigger className="w-[160px]"><SelectValue placeholder="All customers" /></SelectTrigger>
-        <SelectContent>
-          <SelectItem value="_all">All customers</SelectItem>
-          {customers.map((c) => <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>)}
-        </SelectContent>
-      </Select>
-      <Select
-        value={activeFilter || '_all'}
-        onValueChange={(v) => { setActiveFilter(v === '_all' ? '' : v); setPage(1); }}
-      >
-        <SelectTrigger className="w-[140px]"><SelectValue placeholder="All statuses" /></SelectTrigger>
-        <SelectContent>
-          <SelectItem value="_all">All statuses</SelectItem>
-          <SelectItem value="true">Active</SelectItem>
-          <SelectItem value="false">Inactive</SelectItem>
-        </SelectContent>
-      </Select>
+      <SearchableSelect
+        className="w-[140px]"
+        value={effectFilter}
+        onChange={(v) => { setEffectFilter(v); setPage(1); }}
+        options={[
+          { value: '', label: 'All effects' },
+          { value: 'ALLOW', label: 'ALLOW' },
+          { value: 'DENY', label: 'DENY' },
+        ]}
+        placeholder="All effects"
+        searchable={false}
+        clearable={false}
+      />
+      <SearchableSelect
+        className="w-[160px]"
+        value={customerFilter}
+        onChange={(v) => { setCustomerFilter(v); setPage(1); }}
+        options={[
+          { value: '', label: 'All customers' },
+          ...customers.map((c) => ({ value: c.id, label: c.name })),
+        ]}
+        placeholder="All customers"
+        searchable={true}
+        clearable={false}
+      />
+      <SearchableSelect
+        className="w-[140px]"
+        value={activeFilter}
+        onChange={(v) => { setActiveFilter(v); setPage(1); }}
+        options={[
+          { value: '', label: 'All statuses' },
+          { value: 'true', label: 'Active' },
+          { value: 'false', label: 'Inactive' },
+        ]}
+        placeholder="All statuses"
+        searchable={false}
+        clearable={false}
+      />
     </>
   );
 

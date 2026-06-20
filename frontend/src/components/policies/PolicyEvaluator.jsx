@@ -1,6 +1,8 @@
 import { useState, useEffect } from 'react';
-import { FlaskConical, ChevronDown } from 'lucide-react';
+import { FlaskConical } from 'lucide-react';
 import Modal from '@/components/shared/Modal';
+import SearchableSelect from '@/components/ui/SearchableSelect';
+import Avatar from '@/components/ui/Avatar';
 import { listUsers } from '@/services/userService';
 import { listServers } from '@/services/serverService';
 import { evaluatePolicy } from '@/services/policyService';
@@ -88,9 +90,6 @@ function PolicyEvaluator({ open, onClose, policy }) {
     }
   };
 
-  const inputCls =
-    'w-full h-9 rounded-md border border-input bg-background px-3 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring appearance-none';
-
   return (
     <Modal open={open} onClose={onClose} title="Policy Evaluator" size="md">
       <div className="space-y-4">
@@ -107,40 +106,42 @@ function PolicyEvaluator({ open, onClose, policy }) {
           <>
             <div>
               <label className="mb-1.5 block text-sm font-medium text-foreground">User</label>
-              <div className="relative">
-                <select
-                  className={inputCls}
-                  value={userId}
-                  onChange={(e) => setUserId(e.target.value)}
-                >
-                  <option value="">Select a user...</option>
-                  {users.map((u) => (
-                    <option key={u.id} value={u.id}>
-                      {u.name || u.email} {u.name && u.email ? `(${u.email})` : ''}
-                    </option>
-                  ))}
-                </select>
-                <ChevronDown className="pointer-events-none absolute right-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-              </div>
+              <SearchableSelect
+                value={userId}
+                onChange={(v) => setUserId(v)}
+                placeholder="Select a user..."
+                searchable={true}
+                options={users.map((u) => ({
+                  value: u.id,
+                  label: u.name || u.email,
+                  sublabel: u.email,
+                  avatarUrl: u.avatarUrl,
+                }))}
+                renderOption={(o) => (
+                  <span className="flex items-center gap-2">
+                    <Avatar size="xs" name={o.label} email={o.sublabel} src={o.avatarUrl} />
+                    <span className="min-w-0">
+                      <span className="block truncate">{o.label}</span>
+                      <span className="block truncate text-xs text-muted-foreground">{o.sublabel}</span>
+                    </span>
+                  </span>
+                )}
+              />
             </div>
 
             <div>
               <label className="mb-1.5 block text-sm font-medium text-foreground">Server</label>
-              <div className="relative">
-                <select
-                  className={inputCls}
-                  value={serverId}
-                  onChange={(e) => setServerId(e.target.value)}
-                >
-                  <option value="">Select a server...</option>
-                  {servers.map((s) => (
-                    <option key={s.id} value={s.id}>
-                      {s.hostname} ({s.environment})
-                    </option>
-                  ))}
-                </select>
-                <ChevronDown className="pointer-events-none absolute right-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-              </div>
+              <SearchableSelect
+                value={serverId}
+                onChange={(v) => setServerId(v)}
+                placeholder="Select a server..."
+                searchable={true}
+                options={servers.map((s) => ({
+                  value: s.id,
+                  label: s.hostname,
+                  sublabel: s.environment,
+                }))}
+              />
             </div>
 
             <button

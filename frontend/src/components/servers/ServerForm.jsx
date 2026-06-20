@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { X, ChevronDown, ChevronRight, Info } from 'lucide-react';
 import { listCustomers } from '@/services/customerService';
 import PrivateIPWarning from './PrivateIPWarning';
+import SearchableSelect from '@/components/ui/SearchableSelect';
 
 const ENVIRONMENTS = ['demo', 'dev', 'staging', 'prod'];
 const OS_TYPES = ['', 'linux', 'windows', 'macos', 'other'];
@@ -244,15 +245,13 @@ function ServerForm({ server, customerId: initialCustomerId, onSubmit, onCancel 
         <div className="grid grid-cols-2 gap-3">
           <div>
             <label className={labelCls}>OS Type</label>
-            <select
-              className={inputCls}
+            <SearchableSelect
               value={osType}
-              onChange={(e) => handleOsTypeChange(e.target.value)}
-            >
-              {OS_TYPES.map((o) => (
-                <option key={o} value={o}>{o || 'Unknown / Not specified'}</option>
-              ))}
-            </select>
+              onChange={(v) => handleOsTypeChange(v)}
+              options={OS_TYPES.map((o) => ({ value: o, label: o || 'Unknown / Not specified' }))}
+              searchable={false}
+              clearable={false}
+            />
           </div>
           <div>
             <label className={labelCls}>OS Version <span className="font-normal text-muted-foreground">(optional)</span></label>
@@ -387,30 +386,24 @@ function ServerForm({ server, customerId: initialCustomerId, onSubmit, onCancel 
         <div className="grid grid-cols-2 gap-3">
           <div>
             <label className={labelCls}>Customer <span className="text-destructive">*</span></label>
-            <select
-              className={inputCls}
+            <SearchableSelect
               value={customerId}
-              onChange={(e) => setCustomerId(e.target.value)}
-              required
+              onChange={(v) => setCustomerId(v)}
+              options={customers.map((c) => ({ value: c.id, label: c.name }))}
+              placeholder="Select customer..."
+              clearable={false}
               disabled={!!initialCustomerId && !isEdit}
-            >
-              <option value="">Select customer...</option>
-              {customers.map((c) => (
-                <option key={c.id} value={c.id}>{c.name}</option>
-              ))}
-            </select>
+            />
           </div>
           <div>
             <label className={labelCls}>Environment</label>
-            <select
-              className={inputCls}
+            <SearchableSelect
               value={environment}
-              onChange={(e) => setEnvironment(e.target.value)}
-            >
-              {ENVIRONMENTS.map((env) => (
-                <option key={env} value={env}>{env}</option>
-              ))}
-            </select>
+              onChange={(v) => setEnvironment(v)}
+              options={ENVIRONMENTS.map((env) => ({ value: env, label: env }))}
+              searchable={false}
+              clearable={false}
+            />
           </div>
         </div>
       </div>
@@ -460,15 +453,13 @@ function ServerForm({ server, customerId: initialCustomerId, onSubmit, onCancel 
           <div className="grid grid-cols-2 gap-3">
             <div>
               <label className={labelCls}>Provider</label>
-              <select
-                className={inputCls}
+              <SearchableSelect
                 value={cloudProvider}
-                onChange={(e) => setCloudProvider(e.target.value)}
-              >
-                {CLOUD_PROVIDERS.map((c) => (
-                  <option key={c} value={c}>{c || '-'}</option>
-                ))}
-              </select>
+                onChange={(v) => setCloudProvider(v)}
+                options={CLOUD_PROVIDERS.map((c) => ({ value: c, label: c || '-' }))}
+                searchable={false}
+                clearable={false}
+              />
             </div>
             <div>
               <label className={labelCls}>Region</label>

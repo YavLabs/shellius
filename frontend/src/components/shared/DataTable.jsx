@@ -13,13 +13,7 @@ import {
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select';
+import SearchableSelect from '@/components/ui/SearchableSelect';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -587,18 +581,14 @@ function DataTable({
           {/* Left: page size selector */}
           <div className="flex items-center gap-2">
             <span className="whitespace-nowrap">Rows per page</span>
-            <Select value={String(pageSize)} onValueChange={handlePageSizeChange}>
-              <SelectTrigger className="h-8 w-[72px] text-xs">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                {pageSizeOptions.map((n) => (
-                  <SelectItem key={n} value={String(n)}>
-                    {n}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+            <SearchableSelect
+              className="h-8 w-[72px] text-xs"
+              value={String(pageSize)}
+              onChange={handlePageSizeChange}
+              searchable={false}
+              clearable={false}
+              options={pageSizeOptions.map((n) => ({ value: String(n), label: String(n) }))}
+            />
           </div>
 
           {/* Center: showing X-Y of Z */}

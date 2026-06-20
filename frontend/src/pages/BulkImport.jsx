@@ -18,6 +18,7 @@ import {
   commitImport,
   downloadTemplate,
 } from '@/services/importService';
+import SearchableSelect from '@/components/ui/SearchableSelect';
 
 const ENTITY_TYPES = [
   { value: '', label: 'Auto-detect (JSON object / ZIP)' },
@@ -166,17 +167,14 @@ function BulkImport() {
         <div className="rounded-lg border border-border bg-card p-6 space-y-5 w-full">
           <div>
             <label className="mb-1 block text-sm font-medium text-foreground">File type</label>
-            <select
-              className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm"
+            <SearchableSelect
+              className="w-full"
               value={type}
-              onChange={(e) => setType(e.target.value)}
-            >
-              {ENTITY_TYPES.map((t) => (
-                <option key={t.value} value={t.value}>
-                  {t.label}
-                </option>
-              ))}
-            </select>
+              onChange={(v) => setType(v)}
+              searchable={false}
+              clearable={false}
+              options={ENTITY_TYPES.map((t) => ({ value: t.value, label: t.label }))}
+            />
             <p className="mt-1 text-xs text-muted-foreground">
               Pick the entity for a single CSV. JSON objects ({'{ customers: [...], servers: [...] }'})
               and ZIP packages auto-detect.

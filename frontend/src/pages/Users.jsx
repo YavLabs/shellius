@@ -20,13 +20,7 @@ import SshKeyDialog from '@/components/users/SshKeyDialog';
 import PageHeader from '@/components/common/PageHeader';
 import { formatLabel } from '@/utils/format';
 import { Button } from '@/components/ui/button';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select';
+import SearchableSelect from '@/components/ui/SearchableSelect';
 import {
   listUsers,
   createUser,
@@ -230,20 +224,30 @@ function Users() {
 
   const filterSlot = (
     <>
-      <Select value={role || '_all'} onValueChange={(v) => { setRole(v === '_all' ? '' : v); setPage(1); }}>
-        <SelectTrigger className="w-[160px]"><SelectValue placeholder="All roles" /></SelectTrigger>
-        <SelectContent>
-          <SelectItem value="_all">All roles</SelectItem>
-          {ROLES.map((r) => <SelectItem key={r} value={r}>{formatLabel(r)}</SelectItem>)}
-        </SelectContent>
-      </Select>
-      <Select value={status || '_all'} onValueChange={(v) => { setStatus(v === '_all' ? '' : v); setPage(1); }}>
-        <SelectTrigger className="w-[160px]"><SelectValue placeholder="All statuses" /></SelectTrigger>
-        <SelectContent>
-          <SelectItem value="_all">All statuses</SelectItem>
-          {STATUSES.map((s) => <SelectItem key={s} value={s}>{formatLabel(s)}</SelectItem>)}
-        </SelectContent>
-      </Select>
+      <SearchableSelect
+        className="w-[160px]"
+        value={role}
+        onChange={(v) => { setRole(v); setPage(1); }}
+        options={[
+          { value: '', label: 'All roles' },
+          ...ROLES.map((r) => ({ value: r, label: formatLabel(r) })),
+        ]}
+        placeholder="All roles"
+        searchable={false}
+        clearable={false}
+      />
+      <SearchableSelect
+        className="w-[160px]"
+        value={status}
+        onChange={(v) => { setStatus(v); setPage(1); }}
+        options={[
+          { value: '', label: 'All statuses' },
+          ...STATUSES.map((s) => ({ value: s, label: formatLabel(s) })),
+        ]}
+        placeholder="All statuses"
+        searchable={false}
+        clearable={false}
+      />
     </>
   );
 
