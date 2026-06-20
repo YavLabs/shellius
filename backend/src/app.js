@@ -42,6 +42,20 @@ import { startAllJobs } from './jobs/index.js';
 
 const app = express();
 
+// Behind reverse proxies (internal nginx + any external proxy/load balancer),
+// so honor X-Forwarded-* headers for real client IP + rate limiting. Configure
+// the hop count via TRUST_PROXY (a number is safest; e.g. 2 for proxy-manager →
+// internal nginx). Defaults to 1 in production, off in dev.
+{
+  const tp = process.env.TRUST_PROXY;
+  if (tp !== undefined && tp !== '') {
+    const n = Number(tp);
+    app.set('trust proxy', Number.isNaN(n) ? tp : n);
+  } else {
+    app.set('trust proxy', config.nodeEnv === 'production' ? 1 : false);
+  }
+}
+
 app.use(helmet());
 app.use(cors({ origin: config.corsOrigin, credentials: true }));
 app.use(express.json());
