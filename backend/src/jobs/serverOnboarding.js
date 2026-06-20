@@ -36,23 +36,32 @@ export async function enqueueOnboarding(jobId) {
   return creds.length;
 }
 
+const MAX_ATTEMPTS = 3;
+
 async function processOnboard(job) {
   const { credentialId } = job.data;
   const cred = await prisma.onboardingCredential.findUnique({ where: { id: credentialId } });
-  if (!cred) return; // already wiped
+  if (!cred) return; // already finalized
+  if (['done', 'failed'].includes(cred.status)) {
+    await maybeCompleteJob(cred.jobId);
+    return;
+  }
   if (cred.expiresAt < new Date()) {
-    await wipe(credentialId);
+    await finalize(credentialId, cred.jobId, 'failed', cred.serverId);
     return;
   }
 
-  await prisma.onboardingCredential.update({
+  const upd = await prisma.onboardingCredential.update({
     where: { id: credentialId },
     data: { status: 'running', attempts: { increment: 1 } },
   });
+  const attempt = upd.attempts;
 
-  const server = await prisma.server.findUnique({ where: { id: cred.serverId } });
+  const server = cred.serverId
+    ? await prisma.server.findUnique({ where: { id: cred.serverId } })
+    : null;
   if (!server) {
-    await wipe(credentialId);
+    await finalize(credentialId, cred.jobId, 'failed', cred.serverId);
     return;
   }
 
@@ -70,23 +79,73 @@ async function processOnboard(job) {
       onOutput: () => {},
     });
 
-    await prisma.onboardingCredential.update({ where: { id: credentialId }, data: { status: 'done' } });
-    logger.info('serverOnboarding: server onboarded', { serverId: server.id });
+    logger.info('serverOnboarding: server onboarded', { serverId: server.id, attempt });
+    await finalize(credentialId, cred.jobId, 'done', server.id);
   } catch (err) {
-    logger.warn('serverOnboarding: onboarding failed', { serverId: server.id, error: err.message });
-    await prisma.onboardingCredential.update({ where: { id: credentialId }, data: { status: 'failed' } });
-    throw err; // let BullMQ retry per defaultJobOptions
-  } finally {
-    // Always wipe the secret once we're done with this attempt's terminal state.
-    const fresh = await prisma.onboardingCredential.findUnique({ where: { id: credentialId } });
-    if (fresh && (fresh.status === 'done' || fresh.attempts >= 3)) {
-      await wipe(credentialId);
+    logger.warn('serverOnboarding: onboarding attempt failed', {
+      serverId: server.id, attempt, error: err.message,
+    });
+    if (attempt >= MAX_ATTEMPTS) {
+      // Give up after MAX_ATTEMPTS — import the server with onboarding 'failed'
+      // (retry later from the Server Details page). Terminal: do NOT throw.
+      await finalize(credentialId, cred.jobId, 'failed', server.id);
+      return;
     }
+    // Reset to pending so the job stays "in progress" and BullMQ retries.
+    await prisma.onboardingCredential
+      .update({ where: { id: credentialId }, data: { status: 'pending' } })
+      .catch(() => {});
+    throw err;
   }
 }
 
-async function wipe(credentialId) {
-  await prisma.onboardingCredential.delete({ where: { id: credentialId } }).catch(() => {});
+/**
+ * Reach a terminal state: record done/failed, WIPE the secret material (keep
+ * the row so the importer UI can show the per-server outcome), reflect the
+ * outcome on the Server, and complete the import job when nothing is left.
+ */
+async function finalize(credentialId, jobId, status, serverId) {
+  await prisma.onboardingCredential
+    .update({
+      where: { id: credentialId },
+      data: { status, secretEncrypted: null, sudoPasswordEncrypted: null },
+    })
+    .catch(() => {});
+  if (status === 'failed' && serverId) {
+    await prisma.server
+      .update({ where: { id: serverId }, data: { provisionStatus: 'failed' } })
+      .catch(() => {});
+  }
+  await maybeCompleteJob(jobId);
+}
+
+/** Mark the import job 'completed' once no credential is still in flight. */
+async function maybeCompleteJob(jobId) {
+  if (!jobId) return;
+  const remaining = await prisma.onboardingCredential.count({
+    where: { jobId, status: { in: ['staged', 'pending', 'running'] } },
+  });
+  if (remaining === 0) {
+    await prisma.importJob
+      .updateMany({ where: { id: jobId, status: 'onboarding' }, data: { status: 'completed' } })
+      .catch(() => {});
+  }
+}
+
+/**
+ * On boot, complete any import job stuck in 'onboarding' whose credentials have
+ * all finished (e.g. left over from before this fix).
+ */
+export async function reconcileStuckImports() {
+  try {
+    const jobs = await prisma.importJob.findMany({
+      where: { status: 'onboarding' },
+      select: { id: true },
+    });
+    for (const j of jobs) await maybeCompleteJob(j.id);
+  } catch (err) {
+    logger.warn('serverOnboarding: reconcile failed', { error: err.message });
+  }
 }
 
 export function startServerOnboardingWorker() {

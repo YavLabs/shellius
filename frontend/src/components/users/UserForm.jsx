@@ -25,7 +25,13 @@ function UserForm({ user, onSubmit, onCancel }) {
     listUsers({ pageSize: 200 })
       .then((res) => {
         const items = res?.items || res?.data?.items || res || [];
-        setManagers((Array.isArray(items) ? items : []).filter((u) => u.id !== user?.id));
+        // Managers can only be super_admin / admin / manager (not members).
+        const eligible = ['super_admin', 'admin', 'manager'];
+        setManagers(
+          (Array.isArray(items) ? items : []).filter(
+            (u) => u.id !== user?.id && eligible.includes(u.role)
+          )
+        );
       })
       .catch(() => setManagers([]));
     // Whether SSO is configured — if so, new users sign in via SSO (no password).

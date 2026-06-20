@@ -38,9 +38,20 @@ const ACTION_BADGE = {
 
 const STATUS_BADGE = {
   imported: 'bg-emerald-500/15 text-emerald-700 dark:text-emerald-400',
+  done: 'bg-emerald-500/15 text-emerald-700 dark:text-emerald-400',
   skipped: 'bg-muted text-muted-foreground',
   failed: 'bg-destructive/15 text-destructive',
   pending: 'bg-blue-500/15 text-blue-700 dark:text-blue-400',
+  staged: 'bg-blue-500/15 text-blue-700 dark:text-blue-400',
+  running: 'bg-amber-500/15 text-amber-700 dark:text-amber-400',
+};
+
+const ONBOARDING_LABEL = {
+  done: 'onboarded',
+  failed: 'failed — onboard later',
+  running: 'running',
+  pending: 'queued',
+  staged: 'queued',
 };
 
 function Badge({ cls, children }) {
@@ -347,7 +358,7 @@ function BulkImport() {
                     <tr key={o.id} className="border-t border-border">
                       <td className="px-3 py-2 font-mono text-xs text-foreground">{o.serverRef}</td>
                       <td className="px-3 py-2">
-                        <Badge cls={STATUS_BADGE[o.status] || 'bg-muted'}>{o.status}</Badge>
+                        <Badge cls={STATUS_BADGE[o.status] || 'bg-muted'}>{ONBOARDING_LABEL[o.status] || o.status}</Badge>
                       </td>
                       <td className="px-3 py-2 text-xs text-muted-foreground">{o.attempts}</td>
                     </tr>
