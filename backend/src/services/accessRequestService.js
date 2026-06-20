@@ -29,6 +29,9 @@ const execFileAsync = promisify(execFile);
 export function isServerOnboarded(server) {
   if (!server) return false;
   if (server.provisionStatus === 'provisioned') return true;
+  // RDP-only servers need no host agent — Guacamole injects credentials at
+  // connect time, so they're connectable as soon as they're added.
+  if (server.protocol === 'rdp') return true;
   return !!server.agentId || !!server.agentLastSeen;
 }
 

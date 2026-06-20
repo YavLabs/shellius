@@ -233,20 +233,32 @@ function ServerDetail() {
         </Card>
 
         <Card title="Onboarding">
-          <Field label="Status" value={server.provisionStatus || 'pending'} />
-          {server.provisionStatus === 'failed' && (
-            <Field label="Error" value={server.provisionError} />
-          )}
-          <Field label="Provisioned" value={formatDateTime(server.provisionedAt)} />
-          {server.provisionStatus !== 'provisioned' && canProvision && (
-            <div className="pt-2">
-              <Button size="sm" onClick={() => setProvisionOpen(true)}>
-                {server.provisionStatus === 'failed' ? 'Retry onboarding' : 'Onboard now'}
-              </Button>
+          {server.protocol === 'rdp' ? (
+            <>
+              <Field label="Status" value="Ready (RDP)" />
               <p className="mt-1 text-xs text-muted-foreground">
-                Runs the agent install over SSH using credentials you provide.
+                RDP servers need no host agent — Shellius injects credentials via the
+                gateway at connect time. Ensure the RDP user exists and is allowed to sign in.
               </p>
-            </div>
+            </>
+          ) : (
+            <>
+              <Field label="Status" value={server.provisionStatus || 'pending'} />
+              {server.provisionStatus === 'failed' && (
+                <Field label="Error" value={server.provisionError} />
+              )}
+              <Field label="Provisioned" value={formatDateTime(server.provisionedAt)} />
+              {server.provisionStatus !== 'provisioned' && canProvision && (
+                <div className="pt-2">
+                  <Button size="sm" onClick={() => setProvisionOpen(true)}>
+                    {server.provisionStatus === 'failed' ? 'Retry onboarding' : 'Onboard now'}
+                  </Button>
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    Runs the agent install over SSH using credentials you provide.
+                  </p>
+                </div>
+              )}
+            </>
           )}
         </Card>
 
