@@ -1,4 +1,5 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
+import { listUsers } from '@/services/userService';
 
 const ROLES = ['super_admin', 'admin', 'manager', 'member'];
 const STATUSES = ['active', 'invited', 'suspended', 'deactivated'];
@@ -11,8 +12,19 @@ function UserForm({ user, onSubmit, onCancel }) {
   const [role, setRole] = useState(user?.role || 'member');
   const [status, setStatus] = useState(user?.status || 'active');
   const [managerId, setManagerId] = useState(user?.managerId || '');
+  const [managers, setManagers] = useState([]);
   const [error, setError] = useState('');
   const [submitting, setSubmitting] = useState(false);
+
+  // Load candidate managers (everyone except the user being edited).
+  useEffect(() => {
+    listUsers({ pageSize: 200 })
+      .then((res) => {
+        const items = res?.items || res?.data?.items || res || [];
+        setManagers((Array.isArray(items) ? items : []).filter((u) => u.id !== user?.id));
+      })
+      .catch(() => setManagers([]));
+  }, [user?.id]);
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -33,7 +45,7 @@ function UserForm({ user, onSubmit, onCancel }) {
     const payload = { name: name.trim(), email: email.trim(), role };
     if (!isEdit) payload.password = password;
     if (isEdit) payload.status = status;
-    if (managerId.trim()) payload.managerId = managerId.trim();
+    if (managerId) payload.managerId = managerId;
     setSubmitting(true);
     try {
       await onSubmit(payload);
@@ -111,14 +123,16 @@ function UserForm({ user, onSubmit, onCancel }) {
 
       <div>
         <label className="mb-1.5 block text-sm font-medium text-foreground">
-          Manager ID <span className="text-muted-foreground">(optional)</span>
+          Manager <span className="text-muted-foreground">(optional)</span>
         </label>
-        <input
-          className={inputCls}
-          value={managerId}
-          onChange={(e) => setManagerId(e.target.value)}
-          placeholder="User ID of manager"
-        />
+        <select className={inputCls} value={managerId} onChange={(e) => setManagerId(e.target.value)}>
+          <option value="">— None —</option>
+          {managers.map((m) => (
+            <option key={m.id} value={m.id}>
+              {m.name} ({m.email})
+            </option>
+          ))}
+        </select>
       </div>
 
       <div className="flex justify-end gap-2 pt-2">

@@ -65,7 +65,7 @@ model User {
   email         String
   passwordHash  String?    @map("password_hash")
   name          String
-  role          OrgRole    @default(viewer)
+  role          OrgRole    @default(member)
   status        UserStatus @default(active)
   managerId     String?    @map("manager_id")
   sshPublicKey  String?    @map("ssh_public_key") @db.Text
