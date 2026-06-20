@@ -40,6 +40,12 @@ services:
     container_name: shellius-api
     restart: unless-stopped
     env_file: .env.prod
+    # The external DB is behind a transaction-mode connection pooler (PgBouncer),
+    # which the Prisma *schema/migrate* engine cannot use. The schema is managed
+    # out-of-band (prisma db push + baselined migrations), so we skip
+    # `migrate deploy` here and run the idempotent seed + server directly. The
+    # runtime query engine works through the pooler via ?pgbouncer=true.
+    entrypoint: ["sh", "-c", "node prisma/seed.js || echo '[entrypoint] seed warning (continuing)'; exec node src/server.js"]
     environment:
       REDIS_URL: ${REDIS_URL:-redis://redis:6379}
       GUACD_HOST: guacd
