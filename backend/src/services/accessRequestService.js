@@ -19,15 +19,17 @@ import { renderTemplate } from '../email/index.js';
 
 const execFileAsync = promisify(execFile);
 
-// A server is "onboarded" (and therefore requestable/connectable) once the
-// agent + CA trust is in place: either auto-provisioning succeeded, or the host
-// has checked in via heartbeat / health check. Servers merely added to the
-// inventory (onboard=false in bulk import, or failed onboarding) are not.
+// A server is "onboarded" (requestable/connectable) once the agent + CA trust
+// is in place: either auto-provisioning succeeded, OR the agent has enrolled /
+// checked in (agentId / agentLastSeen — covers manual bootstrap too).
+//
+// NOTE: do NOT use healthStatus / lastHealthCheck — the periodic health probe
+// runs against ANY server (even unreachable / never-onboarded ones), so those
+// fields say nothing about whether the agent is actually installed.
 export function isServerOnboarded(server) {
   if (!server) return false;
   if (server.provisionStatus === 'provisioned') return true;
-  if (server.lastHealthCheck) return true;
-  return !!server.healthStatus && server.healthStatus !== 'unknown';
+  return !!server.agentId || !!server.agentLastSeen;
 }
 
 // ---------------------------------------------------------------------------
