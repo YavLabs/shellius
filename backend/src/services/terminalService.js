@@ -602,18 +602,25 @@ function humanizeSshExitError(stderr, host, port, code) {
  * @param {import('http').IncomingMessage} req
  */
 async function handleRdpConnection(ws, req) {
+  // Reject with a logged reason so a silent close doesn't leave the client
+  // stuck on "Connecting".
+  const reject = (code, reason, extra = {}) => {
+    logger.warn('terminalService: RDP connection rejected', { reason, ...extra });
+    safeClose(ws, code, reason);
+  };
+
   // ── 1. Parse query parameters ──────────────────────────────────────────
   let query;
   try {
     query = Object.fromEntries(new URL(req.url, 'http://localhost').searchParams);
   } catch {
-    safeClose(ws, 1008, 'Malformed request URL');
+    reject(1008, 'Malformed request URL');
     return;
   }
 
   const { token } = query;
   if (!token) {
-    safeClose(ws, 1008, 'Missing token');
+    reject(1008, 'Missing token');
     return;
   }
 
@@ -622,11 +629,12 @@ async function handleRdpConnection(ws, req) {
   try {
     claims = rdpService.verifyGatewayToken(token);
   } catch {
-    safeClose(ws, 1008, 'Invalid or expired gateway token');
+    reject(1008, 'Invalid or expired gateway token');
     return;
   }
 
   const { accessRequestId, userId } = claims;
+  logger.info('terminalService: RDP WS connected, resolving access', { accessRequestId, userId });
 
   // ── 3. Load access request + server ───────────────────────────────────
   let accessRequest;
@@ -637,23 +645,29 @@ async function handleRdpConnection(ws, req) {
       callerRole: 'member', // gateway token holder is always the requester
     });
   } catch (err) {
-    safeClose(ws, 1008, err.message || 'Access request not found');
+    reject(1008, err.message || 'Access request not found', { accessRequestId });
     return;
   }
 
   if (accessRequest.status !== 'APPROVED') {
-    safeClose(ws, 1008, `Access request is not approved (status: ${accessRequest.status})`);
+    reject(1008, `Access request is not approved (status: ${accessRequest.status})`, {
+      accessRequestId,
+    });
     return;
   }
   if (!accessRequest.expiresAt || accessRequest.expiresAt <= new Date()) {
-    safeClose(ws, 1008, 'Access request has expired');
+    reject(1008, 'Access request has expired', { accessRequestId });
     return;
   }
 
   // Load the full server row (includes rdpPassword* fields not in REQUEST_INCLUDE)
   const server = await prisma.server.findUnique({ where: { id: accessRequest.serverId } });
   if (!server) {
-    safeClose(ws, 1008, 'Server not found');
+    reject(1008, 'Server not found', { serverId: accessRequest.serverId });
+    return;
+  }
+  if (!server.rdpPasswordEncrypted) {
+    reject(1008, 'No RDP password configured for this server', { serverId: server.id });
     return;
   }
 
