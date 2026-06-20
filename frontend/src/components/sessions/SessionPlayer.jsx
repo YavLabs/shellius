@@ -23,7 +23,6 @@ function SessionPlayer({ sessionId }) {
   useEffect(() => {
     if (!sessionId) return;
 
-    let objectUrl = null;
     let cancelled = false;
 
     async function loadAndPlay() {
@@ -45,10 +44,12 @@ function SessionPlayer({ sessionId }) {
           throw new Error(`Server responded with ${response.status}`);
         }
 
-        const blob = await response.blob();
+        // Read the recording text and hand it to the player INLINE via the
+        // `{ data }` source. This avoids fetching a blob: object URL (which the
+        // player's internal fetch + CSP/worker setup can choke on) — the most
+        // reliable way to play an authenticated, in-memory recording.
+        const castText = await response.text();
         if (cancelled) return;
-
-        objectUrl = URL.createObjectURL(blob);
 
         // Dynamically import asciinema-player to avoid SSR issues and keep
         // the initial bundle lean.
@@ -57,15 +58,17 @@ function SessionPlayer({ sessionId }) {
 
         if (!containerRef.current) return;
 
-        playerRef.current = AsciinemaPlayer.create(objectUrl, containerRef.current, {
-          cols: 220,
-          rows: 24,
-          autoPlay: false,
-          speed: 1,
-          theme: 'asciinema',
-          fit: 'width',
-          controls: true,
-        });
+        playerRef.current = AsciinemaPlayer.create(
+          { data: castText, parser: 'asciicast' },
+          containerRef.current,
+          {
+            autoPlay: false,
+            speed: 1,
+            theme: 'asciinema',
+            fit: 'width',
+            controls: true,
+          }
+        );
 
         setStatus('ready');
       } catch (err) {
@@ -83,9 +86,6 @@ function SessionPlayer({ sessionId }) {
       if (playerRef.current?.dispose) {
         playerRef.current.dispose();
         playerRef.current = null;
-      }
-      if (objectUrl) {
-        URL.revokeObjectURL(objectUrl);
       }
     };
   }, [sessionId]);
