@@ -107,7 +107,11 @@ function RdpTerminal({ requestId, onClose }) {
 
     const jwt = tokenData.token;
     const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-    const wsUrl = `${wsProtocol}//${window.location.host}/api/terminal/rdp?token=${encodeURIComponent(jwt)}`;
+    // NOTE: do NOT put query params on the tunnel URL — Guacamole's
+    // WebSocketTunnel builds the socket URL as `tunnelURL + "?" + connectData`,
+    // so any existing "?token=" would collide and corrupt the token. The token
+    // is passed via the connect() data string below instead.
+    const wsUrl = `${wsProtocol}//${window.location.host}/api/terminal/rdp`;
 
     const tunnel = new Guacamole.WebSocketTunnel(wsUrl);
     const client = new Guacamole.Client(tunnel);
@@ -141,7 +145,7 @@ function RdpTerminal({ requestId, onClose }) {
     const containerHeight = containerRef.current.clientHeight || 800;
 
     client.connect(
-      `width=${containerWidth}&height=${containerHeight}&dpi=96`
+      `token=${encodeURIComponent(jwt)}&width=${containerWidth}&height=${containerHeight}&dpi=96`
     );
 
     // Wire up mouse events
