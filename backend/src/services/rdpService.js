@@ -214,9 +214,14 @@ export function createGuacdConnection({ server, width = 1280, height = 800, dpi 
             return;
           }
 
-          // Map known parameter names to values
+          // Map known parameter names to values.
+          // guacd connects to the target directly, so it must receive a
+          // routable IP — not the server's display hostname (e.g. "glovius"),
+          // which guacd cannot DNS-resolve. Mirror the SSH path, which prefers
+          // ipAddress. For dynamicIp servers the connect-time override is
+          // already persisted into ipAddress before this handshake runs.
           const knownParams = {
-            hostname: server.hostname,
+            hostname: server.ipAddress || server.hostname,
             port: String(server.rdpPort ?? server.port ?? 3389),
             username: server.rdpUsername ?? '',
             password: rdpPassword ?? '',
@@ -259,6 +264,7 @@ export function createGuacdConnection({ server, width = 1280, height = 800, dpi 
           logger.info('rdpService.createGuacdConnection: handshake complete', {
             serverId: server.id,
             hostname: server.hostname,
+            connectHost: server.ipAddress || server.hostname,
             guacdHost: GUACD_HOST,
             guacdPort: GUACD_PORT,
           });

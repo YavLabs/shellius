@@ -827,8 +827,10 @@ export async function generateRdpFile({ requestId, callerId }) {
     'smart sizing:i:0',
     'displayconnectionbar:i:1',
     '',
-    // Connection — direct to server (see TODO above re: RD Gateway)
-    `full address:s:${server.hostname}:${rdpPort}`,
+    // Connection — direct to server (see TODO above re: RD Gateway).
+    // Prefer the routable IP so MSTSC connects even when the display hostname
+    // isn't DNS-resolvable; dynamicIp overrides are persisted into ipAddress.
+    `full address:s:${server.ipAddress || server.hostname}:${rdpPort}`,
     `username:s:${rdpUsername}`,
     '',
     // Gateway fields — currently pointing at target server directly.
