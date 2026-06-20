@@ -492,6 +492,7 @@ async function commitServer(orgId, job, row, raw, overwrite, cache) {
     environment: lower(raw.environment) || undefined,
     labels: labelsToArray(raw.labels),
     osType: str(raw.osType) || undefined,
+    osVersion: str(raw.osVersion) || undefined,
     sshUser: str(raw.sshUser) || undefined,
     rdpUsername: str(raw.rdpUsername) || undefined,
     ...(raw.rdpPasswordEnc ? { rdpPassword: safeDecrypt(raw.rdpPasswordEnc) } : {}),

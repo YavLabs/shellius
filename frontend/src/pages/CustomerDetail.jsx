@@ -228,7 +228,7 @@ function CustomerDetail() {
   const lastHealthCheck = useMemo(() => {
     if (!servers.length) return null;
     const dates = servers
-      .map((s) => s.lastHealthCheckAt)
+      .map((s) => s.lastHealthCheck)
       .filter(Boolean)
       .map((d) => new Date(d).getTime())
       .filter((t) => !isNaN(t));
@@ -305,7 +305,7 @@ function CustomerDetail() {
       hideBelow: 'md',
       render: (r) => (
         <span className="text-xs text-muted-foreground">
-          {relativeTime(r.lastHealthCheckAt)}
+          {relativeTime(r.lastHealthCheck)}
         </span>
       ),
     },

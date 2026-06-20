@@ -227,8 +227,8 @@ function ServerDetail() {
 
         <Card title="Health">
           <Field label="Status" value={server.healthStatus} />
-          <Field label="Last Check" value={formatDateTime(server.lastHealthCheckAt)} />
-          <Field label="Relative" value={relativeTime(server.lastHealthCheckAt)} />
+          <Field label="Last Check" value={formatDateTime(server.lastHealthCheck)} />
+          <Field label="Relative" value={relativeTime(server.lastHealthCheck)} />
           <Field label="Message" value={server.healthMessage} />
         </Card>
 

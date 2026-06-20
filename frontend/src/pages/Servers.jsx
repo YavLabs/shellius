@@ -298,7 +298,7 @@ function Servers() {
       hideBelow: 'md',
       render: (r) => (
         <span className="text-xs text-muted-foreground">
-          {relativeTime(r.lastHealthCheckAt)}
+          {relativeTime(r.lastHealthCheck)}
         </span>
       ),
     },
