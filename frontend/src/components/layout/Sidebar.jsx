@@ -13,6 +13,7 @@ import {
   ScrollText,
   Bell,
   Cloud,
+  Upload,
   ChevronUp,
   PanelLeft,
   PanelLeftClose,
@@ -87,6 +88,7 @@ const NAV_SECTIONS = [
     items: [
       { id: 'users', label: 'Users', icon: Users, to: '/users' },
       { id: 'groups', label: 'Groups', icon: UsersRound, to: '/groups' },
+      { id: 'bulk-import', label: 'Bulk Import', icon: Upload, to: '/bulk-import', minRole: 'admin' },
     ],
   },
 ];

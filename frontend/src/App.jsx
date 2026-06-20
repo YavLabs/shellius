@@ -32,6 +32,8 @@ import Legal from './pages/Legal';
 import AuthCallback from './pages/AuthCallback';
 import NotFound from './pages/NotFound';
 import InstallCli from './pages/InstallCli';
+import ApproveRequest from './pages/ApproveRequest';
+import BulkImport from './pages/BulkImport';
 
 function App() {
   return (
@@ -43,6 +45,7 @@ function App() {
               <Route path="/login" element={<Login />} />
               <Route path="/invite/:token" element={<AcceptInvite />} />
               <Route path="/password-reset/:token" element={<ResetPassword />} />
+              <Route path="/approve/:token" element={<ApproveRequest />} />
               <Route path="/forgot-password" element={<ForgotPassword />} />
               <Route path="/device" element={<Device />} />
               <Route path="/register" element={<Register />} />
@@ -64,6 +67,7 @@ function App() {
                   <Route path="/users" element={<Users />} />
                   <Route path="/groups" element={<Groups />} />
                   <Route path="/groups/:id" element={<GroupDetail />} />
+                  <Route path="/bulk-import" element={<BulkImport />} />
                   <Route path="/customers" element={<Customers />} />
                   <Route path="/customers/:id" element={<CustomerDetail />} />
                   <Route path="/servers" element={<Servers />} />

@@ -5,6 +5,7 @@ import { useAuth } from '@/context/AuthContext';
 import PageHeader from '@/components/common/PageHeader';
 import ConfirmDialog from '@/components/shared/ConfirmDialog';
 import Skeleton from '@/components/ui/Skeleton';
+import MfaCard from '@/components/profile/MfaCard';
 import {
   getMe,
   updateMe,
@@ -214,9 +215,18 @@ function Profile() {
         {/* Profile section */}
         <SectionCard title="Profile" description="Your personal information and account details.">
           <div className="flex items-center gap-4 mb-6">
-            <div className="flex h-16 w-16 shrink-0 items-center justify-center rounded-full bg-primary text-lg font-semibold text-primary-foreground select-none">
-              {initials}
-            </div>
+            {(profile?.avatarUrl || authUser?.avatarUrl) ? (
+              <img
+                src={profile?.avatarUrl || authUser?.avatarUrl}
+                alt={profile?.name || 'Avatar'}
+                referrerPolicy="no-referrer"
+                className="h-16 w-16 shrink-0 rounded-full object-cover"
+              />
+            ) : (
+              <div className="flex h-16 w-16 shrink-0 items-center justify-center rounded-full bg-primary text-lg font-semibold text-primary-foreground select-none">
+                {initials}
+              </div>
+            )}
             <div>
               <p className="font-medium text-foreground">{profile?.name || 'No name set'}</p>
               <p className="text-sm text-muted-foreground">{profile?.email}</p>
@@ -408,6 +418,9 @@ function Profile() {
             </form>
           )}
         </SectionCard>
+
+        {/* Two-factor authentication */}
+        <MfaCard />
 
         {/* Data export section */}
         <SectionCard

@@ -33,15 +33,21 @@ function GoogleGlyph({ className = '' }) {
 }
 
 function Login() {
+  const [step, setStep] = useState('email'); // 'email' | 'password' | 'sent'
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState('');
   const [submitting, setSubmitting] = useState(false);
+  const [continuing, setContinuing] = useState(false);
   const [registrationEnabled, setRegistrationEnabled] = useState(false);
   const [ssoStatus, setSsoStatus] = useState({ enabled: false, presetId: null, orgSlug: null });
   const [ssoSubmitting, setSsoSubmitting] = useState(false);
-  const { login, loginWithTokens } = useAuth();
+  const { login, loginWithTokens, completeMfa } = useAuth();
+  const [mfaChallenge, setMfaChallenge] = useState(null); // { mfaToken, methods, emailHint }
+  const [mfaMethod, setMfaMethod] = useState('totp');
+  const [mfaCode, setMfaCode] = useState('');
+  const [otpSent, setOtpSent] = useState(false);
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const isDeleted = searchParams.get('deleted') === '1';
@@ -119,18 +125,84 @@ function Login() {
     }, 600);
   };
 
+  // Email-first: decide whether to show a password field, start SSO, or send a
+  // set-password link, based on the account's auth state.
+  const handleContinue = async (e) => {
+    e.preventDefault();
+    setError('');
+    setContinuing(true);
+    try {
+      const r = await api.post('/auth/login-options', { email });
+      const opts = r.data?.data || {};
+      if (opts.hasPassword) {
+        setStep('password');
+      } else if (opts.ssoEnabled) {
+        // No local password — sign in via the identity provider.
+        handleSsoLogin();
+      } else {
+        // No password and no SSO — email a secure set-password link rather than
+        // letting anyone set a password just by knowing the address.
+        await api.post('/auth/password-reset', { email }).catch(() => {});
+        setStep('sent');
+      }
+    } catch (err) {
+      setError(err?.response?.data?.error?.message || err.message || 'Something went wrong');
+    } finally {
+      setContinuing(false);
+    }
+  };
+
   const handleSubmit = async (e) => {
     e.preventDefault();
     setError('');
     setSubmitting(true);
     try {
-      await login(email, password);
+      const result = await login(email, password);
+      if (result?.mfaRequired) {
+        setMfaChallenge(result);
+        setMfaMethod(result.methods?.includes('totp') ? 'totp' : result.methods?.[0] || 'totp');
+        setStep('mfa');
+        return;
+      }
       navigate(safePostLoginDest, { replace: true });
     } catch (err) {
       setError(err.message || 'Login failed');
     } finally {
       setSubmitting(false);
     }
+  };
+
+  const handleMfaVerify = async (e) => {
+    e.preventDefault();
+    setError('');
+    setSubmitting(true);
+    try {
+      await completeMfa(mfaChallenge.mfaToken, mfaMethod, mfaCode.trim());
+      navigate(safePostLoginDest, { replace: true });
+    } catch (err) {
+      setError(err?.response?.data?.error?.message || err.message || 'Verification failed');
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const sendOtp = async () => {
+    setError('');
+    try {
+      await import('@/services/mfaService').then((m) => m.sendMfaOtp(mfaChallenge.mfaToken));
+      setOtpSent(true);
+    } catch (err) {
+      setError(err?.response?.data?.error?.message || err.message || 'Could not send code');
+    }
+  };
+
+  const resetToEmail = () => {
+    setStep('email');
+    setPassword('');
+    setError('');
+    setMfaChallenge(null);
+    setMfaCode('');
+    setOtpSent(false);
   };
 
   return (
@@ -154,7 +226,99 @@ function Login() {
         </div>
 
         <div className="rounded-lg border border-border bg-card p-6 shadow-sm">
-          <form onSubmit={handleSubmit} className="space-y-4">
+          {step === 'sent' ? (
+            <div className="space-y-4 text-center">
+              <Mail className="mx-auto h-10 w-10 text-emerald-500" />
+              <p className="text-sm text-foreground">
+                If <span className="font-medium">{email}</span> has an account, we&apos;ve sent a
+                link to set your password. Check your inbox to continue.
+              </p>
+              <button
+                type="button"
+                onClick={resetToEmail}
+                className="text-sm text-primary underline-offset-4 hover:underline"
+              >
+                Use a different email
+              </button>
+            </div>
+          ) : step === 'mfa' ? (
+            <form onSubmit={handleMfaVerify} className="space-y-4">
+              {error && (
+                <div className="rounded-md border border-destructive/50 bg-destructive/10 px-3 py-2 text-sm text-destructive">
+                  {error}
+                </div>
+              )}
+              <p className="text-sm text-muted-foreground">
+                Two-factor authentication is required. Enter a verification code to continue.
+              </p>
+
+              {mfaChallenge?.methods?.length > 1 && (
+                <div className="flex gap-1 rounded-md border border-border p-1">
+                  {mfaChallenge.methods.includes('totp') && (
+                    <button
+                      type="button"
+                      onClick={() => setMfaMethod('totp')}
+                      className={`flex-1 rounded px-2 py-1 text-xs font-medium ${mfaMethod === 'totp' ? 'bg-primary text-primary-foreground' : 'text-muted-foreground'}`}
+                    >
+                      Authenticator
+                    </button>
+                  )}
+                  {mfaChallenge.methods.includes('email') && (
+                    <button
+                      type="button"
+                      onClick={() => setMfaMethod('email')}
+                      className={`flex-1 rounded px-2 py-1 text-xs font-medium ${mfaMethod === 'email' ? 'bg-primary text-primary-foreground' : 'text-muted-foreground'}`}
+                    >
+                      Email code
+                    </button>
+                  )}
+                </div>
+              )}
+
+              {mfaMethod === 'email' && (
+                <button
+                  type="button"
+                  onClick={sendOtp}
+                  className="text-xs text-primary underline-offset-4 hover:underline"
+                >
+                  {otpSent ? `Code sent to ${mfaChallenge?.emailHint || 'your email'} — resend` : `Send a code to ${mfaChallenge?.emailHint || 'your email'}`}
+                </button>
+              )}
+
+              <div>
+                <label className="mb-1.5 block text-sm font-medium text-foreground">
+                  {mfaMethod === 'backup' ? 'Backup code' : 'Verification code'}
+                </label>
+                <input
+                  value={mfaCode}
+                  onChange={(e) => setMfaCode(e.target.value)}
+                  placeholder={mfaMethod === 'totp' ? '6-digit code' : 'Enter code'}
+                  autoFocus
+                  inputMode="numeric"
+                  className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm tracking-widest text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring"
+                />
+              </div>
+
+              <button
+                type="submit"
+                disabled={submitting || !mfaCode.trim()}
+                className="flex h-9 w-full items-center justify-center rounded-md bg-primary text-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                {submitting ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
+                Verify
+              </button>
+
+              <div className="flex items-center justify-between text-xs">
+                <button type="button" onClick={() => setMfaMethod('backup')} className="text-muted-foreground hover:text-foreground">
+                  Use a backup code
+                </button>
+                <button type="button" onClick={resetToEmail} className="text-muted-foreground hover:text-foreground">
+                  Cancel
+                </button>
+              </div>
+            </form>
+          ) : (
+          <form onSubmit={step === 'password' ? handleSubmit : handleContinue} className="space-y-4">
             {error && (
               <div className="rounded-md border border-destructive/50 bg-destructive/10 px-3 py-2 text-sm text-destructive">
                 {error}
@@ -175,11 +339,23 @@ function Login() {
                   onChange={(e) => setEmail(e.target.value)}
                   placeholder="you@company.com"
                   required
-                  className="h-9 w-full rounded-md border border-input bg-background pl-9 pr-3 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring"
+                  readOnly={step === 'password'}
+                  className={`h-9 w-full rounded-md border border-input pl-9 pr-3 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring ${step === 'password' ? 'bg-muted/40 cursor-default' : 'bg-background'}`}
                 />
+                {step === 'password' && (
+                  <button
+                    type="button"
+                    onClick={resetToEmail}
+                    className="absolute right-2 top-1/2 -translate-y-1/2 rounded px-1.5 text-xs text-muted-foreground hover:text-foreground"
+                    tabIndex={-1}
+                  >
+                    Change
+                  </button>
+                )}
               </div>
             </div>
 
+            {step === 'password' && (
             <div>
               <div className="mb-1.5 flex items-center justify-between">
                 <label htmlFor="password" className="text-sm font-medium text-foreground">
@@ -202,6 +378,7 @@ function Login() {
                   onChange={(e) => setPassword(e.target.value)}
                   placeholder="Enter your password"
                   required
+                  autoFocus
                   className="h-9 w-full rounded-md border border-input bg-background pl-9 pr-9 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring"
                 />
                 <button
@@ -214,21 +391,39 @@ function Login() {
                 </button>
               </div>
             </div>
+            )}
 
-            <button
-              type="submit"
-              disabled={submitting}
-              className="flex h-9 w-full items-center justify-center rounded-md bg-primary text-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-50"
-            >
-              {submitting ? (
-                <>
-                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                  Signing in...
-                </>
-              ) : (
-                'Sign in'
-              )}
-            </button>
+            {step === 'password' ? (
+              <button
+                type="submit"
+                disabled={submitting}
+                className="flex h-9 w-full items-center justify-center rounded-md bg-primary text-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                {submitting ? (
+                  <>
+                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                    Signing in...
+                  </>
+                ) : (
+                  'Sign in'
+                )}
+              </button>
+            ) : (
+              <button
+                type="submit"
+                disabled={continuing || ssoSubmitting}
+                className="flex h-9 w-full items-center justify-center rounded-md bg-primary text-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                {continuing ? (
+                  <>
+                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                    Continuing...
+                  </>
+                ) : (
+                  'Continue'
+                )}
+              </button>
+            )}
 
             {ssoStatus.enabled && (
               <>
@@ -293,6 +488,7 @@ function Login() {
               </p>
             )}
           </form>
+          )}
         </div>
       </div>
     </div>
