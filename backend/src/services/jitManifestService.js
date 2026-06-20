@@ -122,12 +122,12 @@ export async function buildManifest({ accessRequestId }) {
     const ar = await prisma.accessRequest.findUnique({
       where: { id: accessRequestId },
       include: {
-        user: {
+        requester: {
           select: { id: true, orgId: true, email: true, name: true, jitUid: true },
         },
       },
     });
-    if (!ar || !ar.user) return null;
+    if (!ar || !ar.requester) return null;
     if (ar.status !== 'APPROVED') return null;
     if (!ar.expiresAt || ar.expiresAt <= new Date()) return null;
 

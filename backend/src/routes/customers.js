@@ -34,7 +34,7 @@ router.use(authenticate, tenant);
 
 router.get(
   '/',
-  requireRole('super_admin', 'admin', 'manager'),
+  requireRole('super_admin', 'admin', 'manager', 'member'),
   asyncHandler(async (req, res) => {
     const result = await customerService.listCustomers(req.orgId, req.query);
     res.json({ success: true, data: result });
@@ -43,7 +43,7 @@ router.get(
 
 router.get(
   '/:id',
-  requireRole('super_admin', 'admin', 'manager'),
+  requireRole('super_admin', 'admin', 'manager', 'member'),
   asyncHandler(async (req, res) => {
     const customer = await customerService.getCustomer(req.orgId, req.params.id);
     res.json({ success: true, data: { customer } });
@@ -52,7 +52,7 @@ router.get(
 
 router.get(
   '/:id/stats',
-  requireRole('super_admin', 'admin', 'manager'),
+  requireRole('super_admin', 'admin', 'manager', 'member'),
   asyncHandler(async (req, res) => {
     const stats = await customerService.getCustomerStats(req.orgId, req.params.id);
     res.json({ success: true, data: stats });

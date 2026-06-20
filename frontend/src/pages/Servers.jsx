@@ -49,6 +49,8 @@ const HEALTH_STATUSES = ['healthy', 'unhealthy', 'unknown', 'maintenance'];
 function Servers() {
   const navigate = useNavigate();
   const { user } = useAuth();
+  // Create / edit / delete / bootstrap are admin-only (matches the API).
+  const canManage = user?.role === 'super_admin' || user?.role === 'admin';
 
   const [servers, setServers] = useState([]);
   const [total, setTotal] = useState(0);
@@ -339,36 +341,40 @@ function Servers() {
           icon: Eye,
           onClick: (r) => navigate(`/servers/${r.id}`),
         },
-        {
-          label: 'Edit',
-          icon: Pencil,
-          onClick: (r) => {
-            setEditing(r);
-            setFormOpen(true);
-          },
-        },
-        {
-          label: 'Bootstrap Host',
-          icon: Download,
-          onClick: (r) => setBootstrapServer(r),
-        },
-        {
-          label: 'Uninstall Agent',
-          icon: Eraser,
-          onClick: (r) => setUninstallServer(r),
-        },
-        {
-          label: 'Run Health Check',
-          icon: Activity,
-          onClick: (r) => handleHealthCheck(r),
-        },
-        { separator: true },
-        {
-          label: 'Delete',
-          icon: Trash2,
-          variant: 'destructive',
-          onClick: (r) => handleDelete(r),
-        },
+        ...(canManage
+          ? [
+              {
+                label: 'Edit',
+                icon: Pencil,
+                onClick: (r) => {
+                  setEditing(r);
+                  setFormOpen(true);
+                },
+              },
+              {
+                label: 'Bootstrap Host',
+                icon: Download,
+                onClick: (r) => setBootstrapServer(r),
+              },
+              {
+                label: 'Uninstall Agent',
+                icon: Eraser,
+                onClick: (r) => setUninstallServer(r),
+              },
+              {
+                label: 'Run Health Check',
+                icon: Activity,
+                onClick: (r) => handleHealthCheck(r),
+              },
+              { separator: true },
+              {
+                label: 'Delete',
+                icon: Trash2,
+                variant: 'destructive',
+                onClick: (r) => handleDelete(r),
+              },
+            ]
+          : []),
       ],
     },
   ];
@@ -379,14 +385,16 @@ function Servers() {
         icon={ServerIcon}
         title="Servers"
         subtitle="Manage target servers across customers." helpKey="servers">
-        <Button
-          onClick={() => {
-            setEditing(null);
-            setFormOpen(true);
-          }}
-        >
-          <Plus className="mr-2 h-4 w-4" /> Add Server
-        </Button>
+        {canManage && (
+          <Button
+            onClick={() => {
+              setEditing(null);
+              setFormOpen(true);
+            }}
+          >
+            <Plus className="mr-2 h-4 w-4" /> Add Server
+          </Button>
+        )}
       </PageHeader>
 
       {error && (

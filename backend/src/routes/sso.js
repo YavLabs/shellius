@@ -9,6 +9,7 @@ import * as ssoService from '../services/ssoService.js';
 import * as ssoConfigService from '../services/ssoConfigService.js';
 import { generateAccessToken, generateRefreshToken, hashToken } from '../utils/jwt.js';
 import logger from '../utils/logger.js';
+import redis from '../config/redis.js';
 import authenticate from '../middleware/auth.js';
 import tenant from '../middleware/tenant.js';
 import requireRole from '../middleware/rbac.js';
@@ -18,10 +19,27 @@ const router = express.Router();
 
 const FRONTEND_URL = config.frontendUrl;
 const REFRESH_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+const STATE_TTL_SEC = 10 * 60;
 
-// In-memory state store (TODO: move to Redis for production)
-const stateStore = new Map();
-// Discovery cache (TODO: persist w/ TTL in Redis)
+// SSO state in Redis so it survives backend restarts and works across replicas
+// (the in-memory Map lost state on every redeploy → "Invalid or expired state").
+const stateKey = (s) => `sso:state:${s}`;
+async function saveSsoState(state, data) {
+  await redis.set(stateKey(state), JSON.stringify(data), 'EX', STATE_TTL_SEC);
+}
+async function takeSsoState(state) {
+  const key = stateKey(state);
+  const raw = await redis.get(key);
+  if (!raw) return null;
+  await redis.del(key);
+  try {
+    return JSON.parse(raw);
+  } catch {
+    return null;
+  }
+}
+
+// Discovery cache stays in-memory (cheap, non-critical, re-fetched on miss).
 const discoveryCache = new Map();
 
 // ---------------------------------------------------------------------------
@@ -236,9 +254,8 @@ router.get(
   asyncHandler(async (req, res) => {
     const { code, state } = req.query;
     if (!code || !state) throw new ApiError(400, 'Missing code or state');
-    const stateData = stateStore.get(state);
+    const stateData = await takeSsoState(state);
     if (!stateData) throw new ApiError(400, 'Invalid or expired state');
-    stateStore.delete(state);
     const org = await prisma.organization.findUnique({ where: { id: stateData.orgId } });
     if (!org) throw new ApiError(400, 'Organization not found');
     return runOidcCallback(req, res, org, code);
@@ -262,12 +279,7 @@ router.get(
 
     const discovery = await discover(cfg.issuerUrl);
     const state = crypto.randomBytes(16).toString('hex');
-    stateStore.set(state, { orgId: org.id, createdAt: Date.now() });
-
-    // GC old states
-    for (const [k, v] of stateStore) {
-      if (Date.now() - v.createdAt > 10 * 60 * 1000) stateStore.delete(k);
-    }
+    await saveSsoState(state, { orgId: org.id, createdAt: Date.now() });
 
     const params = new URLSearchParams({
       response_type: 'code',
@@ -281,91 +293,18 @@ router.get(
   })
 );
 
+// Legacy per-org callback (kept for back-compat with older IdP registrations).
 router.get(
   '/:orgSlug/callback',
   asyncHandler(async (req, res) => {
     const { orgSlug } = req.params;
     const { code, state } = req.query;
     if (!code || !state) throw new ApiError(400, 'Missing code or state');
-
-    const stateData = stateStore.get(state);
+    const stateData = await takeSsoState(state);
     if (!stateData) throw new ApiError(400, 'Invalid or expired state');
-    stateStore.delete(state);
-
     const org = await prisma.organization.findUnique({ where: { slug: orgSlug } });
     if (!org || org.id !== stateData.orgId) throw new ApiError(400, 'Org mismatch');
-
-    const cfg = await ssoService.getDecryptedConfig(org.id, { orgSlug: org.slug, req });
-    if (!cfg) throw new ApiError(400, 'SSO not configured');
-
-    const discovery = await discover(cfg.issuerUrl);
-
-    // Exchange code for tokens
-    const tokenRes = await fetch(discovery.token_endpoint, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-      body: new URLSearchParams({
-        grant_type: 'authorization_code',
-        code,
-        redirect_uri: cfg.redirectUri,
-        client_id: cfg.clientId,
-        client_secret: cfg.clientSecret,
-      }),
-    });
-
-    if (!tokenRes.ok) {
-      const text = await tokenRes.text();
-      logger.error('OIDC token exchange failed', { text });
-      throw new ApiError(401, 'Token exchange failed');
-    }
-
-    const tokens = await tokenRes.json();
-
-    // Fetch userinfo
-    const userinfoRes = await fetch(discovery.userinfo_endpoint, {
-      headers: { Authorization: `Bearer ${tokens.access_token}` },
-    });
-    if (!userinfoRes.ok) throw new ApiError(401, 'Userinfo fetch failed');
-    const userinfo = await userinfoRes.json();
-
-    // Provisioning / access errors here should land on the SSO callback page
-    // as a friendly message (popup-aware), not a raw JSON error response.
-    let user;
-    try {
-      user = await ssoService.handleOidcUserInfo(userinfo, org.id);
-    } catch (err) {
-      const msg = err?.statusCode === 403 || err?.errorCode === 'SSO_NOT_PROVISIONED'
-        ? err.message
-        : 'Sign-in failed. Please contact your administrator.';
-      logger.warn('SSO sign-in rejected', { orgId: org.id, error: err.message });
-      const frag = new URLSearchParams({ error: msg }).toString();
-      return res.redirect(`${FRONTEND_URL}/auth/callback#${frag}`);
-    }
-
-    const accessToken = generateAccessToken({
-      userId: user.id,
-      orgId: user.orgId,
-      role: user.role,
-      email: user.email,
-    });
-    const refreshToken = generateRefreshToken({ userId: user.id, tokenId: crypto.randomUUID() });
-
-    await prisma.refreshToken.create({
-      data: {
-        userId: user.id,
-        tokenHash: hashToken(refreshToken),
-        clientType: 'web',
-        ipAddress: req.ip,
-        userAgent: req.get('user-agent') || '',
-        expiresAt: new Date(Date.now() + REFRESH_TTL_MS),
-      },
-    });
-
-    const fragment = new URLSearchParams({
-      access_token: accessToken,
-      refresh_token: refreshToken,
-    }).toString();
-    res.redirect(`${FRONTEND_URL}/auth/callback#${fragment}`);
+    return runOidcCallback(req, res, org, code);
   })
 );
 

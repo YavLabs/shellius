@@ -75,12 +75,14 @@ function Login() {
       .catch(() => setSsoStatus({ enabled: false }));
   }, []);
 
-  // Listen for the SSO popup completion message
+  // Listen for the SSO popup completion (postMessage + localStorage fallback)
   useEffect(() => {
-    function onMessage(e) {
-      if (e.origin !== window.location.origin) return;
-      const msg = e.data || {};
-      if (msg.type !== 'shellius:sso') return;
+    // Fallback channel: the popup writes the result to localStorage, which fires
+    // a `storage` event here even when COOP severed window.opener/postMessage.
+    let handled = false;
+    function finish(msg) {
+      if (handled) return;
+      handled = true;
       setSsoSubmitting(false);
       if (msg.ok && msg.accessToken && msg.refreshToken) {
         loginWithTokens({ accessToken: msg.accessToken, refreshToken: msg.refreshToken })
@@ -90,8 +92,30 @@ function Login() {
         setError(`SSO failed: ${msg.error}`);
       }
     }
-    window.addEventListener('message', onMessage);
-    return () => window.removeEventListener('message', onMessage);
+    function onMessageWrap(e) {
+      if (e.origin !== window.location.origin) return;
+      const msg = e.data || {};
+      if (msg.type !== 'shellius:sso') return;
+      finish(msg);
+    }
+    function onStorage(e) {
+      if (e.key !== 'shellius_sso_msg' || !e.newValue) return;
+      try {
+        const msg = JSON.parse(e.newValue);
+        if (msg.type === 'shellius:sso') {
+          localStorage.removeItem('shellius_sso_msg');
+          finish(msg);
+        }
+      } catch {
+        /* ignore */
+      }
+    }
+    window.addEventListener('message', onMessageWrap);
+    window.addEventListener('storage', onStorage);
+    return () => {
+      window.removeEventListener('message', onMessageWrap);
+      window.removeEventListener('storage', onStorage);
+    };
   }, [loginWithTokens, navigate, safePostLoginDest]);
 
   const handleSsoLogin = () => {

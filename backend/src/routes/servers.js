@@ -78,7 +78,9 @@ router.use(authenticate, tenant);
 
 router.get(
   '/',
-  requireRole('super_admin', 'admin', 'manager'),
+  // Members can browse the inventory read-only so they can request access /
+  // connect. Create / edit / delete remain admin-only below.
+  requireRole('super_admin', 'admin', 'manager', 'member'),
   asyncHandler(async (req, res) => {
     const result = await serverService.listServers(req.orgId, req.query);
     res.json({ success: true, data: result });
@@ -110,7 +112,7 @@ router.post(
 
 router.get(
   '/:id',
-  requireRole('super_admin', 'admin', 'manager'),
+  requireRole('super_admin', 'admin', 'manager', 'member'),
   asyncHandler(async (req, res) => {
     const server = await serverService.getServer(req.orgId, req.params.id);
     res.json({ success: true, data: { server } });

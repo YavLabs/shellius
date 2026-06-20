@@ -56,7 +56,10 @@ const app = express();
   }
 }
 
-app.use(helmet());
+// 'same-origin-allow-popups' lets the SSO popup keep its window.opener after the
+// cross-origin round-trip to the IdP (default 'same-origin' severs it, which
+// breaks the popup → opener handoff and loads the app inside the popup).
+app.use(helmet({ crossOriginOpenerPolicy: { policy: 'same-origin-allow-popups' } }));
 app.use(cors({ origin: config.corsOrigin, credentials: true }));
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));

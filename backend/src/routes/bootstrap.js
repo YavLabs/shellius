@@ -167,6 +167,8 @@ router.get(
       caPubKey: caPubKey.trim(),
       hostname: server.hostname,
       sshUser: server.sshUser || 'root',
+      serverId: payload.serverId,
+      orgId: payload.orgId,
     });
 
     res.setHeader('Content-Type', 'text/x-shellscript; charset=utf-8');
@@ -317,7 +319,7 @@ function shEscape(value) {
   return String(value).replace(/'/g, "'\\''");
 }
 
-function buildUnixInstallScript({ apiUrl, agentSecret, caPubKey, hostname, sshUser }) {
+function buildUnixInstallScript({ apiUrl, agentSecret, caPubKey, hostname, sshUser, serverId, orgId }) {
   // Notes for maintainers:
   // - Avoid heredocs where possible — paste-mangling has bitten us before.
   //   We use printf streams (one printf per line) for every file write so the
@@ -851,6 +853,20 @@ fi
 # ---------------------------------------------------------------------------
 echo "[shellius] [8/12] Installing heartbeat systemd timer"
 if [ "$PLATFORM" = "linux" ] && command -v systemctl >/dev/null 2>&1; then
+  # Heartbeat script — serverId/orgId are baked in (the org-wide agent token
+  # cannot identify the host); agentId/hostname/ip are computed at runtime.
+  # Form-urlencoded (--data-urlencode) avoids JSON quoting in the script.
+  {
+    printf '%s\\n' '#!/bin/bash'
+    printf '%s\\n' 'TOKEN=$(cat /etc/shellius/agent-token 2>/dev/null)'
+    printf '%s\\n' '[ -z "$TOKEN" ] && exit 0'
+    printf '%s\\n' 'HN=$(hostname)'
+    printf '%s\\n' 'IP=$(hostname -I 2>/dev/null)'
+    printf '%s\\n' 'IP=\${IP%% *}'
+    printf '%s\\n' 'curl -fsS --max-time 10 -H "x-agent-token: $TOKEN" -X POST ${apiUrl}/api/hosts/heartbeat --data-urlencode "agentId=$HN" --data-urlencode "serverId=${serverId}" --data-urlencode "orgId=${orgId}" --data-urlencode "hostname=$HN" --data-urlencode "ipAddress=$IP" >/dev/null 2>&1 || true'
+  } > /usr/local/sbin/shellius-heartbeat
+  chmod 755 /usr/local/sbin/shellius-heartbeat
+
   {
     printf '%s\\n' '[Unit]'
     printf '%s\\n' 'Description=Shellius agent heartbeat'
@@ -859,7 +875,7 @@ if [ "$PLATFORM" = "linux" ] && command -v systemctl >/dev/null 2>&1; then
     printf '%s\\n' '[Service]'
     printf '%s\\n' 'Type=oneshot'
     printf '%s\\n' 'User=root'
-    printf 'ExecStart=/bin/bash -c '"'"'TOKEN=\$(cat /etc/shellius/agent-token 2>/dev/null); [ -n "\$TOKEN" ] && curl -fsS --max-time 10 -H "x-agent-token: \$TOKEN" -X POST %s/api/hosts/heartbeat >/dev/null 2>&1 || true'"'"'\\n' "${apiUrl}"
+    printf '%s\\n' 'ExecStart=/usr/local/sbin/shellius-heartbeat'
   } > /etc/systemd/system/shellius-heartbeat.service
 
   {
