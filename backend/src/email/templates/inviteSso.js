@@ -28,7 +28,7 @@ export function render({ recipientName, orgName, loginUrl, providerLabel }) {
     </div>
     <p style="margin:0;font:400 12px/1.5 -apple-system,sans-serif;color:#a1a1aa">
       If the button doesn't work, copy and paste this link into your browser:<br>
-      <a href="${safeUrl}" style="color:#10b981;word-break:break-all">${safeUrl}</a>
+      <a href="${safeUrl}" style="color:#18181b;word-break:break-all">${safeUrl}</a>
     </p>
   `;
 

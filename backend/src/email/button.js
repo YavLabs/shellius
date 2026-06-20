@@ -10,10 +10,10 @@
  * @param {object} params
  * @param {string} params.href   - URL (HTML-escaped)
  * @param {string} params.label  - Button label text
- * @param {string} [params.color] - Fill color hex (default emerald #10b981)
+ * @param {string} [params.color] - Fill color hex (default brand #18181b)
  * @returns {string} HTML string
  */
-export function button({ href, label, color = '#10b981' }) {
+export function button({ href, label, color = '#18181b' }) {
   return `
 <!--[if mso]>
 <v:roundrect xmlns:v="urn:schemas-microsoft-com:vml" xmlns:w="urn:schemas-microsoft-com:office:word"

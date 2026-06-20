@@ -32,7 +32,7 @@ export function render({ recipientName, verifyUrl, expiresInHours = 24 }) {
     </p>
     <p style="margin:0;font:400 12px/1.5 -apple-system,sans-serif;color:#a1a1aa">
       If the button doesn't work, copy and paste this link into your browser:<br>
-      <a href="${safeUrl}" style="color:#10b981;word-break:break-all">${safeUrl}</a>
+      <a href="${safeUrl}" style="color:#18181b;word-break:break-all">${safeUrl}</a>
     </p>
     <p style="margin:16px 0 0;font:400 12px/1.5 -apple-system,sans-serif;color:#a1a1aa">
       If you did not create an account with Shellius, you can safely ignore this email.
