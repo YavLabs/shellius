@@ -50,6 +50,9 @@ function QuickConnectButton({ server, currentUser }) {
 
   const loading = intent === undefined;
   const onboarded = isServerOnboarded(server);
+  // Onboarding failed (and the host isn't otherwise checked in) → don't offer
+  // access at all; it's surfaced/retryable from the Server Details page instead.
+  const onboardFailed = !onboarded && server?.provisionStatus === 'failed';
   const hasAccess = !!intent?.hasActiveAccess;
   const hasPending = !!intent?.hasPendingRequest;
 
@@ -67,6 +70,9 @@ function QuickConnectButton({ server, currentUser }) {
       setRequestOpen(true);
     }
   };
+
+  // Hide the button entirely for servers whose onboarding failed.
+  if (onboardFailed) return null;
 
   const variant = hasAccess ? 'default' : hasPending ? 'ghost' : 'outline';
   const title = !onboarded
