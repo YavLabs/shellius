@@ -1,0 +1,80 @@
+# =============================================================================
+# Shellius — single-host deployment (builds from source)
+#
+# Tailored for 10.1.100.24: external Postgres + AWS S3 (no bundled pg/minio),
+# bundled redis + guacd, served on host port 8100 behind an external reverse
+# proxy (nginx proxy manager terminates TLS for https://shellius.ithena.app).
+#
+# Usage:
+#   docker compose -f docker-compose.deploy.yml up -d --build
+#
+# The backend entrypoint runs `prisma migrate deploy` + the idempotent seed on
+# start, so the external DB is migrated and the super admin is created
+# automatically. Config comes from .env.prod.
+# =============================================================================
+
+services:
+  redis:
+    image: redis:7-alpine
+    container_name: shellius-redis
+    restart: unless-stopped
+    command: redis-server --appendonly yes
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  guacd:
+    image: guacamole/guacd:1.5.5
+    container_name: shellius-guacd
+    restart: unless-stopped
+
+  backend:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.backend
+    image: shellius-backend:local
+    container_name: shellius-api
+    restart: unless-stopped
+    env_file: .env.prod
+    environment:
+      REDIS_URL: ${REDIS_URL:-redis://redis:6379}
+      GUACD_HOST: guacd
+      GUACD_PORT: "4822"
+    depends_on:
+      redis:
+        condition: service_healthy
+      guacd:
+        condition: service_started
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:3001/api/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 40s
+
+  frontend:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.frontend
+    image: shellius-frontend:local
+    container_name: shellius-web
+    restart: unless-stopped
+
+  nginx:
+    image: nginx:alpine
+    container_name: shellius-nginx
+    restart: unless-stopped
+    ports:
+      - "8100:80"
+    volumes:
+      - ./docker/nginx-deploy.conf:/etc/nginx/nginx.conf:ro
+    depends_on:
+      - backend
+      - frontend
+
+volumes:
+  redis_data:

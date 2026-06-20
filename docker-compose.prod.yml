@@ -38,10 +38,11 @@ services:
       - internal
       - homelab
 
-  # ── PostgreSQL ─────────────────────────────────────────────────────────────
+  # ── PostgreSQL (bundled; omit profile + set DATABASE_URL for managed PG) ────
   postgres:
     image: postgres:16-alpine
     container_name: shellius-postgres
+    profiles: ["postgres"]
     restart: unless-stopped
     env_file: .env.prod
     environment:
@@ -59,10 +60,11 @@ services:
     networks:
       - internal
 
-  # ── Redis ──────────────────────────────────────────────────────────────────
+  # ── Redis (bundled; omit profile + set REDIS_URL for managed Redis) ─────────
   redis:
     image: redis:7-alpine
     container_name: shellius-redis
+    profiles: ["redis"]
     restart: unless-stopped
     command: redis-server --appendonly yes
     volumes:
@@ -84,10 +86,11 @@ services:
     networks:
       - internal
 
-  # ── MinIO (session recordings) ────────────────────────────────────────────
+  # ── MinIO (bundled; omit profile + configure S3/Azure for external storage) ─
   minio:
     image: minio/minio:latest
     container_name: shellius-minio
+    profiles: ["minio"]
     command: server /data --console-address ":9001"
     restart: unless-stopped
     env_file: .env.prod
@@ -119,12 +122,15 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+        required: false
       redis:
         condition: service_healthy
+        required: false
       guacd:
         condition: service_started
       minio:
         condition: service_healthy
+        required: false
     healthcheck:
       test: ["CMD", "wget", "-q", "--spider", "http://localhost:3001/api/health"]
       interval: 30s
