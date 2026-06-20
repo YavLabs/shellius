@@ -1,5 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
 import { Film, Loader2, AlertCircle } from 'lucide-react';
+// Required for the player to render its terminal grid — without it the player
+// mounts collapsed/empty.
+import 'asciinema-player/dist/bundle/asciinema-player.css';
 
 /**
  * SessionPlayer
