@@ -477,7 +477,7 @@ function Step3({ form, onChange, errors }) {
 }
 
 // Step 4 ─────────────────────────────────────────────────────────────────────
-const APPROVER_ROLES = ['admin', 'operator'];
+const APPROVER_ROLES = ['admin', 'manager'];
 
 function Step4({ form, onChange, errors }) {
   const durationMinutes = Math.round((form.maxSessionDuration || 3600) / 60);
@@ -789,7 +789,7 @@ function PolicyForm({ open, onClose, onSubmit, policy, onEvaluate }) {
           subjects: (policy.subjects || []).map((s) => ({
             subjectType: s.subjectType,
             subjectId: s.subjectId,
-            _label: s.user?.name || s.user?.email || s.group?.name || s.subjectId,
+            _label: s.label || s.user?.name || s.user?.email || s.group?.name || s.subjectId,
           })),
           customerId: policy.customerId || null,
           targetEnvironments: policy.targetEnvironments || [],

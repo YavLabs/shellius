@@ -634,7 +634,7 @@ async function handleRdpConnection(ws, req) {
     accessRequest = await accessRequestService.getById({
       requestId: accessRequestId,
       callerId: userId,
-      callerRole: 'viewer', // gateway token holder is always the requester
+      callerRole: 'member', // gateway token holder is always the requester
     });
   } catch (err) {
     safeClose(ws, 1008, err.message || 'Access request not found');

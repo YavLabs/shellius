@@ -22,7 +22,7 @@ const execFileAsync = promisify(execFile);
 // ---------------------------------------------------------------------------
 // Role rank helper for revoke authorization
 // ---------------------------------------------------------------------------
-const ROLE_RANK = { super_admin: 4, admin: 3, operator: 2, viewer: 1 };
+const ROLE_RANK = { super_admin: 4, admin: 3, manager: 2, member: 1 };
 
 function isAdminOrAbove(role) {
   return (ROLE_RANK[role] ?? 0) >= ROLE_RANK.admin;
@@ -266,7 +266,9 @@ export async function submit({
   const now = new Date();
   let requestData;
 
-  const needsApproval = server.environment === 'prod' || policyResult.requiresApproval;
+  // Approval is policy-driven (prod defaults to requiring approval, but a
+  // policy can auto-approve privileged subjects — see policyService.evaluate).
+  const needsApproval = policyResult.requiresApproval;
 
   if (needsApproval) {
     // Resolve who may approve from the matched policy's approver routing

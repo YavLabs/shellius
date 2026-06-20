@@ -4,7 +4,7 @@ import ApiError from '../utils/ApiError.js';
 import config from '../config/index.js';
 import logger from '../utils/logger.js';
 
-const ROLE_RANK = { super_admin: 4, admin: 3, operator: 2, viewer: 1 };
+const ROLE_RANK = { super_admin: 4, admin: 3, manager: 2, member: 1 };
 
 function strip(user) {
   if (!user) return user;
@@ -54,7 +54,7 @@ export async function getUser(orgId, userId) {
 }
 
 export async function createUser(orgId, data, actorRole) {
-  const { email, name, password, role = 'viewer', managerId, status } = data;
+  const { email, name, password, role = 'member', managerId, status } = data;
   // password is optional when the invite flow is used
   if (!email || !name) {
     throw new ApiError(400, 'email and name are required');
@@ -441,7 +441,7 @@ export async function createPendingUser(orgId, { email, name, passwordHash }) {
         email,
         name,
         passwordHash,
-        role: 'viewer',
+        role: 'member',
         status: 'pending_verification',
         passwordChangedAt: new Date(),
       },

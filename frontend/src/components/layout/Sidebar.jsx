@@ -40,7 +40,7 @@ const COLLAPSED_KEY = 'shellius_sidebar_collapsed';
 const EXPANDED_WIDTH = 'w-60';
 const COLLAPSED_WIDTH = 'w-14';
 
-const ROLE_RANK = { super_admin: 4, admin: 3, operator: 2, viewer: 1 };
+const ROLE_RANK = { super_admin: 4, admin: 3, manager: 2, member: 1 };
 function isAtLeast(user, role) {
   return (ROLE_RANK[user?.role] || 0) >= (ROLE_RANK[role] || 0);
 }
@@ -78,7 +78,7 @@ const NAV_SECTIONS = [
   {
     label: 'Audit',
     items: [
-      { id: 'sessions', label: 'Sessions', icon: Terminal, to: '/sessions', minRole: 'operator' },
+      { id: 'sessions', label: 'Sessions', icon: Terminal, to: '/sessions', minRole: 'manager' },
       { id: 'audit-log', label: 'Audit Log', icon: ScrollText, to: '/audit-log', minRole: 'admin' },
       { id: 'notifications', label: 'Notifications', icon: Bell, to: '/notifications' },
     ],

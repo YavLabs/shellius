@@ -10,8 +10,8 @@ datasource db {
 enum OrgRole {
   super_admin
   admin
-  operator
-  viewer
+  manager
+  member
 }
 
 enum UserStatus {
@@ -280,10 +280,16 @@ model SsoConfig {
   provider              String
   presetId              String?  @map("preset_id")
   clientId              String   @map("client_id")
-  clientSecretEncrypted String   @map("client_secret_encrypted") @db.Text
+  // Nullable: env-preset configs (e.g. SSO_GOOGLE_CLIENT_SECRET) supply the
+  // secret, so a row can manage defaultRole/autoProvision without storing it.
+  clientSecretEncrypted String?  @map("client_secret_encrypted") @db.Text
   issuerUrl             String   @map("issuer_url")
   redirectUri           String   @map("redirect_uri")
   scopes                String   @default("openid profile email")
+  // New-user provisioning policy for SSO sign-ins.
+  defaultRole           String   @default("viewer") @map("default_role")
+  defaultGroupId        String?  @map("default_group_id")
+  autoProvision         Boolean  @default(true) @map("auto_provision")
   isActive              Boolean  @default(true) @map("is_active")
   createdAt             DateTime @default(now()) @map("created_at")
   updatedAt             DateTime @updatedAt @map("updated_at")

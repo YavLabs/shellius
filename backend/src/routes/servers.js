@@ -78,7 +78,7 @@ router.use(authenticate, tenant);
 
 router.get(
   '/',
-  requireRole('super_admin', 'admin', 'operator'),
+  requireRole('super_admin', 'admin', 'manager'),
   asyncHandler(async (req, res) => {
     const result = await serverService.listServers(req.orgId, req.query);
     res.json({ success: true, data: result });
@@ -87,7 +87,7 @@ router.get(
 
 router.get(
   '/health/summary',
-  requireRole('super_admin', 'admin', 'operator', 'viewer'),
+  requireRole('super_admin', 'admin', 'manager', 'member'),
   asyncHandler(async (req, res) => {
     const summary = await healthCheckService.getHealthSummary(req.orgId);
     res.json({ success: true, data: summary });
@@ -110,7 +110,7 @@ router.post(
 
 router.get(
   '/:id',
-  requireRole('super_admin', 'admin', 'operator'),
+  requireRole('super_admin', 'admin', 'manager'),
   asyncHandler(async (req, res) => {
     const server = await serverService.getServer(req.orgId, req.params.id);
     res.json({ success: true, data: { server } });

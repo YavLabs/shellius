@@ -23,7 +23,7 @@ const validate = (schema) => (req, res, next) => {
   next();
 };
 
-const ROLES = ['super_admin', 'admin', 'operator', 'viewer'];
+const ROLES = ['super_admin', 'admin', 'manager', 'member'];
 const STATUSES = ['active', 'invited', 'suspended', 'deactivated'];
 
 const profileUpdateSchema = Joi.object({
@@ -49,7 +49,7 @@ const createSchema = Joi.object({
   email: Joi.string().email({ tlds: { allow: false } }).required(),
   name: Joi.string().min(1).max(200).required(),
   password: Joi.string().min(8).max(200).optional(),
-  role: Joi.string().valid(...ROLES).default('viewer'),
+  role: Joi.string().valid(...ROLES).default('member'),
   managerId: Joi.string().allow(null),
   sendInvite: Joi.boolean().default(true),
 });

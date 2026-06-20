@@ -173,17 +173,11 @@ export async function evaluate({ orgId, userId, serverId, requestedPrincipal, po
     };
   }
 
-  // Step 2: HARD RULE — production always requires approval regardless of policy
-  if (server.environment === 'prod') {
-    return {
-      allowed: false,
-      requiresApproval: true,
-      autoApprove: false,
-      reason: 'Production servers require approval',
-      principals: [],
-      maxTtl: 0,
-    };
-  }
+  // Step 2: Production approval is policy-driven. By default prod requires
+  // approval, but a matching ALLOW policy with autoApprove=true (e.g. scoped to
+  // admins/managers) grants access without approval. super_admin already
+  // bypassed above. This is applied at the final ALLOW selection below.
+  const isProd = server.environment === 'prod';
 
   // ---------------------------------------------------------------------------
   // Mode A: Draft policy evaluation (inline, no DB lookup for the policy itself)
@@ -306,18 +300,24 @@ export async function evaluate({ orgId, userId, serverId, requestedPrincipal, po
 
   const bestPolicy = allowPolicies[0];
 
+  // Production requires approval UNLESS the matched policy auto-approves the
+  // subject (e.g. an admins/managers policy). Non-prod follows the policy's
+  // own requireApproval flag.
+  const requiresApproval = isProd ? !bestPolicy.autoApprove : bestPolicy.requireApproval;
+
   logger.info('policyService.evaluate: access allowed by policy', {
     orgId,
     userId,
     serverId,
     policyId: bestPolicy.id,
     policyName: bestPolicy.name,
-    requiresApproval: bestPolicy.requireApproval,
+    isProd,
+    requiresApproval,
   });
 
   return {
     allowed: true,
-    requiresApproval: bestPolicy.requireApproval,
+    requiresApproval,
     autoApprove: bestPolicy.autoApprove,
     principals: bestPolicy.allowedPrincipals,
     maxTtl: bestPolicy.maxSessionDuration,
@@ -426,6 +426,7 @@ export async function list(orgId, filters = {}) {
     prisma.accessPolicy.count({ where }),
   ]);
 
+  await enrichPolicySubjects(orgId, items);
   return { items, total, page: p, pageSize: ps };
 }
 
@@ -445,7 +446,43 @@ export async function getById(orgId, id) {
     },
   });
   if (!policy) throw new ApiError(404, 'Policy not found');
+  await enrichPolicySubjects(orgId, [policy]);
   return policy;
+}
+
+const ROLE_LABELS = { super_admin: 'Super Admin', admin: 'Admin', manager: 'Manager', member: 'Member' };
+
+/**
+ * Attach a human-readable `label` to each policy subject (USER → name/email,
+ * GROUP → name, ROLE → role label) so the UI never has to render raw UUIDs.
+ * Batched to avoid N+1. Mutates the passed policies in place.
+ */
+async function enrichPolicySubjects(orgId, policies) {
+  const userIds = new Set();
+  const groupIds = new Set();
+  for (const p of policies) {
+    for (const s of p.subjects || []) {
+      if (s.subjectType === 'USER') userIds.add(s.subjectId);
+      else if (s.subjectType === 'GROUP') groupIds.add(s.subjectId);
+    }
+  }
+  const [users, groups] = await Promise.all([
+    userIds.size
+      ? prisma.user.findMany({ where: { orgId, id: { in: [...userIds] } }, select: { id: true, name: true, email: true } })
+      : [],
+    groupIds.size
+      ? prisma.group.findMany({ where: { orgId, id: { in: [...groupIds] } }, select: { id: true, name: true } })
+      : [],
+  ]);
+  const userMap = new Map(users.map((u) => [u.id, u.name || u.email]));
+  const groupMap = new Map(groups.map((g) => [g.id, g.name]));
+  for (const p of policies) {
+    for (const s of p.subjects || []) {
+      if (s.subjectType === 'USER') s.label = userMap.get(s.subjectId) || '(unknown user)';
+      else if (s.subjectType === 'GROUP') s.label = groupMap.get(s.subjectId) || '(unknown group)';
+      else if (s.subjectType === 'ROLE') s.label = ROLE_LABELS[s.subjectId] || s.subjectId;
+    }
+  }
 }
 
 /**

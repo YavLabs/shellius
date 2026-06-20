@@ -15,32 +15,32 @@
  */
 
 // Role-style groups seeded for every org.
+// Role hierarchy: super_admin > admin > manager > member.
+// Groups (membership-based, used as policy subjects + approver pools):
 export const BASELINE_GROUPS = [
-  { name: 'Admins', description: 'Administrators — broad access; can approve production requests.' },
-  { name: 'Managers', description: 'Approvers for production access requests.' },
-  { name: 'Members', description: 'Standard members — self-serve access to dev and staging hosts.' },
-  { name: 'All Users', description: 'Default catch-all group — every user in the org.' },
-  { name: 'Read Only', description: 'Viewer-tier audience — no SSH access by default.' },
+  { name: 'Admin', description: 'Administrators — full access; no approval needed for production.' },
+  { name: 'Managers', description: 'Managers — production access without approval; can approve others.' },
+  { name: 'Approvers', description: 'Designated approvers for production access requests.' },
+  { name: 'Developers', description: 'Developers — self-serve dev/staging; production requires approval.' },
 ];
 
 // Linux usernames the SSH cert will be valid for, covering major cloud-image
 // conventions plus a generic admin.
 const DEFAULT_PRINCIPALS = ['ubuntu', 'ec2-user', 'azureuser', 'root', 'admin'];
 
-// Approval-aware default policies.
-//
-//   Dev / Staging → requireApproval:false (request flow runs but the request
-//     is created already-APPROVED — i.e. "auto-approved").
-//   Prod          → requireApproval:true. The hard-coded prod invariant in
-//     policyService.evaluate() enforces approval regardless; this policy makes
-//     the rule visible AND routes approval to the Managers group (+ admins).
+// Approval-aware default policies (role-driven). Prod approval is policy-driven
+// in policyService.evaluate(): a matching ALLOW policy with autoApprove=true
+// grants prod access without approval; otherwise prod requires approval.
+//   super_admin → bypasses all policy (full access).
+//   admin / manager → dev + prod without approval.
+//   member / Developers → dev self-serve; prod requires approval (Approvers).
 export const BASELINE_POLICIES = [
   {
-    name: 'Default Dev Access',
+    name: 'Dev & Staging Access',
     description:
-      'Self-serve SSH into dev hosts. Requests are auto-approved, 8 hour cert lifetime, key download enabled so the TUI can connect natively.',
+      'Self-serve SSH into dev/staging/demo hosts for everyone. Auto-approved, 8 hour cert lifetime.',
     effect: 'ALLOW',
-    targetEnvironments: ['dev'],
+    targetEnvironments: ['dev', 'staging', 'demo'],
     allowedPrincipals: DEFAULT_PRINCIPALS,
     maxSessionDuration: 8 * 3600,
     requireApproval: false,
@@ -48,26 +48,29 @@ export const BASELINE_POLICIES = [
     allowKeyDownload: true,
     isBreakGlass: false,
     priority: 100,
-    subjectGroups: ['Members', 'Admins', 'All Users'],
+    subjectRoles: ['admin', 'manager', 'member'],
+    subjectGroups: ['Developers', 'Managers', 'Admin'],
   },
   {
-    name: 'Staging Access',
-    description: 'Self-serve SSH into staging/demo hosts for members. 4 hour cert lifetime, auto-approved.',
+    name: 'Production Access — Admins & Managers',
+    description:
+      'Admins and managers access production WITHOUT approval. 2 hour cert lifetime. Higher precedence than the standard prod policy.',
     effect: 'ALLOW',
-    targetEnvironments: ['staging', 'demo'],
+    targetEnvironments: ['prod'],
     allowedPrincipals: DEFAULT_PRINCIPALS,
-    maxSessionDuration: 4 * 3600,
+    maxSessionDuration: 2 * 3600,
     requireApproval: false,
     autoApprove: true,
     allowKeyDownload: true,
     isBreakGlass: false,
-    priority: 100,
-    subjectGroups: ['Members', 'Admins'],
+    priority: 40,
+    subjectRoles: ['admin', 'manager'],
+    subjectGroups: ['Admin', 'Managers'],
   },
   {
-    name: 'Production Approval',
+    name: 'Production Access — Approval Required',
     description:
-      'Production access requires approval. Routes to the Managers group (admins may also approve). 2 hour cert lifetime.',
+      'Everyone else needs approval for production. Routes to the Approvers group (admins/managers may also approve). 2 hour cert lifetime.',
     effect: 'ALLOW',
     targetEnvironments: ['prod'],
     allowedPrincipals: DEFAULT_PRINCIPALS,
@@ -77,14 +80,15 @@ export const BASELINE_POLICIES = [
     allowKeyDownload: true,
     isBreakGlass: false,
     priority: 50,
-    subjectGroups: ['Members', 'Admins'],
-    approverGroup: 'Managers',
-    approverRoles: ['admin', 'super_admin'],
+    subjectRoles: ['member'],
+    subjectGroups: ['Developers'],
+    approverGroup: 'Approvers',
+    approverRoles: ['admin', 'manager', 'super_admin'],
   },
   {
     name: 'Break-glass Production',
     description:
-      'Emergency production access without approval. 1 hour cert lifetime. Audited as a high-severity event. Use sparingly.',
+      'Emergency production access without approval for admins. 1 hour cert lifetime. Audited as a high-severity event.',
     effect: 'ALLOW',
     targetEnvironments: ['prod'],
     allowedPrincipals: DEFAULT_PRINCIPALS,
@@ -94,7 +98,8 @@ export const BASELINE_POLICIES = [
     allowKeyDownload: true,
     isBreakGlass: true,
     priority: 10,
-    subjectGroups: ['Admins'],
+    subjectRoles: ['admin'],
+    subjectGroups: ['Admin'],
   },
 ];
 
@@ -153,10 +158,17 @@ export async function seedRolesAndPolicies(prisma, orgId, log = () => {}) {
       },
     });
 
-    const subjects = (p.subjectGroups || [])
-      .map((name) => groupsByName[name])
-      .filter(Boolean)
-      .map((g) => ({ policyId: policy.id, subjectType: 'GROUP', subjectId: g.id }));
+    const subjects = [
+      ...(p.subjectGroups || [])
+        .map((name) => groupsByName[name])
+        .filter(Boolean)
+        .map((g) => ({ policyId: policy.id, subjectType: 'GROUP', subjectId: g.id })),
+      ...(p.subjectRoles || []).map((role) => ({
+        policyId: policy.id,
+        subjectType: 'ROLE',
+        subjectId: role,
+      })),
+    ];
     if (subjects.length > 0) {
       await prisma.policySubject.createMany({ data: subjects, skipDuplicates: true });
     }

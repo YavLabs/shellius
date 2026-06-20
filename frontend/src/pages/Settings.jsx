@@ -34,7 +34,8 @@ import {
 } from '@/components/ui/select';
 import { getPublicKey, getStatus, rotate } from '@/services/caService';
 import { getOrg, updateOrg } from '@/services/orgService';
-import { getSsoConfig, saveSsoConfig, testSsoConnection } from '@/services/ssoConfigService';
+import { getSsoConfig, getSsoEffective, saveSsoConfig, testSsoConnection } from '@/services/ssoConfigService';
+import { listGroups as listOrgGroups } from '@/services/groupService';
 import { getMyPreferences, updateMyPreferences } from '@/services/userPreferencesService';
 import {
   getSmtpConfig,
@@ -52,7 +53,7 @@ import { getMfaConfig, saveMfaConfig } from '@/services/mfaService';
 import { useAuth } from '@/context/AuthContext';
 import { formatDateTime } from '@/utils/time';
 
-const ROLE_RANK = { super_admin: 4, admin: 3, operator: 2, viewer: 1 };
+const ROLE_RANK = { super_admin: 4, admin: 3, manager: 2, member: 1 };
 function isAtLeast(user, role) {
   return (ROLE_RANK[user?.role] || 0) >= (ROLE_RANK[role] || 0);
 }
@@ -428,6 +429,13 @@ function SsoTab() {
   const [formData, setFormData] = useState({});
   const [hasStoredSecret, setHasStoredSecret] = useState(false);
   const [isActive, setIsActive] = useState(true);
+  const [fromEnv, setFromEnv] = useState(false); // prefilled from environment
+
+  // New-user provisioning policy
+  const [defaultRole, setDefaultRole] = useState('member');
+  const [defaultGroupId, setDefaultGroupId] = useState('');
+  const [autoProvision, setAutoProvision] = useState(true);
+  const [orgGroups, setOrgGroups] = useState([]);
 
   // Loading / saving / testing state
   const [loading, setLoading] = useState(true);
@@ -440,34 +448,46 @@ function SsoTab() {
   // Derive the redirect URI for display
   const redirectUri = `${window.location.origin}/api/auth/sso/callback`;
 
-  // On mount, load existing config and jump to step 2 if a presetId is saved
+  // On mount, load existing config + env defaults (for prefill) + groups
   useEffect(() => {
     setLoading(true);
-    getSsoConfig()
-      .then((cfg) => {
+    listOrgGroups()
+      .then((res) => setOrgGroups(res?.items || res?.data?.items || res || []))
+      .catch(() => setOrgGroups([]));
+    getSsoEffective()
+      .then((data) => {
+        const cfg = data?.config || null;
+        const env = data?.effective?.envDefaults || null;
         if (cfg) {
           const preset = cfg.presetId ? getProvider(cfg.presetId) : null;
-          if (preset) {
-            setSelectedProvider(preset);
-          }
-          // Pre-fill form fields from saved config
+          if (preset) setSelectedProvider(preset);
           const initial = {};
           if (cfg.clientId) initial.clientId = cfg.clientId;
-          if (cfg.issuerUrl) {
-            // For generic-oidc, the issuerUrl is a direct field
-            if (!preset || preset.id === 'generic-oidc') {
-              initial.issuerUrl = cfg.issuerUrl;
-            }
+          if (cfg.issuerUrl && (!preset || preset.id === 'generic-oidc')) {
+            initial.issuerUrl = cfg.issuerUrl;
           }
           if (cfg.scopes) initial.scopes = cfg.scopes;
           setFormData(initial);
           setHasStoredSecret(!!cfg.hasSecret);
           setIsActive(cfg.isActive ?? true);
+          setDefaultRole(cfg.defaultRole || 'member');
+          setDefaultGroupId(cfg.defaultGroupId || '');
+          setAutoProvision(cfg.autoProvision ?? true);
+        } else if (env?.presetId) {
+          // No saved row — prefill from environment variables.
+          const preset = getProvider(env.presetId);
+          if (preset) setSelectedProvider(preset);
+          const initial = {};
+          if (env.clientId) initial.clientId = env.clientId;
+          if (env.issuerUrl && (!preset || preset.id === 'generic-oidc')) {
+            initial.issuerUrl = env.issuerUrl;
+          }
+          setFormData(initial);
+          setHasStoredSecret(!!env.hasClientSecret);
+          setFromEnv(true);
         }
       })
-      .catch(() => {
-        // No existing config, start fresh
-      })
+      .catch(() => {})
       .finally(() => setLoading(false));
   }, []);
 
@@ -542,6 +562,9 @@ function SsoTab() {
         clientId: (formData.clientId || '').trim(),
         issuerUrl: issuerUrl.trim(),
         isActive,
+        defaultRole,
+        defaultGroupId: defaultGroupId || null,
+        autoProvision,
       };
       // Scopes — use form field or provider default
       const scopes = (formData.scopes || selectedProvider.defaultScopes || '').trim();
@@ -766,6 +789,67 @@ function SsoTab() {
               />
             </button>
             <span className="text-sm text-foreground">SSO Active</span>
+          </div>
+
+          {fromEnv && (
+            <div className="rounded-md border border-blue-500/40 bg-blue-500/10 px-3 py-2 text-xs text-blue-700 dark:text-blue-300">
+              Prefilled from environment variables. Save to manage provisioning options below;
+              the client secret stays in the environment.
+            </div>
+          )}
+
+          {/* New-user provisioning */}
+          <div className="rounded-md border border-border p-4 space-y-4">
+            <div>
+              <h4 className="text-sm font-semibold text-foreground">New user provisioning</h4>
+              <p className="text-xs text-muted-foreground mt-0.5">
+                What happens when someone signs in with SSO for the first time.
+              </p>
+            </div>
+
+            <label className="flex items-start gap-3 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={autoProvision}
+                onChange={(e) => setAutoProvision(e.target.checked)}
+                className="mt-0.5 h-4 w-4 accent-primary"
+              />
+              <span>
+                <span className="text-sm font-medium text-foreground">Auto-provision new users</span>
+                <span className="block text-xs text-muted-foreground">
+                  On: any verified SSO email gets an account. Off: only invited / existing users can
+                  sign in — others are told to contact an admin.
+                </span>
+              </span>
+            </label>
+
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+              <div>
+                <label className="mb-1 block text-xs font-medium text-muted-foreground">Default role</label>
+                <select
+                  className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm"
+                  value={defaultRole}
+                  onChange={(e) => setDefaultRole(e.target.value)}
+                >
+                  <option value="member">Member</option>
+                  <option value="manager">Manager</option>
+                  <option value="admin">Admin</option>
+                </select>
+              </div>
+              <div>
+                <label className="mb-1 block text-xs font-medium text-muted-foreground">Default group (optional)</label>
+                <select
+                  className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm"
+                  value={defaultGroupId}
+                  onChange={(e) => setDefaultGroupId(e.target.value)}
+                >
+                  <option value="">— None —</option>
+                  {orgGroups.map((g) => (
+                    <option key={g.id} value={g.id}>{g.name}</option>
+                  ))}
+                </select>
+              </div>
+            </div>
           </div>
 
           {/* Feedback banners */}

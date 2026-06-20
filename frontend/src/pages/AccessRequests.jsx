@@ -34,7 +34,7 @@ import {
 import { useAuth } from '@/context/AuthContext';
 import { relativeTime, formatDateTime } from '@/utils/time';
 
-const ROLE_RANK = { super_admin: 4, admin: 3, operator: 2, viewer: 1 };
+const ROLE_RANK = { super_admin: 4, admin: 3, manager: 2, member: 1 };
 function isAtLeast(user, role) {
   return (ROLE_RANK[user?.role] || 0) >= (ROLE_RANK[role] || 0);
 }

@@ -54,6 +54,10 @@ const ssoConfigSchema = Joi.object({
   redirectUri: Joi.string().uri(),
   scopes: Joi.string().max(500),
   isActive: Joi.boolean(),
+  // New-user provisioning policy.
+  defaultRole: Joi.string().valid('super_admin', 'admin', 'manager', 'member'),
+  defaultGroupId: Joi.string().allow(null, ''),
+  autoProvision: Joi.boolean(),
   // Optional per-preset identifiers — accepted only when matching the
   // preset's expected pattern. Server-side defense in depth: even if the
   // frontend skips its own regex check, these can never reach the URL
@@ -251,7 +255,19 @@ router.get(
     if (!userinfoRes.ok) throw new ApiError(401, 'Userinfo fetch failed');
     const userinfo = await userinfoRes.json();
 
-    const user = await ssoService.handleOidcUserInfo(userinfo, org.id);
+    // Provisioning / access errors here should land on the SSO callback page
+    // as a friendly message (popup-aware), not a raw JSON error response.
+    let user;
+    try {
+      user = await ssoService.handleOidcUserInfo(userinfo, org.id);
+    } catch (err) {
+      const msg = err?.statusCode === 403 || err?.errorCode === 'SSO_NOT_PROVISIONED'
+        ? err.message
+        : 'Sign-in failed. Please contact your administrator.';
+      logger.warn('SSO sign-in rejected', { orgId: org.id, error: err.message });
+      const frag = new URLSearchParams({ error: msg }).toString();
+      return res.redirect(`${FRONTEND_URL}/auth/callback#${frag}`);
+    }
 
     const accessToken = generateAccessToken({
       userId: user.id,

@@ -35,7 +35,7 @@ const validateQuery = (schema) => (req, res, next) => {
 const ENVIRONMENTS = ['demo', 'dev', 'staging', 'prod'];
 const EFFECTS = ['ALLOW', 'DENY'];
 const SUBJECT_TYPES = ['USER', 'GROUP', 'ROLE'];
-const ORG_ROLES = ['super_admin', 'admin', 'operator', 'viewer'];
+const ORG_ROLES = ['super_admin', 'admin', 'manager', 'member'];
 
 const subjectSchema = Joi.object({
   subjectType: Joi.string().valid(...SUBJECT_TYPES).required(),

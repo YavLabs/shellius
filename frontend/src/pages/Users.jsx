@@ -39,14 +39,14 @@ import {
   triggerPasswordReset,
 } from '@/services/userService';
 
-const ROLES = ['super_admin', 'admin', 'operator', 'viewer'];
+const ROLES = ['super_admin', 'admin', 'manager', 'member'];
 const STATUSES = ['active', 'invited', 'suspended', 'deactivated'];
 
 const roleVariant = (role) => {
   switch (role) {
     case 'super_admin': return 'danger';
     case 'admin': return 'info';
-    case 'operator': return 'warning';
+    case 'manager': return 'warning';
     default: return 'default';
   }
 };

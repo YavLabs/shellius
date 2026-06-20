@@ -75,12 +75,12 @@ export const HELP_CONTENT = {
   users: {
     title: 'Users',
     summary:
-      "Everyone who can log in to Shellius. Roles control what they can see and do: super_admin > admin > operator > viewer.",
+      "Everyone who can log in to Shellius. Roles control what they can see and do: super_admin > admin > manager > member.",
     sections: [
       {
         heading: 'Roles',
         body:
-          'super_admin: full access, including CA rotation and SSO config. admin: org-wide read/write minus CA. operator: read-write servers, read-only policies, can review access requests. viewer: read-only.',
+          'super_admin: full access, including CA rotation and SSO config. admin: org-wide read/write minus CA, production access without approval. manager: production access without approval, can approve others. member: self-serve dev/staging; production requires approval.',
       },
       {
         heading: 'Inviting users',

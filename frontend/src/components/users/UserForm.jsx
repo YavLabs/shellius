@@ -1,6 +1,6 @@
 import { useState } from 'react';
 
-const ROLES = ['super_admin', 'admin', 'operator', 'viewer'];
+const ROLES = ['super_admin', 'admin', 'manager', 'member'];
 const STATUSES = ['active', 'invited', 'suspended', 'deactivated'];
 
 function UserForm({ user, onSubmit, onCancel }) {
@@ -8,7 +8,7 @@ function UserForm({ user, onSubmit, onCancel }) {
   const [name, setName] = useState(user?.name || '');
   const [email, setEmail] = useState(user?.email || '');
   const [password, setPassword] = useState('');
-  const [role, setRole] = useState(user?.role || 'viewer');
+  const [role, setRole] = useState(user?.role || 'member');
   const [status, setStatus] = useState(user?.status || 'active');
   const [managerId, setManagerId] = useState(user?.managerId || '');
   const [error, setError] = useState('');

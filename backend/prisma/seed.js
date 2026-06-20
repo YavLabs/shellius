@@ -30,6 +30,7 @@ import 'dotenv/config';
 import { PrismaClient } from '@prisma/client';
 import bcrypt from 'bcryptjs';
 import { seedRolesAndPolicies } from '../src/services/defaultSeedService.js';
+import * as caService from '../src/services/caService.js';
 
 const prisma = new PrismaClient();
 
@@ -129,13 +130,28 @@ async function main() {
 
   // Put the super admin in the Admins group so the approver routing has at
   // least one member to fall back on. Idempotent via the unique constraint.
-  const adminsGroup = groupsByName['Admins'];
+  const adminsGroup = groupsByName['Admin'];
   if (adminsGroup) {
     await prisma.groupMembership.upsert({
       where: { groupId_userId: { groupId: adminsGroup.id, userId: admin.id } },
       update: {},
       create: { groupId: adminsGroup.id, userId: admin.id },
     });
+  }
+
+  // Ensure an active SSH Certificate Authority key pair exists (idempotent).
+  // Without it, cert signing / host onboarding fails with "No active CA key
+  // pair found". Generated once; rotate later from Settings -> CA Management.
+  try {
+    const activeCa = await prisma.caKeyPair.findFirst({ where: { orgId: org.id, isActive: true } });
+    if (!activeCa) {
+      await caService.generateCaKeyPair(org.id, 'default');
+      console.log('[seed] CA key pair generated');
+    } else {
+      console.log('[seed] CA key pair present');
+    }
+  } catch (e) {
+    console.warn(`[seed] WARNING: CA key pair generation failed: ${e.message}`);
   }
 }
 
