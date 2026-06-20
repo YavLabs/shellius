@@ -16,4 +16,16 @@ export const setImportDecisions = (id, decision, { rowIds = [], applyAll = false
 
 export const commitImport = (id) => api.post(`/import/${id}/commit`).then((r) => r.data?.data ?? r.data);
 
-export const templateUrl = (entity) => `/api/import/templates/${entity}.csv`;
+// Fetch the template through the authenticated client (the endpoint requires a
+// bearer token, so a plain <a href> would 401) and trigger a file download.
+export const downloadTemplate = async (entity) => {
+  const res = await api.get(`/import/templates/${entity}.csv`, { responseType: 'blob' });
+  const url = window.URL.createObjectURL(new Blob([res.data], { type: 'text/csv' }));
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `${entity}-template.csv`;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  window.URL.revokeObjectURL(url);
+};

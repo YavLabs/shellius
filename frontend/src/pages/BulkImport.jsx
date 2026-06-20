@@ -16,7 +16,7 @@ import {
   getImportJob,
   setImportDecisions,
   commitImport,
-  templateUrl,
+  downloadTemplate,
 } from '@/services/importService';
 
 const ENTITY_TYPES = [
@@ -152,7 +152,7 @@ function BulkImport() {
 
       {/* Step: Upload */}
       {step === 'upload' && (
-        <div className="rounded-lg border border-border bg-card p-6 space-y-5 max-w-2xl">
+        <div className="rounded-lg border border-border bg-card p-6 space-y-5 w-full">
           <div>
             <label className="mb-1 block text-sm font-medium text-foreground">File type</label>
             <select
@@ -199,10 +199,15 @@ function BulkImport() {
             </Button>
             <span className="text-xs text-muted-foreground">Templates:</span>
             {['customers', 'servers', 'users', 'groups', 'policies', 'memberships'].map((e) => (
-              <a key={e} href={templateUrl(e)} className="inline-flex items-center gap-1 text-xs text-primary hover:underline">
+              <button
+                key={e}
+                type="button"
+                onClick={() => downloadTemplate(e).catch((err) => setError(err?.response?.data?.error?.message || err.message || 'Download failed'))}
+                className="inline-flex items-center gap-1 text-xs text-primary hover:underline"
+              >
                 <Download className="h-3 w-3" />
                 {e}
-              </a>
+              </button>
             ))}
           </div>
         </div>
