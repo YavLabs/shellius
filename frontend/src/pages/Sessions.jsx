@@ -4,6 +4,7 @@ import {
   Terminal as TerminalIcon,
   Eye,
   Square,
+  Download,
 } from 'lucide-react';
 import DataTable from '@/components/shared/DataTable';
 import Badge from '@/components/shared/Badge';
@@ -19,7 +20,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
-import { listSessions, listActiveSessions, getSession, terminateSession } from '@/services/sessionService';
+import { listSessions, listActiveSessions, getSession, terminateSession, downloadRecording } from '@/services/sessionService';
 import { useAuth } from '@/context/AuthContext';
 import { relativeTime, formatDateTime } from '@/utils/time';
 
@@ -164,13 +165,30 @@ function SessionDetailDrawer({ sessionId, open, onClose }) {
           )}
         </dl>
       )}
-      {!loading && session && session.recordingPath && (
+      {!loading && session && (session.recordingKey || session.recordingPath) && (
         <div className="mt-4">
-          <div className="mb-2 flex items-center gap-1.5 text-xs font-medium uppercase tracking-wide text-muted-foreground">
-            <Film className="h-3.5 w-3.5" />
-            Recording
+          <div className="mb-2 flex items-center justify-between">
+            <div className="flex items-center gap-1.5 text-xs font-medium uppercase tracking-wide text-muted-foreground">
+              <Film className="h-3.5 w-3.5" />
+              Session Replay
+            </div>
+            <button
+              onClick={() => downloadRecording(session.id)}
+              className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground"
+            >
+              <Download className="h-3.5 w-3.5" /> Download .cast
+            </button>
           </div>
           <SessionPlayer sessionId={session.id} />
+        </div>
+      )}
+      {!loading && session && !session.recordingKey && !session.recordingPath && (
+        <div className="mt-4 rounded-md border border-border bg-muted/40 px-3 py-2 text-xs text-muted-foreground">
+          {session.status === 'ACTIVE'
+            ? 'Recording is in progress — available once the session ends.'
+            : session.sessionType === 'RDP'
+              ? 'Replay is not available for RDP sessions.'
+              : 'No recording was captured for this session.'}
         </div>
       )}
     </Modal>
@@ -278,8 +296,8 @@ function Sessions() {
             {r.server?.hostname || r.server?.name || r.serverId}
           </span>
           {r.server?.environment && <EnvironmentBadge environment={r.server.environment} />}
-          {r.recordingPath && (
-            <Film className="h-3.5 w-3.5 shrink-0 text-muted-foreground" title="Recording available" />
+          {(r.recordingKey || r.recordingPath) && (
+            <Film className="h-3.5 w-3.5 shrink-0 text-muted-foreground" title="Replay available" />
           )}
         </div>
       ),

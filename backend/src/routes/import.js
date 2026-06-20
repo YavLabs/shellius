@@ -110,8 +110,8 @@ router.post(
 const TEMPLATES = {
   customers: 'name,slug,description\nAcme Corp,acme,Primary client\n',
   servers:
-    'hostname,displayName,ipAddress,customer,environment,protocol,sshUser,password,keyFile,sudoPassword,rdpUsername,rdpPassword,labels\n' +
-    'web-01,Acme Prod Web,10.0.0.10,acme,prod,ssh,ubuntu,,keys/web-01.pem,,,,team:web;tier:frontend\n',
+    'hostname,displayName,ipAddress,customer,environment,protocol,sshUser,password,keyFile,sudoPassword,rdpUsername,rdpPassword,labels,cloudProvider,cloudInstanceId,cloudRegion\n' +
+    'web-01,Acme Prod Web,10.0.0.10,acme,prod,ssh,ubuntu,,keys/web-01.pem,,,,team:web;tier:frontend,aws,i-0abc123def,ap-south-1\n',
   users: 'email,name,role,manager,sendInvite\njane@acme.com,Jane Doe,operator,,true\n',
   groups: 'name,description\nMembers,Standard members\n',
   policies:

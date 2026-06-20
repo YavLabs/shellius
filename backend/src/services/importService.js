@@ -495,6 +495,10 @@ async function commitServer(orgId, job, row, raw, overwrite, cache) {
     sshUser: str(raw.sshUser) || undefined,
     rdpUsername: str(raw.rdpUsername) || undefined,
     ...(raw.rdpPasswordEnc ? { rdpPassword: safeDecrypt(raw.rdpPasswordEnc) } : {}),
+    // Optional cloud provider metadata.
+    cloudProvider: lower(raw.cloudProvider) || undefined,
+    cloudInstanceId: str(raw.cloudInstanceId) || undefined,
+    cloudRegion: str(raw.cloudRegion) || undefined,
   };
 
   let server = await prisma.server.findFirst({ where: { orgId, hostname } });
