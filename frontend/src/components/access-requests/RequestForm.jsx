@@ -37,6 +37,9 @@ function RequestForm({ open, onClose, onSuccess, initialServerId = '' }) {
   const [protocol, setProtocol] = useState('SSH');
 
   const [submitting, setSubmitting] = useState(false);
+
+  const selectedServer = servers.find((s) => s.id === serverId);
+  const isRdp = protocol === 'RDP';
   const [error, setError] = useState('');
 
   const fetchServers = useCallback(async () => {
@@ -89,6 +92,12 @@ function RequestForm({ open, onClose, onSuccess, initialServerId = '' }) {
     };
   }, [open, serverId]);
 
+  // RDP uses the server's configured RDP account (injected by the gateway), not
+  // an SSH/Linux principal — prefill it and don't apply Linux-username rules.
+  useEffect(() => {
+    if (isRdp) setPrincipal(selectedServer?.rdpUsername || 'Administrator');
+  }, [isRdp, serverId]); // eslint-disable-line react-hooks/exhaustive-deps
+
   const handleSubmit = async (e) => {
     e.preventDefault();
     setError('');
@@ -102,10 +111,16 @@ function RequestForm({ open, onClose, onSuccess, initialServerId = '' }) {
       return;
     }
     const trimmedPrincipal = principal.trim();
-    if (!LINUX_USER_RE.test(trimmedPrincipal)) {
+    // SSH principals must be valid Linux usernames; RDP uses the server's RDP
+    // account (Windows usernames allow different characters), so skip that rule.
+    if (!isRdp && !LINUX_USER_RE.test(trimmedPrincipal)) {
       setError(
         'Principal must be a valid Linux username: lowercase letters, digits, underscore, or hyphen (1-32 chars, must start with a letter or underscore).'
       );
+      return;
+    }
+    if (isRdp && !trimmedPrincipal) {
+      setError('An RDP account is required.');
       return;
     }
     const requestedDuration = toSeconds(durationAmount, durationUnit);
@@ -216,25 +231,35 @@ function RequestForm({ open, onClose, onSuccess, initialServerId = '' }) {
 
         {/* Principal */}
         <div>
-          <label className={labelCls}>Requested Principal (SSH username) <span className="text-destructive">*</span></label>
+          <label className={labelCls}>
+            {isRdp ? 'RDP Account' : 'Requested Principal (SSH username)'}{' '}
+            <span className="text-destructive">*</span>
+          </label>
           <input
             type="text"
             className={`${inputCls} ${
-              principal && !LINUX_USER_RE.test(principal.trim())
+              !isRdp && principal && !LINUX_USER_RE.test(principal.trim())
                 ? 'border-destructive focus:ring-destructive'
                 : ''
             }`}
             value={principal}
             onChange={(e) => setPrincipal(e.target.value)}
-            placeholder="ubuntu"
+            placeholder={isRdp ? 'Administrator' : 'ubuntu'}
             autoComplete="off"
             spellCheck={false}
           />
-          <p className="mt-1 text-[11px] text-muted-foreground">
-            Must match an existing Linux user on the target host. Lowercase
-            letters, digits, underscore, or hyphen (1-32 chars).
-          </p>
-          {principal && !LINUX_USER_RE.test(principal.trim()) && (
+          {isRdp ? (
+            <p className="mt-1 text-[11px] text-muted-foreground">
+              The Windows/RDP account used to sign in. The gateway injects this
+              account&apos;s credentials at connect time.
+            </p>
+          ) : (
+            <p className="mt-1 text-[11px] text-muted-foreground">
+              Must match an existing Linux user on the target host. Lowercase
+              letters, digits, underscore, or hyphen (1-32 chars).
+            </p>
+          )}
+          {!isRdp && principal && !LINUX_USER_RE.test(principal.trim()) && (
             <p className="mt-1 text-[11px] text-destructive">
               Invalid Linux username — example valid values:{' '}
               <code className="font-mono">ubuntu</code>,{' '}

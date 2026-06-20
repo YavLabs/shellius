@@ -493,6 +493,7 @@ async function commitServer(orgId, job, row, raw, overwrite, cache) {
     labels: labelsToArray(raw.labels),
     osType: str(raw.osType) || undefined,
     osVersion: str(raw.osVersion) || undefined,
+    dynamicIp: ['true', 'yes', '1', 'y'].includes(str(raw.dynamicIp).trim().toLowerCase()) || undefined,
     sshUser: str(raw.sshUser) || undefined,
     rdpUsername: str(raw.rdpUsername) || undefined,
     ...(raw.rdpPasswordEnc ? { rdpPassword: safeDecrypt(raw.rdpPasswordEnc) } : {}),

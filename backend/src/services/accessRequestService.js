@@ -251,26 +251,32 @@ export async function submit({
   // the two resolved candidates. This prevents non-admins from requesting
   // arbitrary Linux usernames (which would fail at sshd auth anyway, but
   // better to reject early with a clear error).
-  const jitPolicy = await jitManifestService.findJitPolicyForUserServer({
-    orgId,
-    userId: requesterId,
-    serverId,
-  });
-  const jitPrincipal = jitPolicy ? jitManifestService.jitPrincipalFor(requester) : null;
-  const legacyPrincipal = server.sshUser || 'root';
-  const defaultPrincipal = jitPrincipal || legacyPrincipal;
+  if (protocol === 'RDP') {
+    // RDP uses the server's configured RDP account (injected by the gateway),
+    // not an SSH/Linux principal — the SSH allow-list rules don't apply.
+    requestedPrincipal = server.rdpUsername || requestedPrincipal || 'Administrator';
+  } else {
+    const jitPolicy = await jitManifestService.findJitPolicyForUserServer({
+      orgId,
+      userId: requesterId,
+      serverId,
+    });
+    const jitPrincipal = jitPolicy ? jitManifestService.jitPrincipalFor(requester) : null;
+    const legacyPrincipal = server.sshUser || 'root';
+    const defaultPrincipal = jitPrincipal || legacyPrincipal;
 
-  const isAdminCaller = callerRole === 'admin' || callerRole === 'super_admin';
-  if (!requestedPrincipal) {
-    requestedPrincipal = defaultPrincipal;
-  } else if (!isAdminCaller) {
-    const allowed = new Set([legacyPrincipal]);
-    if (jitPrincipal) allowed.add(jitPrincipal);
-    if (!allowed.has(requestedPrincipal)) {
-      throw new ApiError(
-        403,
-        `Principal "${requestedPrincipal}" is not allowed for this user. Allowed: ${[...allowed].join(', ')}. Admins can override.`
-      );
+    const isAdminCaller = callerRole === 'admin' || callerRole === 'super_admin';
+    if (!requestedPrincipal) {
+      requestedPrincipal = defaultPrincipal;
+    } else if (!isAdminCaller) {
+      const allowed = new Set([legacyPrincipal]);
+      if (jitPrincipal) allowed.add(jitPrincipal);
+      if (!allowed.has(requestedPrincipal)) {
+        throw new ApiError(
+          403,
+          `Principal "${requestedPrincipal}" is not allowed for this user. Allowed: ${[...allowed].join(', ')}. Admins can override.`
+        );
+      }
     }
   }
 
