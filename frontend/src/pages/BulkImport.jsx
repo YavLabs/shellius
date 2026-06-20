@@ -272,6 +272,15 @@ function BulkImport() {
                 </tr>
               </thead>
               <tbody>
+                {rows.length === 0 && (
+                  <tr>
+                    <td colSpan={4} className="px-3 py-6 text-center text-sm text-muted-foreground">
+                      No rows were parsed. For a single CSV, pick the matching{' '}
+                      <span className="font-medium text-foreground">File type</span> above and
+                      re-upload — “Auto-detect” only works for JSON objects and ZIP packages.
+                    </td>
+                  </tr>
+                )}
                 {rows.map((r) => (
                   <tr key={r.id} className="border-t border-border">
                     <td className="px-3 py-2 capitalize text-foreground">{r.entity}</td>

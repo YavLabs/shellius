@@ -134,13 +134,16 @@ export default function SearchableSelect({
         </span>
       );
     }
-    const sel = selectedValues ? byKey.get(selectedValues) : null;
+    // Use has() not truthiness — '' (e.g. "Auto" / "All X") is a valid value.
+    const sel = byKey.has(selectedValues) ? byKey.get(selectedValues) : null;
     if (!sel) return <span className="text-muted-foreground">{placeholder}</span>;
     if (renderValue) return renderValue(sel);
     return <span className="truncate">{sel.label}</span>;
   };
 
-  const hasSelection = multiple ? selectedValues.length > 0 : !!selectedValues;
+  const hasSelection = multiple
+    ? selectedValues.length > 0
+    : selectedValues !== undefined && selectedValues !== null && selectedValues !== '';
 
   return (
     <div ref={rootRef} className={`relative ${className}`}>
