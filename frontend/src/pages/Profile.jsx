@@ -235,7 +235,7 @@ function Profile() {
 
           <form onSubmit={handleNameSave} className="mb-6">
             <label htmlFor="profile-name" className="mb-1.5 block text-sm font-medium text-foreground">
-              Display name
+              Display name <span className="text-destructive">*</span>
             </label>
             <div className="flex gap-2">
               <input
@@ -323,7 +323,7 @@ function Profile() {
 
               <div>
                 <label htmlFor="current-password" className="mb-1.5 block text-sm font-medium text-foreground">
-                  Current password
+                  Current password <span className="text-destructive">*</span>
                 </label>
                 <div className="relative">
                   <Lock className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
@@ -350,7 +350,7 @@ function Profile() {
 
               <div>
                 <label htmlFor="new-password" className="mb-1.5 block text-sm font-medium text-foreground">
-                  New password
+                  New password <span className="text-destructive">*</span>
                 </label>
                 <div className="relative">
                   <Lock className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
@@ -380,7 +380,7 @@ function Profile() {
 
               <div>
                 <label htmlFor="confirm-password" className="mb-1.5 block text-sm font-medium text-foreground">
-                  Confirm new password
+                  Confirm new password <span className="text-destructive">*</span>
                 </label>
                 <div className="relative">
                   <Lock className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />

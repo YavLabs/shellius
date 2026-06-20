@@ -95,12 +95,12 @@ function UserForm({ user, onSubmit, onCancel }) {
       )}
 
       <div>
-        <label className="mb-1.5 block text-sm font-medium text-foreground">Name</label>
+        <label className="mb-1.5 block text-sm font-medium text-foreground">Name <span className="text-destructive">*</span></label>
         <input className={inputCls} value={name} onChange={(e) => setName(e.target.value)} required />
       </div>
 
       <div>
-        <label className="mb-1.5 block text-sm font-medium text-foreground">Email</label>
+        <label className="mb-1.5 block text-sm font-medium text-foreground">Email <span className="text-destructive">*</span></label>
         <input
           type="email"
           className={inputCls}
@@ -142,21 +142,24 @@ function UserForm({ user, onSubmit, onCancel }) {
               </label>
             </div>
             {pwMode === 'set' && (
-              <input
-                type="password"
-                className={inputCls}
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                placeholder="Minimum 8 characters"
-                autoComplete="new-password"
-              />
+              <div>
+                <label className="mb-1.5 block text-sm font-medium text-foreground">Password <span className="text-destructive">*</span></label>
+                <input
+                  type="password"
+                  className={inputCls}
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  placeholder="Minimum 8 characters"
+                  autoComplete="new-password"
+                />
+              </div>
             )}
           </div>
         )
       )}
 
       <div>
-        <label className="mb-1.5 block text-sm font-medium text-foreground">Role</label>
+        <label className="mb-1.5 block text-sm font-medium text-foreground">Role <span className="text-destructive">*</span></label>
         <select className={inputCls} value={role} onChange={(e) => setRole(e.target.value)}>
           {ROLES.map((r) => (
             <option key={r} value={r}>

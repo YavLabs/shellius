@@ -152,7 +152,7 @@ function Step1({ form, onChange, errors }) {
   return (
     <div className="space-y-4">
       <div>
-        <label className={labelCls}>Policy Name *</label>
+        <label className={labelCls}>Policy Name <span className="text-destructive">*</span></label>
         <input
           className={inputCls}
           value={form.name}
@@ -172,7 +172,7 @@ function Step1({ form, onChange, errors }) {
         />
       </div>
       <div>
-        <label className={labelCls}>Effect *</label>
+        <label className={labelCls}>Effect <span className="text-destructive">*</span></label>
         <div className="flex gap-4 mt-1">
           {['ALLOW', 'DENY'].map((eff) => (
             <label key={eff} className="flex items-center gap-2 cursor-pointer">
@@ -231,6 +231,7 @@ function Step1({ form, onChange, errors }) {
 function Step2({ form, onChange, errors }) {
   return (
     <div className="space-y-3">
+      <label className={labelCls}>Subjects <span className="text-destructive">*</span></label>
       <SubjectsPicker
         subjects={form.subjects || []}
         onChange={(next) => onChange('subjects', next)}
@@ -409,7 +410,7 @@ function Step3({ form, onChange, errors }) {
       </div>
 
       <div>
-        <label className={labelCls}>Allowed Principals</label>
+        <label className={labelCls}>Allowed Principals <span className="text-destructive">*</span></label>
         <div className="flex gap-2">
           <input
             className={inputCls}
@@ -508,7 +509,7 @@ function Step4({ form, onChange, errors }) {
   return (
     <div className="space-y-5">
       <div>
-        <label className={labelCls}>Max Session Duration (minutes)</label>
+        <label className={labelCls}>Max Session Duration (minutes) <span className="text-destructive">*</span></label>
         <input
           className={inputCls}
           type="number"

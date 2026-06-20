@@ -180,7 +180,7 @@ function OrgTab() {
           )}
           <div>
             <label className="mb-1.5 block text-sm font-medium text-foreground">
-              Organization Name
+              Organization Name <span className="text-destructive">*</span>
             </label>
             <Input
               value={name}
@@ -755,7 +755,7 @@ function SsoTab() {
             return (
               <div key={field}>
                 <label className="mb-1.5 block text-sm font-medium text-foreground">
-                  {label}
+                  {label} <span className="text-destructive">*</span>
                 </label>
                 <Input
                   value={formData[field] || ''}
@@ -1104,7 +1104,7 @@ function SmtpCard() {
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
             <div>
               <label className="mb-1 flex items-center text-xs font-medium text-muted-foreground">
-                Host {sourceBadge('host')}
+                Host <span className="text-destructive">*</span> {sourceBadge('host')}
               </label>
               <Input value={host} onChange={(e) => setHost(e.target.value)} placeholder="smtp.sendgrid.net" />
             </div>
@@ -1465,7 +1465,7 @@ function StorageTab() {
 
           <div>
             <label className="mb-1 flex items-center text-xs font-medium text-muted-foreground">
-              Provider
+              Provider <span className="text-destructive">*</span>
             </label>
             <Select value={provider} onValueChange={setProvider}>
               <SelectTrigger>

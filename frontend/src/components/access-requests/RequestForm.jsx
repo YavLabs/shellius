@@ -136,7 +136,7 @@ function RequestForm({ open, onClose, onSuccess, initialServerId = '' }) {
       <form onSubmit={handleSubmit} className="space-y-4">
         {/* Server */}
         <div>
-          <label className={labelCls}>Server</label>
+          <label className={labelCls}>Server <span className="text-destructive">*</span></label>
           <select
             className={`${selectCls} w-full`}
             value={serverId}
@@ -184,7 +184,7 @@ function RequestForm({ open, onClose, onSuccess, initialServerId = '' }) {
 
         {/* Reason */}
         <div>
-          <label className={labelCls}>Reason</label>
+          <label className={labelCls}>Reason <span className="text-destructive">*</span></label>
           <textarea
             className={`${inputCls} min-h-20 resize-none`}
             value={reason}
@@ -196,7 +196,7 @@ function RequestForm({ open, onClose, onSuccess, initialServerId = '' }) {
 
         {/* Duration */}
         <div>
-          <label className={labelCls}>Duration</label>
+          <label className={labelCls}>Duration <span className="text-destructive">*</span></label>
           <div className="flex gap-2">
             <input
               type="number"
@@ -221,7 +221,7 @@ function RequestForm({ open, onClose, onSuccess, initialServerId = '' }) {
 
         {/* Principal */}
         <div>
-          <label className={labelCls}>Requested Principal (SSH username)</label>
+          <label className={labelCls}>Requested Principal (SSH username) <span className="text-destructive">*</span></label>
           <input
             type="text"
             className={`${inputCls} ${

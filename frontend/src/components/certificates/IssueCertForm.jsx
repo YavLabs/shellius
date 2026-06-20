@@ -122,7 +122,7 @@ function IssueCertForm({ onSubmit, onCancel }) {
 
       <div>
         <label className="mb-1 block text-sm font-medium text-foreground">
-          Principals
+          Principals <span className="text-destructive">*</span>
         </label>
         <div className="flex flex-wrap gap-1.5 rounded-md border border-input bg-background p-2">
           {principals.map((p) => (

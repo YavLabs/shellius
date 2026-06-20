@@ -209,7 +209,7 @@ function ServerForm({ server, customerId: initialCustomerId, onSubmit, onCancel 
       <div className="space-y-3">
         <h4 className={sectionCls}>Basic Info</h4>
         <div>
-          <label className={labelCls}>Hostname</label>
+          <label className={labelCls}>Hostname <span className="text-destructive">*</span></label>
           <input
             className={inputCls}
             value={hostname}
@@ -272,7 +272,7 @@ function ServerForm({ server, customerId: initialCustomerId, onSubmit, onCancel 
 
         {/* IP Address */}
         <div>
-          <label className={labelCls}>IP Address</label>
+          <label className={labelCls}>IP Address <span className="text-destructive">*</span></label>
           <input
             className={`${inputCls} font-mono`}
             value={ipAddress}
@@ -386,7 +386,7 @@ function ServerForm({ server, customerId: initialCustomerId, onSubmit, onCancel 
         <h4 className={sectionCls}>Classification</h4>
         <div className="grid grid-cols-2 gap-3">
           <div>
-            <label className={labelCls}>Customer</label>
+            <label className={labelCls}>Customer <span className="text-destructive">*</span></label>
             <select
               className={inputCls}
               value={customerId}

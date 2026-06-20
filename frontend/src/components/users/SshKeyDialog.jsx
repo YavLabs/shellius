@@ -75,7 +75,7 @@ function SshKeyDialog({ user, onSave, onRemove, onCancel }) {
 
       {showEditor && (
         <div>
-          <label className="mb-1.5 block text-sm font-medium text-foreground">Public key</label>
+          <label className="mb-1.5 block text-sm font-medium text-foreground">Public key <span className="text-destructive">*</span></label>
           <textarea
             rows={6}
             value={publicKey}

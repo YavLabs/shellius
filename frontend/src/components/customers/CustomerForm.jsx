@@ -65,7 +65,7 @@ function CustomerForm({ customer, onSubmit, onCancel }) {
       )}
 
       <div>
-        <label className="mb-1.5 block text-sm font-medium text-foreground">Name</label>
+        <label className="mb-1.5 block text-sm font-medium text-foreground">Name <span className="text-destructive">*</span></label>
         <input
           className={inputCls}
           value={name}
@@ -75,7 +75,7 @@ function CustomerForm({ customer, onSubmit, onCancel }) {
       </div>
 
       <div>
-        <label className="mb-1.5 block text-sm font-medium text-foreground">Slug</label>
+        <label className="mb-1.5 block text-sm font-medium text-foreground">Slug <span className="text-destructive">*</span></label>
         <input
           className={`${inputCls} font-mono`}
           value={slug}

@@ -297,7 +297,7 @@ function Login() {
 
               <div>
                 <label className="mb-1.5 block text-sm font-medium text-foreground">
-                  {mfaMethod === 'backup' ? 'Backup code' : 'Verification code'}
+                  {mfaMethod === 'backup' ? 'Backup code' : 'Verification code'} <span className="text-destructive">*</span>
                 </label>
                 <input
                   value={mfaCode}
@@ -337,7 +337,7 @@ function Login() {
 
             <div>
               <label htmlFor="email" className="mb-1.5 block text-sm font-medium text-foreground">
-                Email
+                Email <span className="text-destructive">*</span>
               </label>
               <div className="relative">
                 <Mail className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
@@ -369,7 +369,7 @@ function Login() {
             <div>
               <div className="mb-1.5 flex items-center justify-between">
                 <label htmlFor="password" className="text-sm font-medium text-foreground">
-                  Password
+                  Password <span className="text-destructive">*</span>
                 </label>
                 <Link
                   to="/forgot-password"

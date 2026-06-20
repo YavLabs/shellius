@@ -77,7 +77,7 @@ function ProvisionModal({ server, onClose }) {
               <div className="space-y-2">
                 <label className="block text-sm font-medium text-foreground">
                   <Key className="mr-1.5 inline h-3.5 w-3.5" />
-                  SSH Private Key
+                  SSH Private Key <span className="text-destructive">*</span>
                 </label>
                 <textarea
                   rows={8}
