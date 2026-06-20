@@ -122,31 +122,17 @@ function Login() {
     if (!ssoStatus.enabled || !ssoStatus.orgSlug) return;
     setError('');
     setSsoSubmitting(true);
-    const url = `/api/auth/sso/${ssoStatus.orgSlug}`;
-    const w = 480;
-    const h = 640;
-    const left = window.screenX + (window.outerWidth - w) / 2;
-    const top = window.screenY + (window.outerHeight - h) / 2;
-    const popup = window.open(
-      url,
-      'shellius-sso',
-      `width=${w},height=${h},left=${left},top=${top},menubar=no,toolbar=no,location=no,status=no`
-    );
-    if (!popup) {
-      setSsoSubmitting(false);
-      setError('Popup was blocked. Please allow popups for this site and try again.');
-      return;
+    // Full-page redirect (no popup). Popups are unreliable across the
+    // cross-origin IdP round-trip — privacy browsers (e.g. Brave) clear
+    // window.name and COOP severs window.opener, so the handoff fails and the
+    // app loads inside the popup. A same-tab redirect is the robust OAuth flow.
+    // Preserve the post-login destination for AuthCallback to honor.
+    try {
+      sessionStorage.setItem('sso_redirect', safePostLoginDest);
+    } catch {
+      /* ignore */
     }
-    // Watchdog: if user closes the popup without completing, reset
-    const watcher = setInterval(() => {
-      if (popup.closed) {
-        clearInterval(watcher);
-        setSsoSubmitting((s) => {
-          if (s) setError('SSO sign-in cancelled.');
-          return false;
-        });
-      }
-    }, 600);
+    window.location.href = `/api/auth/sso/${ssoStatus.orgSlug}`;
   };
 
   // Email-first: decide whether to show a password field, start SSO, or send a

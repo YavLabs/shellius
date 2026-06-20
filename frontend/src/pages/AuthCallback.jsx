@@ -63,14 +63,22 @@ function AuthCallback() {
       return;
     }
 
-    // Standalone tab — store directly and continue.
+    // Full-page redirect flow (no popup) — store tokens and continue.
     if (!payload.ok) {
       setStatus('error');
       setErrorMsg(payload.error);
       return;
     }
+    let dest = '/dashboard';
+    try {
+      const saved = sessionStorage.getItem('sso_redirect');
+      if (saved && saved.startsWith('/') && !saved.startsWith('//')) dest = saved;
+      sessionStorage.removeItem('sso_redirect');
+    } catch {
+      /* ignore */
+    }
     loginWithTokens({ accessToken, refreshToken })
-      .then(() => navigate('/dashboard', { replace: true }))
+      .then(() => navigate(dest, { replace: true }))
       .catch((e) => {
         setStatus('error');
         setErrorMsg(e?.message || 'Failed to complete SSO login');

@@ -219,11 +219,12 @@ function ServerForm({ server, customerId: initialCustomerId, onSubmit, onCancel 
           />
         </div>
         <div>
-          <label className={labelCls}>Display Name</label>
+          <label className={labelCls}>Name</label>
           <input
             className={inputCls}
             value={displayName}
             onChange={(e) => setDisplayName(e.target.value)}
+            placeholder="Friendly name (e.g. Acme Prod Web)"
           />
         </div>
         <div>

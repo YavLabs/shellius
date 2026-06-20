@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import { listUsers } from '@/services/userService';
+import api from '@/services/api';
 
 const ROLES = ['super_admin', 'admin', 'manager', 'member'];
 const STATUSES = ['active', 'invited', 'suspended', 'deactivated'];
@@ -13,6 +14,9 @@ function UserForm({ user, onSubmit, onCancel }) {
   const [status, setStatus] = useState(user?.status || 'active');
   const [managerId, setManagerId] = useState(user?.managerId || '');
   const [managers, setManagers] = useState([]);
+  // 'email' = send a set-password invite; 'set' = admin sets the password now.
+  const [pwMode, setPwMode] = useState('email');
+  const [ssoEnabled, setSsoEnabled] = useState(false);
   const [error, setError] = useState('');
   const [submitting, setSubmitting] = useState(false);
 
@@ -24,6 +28,11 @@ function UserForm({ user, onSubmit, onCancel }) {
         setManagers((Array.isArray(items) ? items : []).filter((u) => u.id !== user?.id));
       })
       .catch(() => setManagers([]));
+    // Whether SSO is configured — if so, new users sign in via SSO (no password).
+    api
+      .get('/auth/sso/public-status')
+      .then((r) => setSsoEnabled(!!r.data?.data?.enabled))
+      .catch(() => setSsoEnabled(false));
   }, [user?.id]);
 
   const handleSubmit = async (e) => {
@@ -38,14 +47,26 @@ function UserForm({ user, onSubmit, onCancel }) {
       setError('Invalid email format');
       return;
     }
-    if (!isEdit && password.length < 8) {
-      setError('Password must be at least 8 characters');
-      return;
-    }
+
     const payload = { name: name.trim(), email: email.trim(), role };
-    if (!isEdit) payload.password = password;
-    if (isEdit) payload.status = status;
     if (managerId) payload.managerId = managerId;
+
+    if (isEdit) {
+      payload.status = status;
+    } else if (ssoEnabled) {
+      // SSO configured — no password; send the "sign in with SSO" invite.
+      payload.sendInvite = true;
+    } else if (pwMode === 'set') {
+      if (password.length < 8) {
+        setError('Password must be at least 8 characters');
+        return;
+      }
+      payload.password = password; // active immediately, no email
+    } else {
+      // Send a set-password email invite.
+      payload.sendInvite = true;
+    }
+
     setSubmitting(true);
     try {
       await onSubmit(payload);
@@ -84,17 +105,48 @@ function UserForm({ user, onSubmit, onCancel }) {
       </div>
 
       {!isEdit && (
-        <div>
-          <label className="mb-1.5 block text-sm font-medium text-foreground">Password</label>
-          <input
-            type="password"
-            className={inputCls}
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-            placeholder="Minimum 8 characters"
-            required
-          />
-        </div>
+        ssoEnabled ? (
+          <div className="rounded-md border border-blue-500/40 bg-blue-500/10 px-3 py-2 text-sm text-blue-700 dark:text-blue-300">
+            SSO is configured — this user will sign in with single sign-on. No password is
+            needed; they&apos;ll receive an invitation email.
+          </div>
+        ) : (
+          <div className="space-y-2">
+            <label className="block text-sm font-medium text-foreground">Password setup</label>
+            <div className="flex flex-col gap-2">
+              <label className="flex items-center gap-2 text-sm">
+                <input
+                  type="radio"
+                  name="pwMode"
+                  checked={pwMode === 'email'}
+                  onChange={() => setPwMode('email')}
+                  className="h-4 w-4 accent-primary"
+                />
+                Send the user an email to set their own password
+              </label>
+              <label className="flex items-center gap-2 text-sm">
+                <input
+                  type="radio"
+                  name="pwMode"
+                  checked={pwMode === 'set'}
+                  onChange={() => setPwMode('set')}
+                  className="h-4 w-4 accent-primary"
+                />
+                Set a password now
+              </label>
+            </div>
+            {pwMode === 'set' && (
+              <input
+                type="password"
+                className={inputCls}
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                placeholder="Minimum 8 characters"
+                autoComplete="new-password"
+              />
+            )}
+          </div>
+        )
       )}
 
       <div>

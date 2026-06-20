@@ -121,7 +121,7 @@ router.get(
 
 router.post(
   '/',
-  requireRole('super_admin', 'admin'),
+  requireRole('super_admin', 'admin', 'manager'),
   validate(createSchema),
   asyncHandler(async (req, res) => {
     const { customerId, ...rest } = req.body;
@@ -132,7 +132,7 @@ router.post(
 
 router.put(
   '/:id',
-  requireRole('super_admin', 'admin'),
+  requireRole('super_admin', 'admin', 'manager'),
   validate(updateSchema),
   asyncHandler(async (req, res) => {
     const server = await serverService.updateServer(req.orgId, req.params.id, req.body);
@@ -151,7 +151,7 @@ router.delete(
 
 router.post(
   '/:id/health-check',
-  requireRole('super_admin', 'admin'),
+  requireRole('super_admin', 'admin', 'manager'),
   asyncHandler(async (req, res) => {
     const server = await healthCheckService.runHealthCheckForServer(req.orgId, req.params.id);
     if (!server) throw new ApiError(404, 'Server not found');
@@ -164,7 +164,7 @@ router.post(
 // The private key and sudo password are used once in memory and never stored.
 router.post(
   '/:id/provision',
-  requireRole('super_admin', 'admin'),
+  requireRole('super_admin', 'admin', 'manager'),
   asyncHandler(async (req, res) => {
     const { privateKey, sshUser, sudoPassword } = req.body;
     if (!privateKey) throw new ApiError(400, 'privateKey is required');

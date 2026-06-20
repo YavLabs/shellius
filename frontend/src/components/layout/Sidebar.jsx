@@ -86,8 +86,8 @@ const NAV_SECTIONS = [
   {
     label: 'Administration',
     items: [
-      { id: 'users', label: 'Users', icon: Users, to: '/users' },
-      { id: 'groups', label: 'Groups', icon: UsersRound, to: '/groups' },
+      { id: 'users', label: 'Users', icon: Users, to: '/users', minRole: 'admin' },
+      { id: 'groups', label: 'Groups', icon: UsersRound, to: '/groups', minRole: 'admin' },
       { id: 'bulk-import', label: 'Bulk Import', icon: Upload, to: '/bulk-import', minRole: 'admin' },
     ],
   },

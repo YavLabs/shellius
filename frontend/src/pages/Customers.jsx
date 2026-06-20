@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Plus, Building2, Server, Eye, Pencil, Trash2 } from 'lucide-react';
+import { Plus, Building2, Server, Eye, Pencil, Trash2, RefreshCw } from 'lucide-react';
 import Badge from '@/components/shared/Badge';
 import Modal from '@/components/shared/Modal';
 import ConfirmDialog from '@/components/shared/ConfirmDialog';
@@ -8,10 +8,15 @@ import DataTable from '@/components/shared/DataTable';
 import CustomerForm from '@/components/customers/CustomerForm';
 import PageHeader from '@/components/common/PageHeader';
 import { Button } from '@/components/ui/button';
+import { useAuth } from '@/context/AuthContext';
+import { roleAtLeast } from '@/lib/permissions';
 import { listCustomers, createCustomer, updateCustomer, deleteCustomer } from '@/services/customerService';
 
 function Customers() {
   const navigate = useNavigate();
+  const { user } = useAuth();
+  const canManage = roleAtLeast(user, 'manager'); // create / edit
+  const canDelete = roleAtLeast(user, 'admin');
   const [customers, setCustomers] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -123,18 +128,15 @@ function Customers() {
           icon: Eye,
           onClick: (c) => navigate(`/customers/${c.id}`),
         },
-        {
-          label: 'Edit',
-          icon: Pencil,
-          onClick: (c) => setEditing(c),
-        },
-        { separator: true },
-        {
-          label: 'Delete',
-          icon: Trash2,
-          variant: 'destructive',
-          onClick: (c) => handleDelete(c),
-        },
+        ...(canManage
+          ? [{ label: 'Edit', icon: Pencil, onClick: (c) => setEditing(c) }]
+          : []),
+        ...(canDelete
+          ? [
+              { separator: true },
+              { label: 'Delete', icon: Trash2, variant: 'destructive', onClick: (c) => handleDelete(c) },
+            ]
+          : []),
       ],
     },
   ];
@@ -142,9 +144,16 @@ function Customers() {
   return (
     <div className="space-y-6 p-6">
       <PageHeader icon={Building2} title="Customers" subtitle="Organize servers and access by tenant." helpKey="customers">
-        <Button onClick={() => setCreateOpen(true)}>
-          <Plus className="mr-2 h-4 w-4" /> Add Customer
-        </Button>
+        <div className="flex items-center gap-2">
+          <Button variant="outline" onClick={() => fetch()} disabled={loading}>
+            <RefreshCw className={`mr-2 h-4 w-4 ${loading ? 'animate-spin' : ''}`} /> Refresh
+          </Button>
+          {canManage && (
+            <Button onClick={() => setCreateOpen(true)}>
+              <Plus className="mr-2 h-4 w-4" /> Add Customer
+            </Button>
+          )}
+        </div>
       </PageHeader>
 
       {error && (

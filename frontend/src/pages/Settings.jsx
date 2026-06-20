@@ -1693,12 +1693,12 @@ function MfaTab() {
 }
 
 const TABS = [
-  { key: 'org', label: 'Organization', icon: Building2 },
-  { key: 'ca', label: 'CA Management', icon: Shield },
-  { key: 'sso', label: 'SSO', icon: Wifi },
+  { key: 'org', label: 'Organization', icon: Building2, minRole: 'admin' },
+  { key: 'ca', label: 'CA Management', icon: Shield, minRole: 'super_admin' },
+  { key: 'sso', label: 'SSO', icon: Wifi, minRole: 'super_admin' },
   { key: 'storage', label: 'Storage', icon: HardDrive, minRole: 'super_admin' },
   { key: 'mfa', label: 'MFA', icon: ShieldCheck, minRole: 'super_admin' },
-  { key: 'notifications', label: 'Notifications', icon: Bell },
+  { key: 'notifications', label: 'Notifications', icon: Bell, minRole: 'super_admin' },
 ];
 
 // ---------------------------------------------------------------------------
@@ -1741,12 +1741,12 @@ function Settings() {
       </div>
 
       {/* Tab content */}
-      {activeTab === 'org' && <OrgTab />}
-      {activeTab === 'ca' && <CaTab />}
-      {activeTab === 'sso' && <SsoTab />}
+      {activeTab === 'org' && isAtLeast(user, 'admin') && <OrgTab />}
+      {activeTab === 'ca' && isAtLeast(user, 'super_admin') && <CaTab />}
+      {activeTab === 'sso' && isAtLeast(user, 'super_admin') && <SsoTab />}
       {activeTab === 'storage' && isAtLeast(user, 'super_admin') && <StorageTab />}
       {activeTab === 'mfa' && isAtLeast(user, 'super_admin') && <MfaTab />}
-      {activeTab === 'notifications' && <NotificationsTab />}
+      {activeTab === 'notifications' && isAtLeast(user, 'super_admin') && <NotificationsTab />}
     </div>
   );
 }

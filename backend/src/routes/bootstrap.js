@@ -74,7 +74,7 @@ router.post(
   '/token',
   authenticate,
   tenant,
-  requireRole('admin'),
+  requireRole('super_admin', 'admin', 'manager'),
   asyncHandler(async (req, res) => {
     const { error, value } = tokenSchema.validate(req.body);
     if (error) throw new ApiError(400, error.message);
@@ -246,7 +246,7 @@ router.post(
   '/uninstall-token',
   authenticate,
   tenant,
-  requireRole('admin'),
+  requireRole('super_admin', 'admin', 'manager'),
   asyncHandler(async (req, res) => {
     const { error, value } = tokenSchema.validate(req.body);
     if (error) throw new ApiError(400, error.message);

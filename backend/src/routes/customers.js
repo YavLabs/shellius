@@ -61,7 +61,7 @@ router.get(
 
 router.post(
   '/',
-  requireRole('super_admin', 'admin'),
+  requireRole('super_admin', 'admin', 'manager'),
   validate(createSchema),
   asyncHandler(async (req, res) => {
     const customer = await customerService.createCustomer(req.orgId, req.body);
@@ -71,7 +71,7 @@ router.post(
 
 router.put(
   '/:id',
-  requireRole('super_admin', 'admin'),
+  requireRole('super_admin', 'admin', 'manager'),
   validate(updateSchema),
   asyncHandler(async (req, res) => {
     const customer = await customerService.updateCustomer(req.orgId, req.params.id, req.body);

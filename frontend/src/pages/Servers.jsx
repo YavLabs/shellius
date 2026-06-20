@@ -12,6 +12,7 @@ import {
   Download,
   Eye,
   Eraser,
+  RefreshCw,
 } from 'lucide-react';
 import DataTable from '@/components/shared/DataTable';
 import Modal from '@/components/shared/Modal';
@@ -41,6 +42,7 @@ import {
 } from '@/services/serverService';
 import { listCustomers } from '@/services/customerService';
 import { useAuth } from '@/context/AuthContext';
+import { roleAtLeast } from '@/lib/permissions';
 import { relativeTime } from '@/utils/time';
 
 const ENVIRONMENTS = ['demo', 'dev', 'staging', 'prod'];
@@ -49,8 +51,9 @@ const HEALTH_STATUSES = ['healthy', 'unhealthy', 'unknown', 'maintenance'];
 function Servers() {
   const navigate = useNavigate();
   const { user } = useAuth();
-  // Create / edit / delete / bootstrap are admin-only (matches the API).
-  const canManage = user?.role === 'super_admin' || user?.role === 'admin';
+  // Managers onboard/manage servers; only admins delete (matches the API).
+  const canManage = roleAtLeast(user, 'manager');
+  const canDelete = roleAtLeast(user, 'admin');
 
   const [servers, setServers] = useState([]);
   const [total, setTotal] = useState(0);
@@ -248,19 +251,24 @@ function Servers() {
   const columns = [
     {
       key: 'hostname',
-      label: 'Hostname',
+      label: 'Name',
       sortable: true,
-      searchAccessor: (r) => `${r.hostname} ${r.ipAddress || ''}`,
+      searchAccessor: (r) => `${r.displayName || ''} ${r.hostname} ${r.ipAddress || ''}`,
       render: (r) => {
         const proto = r.protocol || r.type || 'SSH';
         const ProtoIcon = proto === 'RDP' ? Monitor : TerminalIcon;
         return (
           <button
             onClick={() => navigate(`/servers/${r.id}`)}
-            className="flex items-center gap-2 font-medium text-foreground hover:text-primary"
+            className="flex items-center gap-2 text-left hover:text-primary"
           >
             <ProtoIcon className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
-            {r.hostname}
+            <span>
+              <span className="block font-medium text-foreground">{r.displayName || r.hostname}</span>
+              {r.displayName && (
+                <span className="block font-mono text-[11px] text-muted-foreground">{r.hostname}</span>
+              )}
+            </span>
           </button>
         );
       },
@@ -366,6 +374,10 @@ function Servers() {
                 icon: Activity,
                 onClick: (r) => handleHealthCheck(r),
               },
+            ]
+          : []),
+        ...(canDelete
+          ? [
               { separator: true },
               {
                 label: 'Delete',
@@ -385,16 +397,21 @@ function Servers() {
         icon={ServerIcon}
         title="Servers"
         subtitle="Manage target servers across customers." helpKey="servers">
-        {canManage && (
-          <Button
-            onClick={() => {
-              setEditing(null);
-              setFormOpen(true);
-            }}
-          >
-            <Plus className="mr-2 h-4 w-4" /> Add Server
+        <div className="flex items-center gap-2">
+          <Button variant="outline" onClick={() => fetch()} disabled={loading}>
+            <RefreshCw className={`mr-2 h-4 w-4 ${loading ? 'animate-spin' : ''}`} /> Refresh
           </Button>
-        )}
+          {canManage && (
+            <Button
+              onClick={() => {
+                setEditing(null);
+                setFormOpen(true);
+              }}
+            >
+              <Plus className="mr-2 h-4 w-4" /> Add Server
+            </Button>
+          )}
+        </div>
       </PageHeader>
 
       {error && (

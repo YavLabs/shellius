@@ -102,7 +102,7 @@ router.get(
   '/config',
   authenticate,
   tenant,
-  requireRole('admin'),
+  requireRole('super_admin'),
   asyncHandler(async (req, res) => {
     const config = await ssoConfigService.get(req.orgId);
     const effective = await ssoConfigService.getEffective(req.orgId);
@@ -115,7 +115,7 @@ router.put(
   '/config',
   authenticate,
   tenant,
-  requireRole('admin'),
+  requireRole('super_admin'),
   audit('sso.config.update', 'SsoConfig'),
   validate(ssoConfigSchema),
   asyncHandler(async (req, res) => {
@@ -129,7 +129,7 @@ router.post(
   '/config/test',
   authenticate,
   tenant,
-  requireRole('admin'),
+  requireRole('super_admin'),
   audit('sso.config.test', 'SsoConfig'),
   validate(ssoTestSchema),
   asyncHandler(async (req, res) => {

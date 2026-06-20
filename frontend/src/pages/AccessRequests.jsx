@@ -9,6 +9,7 @@ import {
   AlertCircle,
   KeyRound,
   Eye,
+  RefreshCw,
 } from 'lucide-react';
 import DataTable from '@/components/shared/DataTable';
 import Badge from '@/components/shared/Badge';
@@ -419,10 +420,15 @@ function AccessRequests() {
         icon={KeyRound}
         title="Access Requests"
         subtitle="Request temporary access to servers or review pending requests." helpKey="access-requests">
-        <Button onClick={() => setFormOpen(true)}>
-          <Plus className="mr-2 h-4 w-4" />
-          New Request
-        </Button>
+        <div className="flex items-center gap-2">
+          <Button variant="outline" onClick={() => fetchRequests()} disabled={loading}>
+            <RefreshCw className={`mr-2 h-4 w-4 ${loading ? 'animate-spin' : ''}`} /> Refresh
+          </Button>
+          <Button onClick={() => setFormOpen(true)}>
+            <Plus className="mr-2 h-4 w-4" />
+            New Request
+          </Button>
+        </div>
       </PageHeader>
 
       {/* Tabs */}
