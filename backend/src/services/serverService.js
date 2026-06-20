@@ -31,6 +31,7 @@ const MUTABLE_FIELDS = [
   'displayName',
   'description',
   'ipAddress',
+  'dynamicIp',
   'port',
   'protocol',
   'environment',
@@ -194,6 +195,28 @@ export async function bulkUpdate(orgId, serverIds, patch = {}) {
     data,
   });
   return { updated: result.count };
+}
+
+/**
+ * Update just the connection IP of a server whose IP is marked non-static.
+ * Available to anyone who can connect (members included) so a changed cloud IP
+ * doesn't block access; only allowed when the server is flagged dynamicIp.
+ */
+export async function updateConnectionIp(orgId, serverId, ipAddress) {
+  const server = await prisma.server.findFirst({ where: { id: serverId, orgId } });
+  if (!server) throw new ApiError(404, 'Server not found');
+  if (!server.dynamicIp) {
+    throw new ApiError(400, 'This server does not have a changeable IP');
+  }
+  if (!validateIp(ipAddress)) {
+    throw new ApiError(400, 'ipAddress must be a valid IPv4 or IPv6 address');
+  }
+  const updated = await prisma.server.update({
+    where: { id: serverId },
+    data: { ipAddress },
+    include: { customer: { select: { id: true, name: true, slug: true } } },
+  });
+  return stripRdpSecrets(updated);
 }
 
 export async function getServersByLabel(orgId, labels) {

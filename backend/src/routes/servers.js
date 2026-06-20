@@ -145,6 +145,22 @@ router.get(
   })
 );
 
+// Update the connection IP of a non-static-IP server (any role with access) —
+// so a changed cloud IP doesn't lock members out.
+router.patch(
+  '/:id/connection-ip',
+  requireRole('super_admin', 'admin', 'manager', 'member'),
+  validate(Joi.object({ ipAddress: Joi.string().required() })),
+  asyncHandler(async (req, res) => {
+    const server = await serverService.updateConnectionIp(
+      req.orgId,
+      req.params.id,
+      req.body.ipAddress
+    );
+    res.json({ success: true, data: { server } });
+  })
+);
+
 router.post(
   '/',
   requireRole('super_admin', 'admin', 'manager'),

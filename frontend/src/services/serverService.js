@@ -19,6 +19,9 @@ export const bulkUpdateEnvironment = (serverIds, environment) =>
 
 export const bulkUpdateServers = (serverIds, patch) =>
   api.post('/servers/bulk', { serverIds, patch }).then((r) => r.data.data);
+
+export const updateConnectionIp = (id, ipAddress) =>
+  api.patch(`/servers/${id}/connection-ip`, { ipAddress }).then((r) => r.data?.data?.server ?? r.data?.data);
 export const triggerHealthCheck = (id) =>
   api.post(`/servers/${id}/health-check`).then(unwrapServer);
 

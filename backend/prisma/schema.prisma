@@ -159,6 +159,7 @@ model Server {
   displayName     String?        @map("display_name")
   description     String?
   ipAddress       String         @map("ip_address")
+  dynamicIp       Boolean        @default(false) @map("dynamic_ip") // public IP can change (no static IP)
   port            Int            @default(22)
   protocol        ServerProtocol @default(ssh)
   environment     Environment    @default(dev)

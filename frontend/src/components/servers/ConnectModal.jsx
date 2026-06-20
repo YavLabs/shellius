@@ -7,6 +7,7 @@ import { Input } from '@/components/ui/input';
 import PrivateIPWarning from './PrivateIPWarning';
 import { LINUX_USER_RE } from '@/utils/principal';
 import SearchableSelect from '@/components/ui/SearchableSelect';
+import { updateConnectionIp } from '@/services/serverService';
 
 /**
  * ConnectModal
@@ -29,14 +30,19 @@ function ConnectModal({ open, onClose, server, intent, currentUser }) {
 
   const [principal, setPrincipal] = useState(() => intent?.preferredPrincipal || '');
   const [overrideOn, setOverrideOn] = useState(false);
+  const [ip, setIp] = useState(server?.ipAddress || '');
+  const [ipErr, setIpErr] = useState('');
+  const [connecting, setConnecting] = useState(false);
 
   // Reset on each open so a stale value from a previous render doesn't leak.
   useEffect(() => {
     if (open) {
       setPrincipal(intent?.preferredPrincipal || '');
       setOverrideOn(false);
+      setIp(server?.ipAddress || '');
+      setIpErr('');
     }
-  }, [open, intent?.preferredPrincipal]);
+  }, [open, intent?.preferredPrincipal, server?.ipAddress]);
 
   const trimmed = (principal || '').trim();
   const isValidFormat = LINUX_USER_RE.test(trimmed);
@@ -48,8 +54,22 @@ function ConnectModal({ open, onClose, server, intent, currentUser }) {
   const canSubmit =
     isValidFormat && (editable || isInAllowList || allowed.length === 0);
 
-  const onConnect = () => {
+  const onConnect = async () => {
     if (!canSubmit || !intent?.activeRequestId) return;
+    // For non-static-IP servers, persist a changed IP first so the connection
+    // (which reads the server's stored IP) targets the right host.
+    if (server?.dynamicIp && ip.trim() && ip.trim() !== server.ipAddress) {
+      setConnecting(true);
+      setIpErr('');
+      try {
+        await updateConnectionIp(server.id, ip.trim());
+      } catch (e) {
+        setIpErr(e.response?.data?.error?.message || 'Failed to update IP');
+        setConnecting(false);
+        return;
+      }
+      setConnecting(false);
+    }
     const params = new URLSearchParams({ requestId: intent.activeRequestId });
     if (trimmed && trimmed !== intent.preferredPrincipal) {
       params.set('principal', trimmed);
@@ -82,10 +102,28 @@ function ConnectModal({ open, onClose, server, intent, currentUser }) {
 
         {/* Connection details */}
         <div className="grid grid-cols-3 gap-3">
-          <ReadOnlyField label="Host" value={server?.ipAddress || server?.hostname || '-'} />
+          {server?.dynamicIp ? (
+            <div>
+              <p className="mb-1 text-xs font-medium text-muted-foreground">Host (IP)</p>
+              <input
+                className="h-8 w-full rounded-md border border-input bg-background px-2 font-mono text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
+                value={ip}
+                onChange={(e) => setIp(e.target.value)}
+                placeholder={server?.ipAddress || 'current IP'}
+              />
+            </div>
+          ) : (
+            <ReadOnlyField label="Host" value={server?.ipAddress || server?.hostname || '-'} />
+          )}
           <ReadOnlyField label="Port" value={port} />
           <ReadOnlyField label="Protocol" value={proto} />
         </div>
+        {server?.dynamicIp && (
+          <p className="-mt-2 text-xs text-muted-foreground">
+            This server&apos;s IP can change. Confirm or update it before connecting.
+          </p>
+        )}
+        {ipErr && <p className="text-xs text-destructive">{ipErr}</p>}
 
         {/* Principal picker — only meaningful for SSH */}
         {!isRdp && (
@@ -170,8 +208,11 @@ function ConnectModal({ open, onClose, server, intent, currentUser }) {
           <Button variant="outline" onClick={onClose}>
             Cancel
           </Button>
-          <Button onClick={onConnect} disabled={!canSubmit}>
-            Connect
+          <Button
+            onClick={onConnect}
+            disabled={!canSubmit || connecting || (server?.dynamicIp && !ip.trim())}
+          >
+            {connecting ? 'Updating IP…' : 'Connect'}
           </Button>
         </div>
       </div>

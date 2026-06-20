@@ -72,6 +72,7 @@ function ServerForm({ server, customerId: initialCustomerId, onSubmit, onCancel 
   // ── Connection ───────────────────────────────────────────────────────────
   const [ipAddress, setIpAddress] = useState(server?.ipAddress || '');
   const [ipError, setIpError]     = useState('');
+  const [dynamicIp, setDynamicIp] = useState(!!server?.dynamicIp);
   const [protocol, setProtocol]   = useState(initialProtocol);
   const [port, setPort]           = useState(server?.port || defaultPort(initialProtocol));
   const [sshUser, setSshUser]     = useState(server?.sshUser || 'root');
@@ -158,6 +159,7 @@ function ServerForm({ server, customerId: initialCustomerId, onSubmit, onCancel 
       displayName:     displayName.trim() || undefined,
       description:     description.trim() || undefined,
       ipAddress,
+      dynamicIp,
       port:            Number(port),
       protocol,
       customerId,
@@ -283,6 +285,18 @@ function ServerForm({ server, customerId: initialCustomerId, onSubmit, onCancel 
           />
           {ipError && <p className="mt-1 text-xs text-destructive">{ipError}</p>}
           <PrivateIPWarning ipAddress={ipAddress} variant="note" />
+          <label className="mt-2 flex items-center gap-2 text-sm text-foreground">
+            <input
+              type="checkbox"
+              checked={dynamicIp}
+              onChange={(e) => setDynamicIp(e.target.checked)}
+              className="rounded border-border accent-primary"
+            />
+            IP may change (not static)
+            <span className="text-xs text-muted-foreground">
+              — users can update it at connect time
+            </span>
+          </label>
         </div>
 
         {/* Protocol — filtered by OS type */}
