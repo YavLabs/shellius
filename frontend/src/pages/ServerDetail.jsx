@@ -223,6 +223,24 @@ function ServerDetail() {
           <Field label="Message" value={server.healthMessage} />
         </Card>
 
+        <Card title="Onboarding">
+          <Field label="Status" value={server.provisionStatus || 'pending'} />
+          {server.provisionStatus === 'failed' && (
+            <Field label="Error" value={server.provisionError} />
+          )}
+          <Field label="Provisioned" value={formatDateTime(server.provisionedAt)} />
+          {server.provisionStatus !== 'provisioned' && canProvision && (
+            <div className="pt-2">
+              <Button size="sm" onClick={() => setProvisionOpen(true)}>
+                {server.provisionStatus === 'failed' ? 'Retry onboarding' : 'Onboard now'}
+              </Button>
+              <p className="mt-1 text-xs text-muted-foreground">
+                Runs the agent install over SSH using credentials you provide.
+              </p>
+            </div>
+          )}
+        </Card>
+
         {(server.cloudProvider || server.cloudInstanceId || server.cloudRegion) && (
           <Card title="Cloud">
             <Field label="Provider" value={server.cloudProvider} />

@@ -40,7 +40,12 @@ router.post('/heartbeat', asyncHandler(async (req, res) => {
     abortEarly: false,
     stripUnknown: true,
   });
-  if (error) throw new ApiError(400, error.details.map((d) => d.message).join(', '));
+  // Soft no-op for agents that don't send identity yet (e.g. hosts onboarded
+  // before the heartbeat payload fix). Avoids 400-error log spam — they'll send
+  // a proper payload once re-onboarded. Token was already validated above.
+  if (error) {
+    return res.json({ success: true, data: { received: false } });
+  }
 
   const server = await prisma.server.findFirst({
     where: { id: value.serverId, orgId: value.orgId },
