@@ -1,5 +1,6 @@
 import { Link } from 'react-router-dom';
 import { APP_VERSION } from '@/version';
+import useOrgName from '@/hooks/useOrgName';
 
 /**
  * Footer
@@ -11,11 +12,12 @@ import { APP_VERSION } from '@/version';
  * ones.
  */
 function Footer() {
+  const orgName = useOrgName();
   return (
     <footer className="shrink-0 border-t border-border/40 bg-card/50 px-6 py-3">
       <div className="flex flex-col gap-2 text-xs text-muted-foreground sm:flex-row sm:items-center sm:justify-between">
         <p>
-          &copy; {new Date().getFullYear()} Shellius v{APP_VERSION} &mdash; YavLabs
+          &copy; {new Date().getFullYear()} {orgName} &middot; v{APP_VERSION}
         </p>
         <div className="flex items-center gap-4">
           <Link to="/legal/privacy" className="hover:text-foreground transition-colors">

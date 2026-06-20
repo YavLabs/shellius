@@ -75,10 +75,12 @@ export default function SearchableSelect({
     function onKey(e) {
       if (e.key === 'Escape') setOpen(false);
     }
-    document.addEventListener('mousedown', onDocClick);
+    // Capture phase so it still fires when a parent (e.g. a modal) stops
+    // propagation of the bubbling event.
+    document.addEventListener('mousedown', onDocClick, true);
     document.addEventListener('keydown', onKey);
     return () => {
-      document.removeEventListener('mousedown', onDocClick);
+      document.removeEventListener('mousedown', onDocClick, true);
       document.removeEventListener('keydown', onKey);
     };
   }, [open]);

@@ -1,5 +1,6 @@
 import { useParams, Link } from 'react-router-dom';
 import { ArrowLeft } from 'lucide-react';
+import useOrgName from '@/hooks/useOrgName';
 
 /**
  * Legal — single page that renders Privacy / Terms / EULA based on the
@@ -94,6 +95,7 @@ const DOCS = {
 function Legal() {
   const { doc } = useParams();
   const content = DOCS[doc];
+  const orgName = useOrgName();
 
   if (!content) {
     return (
@@ -127,6 +129,9 @@ function Legal() {
           </section>
         ))}
       </div>
+      <p className="mt-10 border-t border-border/40 pt-4 text-xs text-muted-foreground">
+        &copy; {new Date().getFullYear()} {orgName}
+      </p>
     </div>
   );
 }

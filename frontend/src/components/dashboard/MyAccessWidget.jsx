@@ -60,17 +60,22 @@ function AccessRow({ entry }) {
             Direct access
           </span>
         )}
-        <span className="whitespace-nowrap text-xs text-muted-foreground">
-          {formatMaxTtl(entry.maxTtl)}
-        </span>
+        {formatMaxTtl(entry.maxTtl) !== '-' && (
+          <span className="whitespace-nowrap text-xs text-muted-foreground">
+            {formatMaxTtl(entry.maxTtl)}
+          </span>
+        )}
         <ChevronRight className="h-4 w-4 text-muted-foreground/40 transition-colors group-hover:text-muted-foreground" />
       </div>
     </button>
   );
 }
 
+const LIMIT = 10;
+
 function MyAccessWidget() {
-  const [groups, setGroups] = useState({});
+  const [entries, setEntries] = useState([]);
+  const [showAll, setShowAll] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
 
@@ -79,15 +84,21 @@ function MyAccessWidget() {
     setError('');
     getMyAccess()
       .then((data) => {
-        const items = Array.isArray(data) ? data : data?.items || [];
-        // Group by customer name
-        const grouped = {};
-        items.forEach((entry) => {
-          const customer = entry.server?.customer?.name || entry.customerName || 'Other';
-          if (!grouped[customer]) grouped[customer] = [];
-          grouped[customer].push(entry);
+        const items = Array.isArray(data) ? data : data?.items || data?.accessibleServers || [];
+        // The API returns { server, evaluation } — flatten the evaluation so the
+        // row reads requiresApproval / principals / maxTtl correctly.
+        const flat = items.map((it) => {
+          const ev = it.evaluation || it;
+          return {
+            server: it.server || it.server,
+            serverId: it.server?.id || it.serverId,
+            customerName: it.server?.customer?.name || it.customerName || 'Other',
+            requiresApproval: ev.requiresApproval,
+            principals: ev.principals || [],
+            maxTtl: ev.maxTtl,
+          };
         });
-        setGroups(grouped);
+        setEntries(flat);
       })
       .catch((err) => {
         setError(err.response?.data?.error?.message || 'Failed to load accessible servers');
@@ -95,8 +106,13 @@ function MyAccessWidget() {
       .finally(() => setLoading(false));
   }, []);
 
+  const totalCount = entries.length;
+  const visible = showAll ? entries : entries.slice(0, LIMIT);
+  const groups = {};
+  visible.forEach((e) => {
+    (groups[e.customerName] = groups[e.customerName] || []).push(e);
+  });
   const customerNames = Object.keys(groups);
-  const totalCount = Object.values(groups).reduce((s, arr) => s + arr.length, 0);
 
   return (
     <div className="rounded-lg border border-border bg-card p-5">
@@ -148,6 +164,16 @@ function MyAccessWidget() {
               </div>
             </div>
           ))}
+
+          {totalCount > LIMIT && (
+            <button
+              type="button"
+              onClick={() => setShowAll((s) => !s)}
+              className="w-full rounded-md border border-border py-2 text-xs font-medium text-muted-foreground hover:bg-accent/40 hover:text-foreground transition-colors"
+            >
+              {showAll ? 'Show less' : `View all ${totalCount} servers`}
+            </button>
+          )}
         </div>
       )}
     </div>

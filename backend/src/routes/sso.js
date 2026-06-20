@@ -161,7 +161,7 @@ router.get(
       return res.json({ success: true, data: { enabled: false, presetId: null, orgSlug: null } });
     }
     const status = await ssoService.getPublicSsoStatus(org.id);
-    res.json({ success: true, data: { ...status, orgSlug: org.slug } });
+    res.json({ success: true, data: { ...status, orgSlug: org.slug, orgName: org.name } });
   })
 );
 
