@@ -61,3 +61,45 @@
     -moz-osx-font-smoothing: grayscale;
   }
 }
+
+/*
+ * Theme-aware scrollbars (global)
+ *
+ * Driven by the same HSL theme tokens as the rest of the UI, so they track
+ * light/dark automatically. Monochrome + subtle to match the Cloudflare /
+ * Linear / Vercel aesthetic: a transparent track with a muted thumb that
+ * darkens on hover.
+ *
+ * Firefox uses the standard `scrollbar-*` properties; Chromium/Safari use the
+ * `::-webkit-scrollbar` pseudo-elements. Both are defined for full coverage.
+ */
+@layer base {
+  /* Firefox */
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: hsl(var(--muted-foreground) / 0.35) transparent;
+  }
+
+  /* WebKit / Chromium */
+  *::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+  *::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  *::-webkit-scrollbar-thumb {
+    background-color: hsl(var(--muted-foreground) / 0.35);
+    border-radius: 9999px;
+    /* Inset the thumb so it reads as a thin pill with breathing room. */
+    border: 2px solid transparent;
+    background-clip: padding-box;
+  }
+  *::-webkit-scrollbar-thumb:hover {
+    background-color: hsl(var(--muted-foreground) / 0.55);
+  }
+  /* Don't paint the little corner where horizontal & vertical bars meet. */
+  *::-webkit-scrollbar-corner {
+    background: transparent;
+  }
+}

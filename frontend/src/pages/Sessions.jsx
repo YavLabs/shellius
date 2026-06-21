@@ -1,10 +1,11 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
 import {
   Film,
   Terminal as TerminalIcon,
   Eye,
   Square,
   Download,
+  ListOrdered,
 } from 'lucide-react';
 import DataTable from '@/components/shared/DataTable';
 import ServerName, { serverSearchString } from '@/components/shared/ServerName';
@@ -18,6 +19,7 @@ import SearchableSelect from '@/components/ui/SearchableSelect';
 import { listSessions, listActiveSessions, getSession, terminateSession, downloadRecording } from '@/services/sessionService';
 import { useAuth } from '@/context/AuthContext';
 import { relativeTime, formatDateTime } from '@/utils/time';
+import { extractCommands, formatOffset } from '@/utils/castCommands';
 
 const ROLE_RANK = { super_admin: 4, admin: 3, manager: 2, member: 1 };
 function isAtLeast(user, role) {
@@ -61,15 +63,61 @@ function DetailRow({ label, value }) {
   );
 }
 
+/**
+ * SessionCommands
+ *
+ * Renders the best-effort list of commands run during a session, derived from
+ * the .cast recording text (see utils/castCommands). Commands are heuristically
+ * parsed from echoed prompt lines, so the heading is labelled "detected".
+ */
+function SessionCommands({ castText }) {
+  const commands = useMemo(() => extractCommands(castText), [castText]);
+
+  if (!castText) return null;
+
+  return (
+    <div className="mt-4">
+      <div className="mb-2 flex items-center gap-1.5 text-xs font-medium uppercase tracking-wide text-muted-foreground">
+        <ListOrdered className="h-3.5 w-3.5" />
+        Commands ({commands.length})
+        <span className="ml-1 normal-case tracking-normal text-[11px] text-muted-foreground/70">
+          best-effort, parsed from terminal output
+        </span>
+      </div>
+      {commands.length === 0 ? (
+        <div className="rounded-md border border-border bg-muted/30 px-3 py-2 text-xs text-muted-foreground">
+          No commands detected in this recording.
+        </div>
+      ) : (
+        <ol className="max-h-64 overflow-y-auto rounded-md border border-border bg-muted/20 font-mono text-xs">
+          {commands.map((c, i) => (
+            <li
+              key={i}
+              className="flex items-start gap-3 border-b border-border/60 px-3 py-1.5 last:border-0"
+            >
+              <span className="shrink-0 select-none tabular-nums text-muted-foreground/60">
+                {formatOffset(c.time)}
+              </span>
+              <span className="break-all text-foreground">{c.command}</span>
+            </li>
+          ))}
+        </ol>
+      )}
+    </div>
+  );
+}
+
 function SessionDetailDrawer({ sessionId, open, onClose }) {
   const [session, setSession] = useState(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  const [castText, setCastText] = useState(null);
 
   useEffect(() => {
     if (!sessionId || !open) return;
     setLoading(true);
     setError('');
+    setCastText(null);
     getSession(sessionId)
       .then((resp) => setSession(resp.data || resp))
       .catch((err) => setError(err.response?.data?.error?.message || 'Failed to load session.'))
@@ -174,7 +222,8 @@ function SessionDetailDrawer({ sessionId, open, onClose }) {
               <Download className="h-3.5 w-3.5" /> Download .cast
             </button>
           </div>
-          <SessionPlayer sessionId={session.id} />
+          <SessionPlayer sessionId={session.id} onCast={setCastText} />
+          <SessionCommands castText={castText} />
         </div>
       )}
       {!loading && session && !session.recordingKey && !session.recordingPath && (
@@ -292,7 +341,14 @@ function Sessions() {
           <ServerName server={r.server} fallback={r.serverId} />
           {r.server?.environment && <EnvironmentBadge environment={r.server.environment} />}
           {(r.recordingKey || r.recordingPath) && (
-            <Film className="h-3.5 w-3.5 shrink-0 text-muted-foreground" title="Replay available" />
+            <button
+              type="button"
+              onClick={(e) => { e.stopPropagation(); openDetail(r.id); }}
+              title="Play recording"
+              className="shrink-0 rounded p-0.5 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+            >
+              <Film className="h-3.5 w-3.5" />
+            </button>
           )}
         </div>
       ),

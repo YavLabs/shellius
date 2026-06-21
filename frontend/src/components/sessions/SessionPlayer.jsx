@@ -9,12 +9,15 @@ import 'asciinema-player/dist/bundle/asciinema-player.css';
  *
  * Renders an asciinema-player for a recorded session.
  * Fetches the .cast recording blob from the API with the auth bearer token,
- * converts it to an object URL, then hands it to AsciinemaPlayer.create().
+ * then hands the text to AsciinemaPlayer.create().
  *
  * Props:
- *   sessionId  {string}  — session ID whose recording to play
+ *   sessionId   {string}    — session ID whose recording to play
+ *   onCast      {function}  — optional, called with the raw .cast text once
+ *                             loaded (so a sibling can derive the command list
+ *                             without re-fetching)
  */
-function SessionPlayer({ sessionId }) {
+function SessionPlayer({ sessionId, onCast }) {
   const containerRef = useRef(null);
   const playerRef = useRef(null);
   const [status, setStatus] = useState('idle'); // idle | loading | ready | error | unavailable
@@ -51,12 +54,22 @@ function SessionPlayer({ sessionId }) {
         const castText = await response.text();
         if (cancelled) return;
 
+        if (onCast) onCast(castText);
+
         // Dynamically import asciinema-player to avoid SSR issues and keep
         // the initial bundle lean.
         const AsciinemaPlayer = await import('asciinema-player');
         if (cancelled) return;
 
         if (!containerRef.current) return;
+
+        // IMPORTANT: flip to "ready" BEFORE create() so the container is
+        // visible (not display:none). asciinema-player measures the element's
+        // width on creation with fit:'width'; if it mounts inside a hidden
+        // element it computes a zero size and renders a collapsed, unclickable
+        // player. Making it visible first is what fixes the "thumbnail shows
+        // but nothing is clickable" bug.
+        setStatus('ready');
 
         playerRef.current = AsciinemaPlayer.create(
           { data: castText, parser: 'asciicast' },
@@ -69,8 +82,6 @@ function SessionPlayer({ sessionId }) {
             controls: true,
           }
         );
-
-        setStatus('ready');
       } catch (err) {
         if (!cancelled) {
           setStatus('error');
@@ -88,7 +99,7 @@ function SessionPlayer({ sessionId }) {
         playerRef.current = null;
       }
     };
-  }, [sessionId]);
+  }, [sessionId, onCast]);
 
   return (
     <div className="space-y-2">
@@ -113,10 +124,20 @@ function SessionPlayer({ sessionId }) {
         </div>
       )}
 
-      {/* Player mounts here; hidden until ready to avoid layout flash */}
+      {/*
+        The player mounts here. The container stays in the layout flow and
+        visible while create() runs (see note above) — an empty container is
+        simply zero-height, so there is no visible flash before playback.
+
+        data-modal-passthrough: when this player is inside a <Modal>, its clicks
+        must NOT be swallowed by the modal's stopPropagation, or asciinema's
+        (Solid.js) delegated click handlers never fire and playback/controls go
+        dead. See Modal.jsx stopUnlessPassthrough.
+      */}
       <div
         ref={containerRef}
-        className={status === 'ready' ? 'overflow-hidden rounded-md' : 'hidden'}
+        data-modal-passthrough
+        className={status === 'ready' ? 'overflow-hidden rounded-md border border-border' : ''}
       />
     </div>
   );
