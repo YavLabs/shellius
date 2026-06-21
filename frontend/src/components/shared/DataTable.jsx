@@ -43,6 +43,8 @@ function ActionMenu({ actions, row }) {
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end" className="w-48">
         {actions.map((action, idx) => {
+          // Per-row visibility: actions may define hidden(row) => boolean.
+          if (typeof action.hidden === 'function' && action.hidden(row)) return null;
           if (action.separator) {
             return <DropdownMenuSeparator key={`sep-${idx}`} />;
           }
@@ -163,6 +165,12 @@ function DataTable({
   // { sortKey, sortDir, onSortChange: (key, dir) => void }
   serverSort,
 
+  // Server-side search — called (debounced) with the query string. Required for
+  // server-paginated tables, where client-side filtering is skipped (it would
+  // only see the current page). The parent sends it to its list API + resets to
+  // page 1.
+  onSearchChange,
+
   // className for the wrapper
   className,
 }) {
@@ -209,6 +217,15 @@ function DataTable({
     prevSearch.current = search;
     prevSortKey.current = sortKey;
   }, [search, sortKey, isServerPagination]);
+
+  // Server-side search — notify the parent when the debounced query changes.
+  const prevServerSearch = useRef(search);
+  useEffect(() => {
+    if (onSearchChange && prevServerSearch.current !== search) {
+      onSearchChange(search);
+    }
+    prevServerSearch.current = search;
+  }, [search, onSearchChange]);
 
   // -------------------------------------------------------------------
   // Handle sort click

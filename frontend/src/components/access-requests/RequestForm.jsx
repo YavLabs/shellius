@@ -45,7 +45,7 @@ function RequestForm({ open, onClose, onSuccess, initialServerId = '' }) {
   const fetchServers = useCallback(async () => {
     setLoadingServers(true);
     try {
-      const data = await listServers({ limit: 200 });
+      const data = await listServers({ pageSize: 100 });
       const items = data?.items || data || [];
       // Only onboarded servers can be requested — hide the rest.
       setServers(items.filter(isServerOnboarded));

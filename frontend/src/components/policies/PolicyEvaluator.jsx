@@ -58,7 +58,7 @@ function PolicyEvaluator({ open, onClose, policy }) {
     setLoadingData(true);
     Promise.all([
       listUsers({ limit: 200 }).then((d) => d?.users ?? d?.items ?? (Array.isArray(d) ? d : [])),
-      listServers({ limit: 200 }).then((d) => d?.items ?? (Array.isArray(d) ? d : [])),
+      listServers({ pageSize: 100 }).then((d) => d?.items ?? (Array.isArray(d) ? d : [])),
     ])
       .then(([u, s]) => {
         setUsers(u);

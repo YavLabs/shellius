@@ -376,14 +376,19 @@ export async function getAccessibleServers(orgId, userId) {
     include: { customer: { select: { id: true, name: true, slug: true } } },
   });
 
-  const results = [];
-  for (const server of servers) {
-    const evaluation = await evaluate({ orgId, userId, serverId: server.id });
-    if (evaluation.allowed || evaluation.requiresApproval) {
-      results.push({ server, evaluation });
-    }
-  }
-  return results;
+  // Evaluate all servers concurrently instead of in a sequential await-loop.
+  // The previous loop took ~N × per-eval latency (≈20s for ~56 servers); this
+  // collapses to roughly the slowest single evaluation. Prisma's connection
+  // pool bounds the actual DB concurrency, so this won't exhaust connections.
+  const evaluations = await Promise.all(
+    servers.map((server) =>
+      evaluate({ orgId, userId, serverId: server.id }).then((evaluation) => ({ server, evaluation }))
+    )
+  );
+
+  return evaluations.filter(
+    ({ evaluation }) => evaluation.allowed || evaluation.requiresApproval
+  );
 }
 
 // ---------------------------------------------------------------------------

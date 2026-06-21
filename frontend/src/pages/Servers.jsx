@@ -53,6 +53,7 @@ function Servers() {
   const [total, setTotal] = useState(0);
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(20);
+  const [search, setSearch] = useState('');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
 
@@ -89,6 +90,7 @@ function Servers() {
       if (environment) params.environment = environment;
       if (healthStatus) params.healthStatus = healthStatus;
       if (customerFilter) params.customerId = customerFilter;
+      if (search) params.search = search;
       const data = await listServers(params);
       setServers(data.items || []);
       setTotal(data.total || 0);
@@ -97,7 +99,13 @@ function Servers() {
     } finally {
       setLoading(false);
     }
-  }, [page, pageSize, environment, healthStatus, customerFilter]);
+  }, [page, pageSize, environment, healthStatus, customerFilter, search]);
+
+  // Server-side search — reset to page 1 and refetch when the query changes.
+  const handleSearchChange = useCallback((q) => {
+    setSearch(q);
+    setPage(1);
+  }, []);
 
   useEffect(() => {
     fetchCustomers();
@@ -462,7 +470,8 @@ function Servers() {
         data={servers}
         loading={loading}
         emptyMessage="No servers found"
-        searchPlaceholder="Search hostname or IP..."
+        searchPlaceholder="Search name, hostname or IP..."
+        onSearchChange={handleSearchChange}
         filters={filterSlot}
         selectable
         selectedIds={selected}
