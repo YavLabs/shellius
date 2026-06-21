@@ -10,8 +10,10 @@ import {
   KeyRound,
   Eye,
   RefreshCw,
+  Zap,
 } from 'lucide-react';
 import DataTable from '@/components/shared/DataTable';
+import ServerName, { serverSearchString } from '@/components/shared/ServerName';
 import Badge from '@/components/shared/Badge';
 import EnvironmentBadge from '@/components/shared/EnvironmentBadge';
 import Modal from '@/components/shared/Modal';
@@ -296,6 +298,18 @@ function AccessRequests() {
     setDetailOpen(true);
   };
 
+  // A request is connectable when it's the caller's own, APPROVED, and unexpired.
+  const isConnectable = (r) =>
+    r?.status === 'APPROVED' &&
+    r?.requesterId === user?.id &&
+    (!r.expiresAt || new Date(r.expiresAt) > new Date());
+
+  // Quick Connect — open the web terminal for an approved request. The Terminal
+  // page detects the protocol (SSH/RDP) from the request and connects.
+  const quickConnect = (r) => {
+    window.open(`/terminal?requestId=${r.id}`, '_blank', 'noopener');
+  };
+
   const handleRefresh = () => {
     fetchRequests();
     fetchPendingReviewCount();
@@ -321,12 +335,10 @@ function AccessRequests() {
       key: 'server',
       label: 'Server',
       sortable: true,
-      searchAccessor: (r) => `${r.server?.hostname || r.server?.name || ''} ${r.server?.environment || ''}`,
+      searchAccessor: (r) => serverSearchString(r.server),
       render: (r) => (
         <div className="flex items-center gap-2">
-          <span className="text-sm font-medium text-foreground">
-            {r.server?.hostname || r.server?.name || r.serverId}
-          </span>
+          <ServerName server={r.server} fallback={r.serverId} />
           {r.server?.environment && <EnvironmentBadge environment={r.server.environment} />}
         </div>
       ),
@@ -393,6 +405,12 @@ function AccessRequests() {
       label: '',
       className: 'w-10',
       actions: [
+        {
+          label: 'Quick Connect',
+          icon: Zap,
+          hidden: (r) => !isConnectable(r),
+          onClick: (r) => quickConnect(r),
+        },
         {
           label: 'View Details',
           icon: Eye,

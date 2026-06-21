@@ -7,6 +7,7 @@ import {
   Download,
 } from 'lucide-react';
 import DataTable from '@/components/shared/DataTable';
+import ServerName, { serverSearchString } from '@/components/shared/ServerName';
 import Badge from '@/components/shared/Badge';
 import EnvironmentBadge from '@/components/shared/EnvironmentBadge';
 import Modal from '@/components/shared/Modal';
@@ -285,12 +286,10 @@ function Sessions() {
       key: 'server',
       label: 'Server',
       sortable: true,
-      searchAccessor: (r) => `${r.server?.hostname || r.server?.name || ''} ${r.server?.environment || ''}`,
+      searchAccessor: (r) => serverSearchString(r.server),
       render: (r) => (
         <div className="flex items-center gap-2">
-          <span className="text-sm font-medium text-foreground">
-            {r.server?.hostname || r.server?.name || r.serverId}
-          </span>
+          <ServerName server={r.server} fallback={r.serverId} />
           {r.server?.environment && <EnvironmentBadge environment={r.server.environment} />}
           {(r.recordingKey || r.recordingPath) && (
             <Film className="h-3.5 w-3.5 shrink-0 text-muted-foreground" title="Replay available" />

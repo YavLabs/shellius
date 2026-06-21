@@ -145,13 +145,13 @@ function ServerDetail() {
         <div>
           <div className="flex items-center gap-3">
             <h1 className="text-2xl font-bold tracking-tight text-foreground">
-              {server.hostname}
+              {server.displayName || server.hostname}
             </h1>
             <HealthStatusDot status={server.healthStatus} showLabel />
             <EnvironmentBadge environment={server.environment} />
           </div>
-          {server.displayName && (
-            <p className="mt-1 text-sm text-muted-foreground">{server.displayName}</p>
+          {server.displayName && server.displayName !== server.hostname && (
+            <p className="mt-1 font-mono text-sm text-muted-foreground">{server.hostname}</p>
           )}
           {server.description && (
             <p className="mt-1 max-w-2xl text-sm text-muted-foreground">{server.description}</p>

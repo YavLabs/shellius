@@ -254,19 +254,24 @@ function CustomerDetail() {
   const serverColumns = [
     {
       key: 'hostname',
-      label: 'Hostname',
+      label: 'Server',
       sortable: true,
-      searchAccessor: (r) => `${r.hostname} ${r.ipAddress || ''}`,
+      searchAccessor: (r) => `${r.displayName || ''} ${r.hostname} ${r.ipAddress || ''}`,
       render: (r) => {
         const proto = r.protocol || r.type || 'SSH';
         const ProtoIcon = proto === 'RDP' ? Monitor : TerminalIcon;
+        const primary = r.displayName || r.hostname;
+        const showHost = r.displayName && r.hostname && r.displayName !== r.hostname;
         return (
           <button
             onClick={() => navigate(`/servers/${r.id}`)}
-            className="flex items-center gap-2 font-medium text-foreground hover:text-primary"
+            className="flex items-center gap-2 text-left hover:text-primary"
           >
             <ProtoIcon className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
-            {r.hostname}
+            <span className="flex flex-col leading-tight">
+              <span className="font-medium text-foreground">{primary}</span>
+              {showHost && <span className="text-xs text-muted-foreground">{r.hostname}</span>}
+            </span>
           </button>
         );
       },
