@@ -280,12 +280,15 @@ export async function submit({
     }
   }
 
-  // Evaluate policy (handles prod hard-block internally)
+  // Evaluate policy (handles prod hard-block internally). For RDP the principal
+  // is the gateway-injected Windows account (e.g. "Administrator"), which is not
+  // part of a policy's SSH allow-list — passing it would filter out every policy
+  // ("No matching policy"). Evaluate RDP on subject + target only.
   const policyResult = await policyService.evaluate({
     orgId,
     userId: requesterId,
     serverId,
-    requestedPrincipal,
+    requestedPrincipal: protocol === 'RDP' ? undefined : requestedPrincipal,
   });
 
   const now = new Date();

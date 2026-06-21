@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
+import { Loader2 } from 'lucide-react';
 import Modal from '@/components/shared/Modal';
 import EnvironmentBadge from '@/components/shared/EnvironmentBadge';
 import { createAccessRequest, getAccessIntent } from '@/services/accessRequestService';
@@ -28,6 +29,7 @@ function RequestForm({ open, onClose, onSuccess, initialServerId = '' }) {
 
   const [servers, setServers] = useState([]);
   const [loadingServers, setLoadingServers] = useState(false);
+  const [loadingIntent, setLoadingIntent] = useState(false);
 
   const [serverId, setServerId] = useState('');
   const [reason, setReason] = useState('');
@@ -74,8 +76,9 @@ function RequestForm({ open, onClose, onSuccess, initialServerId = '' }) {
   // what makes the Request Access button on the Servers page behave
   // intelligently (pre-selects the server + the JIT principal if any).
   useEffect(() => {
-    if (!open || !serverId) return;
+    if (!open || !serverId) return undefined;
     let cancelled = false;
+    setLoadingIntent(true);
     getAccessIntent(serverId)
       .then((intent) => {
         if (cancelled || !intent) return;
@@ -86,6 +89,9 @@ function RequestForm({ open, onClose, onSuccess, initialServerId = '' }) {
       })
       .catch(() => {
         // Non-fatal — fall back to the static default already set.
+      })
+      .finally(() => {
+        if (!cancelled) setLoadingIntent(false);
       });
     return () => {
       cancelled = true;
@@ -176,6 +182,12 @@ function RequestForm({ open, onClose, onSuccess, initialServerId = '' }) {
           })()}
         </div>
 
+        {serverId && loadingIntent ? (
+          <div className="flex items-center justify-center gap-2 py-12 text-sm text-muted-foreground">
+            <Loader2 className="h-4 w-4 animate-spin" /> Loading access details…
+          </div>
+        ) : (
+          <>
         {/* Protocol */}
         <div>
           <label className={labelCls}>Protocol</label>
@@ -268,6 +280,8 @@ function RequestForm({ open, onClose, onSuccess, initialServerId = '' }) {
             </p>
           )}
         </div>
+          </>
+        )}
 
         {error && (
           <div className="rounded-md border border-destructive/50 bg-destructive/10 px-3 py-2 text-sm text-destructive">
@@ -285,7 +299,7 @@ function RequestForm({ open, onClose, onSuccess, initialServerId = '' }) {
           </button>
           <button
             type="submit"
-            disabled={submitting}
+            disabled={submitting || (serverId && loadingIntent)}
             className="rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
           >
             {submitting ? 'Submitting...' : 'Submit Request'}
