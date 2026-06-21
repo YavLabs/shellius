@@ -15,6 +15,7 @@ import DataTable from '@/components/shared/DataTable';
 import Badge from '@/components/shared/Badge';
 import Modal from '@/components/shared/Modal';
 import ConfirmDialog from '@/components/shared/ConfirmDialog';
+import DeleteUserDialog from '@/components/users/DeleteUserDialog';
 import UserForm from '@/components/users/UserForm';
 import SshKeyDialog from '@/components/users/SshKeyDialog';
 import PageHeader from '@/components/common/PageHeader';
@@ -25,7 +26,6 @@ import {
   listUsers,
   createUser,
   updateUser,
-  deleteUser,
   uploadSshKey,
   removeSshKey,
   getUser,
@@ -103,6 +103,7 @@ function Users() {
   const [sshUser, setSshUser] = useState(null);
 
   const [confirm, setConfirm] = useState(null);
+  const [deleteTarget, setDeleteTarget] = useState(null);
 
   const [urlModal, setUrlModal] = useState(null);
   const [actionMsg, setActionMsg] = useState('');
@@ -180,19 +181,7 @@ function Users() {
     });
   };
 
-  const handleDelete = (u) => {
-    setConfirm({
-      title: 'Delete user',
-      message: `Permanently delete ${u.name}? This cannot be undone.`,
-      variant: 'destructive',
-      confirmLabel: 'Delete',
-      onConfirm: async () => {
-        await deleteUser(u.id);
-        setConfirm(null);
-        fetchUsers();
-      },
-    });
-  };
+  const handleDelete = (u) => setDeleteTarget(u);
 
   const handleResendInvite = async (u) => {
     try {
@@ -377,6 +366,16 @@ function Users() {
         variant={confirm?.variant}
         onConfirm={confirm?.onConfirm}
         onCancel={() => setConfirm(null)}
+      />
+
+      <DeleteUserDialog
+        user={deleteTarget}
+        open={!!deleteTarget}
+        onClose={() => setDeleteTarget(null)}
+        onDeleted={() => {
+          setDeleteTarget(null);
+          fetchUsers();
+        }}
       />
 
       <Modal

@@ -204,6 +204,9 @@ export function attachWebSocketServer(httpServer) {
 
 // Map guacamole-lite connectionId -> Shellius Session row id, for audit rows.
 const rdpSessionByConn = new Map();
+// Reverse: Session row id -> guacamole-lite ClientConnection, so an RDP session
+// can be force-closed by sessionId (e.g. admin terminate / entity deletion).
+const rdpConnBySession = new Map();
 
 /**
  * Construct the guacamole-lite server (noServer mode). Validates the encrypted
@@ -251,6 +254,7 @@ function buildGuacamoleServer() {
         metadata: { via: 'guacamole-lite', guacId: clientConnection.guacamoleConnectionId },
       });
       rdpSessionByConn.set(clientConnection.connectionId, session.id);
+      rdpConnBySession.set(session.id, clientConnection);
       logger.info('terminalService: RDP session started (guacamole-lite)', {
         sessionId: session.id,
         serverId: s.serverId,
@@ -265,6 +269,7 @@ function buildGuacamoleServer() {
     const sessionId = rdpSessionByConn.get(clientConnection.connectionId);
     if (!sessionId) return;
     rdpSessionByConn.delete(clientConnection.connectionId);
+    rdpConnBySession.delete(sessionId);
     try {
       await sessionService.end(sessionId, { status: 'ENDED' });
     } catch (err) {
@@ -700,7 +705,46 @@ export async function terminateSession(sessionId, byUserId) {
     safeClose(entry.ws, 1001, 'Session terminated by administrator');
   }
 
+  // Force-close a live RDP (guacamole-lite) connection for this session.
+  const rdpConn = rdpConnBySession.get(sessionId);
+  if (rdpConn) {
+    rdpConnBySession.delete(sessionId);
+    try {
+      rdpConn.close();
+    } catch { /* ignore */ }
+  }
+
   return updated;
+}
+
+/**
+ * Force-terminate every ACTIVE session matching `where` (e.g. { serverId } or
+ * { userId }). Best-effort: a session that already ended just no-ops. Used by
+ * the dependency-aware delete flow before hard-deleting an entity.
+ *
+ * @param {string} orgId
+ * @param {object} where     - extra Prisma Session filter (serverId / userId)
+ * @param {string} byUserId  - actor performing the termination
+ * @returns {Promise<number>} count of sessions terminated
+ */
+export async function terminateActiveSessionsFor(orgId, where, byUserId) {
+  const active = await prisma.session.findMany({
+    where: { orgId, status: 'ACTIVE', ...where },
+    select: { id: true },
+  });
+  let terminated = 0;
+  for (const { id } of active) {
+    try {
+      await terminateSession(id, byUserId);
+      terminated += 1;
+    } catch (err) {
+      logger.warn('terminalService: terminateActiveSessionsFor: failed to terminate', {
+        sessionId: id,
+        error: err.message,
+      });
+    }
+  }
+  return terminated;
 }
 
 // ---------------------------------------------------------------------------
@@ -751,4 +795,4 @@ function safeClose(ws, code, reason) {
   }
 }
 
-export default { attachWebSocketServer, terminateSession };
+export default { attachWebSocketServer, terminateSession, terminateActiveSessionsFor };

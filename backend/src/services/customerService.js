@@ -153,6 +153,14 @@ export async function deleteCustomer(orgId, customerId, options = {}) {
 
   if (options.policies === 'delete') {
     await prisma.accessPolicy.deleteMany({ where: { orgId, customerId } });
+  } else if (options.policies === 'reassign') {
+    const target = options.policiesTargetCustomerId || options.targetCustomerId;
+    if (!target || target === customerId) {
+      throw new ApiError(400, 'A different target customer is required to reassign policies');
+    }
+    const targetCustomer = await prisma.customer.findFirst({ where: { id: target, orgId } });
+    if (!targetCustomer) throw new ApiError(400, 'Target customer not found for policies');
+    await prisma.accessPolicy.updateMany({ where: { orgId, customerId }, data: { customerId: target } });
   }
   // else policies SetNull → become org-wide (handled by the FK on delete).
 

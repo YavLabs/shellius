@@ -2,6 +2,7 @@ import net from 'net';
 import prisma from '../config/db.js';
 import ApiError from '../utils/ApiError.js';
 import { encrypt } from '../utils/crypto.js';
+import * as terminalService from './terminalService.js';
 
 const RDP_SENSITIVE_FIELDS = ['rdpPasswordEncrypted', 'rdpPasswordIv', 'rdpPasswordTag'];
 
@@ -180,9 +181,36 @@ export async function updateServer(orgId, serverId, data = {}) {
   return stripRdpSecrets(server);
 }
 
-export async function deleteServer(orgId, serverId) {
+/** Dependents removed when this server is deleted (for the confirm dialog). */
+export async function getDeleteImpact(orgId, serverId) {
+  const server = await prisma.server.findFirst({ where: { id: serverId, orgId } });
+  if (!server) throw new ApiError(404, 'Server not found');
+  const [activeSessions, totalSessions, pendingRequests, certificates] = await Promise.all([
+    prisma.session.count({ where: { orgId, serverId, status: 'ACTIVE' } }),
+    prisma.session.count({ where: { orgId, serverId } }),
+    prisma.accessRequest.count({ where: { orgId, serverId, status: { in: ['PENDING', 'APPROVED'] } } }),
+    prisma.certificate.count({ where: { orgId, issuedForId: serverId } }),
+  ]);
+  return {
+    server: { id: server.id, hostname: server.hostname, displayName: server.displayName },
+    isCloud: !!server.cloudProvider,
+    cloudProvider: server.cloudProvider || null,
+    activeSessions,
+    totalSessions,
+    pendingRequests,
+    certificates,
+  };
+}
+
+/**
+ * Hard-delete a server. Force-terminates any live session first (so the cascade
+ * removes already-terminated rows), then deletes — which cascades AccessRequest
+ * + Session rows and SetNulls issued certificates.
+ */
+export async function deleteServer(orgId, serverId, callerId = null) {
   const existing = await prisma.server.findFirst({ where: { id: serverId, orgId } });
   if (!existing) throw new ApiError(404, 'Server not found');
+  await terminalService.terminateActiveSessionsFor(orgId, { serverId }, callerId);
   await prisma.server.delete({ where: { id: serverId } });
   return { success: true };
 }

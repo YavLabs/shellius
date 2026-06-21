@@ -8,6 +8,7 @@ import {
 } from 'lucide-react';
 import DataTable from '@/components/shared/DataTable';
 import ConfirmDialog from '@/components/shared/ConfirmDialog';
+import DeletePolicyDialog from '@/components/policies/DeletePolicyDialog';
 import EnvironmentBadge from '@/components/shared/EnvironmentBadge';
 import Badge from '@/components/shared/Badge';
 import PolicyForm from '@/components/policies/PolicyForm';
@@ -15,7 +16,7 @@ import PolicyEvaluator from '@/components/policies/PolicyEvaluator';
 import PageHeader from '@/components/common/PageHeader';
 import { Button } from '@/components/ui/button';
 import SearchableSelect from '@/components/ui/SearchableSelect';
-import { listPolicies, createPolicy, updatePolicy, deletePolicy } from '@/services/policyService';
+import { listPolicies, createPolicy, updatePolicy } from '@/services/policyService';
 import { listCustomers } from '@/services/customerService';
 import { useAuth } from '@/context/AuthContext';
 import { relativeTime } from '@/utils/time';
@@ -49,6 +50,7 @@ function Policies() {
   const [formOpen, setFormOpen] = useState(false);
   const [editing, setEditing] = useState(null);
   const [confirm, setConfirm] = useState(null);
+  const [deleteTarget, setDeleteTarget] = useState(null);
   const [evaluatorPolicy, setEvaluatorPolicy] = useState(null);
 
   const fetchCustomers = useCallback(async () => {
@@ -92,23 +94,7 @@ function Policies() {
     fetchPolicies();
   };
 
-  const handleDelete = (policy) => {
-    setConfirm({
-      title: 'Delete Policy',
-      message: `Permanently delete "${policy.name}"? This cannot be undone and may affect users who rely on this policy for access.`,
-      variant: 'destructive',
-      confirmLabel: 'Delete',
-      onConfirm: async () => {
-        try {
-          await deletePolicy(policy.id);
-        } catch (err) {
-          setError(err.response?.data?.error?.message || 'Failed to delete policy');
-        }
-        setConfirm(null);
-        fetchPolicies();
-      },
-    });
-  };
+  const handleDelete = (policy) => setDeleteTarget(policy);
 
   const customerMap = Object.fromEntries(customers.map((c) => [c.id, c.name]));
 
@@ -301,6 +287,16 @@ function Policies() {
         variant={confirm?.variant}
         onConfirm={confirm?.onConfirm}
         onCancel={() => setConfirm(null)}
+      />
+
+      <DeletePolicyDialog
+        policy={deleteTarget}
+        open={!!deleteTarget}
+        onClose={() => setDeleteTarget(null)}
+        onDeleted={() => {
+          setDeleteTarget(null);
+          fetchPolicies();
+        }}
       />
 
       <PolicyEvaluator

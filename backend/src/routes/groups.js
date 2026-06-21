@@ -71,6 +71,15 @@ router.put(
   })
 );
 
+router.get(
+  '/:id/delete-impact',
+  requireRole('super_admin', 'admin'),
+  asyncHandler(async (req, res) => {
+    const impact = await groupService.getGroupDeleteImpact(req.orgId, req.params.id);
+    res.json({ success: true, data: impact });
+  })
+);
+
 router.delete(
   '/:id',
   requireRole('super_admin', 'admin'),

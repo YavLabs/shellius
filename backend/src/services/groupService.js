@@ -1,5 +1,6 @@
 import prisma from '../config/db.js';
 import ApiError from '../utils/ApiError.js';
+import { cleanupPolicySubjects } from './policyService.js';
 
 function stripUser(user) {
   if (!user) return user;
@@ -62,10 +63,55 @@ export async function updateGroup(orgId, groupId, data) {
   }
 }
 
+/**
+ * Dependents handled when this group is deleted (for the confirm dialog):
+ * members removed (cascade) and policies that reference the group as a subject
+ * (the reference is removed; flag any policy that would be left with no
+ * subjects at all).
+ */
+export async function getGroupDeleteImpact(orgId, groupId) {
+  const group = await prisma.group.findFirst({ where: { id: groupId, orgId } });
+  if (!group) throw new ApiError(404, 'Group not found');
+
+  const [memberCount, subjectRows] = await Promise.all([
+    prisma.groupMembership.count({ where: { groupId } }),
+    prisma.policySubject.findMany({
+      where: { subjectType: 'GROUP', subjectId: groupId },
+      select: { policyId: true },
+    }),
+  ]);
+
+  const policyIds = subjectRows.map((r) => r.policyId);
+  let policies = [];
+  if (policyIds.length) {
+    const rows = await prisma.accessPolicy.findMany({
+      where: { id: { in: policyIds }, orgId },
+      select: { id: true, name: true, _count: { select: { subjects: true } } },
+    });
+    // A policy is "left empty" if this group is its only subject.
+    policies = rows.map((p) => ({ id: p.id, name: p.name, leftEmpty: p._count.subjects <= 1 }));
+  }
+
+  return {
+    group: { id: group.id, name: group.name },
+    memberCount,
+    policies,
+    policyCount: policies.length,
+    policiesLeftEmpty: policies.filter((p) => p.leftEmpty).length,
+  };
+}
+
+/**
+ * Delete a group: removes orphan policy-subject references (polymorphic, no
+ * cascade) then deletes the group (cascade removes memberships).
+ */
 export async function deleteGroup(orgId, groupId) {
   const existing = await prisma.group.findFirst({ where: { id: groupId, orgId } });
   if (!existing) throw new ApiError(404, 'Group not found');
-  await prisma.group.delete({ where: { id: groupId } });
+  await prisma.$transaction(async (tx) => {
+    await cleanupPolicySubjects('GROUP', groupId, tx);
+    await tx.group.delete({ where: { id: groupId } });
+  });
   return { success: true };
 }
 

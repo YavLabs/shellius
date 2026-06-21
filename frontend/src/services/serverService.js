@@ -10,6 +10,8 @@ export const createServer = (data) =>
   api.post('/servers', data).then(unwrapServer);
 export const updateServer = (id, data) =>
   api.put(`/servers/${id}`, data).then(unwrapServer);
+export const getServerDeleteImpact = (id) =>
+  api.get(`/servers/${id}/delete-impact`).then((r) => r.data.data);
 export const deleteServer = (id) =>
   api.delete(`/servers/${id}`).then((r) => r.data.data);
 export const bulkUpdateEnvironment = (serverIds, environment) =>

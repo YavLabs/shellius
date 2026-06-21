@@ -691,3 +691,44 @@ export async function del(orgId, id) {
   logger.info('policyService.delete: policy deleted', { orgId, policyId: id });
   return { success: true };
 }
+
+/**
+ * Remove orphan PolicySubject rows for a deleted subject. PolicySubject is
+ * polymorphic (subjectType + subjectId, no FK), so deleting a User or Group
+ * does NOT cascade — call this explicitly so policies don't keep dangling
+ * references that evaluation would silently skip.
+ *
+ * @param {'USER'|'GROUP'|'ROLE'} subjectType
+ * @param {string} subjectId
+ * @param {import('@prisma/client').PrismaClient} [tx] - transaction client
+ * @returns {Promise<number>} rows removed
+ */
+export async function cleanupPolicySubjects(subjectType, subjectId, tx = prisma) {
+  const { count } = await tx.policySubject.deleteMany({ where: { subjectType, subjectId } });
+  return count;
+}
+
+/**
+ * Impact summary for deleting a policy — informational (who relies on it).
+ */
+export async function getDeleteImpact(orgId, id) {
+  const policy = await prisma.accessPolicy.findFirst({
+    where: { id, orgId },
+    include: {
+      subjects: true,
+      customer: { select: { id: true, name: true } },
+    },
+  });
+  if (!policy) throw new ApiError(404, 'Policy not found');
+  const subjects = policy.subjects || [];
+  const counts = { USER: 0, GROUP: 0, ROLE: 0 };
+  for (const s of subjects) counts[s.subjectType] = (counts[s.subjectType] || 0) + 1;
+  return {
+    policy: { id: policy.id, name: policy.name },
+    customer: policy.customer,
+    subjectCount: subjects.length,
+    userCount: counts.USER,
+    groupCount: counts.GROUP,
+    roleCount: counts.ROLE,
+  };
+}

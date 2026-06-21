@@ -17,6 +17,7 @@ import {
 import DataTable from '@/components/shared/DataTable';
 import Modal from '@/components/shared/Modal';
 import ConfirmDialog from '@/components/shared/ConfirmDialog';
+import DeleteServerDialog from '@/components/servers/DeleteServerDialog';
 import EnvironmentBadge from '@/components/shared/EnvironmentBadge';
 import HealthStatusDot from '@/components/shared/HealthStatusDot';
 import ServerForm from '@/components/servers/ServerForm';
@@ -30,7 +31,6 @@ import {
   listServers,
   createServer,
   updateServer,
-  deleteServer,
   bulkUpdateServers,
   triggerHealthCheck,
 } from '@/services/serverService';
@@ -70,6 +70,7 @@ function Servers() {
   const [formOpen, setFormOpen] = useState(false);
   const [editing, setEditing] = useState(null);
   const [confirm, setConfirm] = useState(null);
+  const [deleteTarget, setDeleteTarget] = useState(null);
   const [bootstrapServer, setBootstrapServer] = useState(null);
   const [uninstallServer, setUninstallServer] = useState(null);
 
@@ -131,19 +132,7 @@ function Servers() {
     }
   };
 
-  const handleDelete = (server) => {
-    setConfirm({
-      title: 'Delete server',
-      message: `Permanently delete ${server.hostname}? This cannot be undone.`,
-      variant: 'destructive',
-      confirmLabel: 'Delete',
-      onConfirm: async () => {
-        await deleteServer(server.id);
-        setConfirm(null);
-        fetch();
-      },
-    });
-  };
+  const handleDelete = (server) => setDeleteTarget(server);
 
   const handleHealthCheck = async (server) => {
     try {
@@ -537,6 +526,17 @@ function Servers() {
         variant={confirm?.variant}
         onConfirm={confirm?.onConfirm}
         onCancel={() => setConfirm(null)}
+      />
+
+      <DeleteServerDialog
+        server={deleteTarget}
+        open={!!deleteTarget}
+        onClose={() => setDeleteTarget(null)}
+        onDeleted={() => {
+          setDeleteTarget(null);
+          setSelected([]);
+          fetch();
+        }}
       />
     </div>
   );

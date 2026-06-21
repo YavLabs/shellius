@@ -254,6 +254,15 @@ router.put(
 // DELETE /api/policies/:id — admin+
 // ---------------------------------------------------------------------------
 
+router.get(
+  '/:id/delete-impact',
+  requireRole('super_admin', 'admin'),
+  asyncHandler(async (req, res) => {
+    const impact = await policyService.getDeleteImpact(req.orgId, req.params.id);
+    res.json({ success: true, data: impact });
+  })
+);
+
 router.delete(
   '/:id',
   requireRole('super_admin', 'admin'),

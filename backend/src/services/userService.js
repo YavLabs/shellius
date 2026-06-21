@@ -3,6 +3,8 @@ import prisma from '../config/db.js';
 import ApiError from '../utils/ApiError.js';
 import config from '../config/index.js';
 import logger from '../utils/logger.js';
+import * as terminalService from './terminalService.js';
+import { cleanupPolicySubjects } from './policyService.js';
 
 const ROLE_RANK = { super_admin: 4, admin: 3, manager: 2, member: 1 };
 
@@ -166,10 +168,82 @@ export async function updateUser(orgId, userId, data, actorUserId, actorRole) {
   return strip(updated);
 }
 
-export async function deleteUser(orgId, userId) {
+/** Dependents handled/removed when this user is hard-deleted (for the dialog). */
+export async function getUserDeleteImpact(orgId, userId) {
+  const user = await prisma.user.findFirst({ where: { id: userId, orgId } });
+  if (!user) throw new ApiError(404, 'User not found');
+
+  const [superAdminCount, activeSessions, directReports, pendingRequests, groupMemberships, activeCerts, policyRefs, managers] =
+    await Promise.all([
+      prisma.user.count({ where: { orgId, role: 'super_admin', status: { not: 'deleted' } } }),
+      prisma.session.count({ where: { orgId, userId, status: 'ACTIVE' } }),
+      prisma.user.findMany({ where: { orgId, managerId: userId }, select: { id: true, name: true, email: true } }),
+      prisma.accessRequest.count({ where: { orgId, requesterId: userId, status: { in: ['PENDING', 'APPROVED'] } } }),
+      prisma.groupMembership.count({ where: { userId } }),
+      prisma.certificate.count({ where: { orgId, issuedToId: userId, status: 'ACTIVE' } }),
+      prisma.policySubject.count({ where: { subjectType: 'USER', subjectId: userId } }),
+      prisma.user.findMany({
+        where: { orgId, status: { not: 'deleted' }, id: { not: userId } },
+        select: { id: true, name: true, email: true },
+        orderBy: { name: 'asc' },
+      }),
+    ]);
+
+  return {
+    user: { id: user.id, name: user.name, email: user.email, role: user.role },
+    isLastSuperAdmin: user.role === 'super_admin' && superAdminCount <= 1,
+    activeSessions,
+    directReports,
+    directReportCount: directReports.length,
+    pendingRequests,
+    groupMemberships,
+    activeCertificates: activeCerts,
+    policyReferences: policyRefs,
+    availableManagers: managers,
+  };
+}
+
+/**
+ * Hard-delete a user. Guards the last super_admin, force-terminates live
+ * sessions, optionally reassigns direct reports to another manager, removes
+ * orphan policy-subject rows (polymorphic, no cascade), then deletes — which
+ * cascades sessions, access requests, group memberships and tokens, and
+ * SetNulls audit-log actor / issued certificates.
+ *
+ * @param {object} [options] - { reassignReportsTo?: string }
+ */
+export async function deleteUser(orgId, userId, options = {}, callerId = null) {
   const existing = await prisma.user.findFirst({ where: { id: userId, orgId } });
   if (!existing) throw new ApiError(404, 'User not found');
-  await prisma.user.update({ where: { id: userId }, data: { status: 'deactivated' } });
+
+  if (existing.role === 'super_admin') {
+    const superAdminCount = await prisma.user.count({
+      where: { orgId, role: 'super_admin', status: { not: 'deleted' } },
+    });
+    if (superAdminCount <= 1) {
+      throw new ApiError(409, 'Cannot delete the only super_admin in the organization');
+    }
+  }
+
+  // Validate reassignment target before any destructive work.
+  const reassignTo = options.reassignReportsTo;
+  if (reassignTo) {
+    if (reassignTo === userId) throw new ApiError(400, 'Cannot reassign reports to the user being deleted');
+    const target = await prisma.user.findFirst({ where: { id: reassignTo, orgId, status: { not: 'deleted' } } });
+    if (!target) throw new ApiError(400, 'Reassignment target manager not found');
+  }
+
+  await terminalService.terminateActiveSessionsFor(orgId, { userId }, callerId);
+
+  await prisma.$transaction(async (tx) => {
+    if (reassignTo) {
+      await tx.user.updateMany({ where: { orgId, managerId: userId }, data: { managerId: reassignTo } });
+    }
+    await cleanupPolicySubjects('USER', userId, tx);
+    await tx.user.delete({ where: { id: userId } });
+  });
+
+  logger.info('userService.deleteUser: user hard-deleted', { orgId, userId, reassignTo: reassignTo || null });
   return { success: true };
 }
 
