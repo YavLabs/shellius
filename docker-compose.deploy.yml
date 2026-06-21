@@ -28,7 +28,13 @@ services:
       retries: 5
 
   guacd:
-    image: guacamole/guacd:1.5.5
+    # Custom guacd build with H.264 (OpenH264) enabled so the RDP Graphics
+    # Pipeline used by modern Windows hosts decodes instead of rendering black.
+    # See docker/Dockerfile.guacd.
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.guacd
+    image: shellius-guacd:h264
     container_name: shellius-guacd
     restart: unless-stopped
 

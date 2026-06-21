@@ -39,19 +39,33 @@ const submitSchema = Joi.object({
   serverId: Joi.string().required(),
   reason: Joi.string().min(10).required(),
   requestedDuration: Joi.number().integer().min(60).max(86400 * 7).required(),
-  // POSIX-ish Linux username — must match an actual local account on the
-  // target host or sshd cert auth will refuse the connection.
-  // Optional — when omitted, the service auto-resolves to the JIT
-  // principal if a matching policy has osProvisioning, otherwise the
-  // server's legacy sshUser.
-  requestedPrincipal: Joi.string()
-    .pattern(/^[a-z_][a-z0-9_-]{0,31}$/)
-    .optional()
-    .allow('', null)
-    .messages({
-      'string.pattern.base':
-        'requestedPrincipal must be a valid Linux username: lowercase letters, digits, underscore, or hyphen (1-32 chars, must start with a letter or underscore).',
-    }),
+  // The principal is validated per-protocol:
+  //   • SSH → POSIX-ish Linux username (must match a local account on the
+  //     target host or sshd cert auth refuses the connection).
+  //   • RDP → a Windows/RDP account, which is case-insensitive and may be a
+  //     plain name ("Administrator"), a down-level domain account
+  //     ("CORP\\Administrator"), or a UPN ("admin@corp.local").
+  // Optional in both cases — when omitted, the service auto-resolves the
+  // principal (JIT principal for SSH, the server's rdpUsername for RDP).
+  requestedPrincipal: Joi.when('protocol', {
+    is: 'RDP',
+    then: Joi.string()
+      .pattern(/^[A-Za-z0-9._@\\ -]{1,104}$/)
+      .optional()
+      .allow('', null)
+      .messages({
+        'string.pattern.base':
+          'requestedPrincipal (RDP account) may contain letters, digits, and the characters . _ - @ \\ and spaces (1-104 chars).',
+      }),
+    otherwise: Joi.string()
+      .pattern(/^[a-z_][a-z0-9_-]{0,31}$/)
+      .optional()
+      .allow('', null)
+      .messages({
+        'string.pattern.base':
+          'requestedPrincipal must be a valid Linux username: lowercase letters, digits, underscore, or hyphen (1-32 chars, must start with a letter or underscore).',
+      }),
+  }),
   // Accept any case — the Server model's ServerProtocol enum stores 'ssh'/'rdp'
   // lowercase, but the AccessRequest Protocol enum stores uppercase. Normalize
   // so the callers don't have to care about the difference.

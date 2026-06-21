@@ -27,6 +27,8 @@ import { updateConnectionIp } from '@/services/serverService';
 function ConnectModal({ open, onClose, server, intent, currentUser }) {
   const adminOverride = !!intent?.adminCanOverride;
   const allowed = intent?.allowedPrincipals || [];
+  const proto = intent?.protocol || 'SSH';
+  const isRdp = proto === 'RDP';
 
   const [principal, setPrincipal] = useState(() => intent?.preferredPrincipal || '');
   const [overrideOn, setOverrideOn] = useState(false);
@@ -49,10 +51,12 @@ function ConnectModal({ open, onClose, server, intent, currentUser }) {
   const isInAllowList = allowed.includes(trimmed);
   const editable = adminOverride && overrideOn;
 
-  // Non-admins are locked to the preferred principal OR must pick from
+  // RDP connects with the server-side rdpUsername injected by the gateway, so
+  // the Linux-principal validation does not apply — an active request is enough.
+  // For SSH, non-admins are locked to the preferred principal OR must pick from
   // the allowed list via a select dropdown.
   const canSubmit =
-    isValidFormat && (editable || isInAllowList || allowed.length === 0);
+    isRdp || (isValidFormat && (editable || isInAllowList || allowed.length === 0));
 
   const onConnect = async () => {
     if (!canSubmit || !intent?.activeRequestId) return;
@@ -78,10 +82,8 @@ function ConnectModal({ open, onClose, server, intent, currentUser }) {
     onClose();
   };
 
-  const proto = intent?.protocol || 'SSH';
   const port = server?.port || (proto === 'RDP' ? 3389 : 22);
   const jitBadge = intent?.jitEnabled && trimmed.endsWith('_jit');
-  const isRdp = proto === 'RDP';
 
   return (
     <Modal

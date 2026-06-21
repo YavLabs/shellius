@@ -104,9 +104,16 @@ function Terminal() {
         </button>
       </div>
 
-      {/* Terminal — fills remaining height */}
+      {/* Terminal — fills remaining height. Wait until the request is loaded so
+          we know the protocol; otherwise we'd briefly mount the SSH terminal
+          (protocol defaults to SSH) and open a stray SSH socket to an RDP host,
+          then unmount it — which tears down the real RDP session. */}
       <div className="flex-1 min-h-0">
-        {isRdp ? (
+        {loadingRequest ? (
+          <div className="flex h-full items-center justify-center rounded-lg border border-border bg-[#0a0a0a]">
+            <div className="h-5 w-5 animate-spin rounded-full border-2 border-muted border-t-foreground" />
+          </div>
+        ) : isRdp ? (
           <RdpTerminal requestId={requestId} />
         ) : (
           <WebTerminal requestId={requestId} />

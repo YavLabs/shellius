@@ -1,0 +1,174 @@
+# =============================================================================
+# Custom guacd 1.5.5 build with H.264 (OpenH264) ENABLED in FreeRDP.
+#
+# Why this exists:
+#   The official `guacamole/guacd` image builds FreeRDP with
+#   -DWITH_OPENH264=OFF / -DWITH_FFMPEG=OFF, so it cannot decode the RDP
+#   Graphics Pipeline (RDPGFX) when the server uses the H.264 / AVC 444 codec.
+#   Modern Windows hosts (Windows 10/11, Server 2016+, AWS EC2 Windows) default
+#   to that codec, so the remote desktop renders fully BLACK while the mouse
+#   cursor (a separate, non-H.264 PDU) still moves. guacd logs a flood of
+#   "Handler not found for """ as the GFX frames are dropped.
+#
+# This image is byte-for-byte the upstream 1.5.5 build EXCEPT:
+#   * FREERDP_OPTS sets -DWITH_OPENH264=ON (+ -DWITH_GFX_H264=ON)
+#   * `openh264-dev` is added to the build dependencies
+#   list-dependencies.sh then folds libopenh264 into the runtime image
+#   automatically (it resolves the linked .so of the built FreeRDP libs).
+#
+# Pinned to Alpine 3.18 because `openssl1.1-compat-dev` (required by the 1.5.5
+# build) was dropped in Alpine 3.19+.
+# =============================================================================
+
+ARG ALPINE_BASE_IMAGE=3.18
+FROM alpine:${ALPINE_BASE_IMAGE} AS builder
+
+# Install build dependencies (upstream list + openh264-dev)
+RUN apk add --no-cache                \
+        autoconf                      \
+        automake                      \
+        build-base                    \
+        cairo-dev                     \
+        cmake                         \
+        git                           \
+        grep                          \
+        libjpeg-turbo-dev             \
+        libpng-dev                    \
+        libtool                       \
+        libwebp-dev                   \
+        make                          \
+        openh264-dev                  \
+        openssl1.1-compat-dev         \
+        pango-dev                     \
+        pulseaudio-dev                \
+        util-linux-dev
+
+# Fetch the guacamole-server source at the pinned release tag
+ARG GUAC_VERSION=1.5.5
+ARG BUILD_DIR=/tmp/guacamole-server
+RUN git clone --depth 1 --branch "${GUAC_VERSION}" \
+        https://github.com/apache/guacamole-server "${BUILD_DIR}"
+
+# Base directory for installed build artifacts (duplicated in stage 2 by design)
+ARG PREFIX_DIR=/opt/guacamole
+
+# Core protocol library version selectors (match upstream defaults)
+ARG WITH_FREERDP='2(\.\d+)+'
+ARG WITH_LIBSSH2='libssh2-\d+(\.\d+)+'
+ARG WITH_LIBTELNET='\d+(\.\d+)+'
+ARG WITH_LIBVNCCLIENT='LibVNCServer-\d+(\.\d+)+'
+ARG WITH_LIBWEBSOCKETS='v\d+(\.\d+)+'
+
+# FreeRDP build options — identical to upstream EXCEPT OpenH264 + GFX H264 ON.
+ARG FREERDP_OPTS="\
+    -DBUILTIN_CHANNELS=OFF \
+    -DCHANNEL_URBDRC=OFF \
+    -DWITH_ALSA=OFF \
+    -DWITH_CAIRO=ON \
+    -DWITH_CHANNELS=ON \
+    -DWITH_CLIENT=ON \
+    -DWITH_CUPS=OFF \
+    -DWITH_DIRECTFB=OFF \
+    -DWITH_FFMPEG=OFF \
+    -DWITH_GSM=OFF \
+    -DWITH_GSSAPI=OFF \
+    -DWITH_GFX_H264=ON \
+    -DWITH_IPP=OFF \
+    -DWITH_JPEG=ON \
+    -DWITH_LIBSYSTEMD=OFF \
+    -DWITH_MANPAGES=OFF \
+    -DWITH_OPENH264=ON \
+    -DWITH_OPENSSL=ON \
+    -DWITH_OSS=OFF \
+    -DWITH_PCSC=OFF \
+    -DWITH_PULSE=OFF \
+    -DWITH_SERVER=OFF \
+    -DWITH_SERVER_INTERFACE=OFF \
+    -DWITH_SHADOW_MAC=OFF \
+    -DWITH_SHADOW_X11=OFF \
+    -DWITH_SSE2=ON \
+    -DWITH_WAYLAND=OFF \
+    -DWITH_X11=OFF \
+    -DWITH_X264=OFF \
+    -DWITH_XCURSOR=ON \
+    -DWITH_XEXT=ON \
+    -DWITH_XI=OFF \
+    -DWITH_XINERAMA=OFF \
+    -DWITH_XKBFILE=ON \
+    -DWITH_XRENDER=OFF \
+    -DWITH_XTEST=OFF \
+    -DWITH_XV=OFF \
+    -DWITH_ZLIB=ON"
+
+# --enable-allow-freerdp-snapshots: build-all.sh checks out the latest FreeRDP
+# 2.x tag, whose version string trips guacamole-server's "development version"
+# heuristic and aborts configure. We are building against a real release tag, so
+# allow it.
+ARG GUACAMOLE_SERVER_OPTS="\
+    --disable-guaclog \
+    --enable-allow-freerdp-snapshots"
+
+ARG LIBSSH2_OPTS="\
+    -DBUILD_EXAMPLES=OFF \
+    -DBUILD_SHARED_LIBS=ON"
+
+ARG LIBTELNET_OPTS="\
+    --disable-static \
+    --disable-util"
+
+ARG LIBVNCCLIENT_OPTS=""
+
+ARG LIBWEBSOCKETS_OPTS="\
+    -DDISABLE_WERROR=ON \
+    -DLWS_WITHOUT_SERVER=ON \
+    -DLWS_WITHOUT_TESTAPPS=ON \
+    -DLWS_WITHOUT_TEST_CLIENT=ON \
+    -DLWS_WITHOUT_TEST_PING=ON \
+    -DLWS_WITHOUT_TEST_SERVER=ON \
+    -DLWS_WITHOUT_TEST_SERVER_EXTPOLL=ON \
+    -DLWS_WITH_STATIC=OFF"
+
+# Build guacamole-server and its core protocol library dependencies
+RUN ${BUILD_DIR}/src/guacd-docker/bin/build-all.sh
+
+# Record the packages of all runtime library dependencies (folds in libopenh264)
+RUN ${BUILD_DIR}/src/guacd-docker/bin/list-dependencies.sh \
+        ${PREFIX_DIR}/sbin/guacd               \
+        ${PREFIX_DIR}/lib/libguac-client-*.so  \
+        ${PREFIX_DIR}/lib/freerdp2/*guac*.so   \
+        > ${PREFIX_DIR}/DEPENDENCIES
+
+# ---- Runtime image -----------------------------------------------------------
+FROM alpine:${ALPINE_BASE_IMAGE}
+
+ARG PREFIX_DIR=/opt/guacamole
+
+ENV LC_ALL=C.UTF-8
+ENV LD_LIBRARY_PATH=${PREFIX_DIR}/lib
+ENV GUACD_LOG_LEVEL=info
+
+COPY --from=builder ${PREFIX_DIR} ${PREFIX_DIR}
+
+RUN apk add --no-cache                \
+        ca-certificates               \
+        font-noto-cjk                 \
+        ghostscript                   \
+        netcat-openbsd                \
+        shadow                        \
+        terminus-font                 \
+        ttf-dejavu                    \
+        ttf-liberation                \
+        util-linux-login && \
+    xargs apk add --no-cache < ${PREFIX_DIR}/DEPENDENCIES
+
+HEALTHCHECK --interval=5m --timeout=5s CMD nc -z 127.0.0.1 4822 || exit 1
+
+ARG UID=1000
+ARG GID=1000
+RUN groupadd --gid $GID guacd
+RUN useradd --system --create-home --shell /sbin/nologin --uid $UID --gid $GID guacd
+
+USER guacd
+EXPOSE 4822
+
+CMD /opt/guacamole/sbin/guacd -b 0.0.0.0 -L $GUACD_LOG_LEVEL -f
