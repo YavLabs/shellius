@@ -151,7 +151,12 @@ function ServerForm({ server, customerId: initialCustomerId, onSubmit, onCancel 
     setError('');
 
     if (!hostname.trim())                         { setError('Hostname is required'); return; }
-    if (!ipAddress || !ipv4Re.test(ipAddress))    { setError('Valid IPv4 address is required'); return; }
+    // dynamicIp servers resolve their address at connect time — IP optional here.
+    if (dynamicIp) {
+      if (ipAddress && !ipv4Re.test(ipAddress))   { setError('Invalid IPv4 address'); return; }
+    } else if (!ipAddress || !ipv4Re.test(ipAddress)) {
+      setError('Valid IPv4 address is required'); return;
+    }
     if (!customerId)                              { setError('Customer is required'); return; }
 
     const payload = {
@@ -274,14 +279,16 @@ function ServerForm({ server, customerId: initialCustomerId, onSubmit, onCancel 
 
         {/* IP Address */}
         <div>
-          <label className={labelCls}>IP Address <span className="text-destructive">*</span></label>
+          <label className={labelCls}>
+            IP Address {!dynamicIp && <span className="text-destructive">*</span>}
+          </label>
           <input
             className={`${inputCls} font-mono`}
             value={ipAddress}
             onChange={(e) => setIpAddress(e.target.value)}
             onBlur={handleIpBlur}
-            placeholder="10.0.0.1"
-            required
+            placeholder={dynamicIp ? 'Resolved at connect time (optional)' : '10.0.0.1'}
+            required={!dynamicIp}
           />
           {ipError && <p className="mt-1 text-xs text-destructive">{ipError}</p>}
           <PrivateIPWarning ipAddress={ipAddress} variant="note" />

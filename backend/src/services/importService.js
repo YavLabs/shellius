@@ -221,8 +221,11 @@ async function planUser(orgId, row, inImport) {
 async function planServer(orgId, row, inImport, files) {
   const hostname = str(row.hostname);
   const ipAddress = str(row.ipAddress || row.ip);
+  const dynamicIp = bool(row.dynamicIp);
   if (!hostname) return { action: 'error', error: 'hostname is required' };
-  if (!ipAddress) return { action: 'error', error: 'ipAddress is required' };
+  // Non-static (dynamicIp) servers resolve their address at connect time, so an
+  // ipAddress is not required at import. Static servers still require one.
+  if (!ipAddress && !dynamicIp) return { action: 'error', error: 'ipAddress is required' };
 
   // Customer ref required (by slug or name), DB or same-import.
   const custRef = lower(row.customer || row.customerSlug || row.customerName);
@@ -493,7 +496,7 @@ async function commitServer(orgId, job, row, raw, overwrite, cache) {
     labels: labelsToArray(raw.labels),
     osType: str(raw.osType) || undefined,
     osVersion: str(raw.osVersion) || undefined,
-    dynamicIp: ['true', 'yes', '1', 'y'].includes(str(raw.dynamicIp).trim().toLowerCase()) || undefined,
+    dynamicIp: bool(raw.dynamicIp) || undefined,
     sshUser: str(raw.sshUser) || undefined,
     rdpUsername: str(raw.rdpUsername) || undefined,
     ...(raw.rdpPasswordEnc ? { rdpPassword: safeDecrypt(raw.rdpPasswordEnc) } : {}),

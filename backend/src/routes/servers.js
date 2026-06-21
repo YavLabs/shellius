@@ -29,7 +29,12 @@ const createSchema = Joi.object({
   hostname: Joi.string().min(1).max(255).required(),
   displayName: Joi.string().allow('', null).max(255),
   description: Joi.string().allow('', null).max(1000),
-  ipAddress: Joi.string().required(),
+  dynamicIp: Joi.boolean().default(false),
+  // Required only for static servers; dynamicIp servers resolve the address at
+  // connect time, so it may be omitted/empty.
+  ipAddress: Joi.string()
+    .allow('', null)
+    .when('dynamicIp', { is: true, then: Joi.optional(), otherwise: Joi.string().required() }),
   port: Joi.number().integer().min(1).max(65535).default(22),
   protocol: Joi.string().valid(...PROTOCOLS).default('ssh'),
   environment: Joi.string().valid(...ENVIRONMENTS).default('dev'),
@@ -51,7 +56,8 @@ const updateSchema = Joi.object({
   hostname: Joi.string().min(1).max(255),
   displayName: Joi.string().allow('', null).max(255),
   description: Joi.string().allow('', null).max(1000),
-  ipAddress: Joi.string(),
+  dynamicIp: Joi.boolean(),
+  ipAddress: Joi.string().allow('', null),
   port: Joi.number().integer().min(1).max(65535),
   protocol: Joi.string().valid(...PROTOCOLS),
   environment: Joi.string().valid(...ENVIRONMENTS),

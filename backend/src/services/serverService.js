@@ -109,13 +109,22 @@ export async function createServer(orgId, customerId, data = {}) {
   if (!customer) throw new ApiError(400, 'Customer not found in organization');
 
   if (!data.hostname) throw new ApiError(400, 'hostname is required');
-  if (!validateIp(data.ipAddress)) throw new ApiError(400, 'ipAddress must be a valid IPv4 or IPv6 address');
+  // dynamicIp servers resolve their address at connect time, so an ipAddress is
+  // optional at create. If one is supplied it must still be valid. Static
+  // servers require a valid IP.
+  const isDynamic = data.dynamicIp === true;
+  const ip = (data.ipAddress ?? '').trim();
+  if (isDynamic) {
+    if (ip && !validateIp(ip)) throw new ApiError(400, 'ipAddress must be a valid IPv4 or IPv6 address');
+  } else if (!validateIp(ip)) {
+    throw new ApiError(400, 'ipAddress must be a valid IPv4 or IPv6 address');
+  }
 
   const payload = {
     orgId,
     customerId,
     hostname: data.hostname,
-    ipAddress: data.ipAddress,
+    ipAddress: ip,
     healthStatus: 'unknown',
   };
   for (const f of MUTABLE_FIELDS) {
@@ -145,8 +154,19 @@ export async function updateServer(orgId, serverId, data = {}) {
     updateData[key] = data[key];
   }
 
-  if (updateData.ipAddress !== undefined && !validateIp(updateData.ipAddress)) {
-    throw new ApiError(400, 'ipAddress must be a valid IPv4 or IPv6 address');
+  if (updateData.ipAddress !== undefined) {
+    // Determine the effective dynamicIp state after this update.
+    const willBeDynamic =
+      data.dynamicIp !== undefined ? data.dynamicIp === true : existing.dynamicIp === true;
+    const ip = (updateData.ipAddress ?? '').trim();
+    if (willBeDynamic) {
+      if (ip && !validateIp(ip)) {
+        throw new ApiError(400, 'ipAddress must be a valid IPv4 or IPv6 address');
+      }
+    } else if (!validateIp(ip)) {
+      throw new ApiError(400, 'ipAddress must be a valid IPv4 or IPv6 address');
+    }
+    updateData.ipAddress = ip;
   }
   if (data.rdpPassword) {
     updateData.rdpPasswordEncrypted = encrypt(data.rdpPassword);
