@@ -186,6 +186,12 @@ export function attachWebSocketServer(httpServer) {
   });
 
   wssSsh.on('connection', (ws, req) => {
+    // Heartbeat liveness — see HEARTBEAT_MS below. Browsers reply to a
+    // protocol-level ping automatically (even for a backgrounded tab), so a
+    // live peer flips this back to true via the 'pong' handler.
+    ws.isAlive = true;
+    ws.on('pong', () => { ws.isAlive = true; });
+
     handleConnection(ws, req).catch((err) => {
       logger.error('terminalService: unhandled error in handleConnection (SSH)', {
         error: err.message,
@@ -193,6 +199,38 @@ export function attachWebSocketServer(httpServer) {
       safeClose(ws, 1011, 'Internal server error');
     });
   });
+
+  // ── Heartbeat ────────────────────────────────────────────────────────────
+  // An interactive SSH/RDP session can sit idle for minutes with zero bytes
+  // flowing. NAT gateways, load balancers and the browser itself silently drop
+  // an idle WebSocket after a few minutes — this is what caused sessions to die
+  // "after ~5 min" and "when I switch tabs" (a backgrounded tab produces no
+  // traffic). We keep the path warm by pinging every client periodically.
+  // Protocol-level pings are handled by the browser's network stack, NOT JS
+  // timers, so they are NOT throttled when the tab is in the background.
+  const HEARTBEAT_MS = 25000;
+  const heartbeat = setInterval(() => {
+    // SSH sockets: ping, and reap peers that missed the previous ping.
+    wssSsh.clients.forEach((ws) => {
+      if (ws.isAlive === false) {
+        try { ws.terminate(); } catch { /* ignore */ }
+        return;
+      }
+      ws.isAlive = false;
+      try { ws.ping(); } catch { /* ignore */ }
+    });
+    // RDP (guacamole-lite) sockets: ping only to keep the tunnel warm —
+    // guacamole-lite owns their connect/close lifecycle, so we don't reap them.
+    try {
+      guacRdp.webSocketServer?.clients?.forEach((ws) => {
+        if (ws.readyState === ws.OPEN) {
+          try { ws.ping(); } catch { /* ignore */ }
+        }
+      });
+    } catch { /* ignore */ }
+  }, HEARTBEAT_MS);
+  heartbeat.unref?.();
+  wssSsh.on('close', () => clearInterval(heartbeat));
 
   logger.info('terminalService: WebSocket SSH proxy attached on /api/terminal/ssh');
   logger.info('terminalService: guacamole-lite RDP tunnel attached on /api/terminal/rdp');

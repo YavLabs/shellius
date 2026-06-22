@@ -725,8 +725,13 @@ export async function generateSshCredentials({
     });
 
     const port = server.port ?? 22;
+    // Use the routable IP for the connect command — the user's machine usually
+    // can't resolve the server's internal hostname (e.g. ip-172-31-37-143).
+    // accept-new mirrors the web terminal so the first connect isn't blocked by
+    // an interactive host-key prompt.
+    const connectHost = server.ipAddress || server.hostname;
     const connectCommand =
-      `ssh -i id_ed25519 -o CertificateFile=id_ed25519-cert.pub ${primaryPrincipal}@${server.hostname} -p ${port}`;
+      `ssh -i id_ed25519 -o CertificateFile=id_ed25519-cert.pub -o StrictHostKeyChecking=accept-new ${primaryPrincipal}@${connectHost} -p ${port}`;
 
     const result = {
       privateKey: privateKeyBuf.toString('utf8'),

@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { Terminal, Download, Copy, Check, AlertTriangle, ExternalLink, Monitor, Info } from 'lucide-react';
 import { getSshCredentials, getRdpCredentials } from '@/services/accessRequestService';
 import { formatDateTime } from '@/utils/time';
+import { createZip } from '@/utils/zip';
 
 function useCountdown(targetDate) {
   const [label, setLabel] = useState('');
@@ -34,8 +35,7 @@ function useCountdown(targetDate) {
   return label;
 }
 
-function downloadBlob(filename, content) {
-  const blob = new Blob([content], { type: 'application/octet-stream' });
+function triggerDownload(filename, blob) {
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url;
@@ -44,6 +44,10 @@ function downloadBlob(filename, content) {
   a.click();
   document.body.removeChild(a);
   URL.revokeObjectURL(url);
+}
+
+function downloadBlob(filename, content) {
+  triggerDownload(filename, new Blob([content], { type: 'application/octet-stream' }));
 }
 
 function CopyButton({ text }) {
@@ -91,12 +95,47 @@ function CredentialDownload({ request }) {
       const resp = await getSshCredentials(request.id);
       const creds = resp.data || resp;
       setSshCreds(creds);
-      if (creds.privateKey) {
-        downloadBlob('id_ed25519', creds.privateKey);
-      }
+
+      // Bundle key + cert + helpers into ONE archive. Firing several
+      // programmatic downloads back-to-back makes the browser drop all but the
+      // first, which previously left users with only the private key and no
+      // certificate (so the connect command failed).
+      const host = creds.address || creds.hostname || 'server';
+      const safeHost = host.replace(/[^a-zA-Z0-9._-]/g, '_');
+      const connectCmd =
+        creds.connectCommand ||
+        `ssh -i id_ed25519 -o CertificateFile=id_ed25519-cert.pub ${creds.username}@${host} -p ${creds.port}`;
+
+      const readme =
+        'Shellius — temporary SSH access\n' +
+        '================================\n\n' +
+        `Server:   ${creds.hostname || host}${creds.address ? ` (${creds.address})` : ''}\n` +
+        `User:     ${creds.username || ''}\n` +
+        `Port:     ${creds.port || 22}\n` +
+        (creds.expiresAt ? `Expires:  ${new Date(creds.expiresAt).toLocaleString()}\n` : '') +
+        '\nUnzip this archive, then from inside the folder run:\n\n' +
+        '  Linux/macOS:  chmod 600 id_ed25519 && bash connect.sh\n' +
+        `  Manual:       ${connectCmd}\n\n` +
+        'The private key is short-lived and tied to this access request. It\n' +
+        'cannot be downloaded again.\n';
+
+      const connectSh =
+        '#!/usr/bin/env bash\n' +
+        'set -euo pipefail\n' +
+        'cd "$(dirname "$0")"\n' +
+        'chmod 600 id_ed25519\n' +
+        `${connectCmd}\n`;
+
+      const files = [
+        { name: 'id_ed25519', data: creds.privateKey || '', unixMode: 0o100600 },
+        { name: 'README.txt', data: readme, unixMode: 0o100644 },
+      ];
       if (creds.certificate) {
-        downloadBlob('id_ed25519-cert.pub', creds.certificate);
+        files.splice(1, 0, { name: 'id_ed25519-cert.pub', data: creds.certificate, unixMode: 0o100644 });
       }
+      files.push({ name: 'connect.sh', data: connectSh, unixMode: 0o100755 });
+
+      triggerDownload(`shellius-${safeHost}-ssh.zip`, createZip(files));
     } catch (err) {
       setError(err.response?.data?.error?.message || err.message || 'Failed to retrieve SSH credentials.');
     } finally {
