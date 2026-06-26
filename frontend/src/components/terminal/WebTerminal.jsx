@@ -38,7 +38,15 @@ function StatusIndicator({ status }) {
 }
 
 function WebTerminal({ requestId, onClose }) {
-  const { accessToken, refresh } = useAuth();
+  // NOTE: we deliberately do NOT consume `accessToken` from context here.
+  // connect() calls refresh(), which updates accessToken in AuthContext; if
+  // accessToken were a dependency of connect()/the effect, that update would
+  // re-create connect → tear down and reopen the socket → refresh() again, an
+  // endless reconnect loop. The loop left a stale "WebSocket connection error"
+  // banner on top of an otherwise-Connected session. The token is always read
+  // fresh from storage (and via refresh()) at connect time, so it isn't needed
+  // as reactive state.
+  const { refresh } = useAuth();
   const containerRef = useRef(null);
   const termRef = useRef(null);
   const fitAddonRef = useRef(null);
@@ -64,7 +72,7 @@ function WebTerminal({ requestId, onClose }) {
     // bypasses axios entirely, so the auto-refresh interceptor never fires
     // for it. Without this, a stale token (15 min default TTL) leaves the
     // backend rejecting the upgrade with "Invalid or expired token".
-    let token = accessToken || localStorage.getItem('accessToken');
+    let token = localStorage.getItem('accessToken');
     try {
       const refreshed = await refresh();
       if (refreshed?.accessToken) token = refreshed.accessToken;
@@ -142,19 +150,25 @@ function WebTerminal({ requestId, onClose }) {
     return () => {
       window.removeEventListener('resize', handleResize);
     };
-  }, [requestId, accessToken, refresh, sendResize]);
+  }, [requestId, refresh, sendResize]);
 
   function openWs(url, term) {
     const ws = new WebSocket(url);
     wsRef.current = ws;
     ws.binaryType = 'arraybuffer';
 
+    // A socket that has been superseded (replaced in wsRef during a reconnect)
+    // must never write output or flip status/error for the live session.
+    const isCurrent = () => wsRef.current === ws;
+
     ws.onopen = () => {
+      if (!isCurrent()) return;
       setStatus(STATUS.CONNECTED);
       term.focus();
     };
 
     ws.onmessage = (evt) => {
+      if (!isCurrent()) return;
       let text;
       if (typeof evt.data === 'string') {
         text = evt.data;
@@ -180,11 +194,13 @@ function WebTerminal({ requestId, onClose }) {
     };
 
     ws.onerror = () => {
+      if (!isCurrent()) return;
       setStatus(STATUS.DISCONNECTED);
       setError((prev) => prev || 'WebSocket connection error. Check your network or try reconnecting.');
     };
 
     ws.onclose = (evt) => {
+      if (!isCurrent()) return;
       setStatus(STATUS.DISCONNECTED);
       if (evt.code !== 1000 && evt.code !== 1001) {
         // Prefer the human reason from the backend (set via setError on the
