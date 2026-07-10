@@ -35,7 +35,7 @@ router.use(authenticate, tenant);
 
 router.get(
   '/',
-  requireRole('super_admin', 'admin', 'operator'),
+  requireRole('super_admin', 'admin', 'manager'),
   asyncHandler(async (req, res) => {
     const groups = await groupService.listGroups(req.orgId);
     res.json({ success: true, data: { groups } });
@@ -44,7 +44,7 @@ router.get(
 
 router.get(
   '/:id',
-  requireRole('super_admin', 'admin', 'operator'),
+  requireRole('super_admin', 'admin', 'manager'),
   asyncHandler(async (req, res) => {
     const group = await groupService.getGroup(req.orgId, req.params.id);
     res.json({ success: true, data: { group } });
@@ -68,6 +68,15 @@ router.put(
   asyncHandler(async (req, res) => {
     const group = await groupService.updateGroup(req.orgId, req.params.id, req.body);
     res.json({ success: true, data: { group } });
+  })
+);
+
+router.get(
+  '/:id/delete-impact',
+  requireRole('super_admin', 'admin'),
+  asyncHandler(async (req, res) => {
+    const impact = await groupService.getGroupDeleteImpact(req.orgId, req.params.id);
+    res.json({ success: true, data: impact });
   })
 );
 

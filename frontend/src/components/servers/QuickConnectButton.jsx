@@ -4,6 +4,7 @@ import { Button } from '@/components/ui/button';
 import ConnectModal from './ConnectModal';
 import RequestForm from '@/components/access-requests/RequestForm';
 import { getAccessIntent } from '@/services/accessRequestService';
+import { isServerOnboarded } from '@/lib/serverStatus';
 
 /**
  * QuickConnectButton
@@ -48,11 +49,16 @@ function QuickConnectButton({ server, currentUser }) {
   }, [fetchIntent]);
 
   const loading = intent === undefined;
+  const onboarded = isServerOnboarded(server);
+  // Onboarding failed (and the host isn't otherwise checked in) → don't offer
+  // access at all; it's surfaced/retryable from the Server Details page instead.
+  const onboardFailed = !onboarded && server?.provisionStatus === 'failed';
   const hasAccess = !!intent?.hasActiveAccess;
   const hasPending = !!intent?.hasPendingRequest;
 
   const handleClick = (e) => {
     e.stopPropagation();
+    if (!onboarded) return;
     // Always re-check right before opening — covers the "second browser
     // tab approved my AR 10 seconds ago" edge case.
     fetchIntent();
@@ -65,21 +71,33 @@ function QuickConnectButton({ server, currentUser }) {
     }
   };
 
+  // Hide the button entirely for servers whose onboarding failed.
+  if (onboardFailed) return null;
+
   const variant = hasAccess ? 'default' : hasPending ? 'ghost' : 'outline';
-  const title = hasPending ? 'An access request is pending manager approval' : undefined;
+  const title = !onboarded
+    ? 'This server has not been onboarded yet'
+    : hasPending
+      ? 'An access request is pending manager approval'
+      : undefined;
 
   return (
     <>
       <Button
         size="sm"
-        variant={variant}
+        variant={!onboarded ? 'ghost' : variant}
         className="gap-1.5"
-        disabled={loading || hasPending}
+        disabled={loading || hasPending || !onboarded}
         onClick={handleClick}
         title={title}
       >
         {loading ? (
           <Loader2 className="h-4 w-4 animate-spin" />
+        ) : !onboarded ? (
+          <>
+            <KeyRound className="h-4 w-4" />
+            Not onboarded
+          </>
         ) : hasAccess ? (
           <>
             <Terminal className="h-4 w-4" />

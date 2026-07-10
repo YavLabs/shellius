@@ -47,9 +47,19 @@ const ENV_DEFAULTS = {
  * @param {string} orgId
  * @returns {Promise<{row: object|null, envDefaults: object, source: object}>}
  */
+/** Detect which preset has env credentials configured (clientId + secret). */
+function detectEnvPreset() {
+  for (const [id, d] of Object.entries(ENV_DEFAULTS)) {
+    if (d.clientId && d.clientSecret) return id;
+  }
+  return null;
+}
+
 export async function getEffective(orgId) {
   const row = await prisma.ssoConfig.findUnique({ where: { orgId } });
-  const presetId = row?.presetId || null;
+  // When no row exists, fall back to whichever preset is configured via env so
+  // the Settings UI can prefill it.
+  const presetId = row?.presetId || detectEnvPreset();
   const envDefaults = presetId ? (ENV_DEFAULTS[presetId] || {}) : {};
 
   // Build a source map per logical field. NEVER leak env-var secret values —
@@ -206,12 +216,18 @@ const DEFAULT_APP_URL = process.env.APP_URL || runtimeConfig.publicBaseUrl;
 const DEFAULT_REDIRECT_URI = `${DEFAULT_APP_URL.replace(/\/$/, '')}/api/auth/sso/callback`;
 
 export async function upsert(orgId, data) {
-  const { provider, presetId, clientId, clientSecret, issuerUrl, redirectUri, scopes, isActive } = data;
+  const {
+    provider, presetId, clientId, clientSecret, issuerUrl, redirectUri, scopes, isActive,
+    defaultRole, defaultGroupId, autoProvision,
+  } = data;
 
   const existing = await prisma.ssoConfig.findUnique({ where: { orgId } });
 
   // Compute effective redirectUri — use supplied value, fall back to env-derived default
   const effectiveRedirectUri = redirectUri || DEFAULT_REDIRECT_URI;
+
+  // The preset's env secret (if any) lets a row be saved without re-entering it.
+  const envHasSecret = presetId ? !!(ENV_DEFAULTS[presetId] || {}).clientSecret : false;
 
   const baseData = {
     provider,
@@ -221,12 +237,15 @@ export async function upsert(orgId, data) {
     ...(presetId !== undefined && { presetId }),
     ...(scopes !== undefined && { scopes }),
     ...(isActive !== undefined && { isActive }),
+    ...(defaultRole !== undefined && { defaultRole }),
+    ...(defaultGroupId !== undefined && { defaultGroupId: defaultGroupId || null }),
+    ...(autoProvision !== undefined && { autoProvision }),
   };
 
   if (clientSecret) {
     baseData.clientSecretEncrypted = encrypt(clientSecret);
-  } else if (!existing) {
-    // New config but no secret provided
+  } else if (!existing && !envHasSecret) {
+    // New config with no stored secret and none available from env.
     throw new ApiError(400, 'clientSecret is required when creating a new SSO configuration');
   }
 

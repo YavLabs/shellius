@@ -29,7 +29,12 @@ const createSchema = Joi.object({
   hostname: Joi.string().min(1).max(255).required(),
   displayName: Joi.string().allow('', null).max(255),
   description: Joi.string().allow('', null).max(1000),
-  ipAddress: Joi.string().required(),
+  dynamicIp: Joi.boolean().default(false),
+  // Required only for static servers; dynamicIp servers resolve the address at
+  // connect time, so it may be omitted/empty.
+  ipAddress: Joi.string()
+    .allow('', null)
+    .when('dynamicIp', { is: true, then: Joi.optional(), otherwise: Joi.string().required() }),
   port: Joi.number().integer().min(1).max(65535).default(22),
   protocol: Joi.string().valid(...PROTOCOLS).default('ssh'),
   environment: Joi.string().valid(...ENVIRONMENTS).default('dev'),
@@ -51,7 +56,8 @@ const updateSchema = Joi.object({
   hostname: Joi.string().min(1).max(255),
   displayName: Joi.string().allow('', null).max(255),
   description: Joi.string().allow('', null).max(1000),
-  ipAddress: Joi.string(),
+  dynamicIp: Joi.boolean(),
+  ipAddress: Joi.string().allow('', null),
   port: Joi.number().integer().min(1).max(65535),
   protocol: Joi.string().valid(...PROTOCOLS),
   environment: Joi.string().valid(...ENVIRONMENTS),
@@ -74,11 +80,28 @@ const bulkEnvSchema = Joi.object({
   environment: Joi.string().valid(...ENVIRONMENTS).required(),
 });
 
+const bulkUpdateSchema = Joi.object({
+  serverIds: Joi.array().items(Joi.string()).min(1).required(),
+  patch: Joi.object({
+    environment: Joi.string().valid(...ENVIRONMENTS),
+    protocol: Joi.string().valid(...PROTOCOLS),
+    osType: Joi.string().valid('linux', 'windows', 'other'),
+    osVersion: Joi.string().allow(''),
+    sshUser: Joi.string().allow(''),
+    isActive: Joi.boolean(),
+    customerId: Joi.string(),
+  })
+    .min(1)
+    .required(),
+});
+
 router.use(authenticate, tenant);
 
 router.get(
   '/',
-  requireRole('super_admin', 'admin', 'operator'),
+  // Members can browse the inventory read-only so they can request access /
+  // connect. Create / edit / delete remain admin-only below.
+  requireRole('super_admin', 'admin', 'manager', 'member'),
   asyncHandler(async (req, res) => {
     const result = await serverService.listServers(req.orgId, req.query);
     res.json({ success: true, data: result });
@@ -87,7 +110,7 @@ router.get(
 
 router.get(
   '/health/summary',
-  requireRole('super_admin', 'admin', 'operator', 'viewer'),
+  requireRole('super_admin', 'admin', 'manager', 'member'),
   asyncHandler(async (req, res) => {
     const summary = await healthCheckService.getHealthSummary(req.orgId);
     res.json({ success: true, data: summary });
@@ -108,18 +131,45 @@ router.post(
   })
 );
 
+// Generalized bulk update — change any of a set of fields on many servers.
+router.post(
+  '/bulk',
+  requireRole('super_admin', 'admin', 'manager'),
+  validate(bulkUpdateSchema),
+  asyncHandler(async (req, res) => {
+    const result = await serverService.bulkUpdate(req.orgId, req.body.serverIds, req.body.patch);
+    res.json({ success: true, data: result });
+  })
+);
+
 router.get(
   '/:id',
-  requireRole('super_admin', 'admin', 'operator'),
+  requireRole('super_admin', 'admin', 'manager', 'member'),
   asyncHandler(async (req, res) => {
     const server = await serverService.getServer(req.orgId, req.params.id);
     res.json({ success: true, data: { server } });
   })
 );
 
+// Update the connection IP of a non-static-IP server (any role with access) —
+// so a changed cloud IP doesn't lock members out.
+router.patch(
+  '/:id/connection-ip',
+  requireRole('super_admin', 'admin', 'manager', 'member'),
+  validate(Joi.object({ ipAddress: Joi.string().required() })),
+  asyncHandler(async (req, res) => {
+    const server = await serverService.updateConnectionIp(
+      req.orgId,
+      req.params.id,
+      req.body.ipAddress
+    );
+    res.json({ success: true, data: { server } });
+  })
+);
+
 router.post(
   '/',
-  requireRole('super_admin', 'admin'),
+  requireRole('super_admin', 'admin', 'manager'),
   validate(createSchema),
   asyncHandler(async (req, res) => {
     const { customerId, ...rest } = req.body;
@@ -130,7 +180,7 @@ router.post(
 
 router.put(
   '/:id',
-  requireRole('super_admin', 'admin'),
+  requireRole('super_admin', 'admin', 'manager'),
   validate(updateSchema),
   asyncHandler(async (req, res) => {
     const server = await serverService.updateServer(req.orgId, req.params.id, req.body);
@@ -138,18 +188,27 @@ router.put(
   })
 );
 
+router.get(
+  '/:id/delete-impact',
+  requireRole('super_admin', 'admin'),
+  asyncHandler(async (req, res) => {
+    const impact = await serverService.getDeleteImpact(req.orgId, req.params.id);
+    res.json({ success: true, data: impact });
+  })
+);
+
 router.delete(
   '/:id',
   requireRole('super_admin'),
   asyncHandler(async (req, res) => {
-    await serverService.deleteServer(req.orgId, req.params.id);
+    await serverService.deleteServer(req.orgId, req.params.id, req.user.userId);
     res.json({ success: true, data: { success: true } });
   })
 );
 
 router.post(
   '/:id/health-check',
-  requireRole('super_admin', 'admin'),
+  requireRole('super_admin', 'admin', 'manager'),
   asyncHandler(async (req, res) => {
     const server = await healthCheckService.runHealthCheckForServer(req.orgId, req.params.id);
     if (!server) throw new ApiError(404, 'Server not found');
@@ -162,10 +221,10 @@ router.post(
 // The private key and sudo password are used once in memory and never stored.
 router.post(
   '/:id/provision',
-  requireRole('super_admin', 'admin'),
+  requireRole('super_admin', 'admin', 'manager'),
   asyncHandler(async (req, res) => {
-    const { privateKey, sshUser, sudoPassword } = req.body;
-    if (!privateKey) throw new ApiError(400, 'privateKey is required');
+    const { privateKey, passphrase, password, sshUser, sudoPassword } = req.body;
+    if (!privateKey && !password) throw new ApiError(400, 'Provide an SSH private key or a password');
     if (!sshUser) throw new ApiError(400, 'sshUser is required');
 
     // Set SSE headers before any async work so the client starts receiving
@@ -209,7 +268,9 @@ router.post(
       send('log', { message: '[shellius] Bootstrap token generated' });
 
       await provisionServer(req.orgId, req.params.id, {
-        privateKey,
+        privateKey: privateKey || undefined,
+        passphrase: passphrase || undefined,
+        password: password || undefined,
         sshUser,
         sudoPassword: sudoPassword || '',
         bootstrapUrl,

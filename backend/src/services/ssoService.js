@@ -92,13 +92,26 @@ function buildEnvCallbackUrl(orgSlug, req) {
   const publicBase =
     ssoConfig.publicBaseUrl ||
     (req ? `${req.protocol}://${req.get('host')}` : 'http://localhost:3001');
-  return `${publicBase.replace(/\/$/, '')}/api/auth/sso/${orgSlug}/callback`;
+  // Single org-agnostic callback (org is carried in `state`). Matches the
+  // GET /api/auth/sso/callback route and the saved-row default redirect URI.
+  void orgSlug;
+  return `${publicBase.replace(/\/$/, '')}/api/auth/sso/callback`;
 }
 
 export async function getDecryptedConfig(orgId, { orgSlug = null, req = null } = {}) {
   const cfg = await prisma.ssoConfig.findUnique({ where: { orgId } });
   if (cfg) {
-    return { ...cfg, clientSecret: decrypt(cfg.clientSecretEncrypted) };
+    // Secret from the row, or fall back to the preset's env secret/clientId so
+    // an env-backed config (managed only for defaultRole/autoProvision) works.
+    const envPreset = cfg.presetId ? ENV_ONLY_PRESETS[cfg.presetId]?.() : null;
+    const clientSecret = cfg.clientSecretEncrypted
+      ? decrypt(cfg.clientSecretEncrypted)
+      : envPreset?.clientSecret || null;
+    return {
+      ...cfg,
+      clientId: cfg.clientId || envPreset?.clientId || null,
+      clientSecret,
+    };
   }
 
   // Fall back to env-only presets
@@ -145,27 +158,57 @@ export async function handleOidcUserInfo(userinfo, orgId) {
   const avatarUrl = userinfo.picture || null;
   const ssoSub = userinfo.sub;
 
+  // Provisioning policy: DB row wins, else env defaults.
+  const ssoRow = await prisma.ssoConfig.findUnique({ where: { orgId } });
+  const autoProvision = ssoRow
+    ? ssoRow.autoProvision
+    : process.env.SSO_AUTO_PROVISION !== 'false';
+  const defaultRole = ssoRow?.defaultRole || process.env.SSO_DEFAULT_ROLE || 'member';
+  const defaultGroupId = ssoRow?.defaultGroupId || null;
+
   if (!user) {
+    if (!autoProvision) {
+      // Invite-only mode — an unknown email cannot self-provision via SSO.
+      const err = new ApiError(
+        403,
+        'Your account has not been set up in Shellius yet. Please contact your administrator to request access.'
+      );
+      err.errorCode = 'SSO_NOT_PROVISIONED';
+      throw err;
+    }
     user = await prisma.user.create({
       data: {
         orgId,
         email,
         name,
-        role: 'viewer',
+        role: defaultRole,
         status: 'active',
         ssoProvider: 'oidc',
         ssoSub,
         avatarUrl,
       },
     });
+    // Auto-assign the configured default group, if any.
+    if (defaultGroupId) {
+      await prisma.groupMembership
+        .create({ data: { groupId: defaultGroupId, userId: user.id } })
+        .catch(() => {}); // ignore if group was deleted / already a member
+    }
   } else {
+    if (user.status === 'deleted' || user.status === 'suspended' || user.status === 'deactivated') {
+      throw new ApiError(403, 'Account is not active');
+    }
     user = await prisma.user.update({
       where: { id: user.id },
       data: {
-        name,
+        // Keep the user's existing display name if they've already set one.
+        name: user.name || name,
         avatarUrl: avatarUrl || user.avatarUrl,
         ssoProvider: user.ssoProvider || 'oidc',
         ssoSub: user.ssoSub || ssoSub,
+        // First SSO sign-in for an invited / pending user activates the account
+        // (linking by email — no separate password step required).
+        status: 'active',
         lastLoginAt: new Date(),
       },
     });

@@ -298,8 +298,8 @@ describe('userService.js — createPendingUser', () => {
     expect(mod.createPendingUser.length).toBe(2);
   });
 
-  test('source sets role to viewer', () => {
-    expect(userServiceSrc).toMatch(/role\s*:\s*['"]viewer['"]/);
+  test('source sets role to member', () => {
+    expect(userServiceSrc).toMatch(/role\s*:\s*['"]member['"]/);
   });
 
   test('source sets status to pending_verification', () => {

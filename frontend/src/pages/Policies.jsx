@@ -8,25 +8,20 @@ import {
 } from 'lucide-react';
 import DataTable from '@/components/shared/DataTable';
 import ConfirmDialog from '@/components/shared/ConfirmDialog';
+import DeletePolicyDialog from '@/components/policies/DeletePolicyDialog';
 import EnvironmentBadge from '@/components/shared/EnvironmentBadge';
 import Badge from '@/components/shared/Badge';
 import PolicyForm from '@/components/policies/PolicyForm';
 import PolicyEvaluator from '@/components/policies/PolicyEvaluator';
 import PageHeader from '@/components/common/PageHeader';
 import { Button } from '@/components/ui/button';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select';
-import { listPolicies, createPolicy, updatePolicy, deletePolicy } from '@/services/policyService';
+import SearchableSelect from '@/components/ui/SearchableSelect';
+import { listPolicies, createPolicy, updatePolicy } from '@/services/policyService';
 import { listCustomers } from '@/services/customerService';
 import { useAuth } from '@/context/AuthContext';
 import { relativeTime } from '@/utils/time';
 
-const ROLE_RANK = { super_admin: 4, admin: 3, operator: 2, viewer: 1 };
+const ROLE_RANK = { super_admin: 4, admin: 3, manager: 2, member: 1 };
 function isAtLeast(user, role) {
   return (ROLE_RANK[user?.role] || 0) >= (ROLE_RANK[role] || 0);
 }
@@ -55,6 +50,7 @@ function Policies() {
   const [formOpen, setFormOpen] = useState(false);
   const [editing, setEditing] = useState(null);
   const [confirm, setConfirm] = useState(null);
+  const [deleteTarget, setDeleteTarget] = useState(null);
   const [evaluatorPolicy, setEvaluatorPolicy] = useState(null);
 
   const fetchCustomers = useCallback(async () => {
@@ -98,60 +94,50 @@ function Policies() {
     fetchPolicies();
   };
 
-  const handleDelete = (policy) => {
-    setConfirm({
-      title: 'Delete Policy',
-      message: `Permanently delete "${policy.name}"? This cannot be undone and may affect users who rely on this policy for access.`,
-      variant: 'destructive',
-      confirmLabel: 'Delete',
-      onConfirm: async () => {
-        try {
-          await deletePolicy(policy.id);
-        } catch (err) {
-          setError(err.response?.data?.error?.message || 'Failed to delete policy');
-        }
-        setConfirm(null);
-        fetchPolicies();
-      },
-    });
-  };
+  const handleDelete = (policy) => setDeleteTarget(policy);
 
   const customerMap = Object.fromEntries(customers.map((c) => [c.id, c.name]));
 
   const filterSlot = (
     <>
-      <Select
-        value={effectFilter || '_all'}
-        onValueChange={(v) => { setEffectFilter(v === '_all' ? '' : v); setPage(1); }}
-      >
-        <SelectTrigger className="w-[140px]"><SelectValue placeholder="All effects" /></SelectTrigger>
-        <SelectContent>
-          <SelectItem value="_all">All effects</SelectItem>
-          <SelectItem value="ALLOW">ALLOW</SelectItem>
-          <SelectItem value="DENY">DENY</SelectItem>
-        </SelectContent>
-      </Select>
-      <Select
-        value={customerFilter || '_all'}
-        onValueChange={(v) => { setCustomerFilter(v === '_all' ? '' : v); setPage(1); }}
-      >
-        <SelectTrigger className="w-[160px]"><SelectValue placeholder="All customers" /></SelectTrigger>
-        <SelectContent>
-          <SelectItem value="_all">All customers</SelectItem>
-          {customers.map((c) => <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>)}
-        </SelectContent>
-      </Select>
-      <Select
-        value={activeFilter || '_all'}
-        onValueChange={(v) => { setActiveFilter(v === '_all' ? '' : v); setPage(1); }}
-      >
-        <SelectTrigger className="w-[140px]"><SelectValue placeholder="All statuses" /></SelectTrigger>
-        <SelectContent>
-          <SelectItem value="_all">All statuses</SelectItem>
-          <SelectItem value="true">Active</SelectItem>
-          <SelectItem value="false">Inactive</SelectItem>
-        </SelectContent>
-      </Select>
+      <SearchableSelect
+        className="w-[140px]"
+        value={effectFilter}
+        onChange={(v) => { setEffectFilter(v); setPage(1); }}
+        options={[
+          { value: '', label: 'All effects' },
+          { value: 'ALLOW', label: 'ALLOW' },
+          { value: 'DENY', label: 'DENY' },
+        ]}
+        placeholder="All effects"
+        searchable={false}
+        clearable={false}
+      />
+      <SearchableSelect
+        className="w-[160px]"
+        value={customerFilter}
+        onChange={(v) => { setCustomerFilter(v); setPage(1); }}
+        options={[
+          { value: '', label: 'All customers' },
+          ...customers.map((c) => ({ value: c.id, label: c.name })),
+        ]}
+        placeholder="All customers"
+        searchable={true}
+        clearable={false}
+      />
+      <SearchableSelect
+        className="w-[140px]"
+        value={activeFilter}
+        onChange={(v) => { setActiveFilter(v); setPage(1); }}
+        options={[
+          { value: '', label: 'All statuses' },
+          { value: 'true', label: 'Active' },
+          { value: 'false', label: 'Inactive' },
+        ]}
+        placeholder="All statuses"
+        searchable={false}
+        clearable={false}
+      />
     </>
   );
 
@@ -301,6 +287,16 @@ function Policies() {
         variant={confirm?.variant}
         onConfirm={confirm?.onConfirm}
         onCancel={() => setConfirm(null)}
+      />
+
+      <DeletePolicyDialog
+        policy={deleteTarget}
+        open={!!deleteTarget}
+        onClose={() => setDeleteTarget(null)}
+        onDeleted={() => {
+          setDeleteTarget(null);
+          fetchPolicies();
+        }}
       />
 
       <PolicyEvaluator

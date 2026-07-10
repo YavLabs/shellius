@@ -119,7 +119,7 @@ function Register() {
 
               <div>
                 <label htmlFor="reg-email" className="mb-1.5 block text-sm font-medium text-foreground">
-                  Email
+                  Email <span className="text-destructive">*</span>
                 </label>
                 <div className="relative">
                   <Mail className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
@@ -138,7 +138,7 @@ function Register() {
 
               <div>
                 <label htmlFor="reg-name" className="mb-1.5 block text-sm font-medium text-foreground">
-                  Full name
+                  Full name <span className="text-destructive">*</span>
                 </label>
                 <div className="relative">
                   <User className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
@@ -157,7 +157,7 @@ function Register() {
 
               <div>
                 <label htmlFor="reg-password" className="mb-1.5 block text-sm font-medium text-foreground">
-                  Password
+                  Password <span className="text-destructive">*</span>
                 </label>
                 <div className="relative">
                   <Lock className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
@@ -187,7 +187,7 @@ function Register() {
 
               <div>
                 <label htmlFor="reg-confirm" className="mb-1.5 block text-sm font-medium text-foreground">
-                  Confirm password
+                  Confirm password <span className="text-destructive">*</span>
                 </label>
                 <div className="relative">
                   <Lock className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />

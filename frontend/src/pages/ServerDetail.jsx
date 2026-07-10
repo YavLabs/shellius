@@ -13,6 +13,7 @@ import QuickConnectButton from '@/components/servers/QuickConnectButton';
 import PrivateIPWarning from '@/components/servers/PrivateIPWarning';
 import { Button } from '@/components/ui/button';
 import { useAuth } from '@/context/AuthContext';
+import { roleAtLeast } from '@/lib/permissions';
 import {
   getServer,
   updateServer,
@@ -99,11 +100,13 @@ function ServerDetail() {
     }
   };
 
+  const canManage = roleAtLeast(currentUser, 'manager'); // onboard/edit servers
+  const canDelete = roleAtLeast(currentUser, 'admin');
   const canProvision =
     server &&
     (server.protocol === 'ssh' || server.protocol === 'both') &&
     server.osType !== 'windows' &&
-    (currentUser?.role === 'admin' || currentUser?.role === 'super_admin');
+    canManage;
 
   if (loading) {
     return (
@@ -142,13 +145,13 @@ function ServerDetail() {
         <div>
           <div className="flex items-center gap-3">
             <h1 className="text-2xl font-bold tracking-tight text-foreground">
-              {server.hostname}
+              {server.displayName || server.hostname}
             </h1>
             <HealthStatusDot status={server.healthStatus} showLabel />
             <EnvironmentBadge environment={server.environment} />
           </div>
-          {server.displayName && (
-            <p className="mt-1 text-sm text-muted-foreground">{server.displayName}</p>
+          {server.displayName && server.displayName !== server.hostname && (
+            <p className="mt-1 font-mono text-sm text-muted-foreground">{server.hostname}</p>
           )}
           {server.description && (
             <p className="mt-1 max-w-2xl text-sm text-muted-foreground">{server.description}</p>
@@ -159,33 +162,39 @@ function ServerDetail() {
               or Request Access (when one doesn't) — same source of truth as
               the Servers list row, so the two views can never disagree. */}
           <QuickConnectButton server={server} currentUser={currentUser} />
-          <Button variant="outline" size="sm" onClick={() => setBootstrapOpen(true)}>
-            <Download className="mr-2 h-4 w-4" /> Bootstrap Host
-          </Button>
-          {canProvision && (
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => setProvisionOpen(true)}
-              className="gap-1.5"
-            >
-              <Terminal className="h-4 w-4" />
-              Auto-Provision
+          {canManage && (
+            <>
+              <Button variant="outline" size="sm" onClick={() => setBootstrapOpen(true)}>
+                <Download className="mr-2 h-4 w-4" /> Bootstrap Host
+              </Button>
+              {canProvision && (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setProvisionOpen(true)}
+                  className="gap-1.5"
+                >
+                  <Terminal className="h-4 w-4" />
+                  Auto-Provision
+                </Button>
+              )}
+              <Button variant="outline" size="sm" onClick={() => setUninstallOpen(true)}>
+                <Eraser className="mr-2 h-4 w-4" /> Uninstall Agent
+              </Button>
+              <Button variant="outline" size="sm" onClick={handleHealthCheck} disabled={checking}>
+                <Activity className={`mr-2 h-4 w-4 ${checking ? 'animate-pulse' : ''}`} />
+                {checking ? 'Checking...' : 'Run Health Check'}
+              </Button>
+              <Button variant="outline" size="sm" onClick={() => setEditOpen(true)}>
+                <Pencil className="mr-2 h-4 w-4" /> Edit
+              </Button>
+            </>
+          )}
+          {canDelete && (
+            <Button variant="destructive" size="sm" onClick={() => setConfirmDelete(true)}>
+              <Trash2 className="mr-2 h-4 w-4" /> Delete
             </Button>
           )}
-          <Button variant="outline" size="sm" onClick={() => setUninstallOpen(true)}>
-            <Eraser className="mr-2 h-4 w-4" /> Uninstall Agent
-          </Button>
-          <Button variant="outline" size="sm" onClick={handleHealthCheck} disabled={checking}>
-            <Activity className={`mr-2 h-4 w-4 ${checking ? 'animate-pulse' : ''}`} />
-            {checking ? 'Checking...' : 'Run Health Check'}
-          </Button>
-          <Button variant="outline" size="sm" onClick={() => setEditOpen(true)}>
-            <Pencil className="mr-2 h-4 w-4" /> Edit
-          </Button>
-          <Button variant="destructive" size="sm" onClick={() => setConfirmDelete(true)}>
-            <Trash2 className="mr-2 h-4 w-4" /> Delete
-          </Button>
         </div>
       </div>
 
@@ -218,9 +227,39 @@ function ServerDetail() {
 
         <Card title="Health">
           <Field label="Status" value={server.healthStatus} />
-          <Field label="Last Check" value={formatDateTime(server.lastHealthCheckAt)} />
-          <Field label="Relative" value={relativeTime(server.lastHealthCheckAt)} />
+          <Field label="Last Check" value={formatDateTime(server.lastHealthCheck)} />
+          <Field label="Relative" value={relativeTime(server.lastHealthCheck)} />
           <Field label="Message" value={server.healthMessage} />
+        </Card>
+
+        <Card title="Onboarding">
+          {server.protocol === 'rdp' ? (
+            <>
+              <Field label="Status" value="Ready (RDP)" />
+              <p className="mt-1 text-xs text-muted-foreground">
+                RDP servers need no host agent — Shellius injects credentials via the
+                gateway at connect time. Ensure the RDP user exists and is allowed to sign in.
+              </p>
+            </>
+          ) : (
+            <>
+              <Field label="Status" value={server.provisionStatus || 'pending'} />
+              {server.provisionStatus === 'failed' && (
+                <Field label="Error" value={server.provisionError} />
+              )}
+              <Field label="Provisioned" value={formatDateTime(server.provisionedAt)} />
+              {server.provisionStatus !== 'provisioned' && canProvision && (
+                <div className="pt-2">
+                  <Button size="sm" onClick={() => setProvisionOpen(true)}>
+                    {server.provisionStatus === 'failed' ? 'Retry onboarding' : 'Onboard now'}
+                  </Button>
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    Runs the agent install over SSH using credentials you provide.
+                  </p>
+                </div>
+              )}
+            </>
+          )}
         </Card>
 
         {(server.cloudProvider || server.cloudInstanceId || server.cloudRegion) && (

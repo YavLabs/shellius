@@ -12,10 +12,12 @@ import {
   Download,
   Eye,
   Eraser,
+  RefreshCw,
 } from 'lucide-react';
 import DataTable from '@/components/shared/DataTable';
 import Modal from '@/components/shared/Modal';
 import ConfirmDialog from '@/components/shared/ConfirmDialog';
+import DeleteServerDialog from '@/components/servers/DeleteServerDialog';
 import EnvironmentBadge from '@/components/shared/EnvironmentBadge';
 import HealthStatusDot from '@/components/shared/HealthStatusDot';
 import ServerForm from '@/components/servers/ServerForm';
@@ -24,23 +26,17 @@ import UninstallHostModal from '@/components/servers/UninstallHostModal';
 import QuickConnectButton from '@/components/servers/QuickConnectButton';
 import PageHeader from '@/components/common/PageHeader';
 import { Button } from '@/components/ui/button';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select';
+import SearchableSelect from '@/components/ui/SearchableSelect';
 import {
   listServers,
   createServer,
   updateServer,
-  deleteServer,
-  bulkUpdateEnvironment,
+  bulkUpdateServers,
   triggerHealthCheck,
 } from '@/services/serverService';
 import { listCustomers } from '@/services/customerService';
 import { useAuth } from '@/context/AuthContext';
+import { roleAtLeast } from '@/lib/permissions';
 import { relativeTime } from '@/utils/time';
 
 const ENVIRONMENTS = ['demo', 'dev', 'staging', 'prod'];
@@ -49,11 +45,15 @@ const HEALTH_STATUSES = ['healthy', 'unhealthy', 'unknown', 'maintenance'];
 function Servers() {
   const navigate = useNavigate();
   const { user } = useAuth();
+  // Managers onboard/manage servers; only admins delete (matches the API).
+  const canManage = roleAtLeast(user, 'manager');
+  const canDelete = roleAtLeast(user, 'admin');
 
   const [servers, setServers] = useState([]);
   const [total, setTotal] = useState(0);
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(20);
+  const [search, setSearch] = useState('');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
 
@@ -63,12 +63,14 @@ function Servers() {
   const [customers, setCustomers] = useState([]);
 
   const [selected, setSelected] = useState([]);
-  const [bulkEnv, setBulkEnv] = useState('');
+  const [bulkField, setBulkField] = useState('');
+  const [bulkValue, setBulkValue] = useState('');
   const [bulkConfirm, setBulkConfirm] = useState(false);
 
   const [formOpen, setFormOpen] = useState(false);
   const [editing, setEditing] = useState(null);
   const [confirm, setConfirm] = useState(null);
+  const [deleteTarget, setDeleteTarget] = useState(null);
   const [bootstrapServer, setBootstrapServer] = useState(null);
   const [uninstallServer, setUninstallServer] = useState(null);
 
@@ -89,6 +91,7 @@ function Servers() {
       if (environment) params.environment = environment;
       if (healthStatus) params.healthStatus = healthStatus;
       if (customerFilter) params.customerId = customerFilter;
+      if (search) params.search = search;
       const data = await listServers(params);
       setServers(data.items || []);
       setTotal(data.total || 0);
@@ -97,7 +100,13 @@ function Servers() {
     } finally {
       setLoading(false);
     }
-  }, [page, pageSize, environment, healthStatus, customerFilter]);
+  }, [page, pageSize, environment, healthStatus, customerFilter, search]);
+
+  // Server-side search — reset to page 1 and refetch when the query changes.
+  const handleSearchChange = useCallback((q) => {
+    setSearch(q);
+    setPage(1);
+  }, []);
 
   useEffect(() => {
     fetchCustomers();
@@ -123,19 +132,7 @@ function Servers() {
     }
   };
 
-  const handleDelete = (server) => {
-    setConfirm({
-      title: 'Delete server',
-      message: `Permanently delete ${server.hostname}? This cannot be undone.`,
-      variant: 'destructive',
-      confirmLabel: 'Delete',
-      onConfirm: async () => {
-        await deleteServer(server.id);
-        setConfirm(null);
-        fetch();
-      },
-    });
-  };
+  const handleDelete = (server) => setDeleteTarget(server);
 
   const handleHealthCheck = async (server) => {
     try {
@@ -147,72 +144,83 @@ function Servers() {
   };
 
   const handleBulkUpdate = async () => {
-    await bulkUpdateEnvironment(selected, bulkEnv);
+    let value = bulkValue;
+    if (bulkField === 'isActive') value = bulkValue === 'true';
+    await bulkUpdateServers(selected, { [bulkField]: value });
     setBulkConfirm(false);
-    setBulkEnv('');
+    setBulkField('');
+    setBulkValue('');
     setSelected([]);
     fetch();
   };
 
+  // Options for the bulk "value" control, keyed by the chosen field.
+  const BULK_FIELDS = [
+    { value: 'environment', label: 'Environment' },
+    { value: 'customerId', label: 'Customer' },
+    { value: 'protocol', label: 'Protocol' },
+    { value: 'osType', label: 'OS Type' },
+    { value: 'isActive', label: 'Status' },
+    { value: 'sshUser', label: 'SSH User' },
+  ];
+  const bulkValueOptions = {
+    environment: ENVIRONMENTS.map((e) => ({ value: e, label: e })),
+    customerId: customers.map((c) => ({ value: c.id, label: c.name })),
+    protocol: [
+      { value: 'ssh', label: 'SSH' },
+      { value: 'rdp', label: 'RDP' },
+      { value: 'both', label: 'Both' },
+    ],
+    osType: [
+      { value: 'linux', label: 'Linux' },
+      { value: 'windows', label: 'Windows' },
+      { value: 'other', label: 'Other' },
+    ],
+    isActive: [
+      { value: 'true', label: 'Active' },
+      { value: 'false', label: 'Inactive' },
+    ],
+  };
+  const bulkFieldLabel = BULK_FIELDS.find((f) => f.value === bulkField)?.label || '';
+
   const filterSlot = (
     <>
-      <Select
-        value={environment || '_all'}
-        onValueChange={(v) => {
-          setEnvironment(v === '_all' ? '' : v);
-          setPage(1);
-        }}
-      >
-        <SelectTrigger className="w-[160px]">
-          <SelectValue placeholder="All environments" />
-        </SelectTrigger>
-        <SelectContent>
-          <SelectItem value="_all">All environments</SelectItem>
-          {ENVIRONMENTS.map((e) => (
-            <SelectItem key={e} value={e}>
-              {e}
-            </SelectItem>
-          ))}
-        </SelectContent>
-      </Select>
-      <Select
-        value={healthStatus || '_all'}
-        onValueChange={(v) => {
-          setHealthStatus(v === '_all' ? '' : v);
-          setPage(1);
-        }}
-      >
-        <SelectTrigger className="w-[150px]">
-          <SelectValue placeholder="All health" />
-        </SelectTrigger>
-        <SelectContent>
-          <SelectItem value="_all">All health</SelectItem>
-          {HEALTH_STATUSES.map((h) => (
-            <SelectItem key={h} value={h}>
-              {h}
-            </SelectItem>
-          ))}
-        </SelectContent>
-      </Select>
-      <Select
-        value={customerFilter || '_all'}
-        onValueChange={(v) => {
-          setCustomerFilter(v === '_all' ? '' : v);
-          setPage(1);
-        }}
-      >
-        <SelectTrigger className="w-[180px]">
-          <SelectValue placeholder="All customers" />
-        </SelectTrigger>
-        <SelectContent>
-          <SelectItem value="_all">All customers</SelectItem>
-          {customers.map((c) => (
-            <SelectItem key={c.id} value={c.id}>
-              {c.name}
-            </SelectItem>
-          ))}
-        </SelectContent>
-      </Select>
+      <SearchableSelect
+        className="w-[160px]"
+        value={environment}
+        onChange={(v) => { setEnvironment(v); setPage(1); }}
+        options={[
+          { value: '', label: 'All environments' },
+          ...ENVIRONMENTS.map((e) => ({ value: e, label: e })),
+        ]}
+        placeholder="All environments"
+        searchable={false}
+        clearable={false}
+      />
+      <SearchableSelect
+        className="w-[150px]"
+        value={healthStatus}
+        onChange={(v) => { setHealthStatus(v); setPage(1); }}
+        options={[
+          { value: '', label: 'All health' },
+          ...HEALTH_STATUSES.map((h) => ({ value: h, label: h })),
+        ]}
+        placeholder="All health"
+        searchable={false}
+        clearable={false}
+      />
+      <SearchableSelect
+        className="w-[180px]"
+        value={customerFilter}
+        onChange={(v) => { setCustomerFilter(v); setPage(1); }}
+        options={[
+          { value: '', label: 'All customers' },
+          ...customers.map((c) => ({ value: c.id, label: c.name })),
+        ]}
+        placeholder="All customers"
+        searchable={true}
+        clearable={false}
+      />
     </>
   );
 
@@ -220,23 +228,54 @@ function Servers() {
     selected.length > 0 ? (
       <div className="flex flex-col gap-2 rounded-lg border border-border bg-accent/30 px-4 py-2.5 sm:flex-row sm:items-center sm:justify-between">
         <span className="text-sm text-foreground">{selected.length} selected</span>
-        <div className="flex items-center gap-2">
-          <Select value={bulkEnv} onValueChange={setBulkEnv}>
-            <SelectTrigger className="w-[180px]">
-              <SelectValue placeholder="Change environment..." />
-            </SelectTrigger>
-            <SelectContent>
-              {ENVIRONMENTS.map((e) => (
-                <SelectItem key={e} value={e}>
-                  {e}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-          <Button size="sm" onClick={() => bulkEnv && setBulkConfirm(true)} disabled={!bulkEnv}>
+        <div className="flex flex-wrap items-center gap-2">
+          <SearchableSelect
+            className="w-[160px]"
+            value={bulkField}
+            onChange={(v) => {
+              setBulkField(v);
+              setBulkValue('');
+            }}
+            options={BULK_FIELDS}
+            placeholder="Change field..."
+            searchable={false}
+            clearable={false}
+          />
+          {bulkField && bulkField !== 'sshUser' && (
+            <SearchableSelect
+              className="w-[180px]"
+              value={bulkValue}
+              onChange={setBulkValue}
+              options={bulkValueOptions[bulkField] || []}
+              placeholder={`Select ${bulkFieldLabel.toLowerCase()}...`}
+              searchable={bulkField === 'customerId'}
+              clearable={false}
+            />
+          )}
+          {bulkField === 'sshUser' && (
+            <input
+              className="h-9 w-[180px] rounded-md border border-input bg-background px-3 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring"
+              value={bulkValue}
+              onChange={(e) => setBulkValue(e.target.value)}
+              placeholder="SSH user (e.g. ubuntu)"
+            />
+          )}
+          <Button
+            size="sm"
+            onClick={() => bulkField && bulkValue !== '' && setBulkConfirm(true)}
+            disabled={!bulkField || bulkValue === ''}
+          >
             Apply
           </Button>
-          <Button variant="outline" size="sm" onClick={() => setSelected([])}>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => {
+              setSelected([]);
+              setBulkField('');
+              setBulkValue('');
+            }}
+          >
             <X className="mr-1 h-4 w-4" /> Clear
           </Button>
         </div>
@@ -246,19 +285,24 @@ function Servers() {
   const columns = [
     {
       key: 'hostname',
-      label: 'Hostname',
+      label: 'Name',
       sortable: true,
-      searchAccessor: (r) => `${r.hostname} ${r.ipAddress || ''}`,
+      searchAccessor: (r) => `${r.displayName || ''} ${r.hostname} ${r.ipAddress || ''}`,
       render: (r) => {
         const proto = r.protocol || r.type || 'SSH';
         const ProtoIcon = proto === 'RDP' ? Monitor : TerminalIcon;
         return (
           <button
             onClick={() => navigate(`/servers/${r.id}`)}
-            className="flex items-center gap-2 font-medium text-foreground hover:text-primary"
+            className="flex items-center gap-2 text-left hover:text-primary"
           >
             <ProtoIcon className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
-            {r.hostname}
+            <span>
+              <span className="block font-medium text-foreground">{r.displayName || r.hostname}</span>
+              {r.displayName && (
+                <span className="block font-mono text-[11px] text-muted-foreground">{r.hostname}</span>
+              )}
+            </span>
           </button>
         );
       },
@@ -319,7 +363,7 @@ function Servers() {
       hideBelow: 'md',
       render: (r) => (
         <span className="text-xs text-muted-foreground">
-          {relativeTime(r.lastHealthCheckAt)}
+          {relativeTime(r.lastHealthCheck)}
         </span>
       ),
     },
@@ -339,36 +383,44 @@ function Servers() {
           icon: Eye,
           onClick: (r) => navigate(`/servers/${r.id}`),
         },
-        {
-          label: 'Edit',
-          icon: Pencil,
-          onClick: (r) => {
-            setEditing(r);
-            setFormOpen(true);
-          },
-        },
-        {
-          label: 'Bootstrap Host',
-          icon: Download,
-          onClick: (r) => setBootstrapServer(r),
-        },
-        {
-          label: 'Uninstall Agent',
-          icon: Eraser,
-          onClick: (r) => setUninstallServer(r),
-        },
-        {
-          label: 'Run Health Check',
-          icon: Activity,
-          onClick: (r) => handleHealthCheck(r),
-        },
-        { separator: true },
-        {
-          label: 'Delete',
-          icon: Trash2,
-          variant: 'destructive',
-          onClick: (r) => handleDelete(r),
-        },
+        ...(canManage
+          ? [
+              {
+                label: 'Edit',
+                icon: Pencil,
+                onClick: (r) => {
+                  setEditing(r);
+                  setFormOpen(true);
+                },
+              },
+              {
+                label: 'Bootstrap Host',
+                icon: Download,
+                onClick: (r) => setBootstrapServer(r),
+              },
+              {
+                label: 'Uninstall Agent',
+                icon: Eraser,
+                onClick: (r) => setUninstallServer(r),
+              },
+              {
+                label: 'Run Health Check',
+                icon: Activity,
+                onClick: (r) => handleHealthCheck(r),
+              },
+            ]
+          : []),
+        ...(canDelete
+          ? [
+              { separator: true },
+              {
+                label: 'Delete',
+                icon: Trash2,
+                variant: 'destructive',
+                onClick: (r) => handleDelete(r),
+              },
+            ]
+          : []),
       ],
     },
   ];
@@ -379,14 +431,21 @@ function Servers() {
         icon={ServerIcon}
         title="Servers"
         subtitle="Manage target servers across customers." helpKey="servers">
-        <Button
-          onClick={() => {
-            setEditing(null);
-            setFormOpen(true);
-          }}
-        >
-          <Plus className="mr-2 h-4 w-4" /> Add Server
-        </Button>
+        <div className="flex items-center gap-2">
+          <Button variant="outline" onClick={() => fetch()} disabled={loading}>
+            <RefreshCw className={`mr-2 h-4 w-4 ${loading ? 'animate-spin' : ''}`} /> Refresh
+          </Button>
+          {canManage && (
+            <Button
+              onClick={() => {
+                setEditing(null);
+                setFormOpen(true);
+              }}
+            >
+              <Plus className="mr-2 h-4 w-4" /> Add Server
+            </Button>
+          )}
+        </div>
       </PageHeader>
 
       {error && (
@@ -400,7 +459,8 @@ function Servers() {
         data={servers}
         loading={loading}
         emptyMessage="No servers found"
-        searchPlaceholder="Search hostname or IP..."
+        searchPlaceholder="Search name, hostname or IP..."
+        onSearchChange={handleSearchChange}
         filters={filterSlot}
         selectable
         selectedIds={selected}
@@ -449,8 +509,10 @@ function Servers() {
 
       <ConfirmDialog
         open={bulkConfirm}
-        title="Change environment"
-        message={`Change environment to "${bulkEnv}" for ${selected.length} server(s)?`}
+        title={`Update ${bulkFieldLabel}`}
+        message={`Set ${bulkFieldLabel} to "${
+          (bulkValueOptions[bulkField] || []).find((o) => o.value === bulkValue)?.label || bulkValue
+        }" for ${selected.length} server(s)?`}
         confirmLabel="Apply"
         onConfirm={handleBulkUpdate}
         onCancel={() => setBulkConfirm(false)}
@@ -464,6 +526,17 @@ function Servers() {
         variant={confirm?.variant}
         onConfirm={confirm?.onConfirm}
         onCancel={() => setConfirm(null)}
+      />
+
+      <DeleteServerDialog
+        server={deleteTarget}
+        open={!!deleteTarget}
+        onClose={() => setDeleteTarget(null)}
+        onDeleted={() => {
+          setDeleteTarget(null);
+          setSelected([]);
+          fetch();
+        }}
       />
     </div>
   );

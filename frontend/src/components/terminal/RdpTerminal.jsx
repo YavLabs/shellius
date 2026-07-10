@@ -107,7 +107,11 @@ function RdpTerminal({ requestId, onClose }) {
 
     const jwt = tokenData.token;
     const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-    const wsUrl = `${wsProtocol}//${window.location.host}/api/terminal/rdp?token=${encodeURIComponent(jwt)}`;
+    // NOTE: do NOT put query params on the tunnel URL — Guacamole's
+    // WebSocketTunnel builds the socket URL as `tunnelURL + "?" + connectData`,
+    // so any existing "?token=" would collide and corrupt the token. The token
+    // is passed via the connect() data string below instead.
+    const wsUrl = `${wsProtocol}//${window.location.host}/api/terminal/rdp`;
 
     const tunnel = new Guacamole.WebSocketTunnel(wsUrl);
     const client = new Guacamole.Client(tunnel);
@@ -133,15 +137,35 @@ function RdpTerminal({ requestId, onClose }) {
     };
 
     // Mount the Guacamole display element
-    const displayEl = client.getDisplay().getElement();
+    const display = client.getDisplay();
+    const displayEl = display.getElement();
     containerRef.current.appendChild(displayEl);
+
+    // Scale the remote desktop to fit the container. Must guard against the
+    // display having no frame yet (getWidth() === 0) — otherwise w/0 = Infinity
+    // and display.scale(Infinity) renders the canvas off-screen (black screen).
+    const scaleDisplay = () => {
+      if (!containerRef.current) return;
+      const dw = display.getWidth();
+      const dh = display.getHeight();
+      if (!dw || !dh) return; // no remote frame yet
+      const cw = containerRef.current.clientWidth;
+      const ch = containerRef.current.clientHeight;
+      if (!cw || !ch) return;
+      const scale = Math.min(cw / dw, ch / dh);
+      if (scale > 0 && Number.isFinite(scale)) display.scale(scale);
+    };
+
+    // Recompute scale as soon as the remote desktop dimensions are known (first
+    // frame) and whenever they change.
+    display.onresize = scaleDisplay;
 
     // Compute initial dimensions from the container
     const containerWidth = containerRef.current.clientWidth || 1280;
     const containerHeight = containerRef.current.clientHeight || 800;
 
     client.connect(
-      `width=${containerWidth}&height=${containerHeight}&dpi=96`
+      `token=${encodeURIComponent(jwt)}&width=${containerWidth}&height=${containerHeight}&dpi=96`
     );
 
     // Wire up mouse events
@@ -159,18 +183,10 @@ function RdpTerminal({ requestId, onClose }) {
     keyboard.onkeydown = (keysym) => client.sendKeyEvent(1, keysym);
     keyboard.onkeyup = (keysym) => client.sendKeyEvent(0, keysym);
 
-    // Resize observer — dispatch size to the display and attempt client.sendSize
+    // Re-fit on container resize (the remote desktop size is fixed at 1280x800;
+    // we just rescale to fill the available space).
     const resizeObserver = new ResizeObserver(() => {
-      if (!containerRef.current || !clientRef.current) return;
-      const w = containerRef.current.clientWidth;
-      const h = containerRef.current.clientHeight;
-      if (!w || !h) return;
-      const display = clientRef.current.getDisplay();
-      display.scale(w / display.getWidth() || 1);
-      // sendSize is available in newer guacamole-common-js builds
-      if (typeof clientRef.current.sendSize === 'function') {
-        clientRef.current.sendSize(w, h);
-      }
+      scaleDisplay();
     });
     resizeObserverRef.current = resizeObserver;
     resizeObserver.observe(containerRef.current);

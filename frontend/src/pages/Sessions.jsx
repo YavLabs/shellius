@@ -1,29 +1,27 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
 import {
   Film,
   Terminal as TerminalIcon,
   Eye,
   Square,
+  Download,
+  ListOrdered,
 } from 'lucide-react';
 import DataTable from '@/components/shared/DataTable';
+import ServerName, { serverSearchString } from '@/components/shared/ServerName';
 import Badge from '@/components/shared/Badge';
 import EnvironmentBadge from '@/components/shared/EnvironmentBadge';
 import Modal from '@/components/shared/Modal';
 import ConfirmDialog from '@/components/shared/ConfirmDialog';
 import SessionPlayer from '@/components/sessions/SessionPlayer';
 import PageHeader from '@/components/common/PageHeader';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select';
-import { listSessions, listActiveSessions, getSession, terminateSession } from '@/services/sessionService';
+import SearchableSelect from '@/components/ui/SearchableSelect';
+import { listSessions, listActiveSessions, getSession, terminateSession, downloadRecording } from '@/services/sessionService';
 import { useAuth } from '@/context/AuthContext';
 import { relativeTime, formatDateTime } from '@/utils/time';
+import { extractCommands, formatOffset } from '@/utils/castCommands';
 
-const ROLE_RANK = { super_admin: 4, admin: 3, operator: 2, viewer: 1 };
+const ROLE_RANK = { super_admin: 4, admin: 3, manager: 2, member: 1 };
 function isAtLeast(user, role) {
   return (ROLE_RANK[user?.role] || 0) >= (ROLE_RANK[role] || 0);
 }
@@ -65,15 +63,61 @@ function DetailRow({ label, value }) {
   );
 }
 
+/**
+ * SessionCommands
+ *
+ * Renders the best-effort list of commands run during a session, derived from
+ * the .cast recording text (see utils/castCommands). Commands are heuristically
+ * parsed from echoed prompt lines, so the heading is labelled "detected".
+ */
+function SessionCommands({ castText }) {
+  const commands = useMemo(() => extractCommands(castText), [castText]);
+
+  if (!castText) return null;
+
+  return (
+    <div className="mt-4">
+      <div className="mb-2 flex items-center gap-1.5 text-xs font-medium uppercase tracking-wide text-muted-foreground">
+        <ListOrdered className="h-3.5 w-3.5" />
+        Commands ({commands.length})
+        <span className="ml-1 normal-case tracking-normal text-[11px] text-muted-foreground/70">
+          best-effort, parsed from terminal output
+        </span>
+      </div>
+      {commands.length === 0 ? (
+        <div className="rounded-md border border-border bg-muted/30 px-3 py-2 text-xs text-muted-foreground">
+          No commands detected in this recording.
+        </div>
+      ) : (
+        <ol className="max-h-64 overflow-y-auto rounded-md border border-border bg-muted/20 font-mono text-xs">
+          {commands.map((c, i) => (
+            <li
+              key={i}
+              className="flex items-start gap-3 border-b border-border/60 px-3 py-1.5 last:border-0"
+            >
+              <span className="shrink-0 select-none tabular-nums text-muted-foreground/60">
+                {formatOffset(c.time)}
+              </span>
+              <span className="break-all text-foreground">{c.command}</span>
+            </li>
+          ))}
+        </ol>
+      )}
+    </div>
+  );
+}
+
 function SessionDetailDrawer({ sessionId, open, onClose }) {
   const [session, setSession] = useState(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  const [castText, setCastText] = useState(null);
 
   useEffect(() => {
     if (!sessionId || !open) return;
     setLoading(true);
     setError('');
+    setCastText(null);
     getSession(sessionId)
       .then((resp) => setSession(resp.data || resp))
       .catch((err) => setError(err.response?.data?.error?.message || 'Failed to load session.'))
@@ -164,13 +208,31 @@ function SessionDetailDrawer({ sessionId, open, onClose }) {
           )}
         </dl>
       )}
-      {!loading && session && session.recordingPath && (
+      {!loading && session && (session.recordingKey || session.recordingPath) && (
         <div className="mt-4">
-          <div className="mb-2 flex items-center gap-1.5 text-xs font-medium uppercase tracking-wide text-muted-foreground">
-            <Film className="h-3.5 w-3.5" />
-            Recording
+          <div className="mb-2 flex items-center justify-between">
+            <div className="flex items-center gap-1.5 text-xs font-medium uppercase tracking-wide text-muted-foreground">
+              <Film className="h-3.5 w-3.5" />
+              Session Replay
+            </div>
+            <button
+              onClick={() => downloadRecording(session.id)}
+              className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground"
+            >
+              <Download className="h-3.5 w-3.5" /> Download .cast
+            </button>
           </div>
-          <SessionPlayer sessionId={session.id} />
+          <SessionPlayer sessionId={session.id} onCast={setCastText} />
+          <SessionCommands castText={castText} />
+        </div>
+      )}
+      {!loading && session && !session.recordingKey && !session.recordingPath && (
+        <div className="mt-4 rounded-md border border-border bg-muted/40 px-3 py-2 text-xs text-muted-foreground">
+          {session.status === 'ACTIVE'
+            ? 'Recording is in progress — available once the session ends.'
+            : session.sessionType === 'RDP'
+              ? 'Replay is not available for RDP sessions.'
+              : 'No recording was captured for this session.'}
         </div>
       )}
     </Modal>
@@ -254,16 +316,18 @@ function Sessions() {
   };
 
   const filterSlot = activeTab === 'all' ? (
-    <Select
-      value={statusFilter || '_all'}
-      onValueChange={(v) => { setStatusFilter(v === '_all' ? '' : v); setPage(1); }}
-    >
-      <SelectTrigger className="w-[160px]"><SelectValue placeholder="All statuses" /></SelectTrigger>
-      <SelectContent>
-        <SelectItem value="_all">All statuses</SelectItem>
-        {SESSION_STATUSES.map((s) => <SelectItem key={s} value={s}>{s}</SelectItem>)}
-      </SelectContent>
-    </Select>
+    <SearchableSelect
+      className="w-[160px]"
+      value={statusFilter}
+      onChange={(v) => { setStatusFilter(v); setPage(1); }}
+      options={[
+        { value: '', label: 'All statuses' },
+        ...SESSION_STATUSES.map((s) => ({ value: s, label: s })),
+      ]}
+      placeholder="All statuses"
+      searchable={false}
+      clearable={false}
+    />
   ) : null;
 
   const columns = [
@@ -271,15 +335,20 @@ function Sessions() {
       key: 'server',
       label: 'Server',
       sortable: true,
-      searchAccessor: (r) => `${r.server?.hostname || r.server?.name || ''} ${r.server?.environment || ''}`,
+      searchAccessor: (r) => serverSearchString(r.server),
       render: (r) => (
         <div className="flex items-center gap-2">
-          <span className="text-sm font-medium text-foreground">
-            {r.server?.hostname || r.server?.name || r.serverId}
-          </span>
+          <ServerName server={r.server} fallback={r.serverId} />
           {r.server?.environment && <EnvironmentBadge environment={r.server.environment} />}
-          {r.recordingPath && (
-            <Film className="h-3.5 w-3.5 shrink-0 text-muted-foreground" title="Recording available" />
+          {(r.recordingKey || r.recordingPath) && (
+            <button
+              type="button"
+              onClick={(e) => { e.stopPropagation(); openDetail(r.id); }}
+              title="Play recording"
+              className="shrink-0 rounded p-0.5 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+            >
+              <Film className="h-3.5 w-3.5" />
+            </button>
           )}
         </div>
       ),

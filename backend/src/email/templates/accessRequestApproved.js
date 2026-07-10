@@ -23,7 +23,7 @@ export function render({ recipientName, serverHostname, environment, expiresAt, 
 
   const bodyHtml = `
     <h1 style="margin:0 0 16px;font:600 22px/1.3 -apple-system,sans-serif;color:#0a0a0a">
-      Your access request was approved ✓
+      Your access request was approved
     </h1>
     <p style="margin:0 0 16px;font:400 15px/1.5 -apple-system,sans-serif;color:#3f3f46">
       Hi ${safeName}, your request to access <strong>${safeHost}</strong>

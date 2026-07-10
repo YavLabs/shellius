@@ -173,17 +173,11 @@ export async function evaluate({ orgId, userId, serverId, requestedPrincipal, po
     };
   }
 
-  // Step 2: HARD RULE — production always requires approval regardless of policy
-  if (server.environment === 'prod') {
-    return {
-      allowed: false,
-      requiresApproval: true,
-      autoApprove: false,
-      reason: 'Production servers require approval',
-      principals: [],
-      maxTtl: 0,
-    };
-  }
+  // Step 2: Production approval is policy-driven. By default prod requires
+  // approval, but a matching ALLOW policy with autoApprove=true (e.g. scoped to
+  // admins/managers) grants access without approval. super_admin already
+  // bypassed above. This is applied at the final ALLOW selection below.
+  const isProd = server.environment === 'prod';
 
   // ---------------------------------------------------------------------------
   // Mode A: Draft policy evaluation (inline, no DB lookup for the policy itself)
@@ -306,23 +300,60 @@ export async function evaluate({ orgId, userId, serverId, requestedPrincipal, po
 
   const bestPolicy = allowPolicies[0];
 
+  // Production requires approval UNLESS the matched policy auto-approves the
+  // subject (e.g. an admins/managers policy). Non-prod follows the policy's
+  // own requireApproval flag.
+  const requiresApproval = isProd ? !bestPolicy.autoApprove : bestPolicy.requireApproval;
+
   logger.info('policyService.evaluate: access allowed by policy', {
     orgId,
     userId,
     serverId,
     policyId: bestPolicy.id,
     policyName: bestPolicy.name,
-    requiresApproval: bestPolicy.requireApproval,
+    isProd,
+    requiresApproval,
   });
 
   return {
     allowed: true,
-    requiresApproval: bestPolicy.requireApproval,
+    requiresApproval,
     autoApprove: bestPolicy.autoApprove,
     principals: bestPolicy.allowedPrincipals,
     maxTtl: bestPolicy.maxSessionDuration,
     policyId: bestPolicy.id,
   };
+}
+
+/**
+ * Find the best-matching ALLOW policy for a user+server purely to read its
+ * approver routing (approverGroupId / approverRoles / approverUserIds).
+ *
+ * Unlike evaluate(), this does NOT short-circuit on the prod hard-rule — prod
+ * requests still need approver routing even though the invariant forces
+ * approval. Returns the policy row (or null when nothing matches).
+ *
+ * @param {object} params
+ * @param {string} params.orgId
+ * @param {string} params.userId
+ * @param {string} params.serverId
+ * @param {string} [params.requestedPrincipal]
+ * @returns {Promise<object|null>}
+ */
+export async function findApproverPolicy({ orgId, userId, serverId, requestedPrincipal }) {
+  const server = await prisma.server.findFirst({ where: { id: serverId, orgId } });
+  if (!server) return null;
+
+  const [userGroupIds, userRecord] = await Promise.all([
+    resolveUserGroupIds(userId, orgId),
+    prisma.user.findUnique({ where: { id: userId }, select: { role: true } }),
+  ]);
+  const rawPolicies = await loadMatchingPolicies(orgId, userId, userGroupIds, userRecord?.role || null);
+  const matching = filterPolicies(rawPolicies, server, serverId, requestedPrincipal);
+  const allow = matching
+    .filter((p) => p.effect === 'ALLOW')
+    .sort((a, b) => a.priority - b.priority);
+  return allow[0] || null;
 }
 
 /**
@@ -345,14 +376,19 @@ export async function getAccessibleServers(orgId, userId) {
     include: { customer: { select: { id: true, name: true, slug: true } } },
   });
 
-  const results = [];
-  for (const server of servers) {
-    const evaluation = await evaluate({ orgId, userId, serverId: server.id });
-    if (evaluation.allowed || evaluation.requiresApproval) {
-      results.push({ server, evaluation });
-    }
-  }
-  return results;
+  // Evaluate all servers concurrently instead of in a sequential await-loop.
+  // The previous loop took ~N × per-eval latency (≈20s for ~56 servers); this
+  // collapses to roughly the slowest single evaluation. Prisma's connection
+  // pool bounds the actual DB concurrency, so this won't exhaust connections.
+  const evaluations = await Promise.all(
+    servers.map((server) =>
+      evaluate({ orgId, userId, serverId: server.id }).then((evaluation) => ({ server, evaluation }))
+    )
+  );
+
+  return evaluations.filter(
+    ({ evaluation }) => evaluation.allowed || evaluation.requiresApproval
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -395,6 +431,7 @@ export async function list(orgId, filters = {}) {
     prisma.accessPolicy.count({ where }),
   ]);
 
+  await enrichPolicySubjects(orgId, items);
   return { items, total, page: p, pageSize: ps };
 }
 
@@ -414,7 +451,43 @@ export async function getById(orgId, id) {
     },
   });
   if (!policy) throw new ApiError(404, 'Policy not found');
+  await enrichPolicySubjects(orgId, [policy]);
   return policy;
+}
+
+const ROLE_LABELS = { super_admin: 'Super Admin', admin: 'Admin', manager: 'Manager', member: 'Member' };
+
+/**
+ * Attach a human-readable `label` to each policy subject (USER → name/email,
+ * GROUP → name, ROLE → role label) so the UI never has to render raw UUIDs.
+ * Batched to avoid N+1. Mutates the passed policies in place.
+ */
+async function enrichPolicySubjects(orgId, policies) {
+  const userIds = new Set();
+  const groupIds = new Set();
+  for (const p of policies) {
+    for (const s of p.subjects || []) {
+      if (s.subjectType === 'USER') userIds.add(s.subjectId);
+      else if (s.subjectType === 'GROUP') groupIds.add(s.subjectId);
+    }
+  }
+  const [users, groups] = await Promise.all([
+    userIds.size
+      ? prisma.user.findMany({ where: { orgId, id: { in: [...userIds] } }, select: { id: true, name: true, email: true } })
+      : [],
+    groupIds.size
+      ? prisma.group.findMany({ where: { orgId, id: { in: [...groupIds] } }, select: { id: true, name: true } })
+      : [],
+  ]);
+  const userMap = new Map(users.map((u) => [u.id, u.name || u.email]));
+  const groupMap = new Map(groups.map((g) => [g.id, g.name]));
+  for (const p of policies) {
+    for (const s of p.subjects || []) {
+      if (s.subjectType === 'USER') s.label = userMap.get(s.subjectId) || '(unknown user)';
+      else if (s.subjectType === 'GROUP') s.label = groupMap.get(s.subjectId) || '(unknown group)';
+      else if (s.subjectType === 'ROLE') s.label = ROLE_LABELS[s.subjectId] || s.subjectId;
+    }
+  }
 }
 
 /**
@@ -444,6 +517,9 @@ export async function create(orgId, data) {
     osProvisioning = {},
     allowKeyDownload = false,
     isBreakGlass = false,
+    approverGroupId = null,
+    approverRoles = [],
+    approverUserIds = [],
   } = data;
 
   if (!name) throw new ApiError(400, 'name is required');
@@ -478,6 +554,9 @@ export async function create(orgId, data) {
         osProvisioning,
         allowKeyDownload,
         isBreakGlass,
+        approverGroupId: approverGroupId || null,
+        approverRoles,
+        approverUserIds,
       },
     });
 
@@ -535,6 +614,9 @@ export async function update(orgId, id, data) {
     osProvisioning,
     allowKeyDownload,
     isBreakGlass,
+    approverGroupId,
+    approverRoles,
+    approverUserIds,
   } = data;
 
   // Verify customerId belongs to org if changing it
@@ -560,6 +642,9 @@ export async function update(orgId, id, data) {
   if (osProvisioning !== undefined) updateData.osProvisioning = osProvisioning;
   if (allowKeyDownload !== undefined) updateData.allowKeyDownload = allowKeyDownload;
   if (isBreakGlass !== undefined) updateData.isBreakGlass = isBreakGlass;
+  if (approverGroupId !== undefined) updateData.approverGroupId = approverGroupId || null;
+  if (approverRoles !== undefined) updateData.approverRoles = approverRoles;
+  if (approverUserIds !== undefined) updateData.approverUserIds = approverUserIds;
 
   const policy = await prisma.$transaction(async (tx) => {
     await tx.accessPolicy.update({ where: { id }, data: updateData });
@@ -605,4 +690,45 @@ export async function del(orgId, id) {
   await prisma.accessPolicy.delete({ where: { id } });
   logger.info('policyService.delete: policy deleted', { orgId, policyId: id });
   return { success: true };
+}
+
+/**
+ * Remove orphan PolicySubject rows for a deleted subject. PolicySubject is
+ * polymorphic (subjectType + subjectId, no FK), so deleting a User or Group
+ * does NOT cascade — call this explicitly so policies don't keep dangling
+ * references that evaluation would silently skip.
+ *
+ * @param {'USER'|'GROUP'|'ROLE'} subjectType
+ * @param {string} subjectId
+ * @param {import('@prisma/client').PrismaClient} [tx] - transaction client
+ * @returns {Promise<number>} rows removed
+ */
+export async function cleanupPolicySubjects(subjectType, subjectId, tx = prisma) {
+  const { count } = await tx.policySubject.deleteMany({ where: { subjectType, subjectId } });
+  return count;
+}
+
+/**
+ * Impact summary for deleting a policy — informational (who relies on it).
+ */
+export async function getDeleteImpact(orgId, id) {
+  const policy = await prisma.accessPolicy.findFirst({
+    where: { id, orgId },
+    include: {
+      subjects: true,
+      customer: { select: { id: true, name: true } },
+    },
+  });
+  if (!policy) throw new ApiError(404, 'Policy not found');
+  const subjects = policy.subjects || [];
+  const counts = { USER: 0, GROUP: 0, ROLE: 0 };
+  for (const s of subjects) counts[s.subjectType] = (counts[s.subjectType] || 0) + 1;
+  return {
+    policy: { id: policy.id, name: policy.name },
+    customer: policy.customer,
+    subjectCount: subjects.length,
+    userCount: counts.USER,
+    groupCount: counts.GROUP,
+    roleCount: counts.ROLE,
+  };
 }

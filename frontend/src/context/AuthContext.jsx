@@ -32,16 +32,22 @@ export function AuthProvider({ children }) {
     loadMe();
   }, [loadMe]);
 
+  // Store a token pair + hydrate user from a login/MFA response. Returns the
+  // user, or the raw challenge object when MFA is required (no tokens yet).
+  const applyAuthResult = useCallback((data) => {
+    if (data.mfaRequired || data.mfaSetupRequired) return data; // challenge — caller handles
+    if (data.accessToken) localStorage.setItem('accessToken', data.accessToken);
+    if (data.refreshToken) localStorage.setItem('refreshToken', data.refreshToken);
+    setAccessToken(data.accessToken);
+    setUser(data.user);
+    return data.user;
+  }, []);
+
   const login = useCallback(async (email, password) => {
     setError(null);
     try {
       const res = await api.post('/auth/login', { email, password });
-      const data = res.data?.data || {};
-      if (data.accessToken) localStorage.setItem('accessToken', data.accessToken);
-      if (data.refreshToken) localStorage.setItem('refreshToken', data.refreshToken);
-      setAccessToken(data.accessToken);
-      setUser(data.user);
-      return data.user;
+      return applyAuthResult(res.data?.data || {});
     } catch (e) {
       const msg =
         e.response?.status === 401
@@ -50,7 +56,14 @@ export function AuthProvider({ children }) {
       setError(msg);
       throw new Error(msg);
     }
-  }, []);
+  }, [applyAuthResult]);
+
+  // Complete an MFA challenge from the login flow.
+  const completeMfa = useCallback(async (mfaToken, method, code) => {
+    setError(null);
+    const res = await api.post('/auth/mfa/verify', { mfaToken, method, code });
+    return applyAuthResult(res.data?.data || {});
+  }, [applyAuthResult]);
 
   // Used by the SSO popup callback flow — tokens come from the OIDC
   // exchange, not from a username/password POST. Stores them and
@@ -101,6 +114,7 @@ export function AuthProvider({ children }) {
     isAuthenticated: !!user,
     login,
     loginWithTokens,
+    completeMfa,
     logout,
     refresh,
   };

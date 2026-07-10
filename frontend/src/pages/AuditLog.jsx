@@ -13,13 +13,7 @@ import DataTable from '@/components/shared/DataTable';
 import PageHeader from '@/components/common/PageHeader';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select';
+import SearchableSelect from '@/components/ui/SearchableSelect';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -119,7 +113,7 @@ function ActionBadge({ action }) {
   );
 }
 
-const ROLE_RANK = { super_admin: 4, admin: 3, operator: 2, viewer: 1 };
+const ROLE_RANK = { super_admin: 4, admin: 3, manager: 2, member: 1 };
 function isAtLeast(user, role) {
   return (ROLE_RANK[user?.role] || 0) >= (ROLE_RANK[role] || 0);
 }
@@ -139,8 +133,6 @@ function MetadataPanel({ metadata }) {
     </pre>
   );
 }
-
-const selectCls = 'h-9 rounded-md border border-input bg-background px-3 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-ring';
 
 function AuditLog() {
   const { user } = useAuth();
@@ -330,38 +322,38 @@ function AuditLog() {
           />
         </div>
 
-        {/* Action filter — native select for optgroup support */}
+        {/* Action filter */}
         <div className="min-w-44">
           <label className="mb-1 block text-xs text-muted-foreground">Action</label>
-          <select
+          <SearchableSelect
             value={actionFilter}
-            onChange={(e) => handleFilterChange(setActionFilter)(e.target.value)}
-            className={selectCls}
-          >
-            <option value="">All actions</option>
-            {Object.entries(ACTION_CATEGORIES).map(([catKey, cat]) => (
-              <optgroup key={catKey} label={cat.label}>
-                {cat.actions.map((action) => (
-                  <option key={action} value={action}>{action}</option>
-                ))}
-              </optgroup>
-            ))}
-          </select>
+            onChange={(v) => handleFilterChange(setActionFilter)(v)}
+            searchable={false}
+            clearable={false}
+            options={[
+              { value: '', label: 'All actions' },
+              ...Object.entries(ACTION_CATEGORIES).flatMap(([, cat]) =>
+                cat.actions.map((action) => ({ value: action, label: action }))
+              ),
+            ]}
+          />
         </div>
 
         {/* Resource type filter */}
         <div className="min-w-36">
           <label className="mb-1 block text-xs text-muted-foreground">Resource Type</label>
-          <Select
-            value={resourceTypeFilter || '_all'}
-            onValueChange={(v) => handleFilterChange(setResourceTypeFilter)(v === '_all' ? '' : v)}
-          >
-            <SelectTrigger className="w-full"><SelectValue placeholder="All types" /></SelectTrigger>
-            <SelectContent>
-              <SelectItem value="_all">All types</SelectItem>
-              {RESOURCE_TYPES.map((t) => <SelectItem key={t} value={t}>{t}</SelectItem>)}
-            </SelectContent>
-          </Select>
+          <SearchableSelect
+            className="w-full"
+            value={resourceTypeFilter}
+            onChange={(v) => handleFilterChange(setResourceTypeFilter)(v)}
+            placeholder="All types"
+            searchable={false}
+            clearable={false}
+            options={[
+              { value: '', label: 'All types' },
+              ...RESOURCE_TYPES.map((t) => ({ value: t, label: t })),
+            ]}
+          />
         </div>
 
         {/* Date range */}
@@ -567,18 +559,17 @@ function AuditPagination({ page, total, pageSize, totalPages, onPageChange, onPa
       </span>
       <div className="flex items-center gap-3">
         {onPageSizeChange && (
-          <label className="flex items-center gap-1.5 text-xs">
+          <div className="flex items-center gap-1.5 text-xs">
             <span>Rows</span>
-            <select
-              className="h-8 rounded-md border border-input bg-background px-2 text-xs text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
-              value={pageSize}
-              onChange={(e) => onPageSizeChange(Number(e.target.value))}
-            >
-              {[10, 25, 50, 100].map((n) => (
-                <option key={n} value={n}>{n}</option>
-              ))}
-            </select>
-          </label>
+            <SearchableSelect
+              className="h-8 w-[72px]"
+              value={String(pageSize)}
+              onChange={(v) => onPageSizeChange(Number(v))}
+              searchable={false}
+              clearable={false}
+              options={[10, 25, 50, 100].map((n) => ({ value: String(n), label: String(n) }))}
+            />
+          </div>
         )}
         <Button
           variant="outline"

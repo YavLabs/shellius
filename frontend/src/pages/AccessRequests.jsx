@@ -9,8 +9,11 @@ import {
   AlertCircle,
   KeyRound,
   Eye,
+  RefreshCw,
+  Zap,
 } from 'lucide-react';
 import DataTable from '@/components/shared/DataTable';
+import ServerName, { serverSearchString } from '@/components/shared/ServerName';
 import Badge from '@/components/shared/Badge';
 import EnvironmentBadge from '@/components/shared/EnvironmentBadge';
 import Modal from '@/components/shared/Modal';
@@ -19,13 +22,7 @@ import ApprovalCard from '@/components/access-requests/ApprovalCard';
 import CredentialDownload from '@/components/access-requests/CredentialDownload';
 import PageHeader from '@/components/common/PageHeader';
 import { Button } from '@/components/ui/button';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select';
+import SearchableSelect from '@/components/ui/SearchableSelect';
 import {
   listAccessRequests,
   getAccessRequest,
@@ -34,7 +31,7 @@ import {
 import { useAuth } from '@/context/AuthContext';
 import { relativeTime, formatDateTime } from '@/utils/time';
 
-const ROLE_RANK = { super_admin: 4, admin: 3, operator: 2, viewer: 1 };
+const ROLE_RANK = { super_admin: 4, admin: 3, manager: 2, member: 1 };
 function isAtLeast(user, role) {
   return (ROLE_RANK[user?.role] || 0) >= (ROLE_RANK[role] || 0);
 }
@@ -301,22 +298,36 @@ function AccessRequests() {
     setDetailOpen(true);
   };
 
+  // A request is connectable when it's the caller's own, APPROVED, and unexpired.
+  const isConnectable = (r) =>
+    r?.status === 'APPROVED' &&
+    r?.requesterId === user?.id &&
+    (!r.expiresAt || new Date(r.expiresAt) > new Date());
+
+  // Quick Connect — open the web terminal for an approved request. The Terminal
+  // page detects the protocol (SSH/RDP) from the request and connects.
+  const quickConnect = (r) => {
+    window.open(`/terminal?requestId=${r.id}`, '_blank', 'noopener');
+  };
+
   const handleRefresh = () => {
     fetchRequests();
     fetchPendingReviewCount();
   };
 
   const filterSlot = (
-    <Select
-      value={statusFilter || '_all'}
-      onValueChange={(v) => { setStatusFilter(v === '_all' ? '' : v); setPage(1); }}
-    >
-      <SelectTrigger className="w-[160px]"><SelectValue placeholder="All statuses" /></SelectTrigger>
-      <SelectContent>
-        <SelectItem value="_all">All statuses</SelectItem>
-        {STATUSES.map((s) => <SelectItem key={s} value={s}>{s}</SelectItem>)}
-      </SelectContent>
-    </Select>
+    <SearchableSelect
+      className="w-[160px]"
+      value={statusFilter}
+      onChange={(v) => { setStatusFilter(v); setPage(1); }}
+      options={[
+        { value: '', label: 'All statuses' },
+        ...STATUSES.map((s) => ({ value: s, label: s })),
+      ]}
+      placeholder="All statuses"
+      searchable={false}
+      clearable={false}
+    />
   );
 
   const columns = [
@@ -324,12 +335,10 @@ function AccessRequests() {
       key: 'server',
       label: 'Server',
       sortable: true,
-      searchAccessor: (r) => `${r.server?.hostname || r.server?.name || ''} ${r.server?.environment || ''}`,
+      searchAccessor: (r) => serverSearchString(r.server),
       render: (r) => (
         <div className="flex items-center gap-2">
-          <span className="text-sm font-medium text-foreground">
-            {r.server?.hostname || r.server?.name || r.serverId}
-          </span>
+          <ServerName server={r.server} fallback={r.serverId} />
           {r.server?.environment && <EnvironmentBadge environment={r.server.environment} />}
         </div>
       ),
@@ -397,6 +406,12 @@ function AccessRequests() {
       className: 'w-10',
       actions: [
         {
+          label: 'Quick Connect',
+          icon: Zap,
+          hidden: (r) => !isConnectable(r),
+          onClick: (r) => quickConnect(r),
+        },
+        {
           label: 'View Details',
           icon: Eye,
           onClick: (r) => openDetail(r.id),
@@ -419,10 +434,15 @@ function AccessRequests() {
         icon={KeyRound}
         title="Access Requests"
         subtitle="Request temporary access to servers or review pending requests." helpKey="access-requests">
-        <Button onClick={() => setFormOpen(true)}>
-          <Plus className="mr-2 h-4 w-4" />
-          New Request
-        </Button>
+        <div className="flex items-center gap-2">
+          <Button variant="outline" onClick={() => fetchRequests()} disabled={loading}>
+            <RefreshCw className={`mr-2 h-4 w-4 ${loading ? 'animate-spin' : ''}`} /> Refresh
+          </Button>
+          <Button onClick={() => setFormOpen(true)}>
+            <Plus className="mr-2 h-4 w-4" />
+            New Request
+          </Button>
+        </div>
       </PageHeader>
 
       {/* Tabs */}

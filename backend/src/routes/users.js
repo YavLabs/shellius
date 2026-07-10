@@ -9,6 +9,7 @@ import audit from '../middleware/audit.js';
 import { tokenActionLimiter } from '../middleware/rateLimiter.js';
 import * as userService from '../services/userService.js';
 import * as inviteService from '../services/inviteService.js';
+import * as userInviteService from '../services/userInviteService.js';
 import { sendMail } from '../services/mailer.js';
 import { renderTemplate } from '../email/index.js';
 import { log as auditLog } from '../services/auditService.js';
@@ -22,7 +23,7 @@ const validate = (schema) => (req, res, next) => {
   next();
 };
 
-const ROLES = ['super_admin', 'admin', 'operator', 'viewer'];
+const ROLES = ['super_admin', 'admin', 'manager', 'member'];
 const STATUSES = ['active', 'invited', 'suspended', 'deactivated'];
 
 const profileUpdateSchema = Joi.object({
@@ -48,7 +49,7 @@ const createSchema = Joi.object({
   email: Joi.string().email({ tlds: { allow: false } }).required(),
   name: Joi.string().min(1).max(200).required(),
   password: Joi.string().min(8).max(200).optional(),
-  role: Joi.string().valid(...ROLES).default('viewer'),
+  role: Joi.string().valid(...ROLES).default('member'),
   managerId: Joi.string().allow(null),
   sendInvite: Joi.boolean().default(true),
 });
@@ -301,32 +302,12 @@ router.post(
       userAgent: req.headers['user-agent'],
     });
 
-    let inviteUrl = null;
-    let mailResult = null;
+    let invite = null;
 
     if (isInviteFlow && doSendInvite) {
-      const { rawToken } = await inviteService.createInvite(user.id, inviteService.TOKEN_TYPES.INVITE, 168);
-      inviteUrl = inviteService.buildTokenUrl(inviteService.TOKEN_TYPES.INVITE, rawToken, req);
-
-      const { organization } = await import('../config/db.js').then(({ default: prisma }) =>
-        prisma.organization.findUnique({ where: { id: req.orgId } })
-      ).then((org) => ({ organization: org }));
-
-      const orgName = organization?.name ?? 'Shellius';
-
-      const tpl = renderTemplate('invite', {
-        recipientName: user.name,
-        orgName,
-        inviteUrl,
-        expiresInHours: 168,
-      });
-      mailResult = await sendMail({
-        orgId: req.orgId,
-        to: user.email,
-        subject: tpl.subject,
-        html: tpl.html,
-        text: tpl.text,
-      });
+      // Picks the SSO "sign in" email or the classic set-password invite based
+      // on whether the org has SSO enabled.
+      invite = await userInviteService.sendInvite({ orgId: req.orgId, user, req });
 
       await auditLog({
         orgId: req.orgId,
@@ -336,14 +317,15 @@ router.post(
         resourceId: user.id,
         ipAddress: req.ip,
         userAgent: req.headers['user-agent'],
+        metadata: { mode: invite.mode },
       });
     }
 
     const responseData = { user };
     // Surface the invite URL when email was not delivered (log-only mode) so the
     // admin can copy-paste it manually.
-    if (inviteUrl && mailResult && !mailResult.delivered) {
-      responseData.inviteUrl = inviteUrl;
+    if (invite && invite.inviteUrl && !invite.delivered) {
+      responseData.inviteUrl = invite.inviteUrl;
     }
 
     res.status(201).json({ success: true, data: responseData });
@@ -383,11 +365,25 @@ router.put(
   })
 );
 
+router.get(
+  '/:id/delete-impact',
+  requireRole('super_admin', 'admin'),
+  asyncHandler(async (req, res) => {
+    const impact = await userService.getUserDeleteImpact(req.orgId, req.params.id);
+    res.json({ success: true, data: impact });
+  })
+);
+
 router.delete(
   '/:id',
   requireRole('super_admin'),
   asyncHandler(async (req, res) => {
-    await userService.deleteUser(req.orgId, req.params.id);
+    await userService.deleteUser(
+      req.orgId,
+      req.params.id,
+      { reassignReportsTo: req.body?.reassignReportsTo },
+      req.user.userId
+    );
     res.json({ success: true, data: { success: true } });
   })
 );

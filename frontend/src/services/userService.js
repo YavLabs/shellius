@@ -8,8 +8,10 @@ export const getUser = (id) => api.get(`/users/${id}`).then(unwrapUser);
 export const createUser = (data) => api.post('/users', data).then(unwrapUser);
 export const updateUser = (id, data) =>
   api.put(`/users/${id}`, data).then(unwrapUser);
-export const deleteUser = (id) =>
-  api.delete(`/users/${id}`).then((r) => r.data?.data ?? r.data);
+export const getUserDeleteImpact = (id) =>
+  api.get(`/users/${id}/delete-impact`).then((r) => r.data.data);
+export const deleteUser = (id, options = {}) =>
+  api.delete(`/users/${id}`, { data: options }).then((r) => r.data?.data ?? r.data);
 export const uploadSshKey = (id, publicKey) =>
   api.put(`/users/${id}/ssh-key`, { publicKey }).then((r) => r.data?.data ?? r.data);
 export const removeSshKey = (id) =>

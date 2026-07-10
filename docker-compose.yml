@@ -1,6 +1,14 @@
+# Bundled infra (postgres, redis, minio) runs under Compose profiles so you can
+# "bring your own" managed Postgres / Redis / S3 / Azure and drop the container.
+# COMPOSE_PROFILES in .env controls which bundled services start (default:
+# postgres,redis,minio). To use an external service: remove its profile from
+# COMPOSE_PROFILES and set the matching env (DATABASE_URL / REDIS_URL /
+# storage settings). depends_on uses `required: false` so the backend still
+# starts when a bundled service is absent.
 services:
   postgres:
     image: postgres:16-alpine
+    profiles: ["postgres"]
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-shellius}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-shellius_dev}
@@ -17,6 +25,7 @@ services:
 
   redis:
     image: redis:7-alpine
+    profiles: ["redis"]
     ports:
       - "6379:6379"
     volumes:
@@ -35,6 +44,7 @@ services:
 
   minio:
     image: minio/minio:latest
+    profiles: ["minio"]
     command: server /data --console-address ":9001"
     restart: unless-stopped
     environment:
@@ -60,19 +70,24 @@ services:
       - "3001:3001"
     env_file: .env
     environment:
-      DATABASE_URL: postgresql://${POSTGRES_USER:-shellius}:${POSTGRES_PASSWORD:-shellius_dev}@postgres:5432/${POSTGRES_DB:-shellius}?schema=public
-      REDIS_URL: redis://redis:6379
+      # Defaults point at the bundled containers; override DATABASE_URL /
+      # REDIS_URL in .env to use an external Postgres / Redis.
+      DATABASE_URL: ${DATABASE_URL:-postgresql://${POSTGRES_USER:-shellius}:${POSTGRES_PASSWORD:-shellius_dev}@postgres:5432/${POSTGRES_DB:-shellius}?schema=public}
+      REDIS_URL: ${REDIS_URL:-redis://redis:6379}
       GUACD_HOST: guacd
       GUACD_PORT: "4822"
     depends_on:
       postgres:
         condition: service_healthy
+        required: false
       redis:
         condition: service_healthy
+        required: false
       guacd:
         condition: service_started
       minio:
         condition: service_healthy
+        required: false
 
   frontend:
     build:

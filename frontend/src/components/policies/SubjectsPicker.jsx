@@ -38,14 +38,14 @@ const ROLES = [
     description: 'Manages users, servers, and policies',
   },
   {
-    id: 'operator',
-    label: 'Operator',
-    description: 'Connects to servers within policy scope',
+    id: 'manager',
+    label: 'Manager',
+    description: 'Production access without approval; can approve others',
   },
   {
-    id: 'viewer',
-    label: 'Viewer',
-    description: 'Read-only access to the UI',
+    id: 'member',
+    label: 'Member',
+    description: 'Self-serve dev/staging; production requires approval',
   },
 ];
 

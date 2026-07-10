@@ -35,7 +35,7 @@ const validateQuery = (schema) => (req, res, next) => {
 const ENVIRONMENTS = ['demo', 'dev', 'staging', 'prod'];
 const EFFECTS = ['ALLOW', 'DENY'];
 const SUBJECT_TYPES = ['USER', 'GROUP', 'ROLE'];
-const ORG_ROLES = ['super_admin', 'admin', 'operator', 'viewer'];
+const ORG_ROLES = ['super_admin', 'admin', 'manager', 'member'];
 
 const subjectSchema = Joi.object({
   subjectType: Joi.string().valid(...SUBJECT_TYPES).required(),
@@ -72,6 +72,9 @@ const policyBodySchema = Joi.object({
   osProvisioning: osProvisioningSchema,
   allowKeyDownload: Joi.boolean().default(false),
   isBreakGlass: Joi.boolean().default(false),
+  approverGroupId: Joi.string().allow(null, ''),
+  approverRoles: Joi.array().items(Joi.string().valid(...ORG_ROLES)).default([]),
+  approverUserIds: Joi.array().items(Joi.string()).default([]),
   subjects: Joi.array().items(subjectSchema).default([]),
 });
 
@@ -92,6 +95,9 @@ const policyUpdateSchema = Joi.object({
   osProvisioning: osProvisioningSchema,
   allowKeyDownload: Joi.boolean(),
   isBreakGlass: Joi.boolean(),
+  approverGroupId: Joi.string().allow(null, ''),
+  approverRoles: Joi.array().items(Joi.string().valid(...ORG_ROLES)),
+  approverUserIds: Joi.array().items(Joi.string()),
   subjects: Joi.array().items(subjectSchema),
 }).min(1);
 
@@ -247,6 +253,15 @@ router.put(
 // ---------------------------------------------------------------------------
 // DELETE /api/policies/:id — admin+
 // ---------------------------------------------------------------------------
+
+router.get(
+  '/:id/delete-impact',
+  requireRole('super_admin', 'admin'),
+  asyncHandler(async (req, res) => {
+    const impact = await policyService.getDeleteImpact(req.orgId, req.params.id);
+    res.json({ success: true, data: impact });
+  })
+);
 
 router.delete(
   '/:id',

@@ -10,22 +10,36 @@ export const createServer = (data) =>
   api.post('/servers', data).then(unwrapServer);
 export const updateServer = (id, data) =>
   api.put(`/servers/${id}`, data).then(unwrapServer);
+export const getServerDeleteImpact = (id) =>
+  api.get(`/servers/${id}/delete-impact`).then((r) => r.data.data);
 export const deleteServer = (id) =>
   api.delete(`/servers/${id}`).then((r) => r.data.data);
 export const bulkUpdateEnvironment = (serverIds, environment) =>
   api
     .post('/servers/bulk/environment', { serverIds, environment })
     .then((r) => r.data.data);
+
+export const bulkUpdateServers = (serverIds, patch) =>
+  api.post('/servers/bulk', { serverIds, patch }).then((r) => r.data.data);
+
+export const updateConnectionIp = (id, ipAddress) =>
+  api.patch(`/servers/${id}/connection-ip`, { ipAddress }).then((r) => r.data?.data?.server ?? r.data?.data);
 export const triggerHealthCheck = (id) =>
   api.post(`/servers/${id}/health-check`).then(unwrapServer);
 
-export async function provisionServer(serverId, { privateKey, sshUser, sudoPassword, onLog }) {
+export async function provisionServer(serverId, { privateKey, passphrase, password, sshUser, sudoPassword, onLog }) {
   return new Promise((resolve, reject) => {
+    // This is a raw fetch (SSE stream), so it bypasses the axios interceptor —
+    // attach the bearer token manually.
+    const token = localStorage.getItem('accessToken');
     fetch(`/api/servers/${serverId}/provision`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: {
+        'Content-Type': 'application/json',
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      },
       credentials: 'include',
-      body: JSON.stringify({ privateKey, sshUser, sudoPassword }),
+      body: JSON.stringify({ privateKey, passphrase, password, sshUser, sudoPassword }),
     }).then(async (response) => {
       if (!response.ok) {
         const data = await response.json().catch(() => ({}));

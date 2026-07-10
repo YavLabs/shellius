@@ -5,13 +5,7 @@ import DataTable from '@/components/shared/DataTable';
 import Badge from '@/components/shared/Badge';
 import PageHeader from '@/components/common/PageHeader';
 import { Button } from '@/components/ui/button';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select';
+import SearchableSelect from '@/components/ui/SearchableSelect';
 import {
   listNotifications,
   markAllNotificationsRead,
@@ -77,15 +71,17 @@ function Notifications() {
   };
 
   const filterSlot = (
-    <Select value={filter} onValueChange={setFilter}>
-      <SelectTrigger className="w-[160px]">
-        <SelectValue />
-      </SelectTrigger>
-      <SelectContent>
-        <SelectItem value="all">All notifications</SelectItem>
-        <SelectItem value="unread">Unread only</SelectItem>
-      </SelectContent>
-    </Select>
+    <SearchableSelect
+      className="w-[160px]"
+      value={filter}
+      onChange={setFilter}
+      searchable={false}
+      clearable={false}
+      options={[
+        { value: 'all', label: 'All notifications' },
+        { value: 'unread', label: 'Unread only' },
+      ]}
+    />
   );
 
   const columns = [

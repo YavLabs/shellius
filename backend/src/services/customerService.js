@@ -99,18 +99,71 @@ export async function updateCustomer(orgId, customerId, { name, description, met
   return customer;
 }
 
-export async function deleteCustomer(orgId, customerId) {
+/** Dependents that must be handled before a customer can be deleted. */
+export async function getDeleteImpact(orgId, customerId) {
+  const existing = await prisma.customer.findFirst({ where: { id: customerId, orgId } });
+  if (!existing) throw new ApiError(404, 'Customer not found');
+  const [servers, policies] = await Promise.all([
+    prisma.server.findMany({
+      where: { orgId, customerId },
+      select: { id: true, hostname: true, displayName: true },
+    }),
+    prisma.accessPolicy.findMany({
+      where: { orgId, customerId },
+      select: { id: true, name: true },
+    }),
+  ]);
+  return {
+    customer: { id: existing.id, name: existing.name },
+    servers,
+    serverCount: servers.length,
+    policies,
+    policyCount: policies.length,
+  };
+}
+
+/**
+ * Delete a customer, resolving its dependents per the chosen strategy.
+ * options.servers: 'reassign' (→ targetCustomerId) | 'delete' (cascade)
+ * options.policies: 'orgwide' (default, SetNull) | 'delete'
+ */
+export async function deleteCustomer(orgId, customerId, options = {}) {
   const existing = await prisma.customer.findFirst({
     where: { id: customerId, orgId },
     include: { _count: { select: { servers: true } } },
   });
   if (!existing) throw new ApiError(404, 'Customer not found');
+
   if (existing._count.servers > 0) {
-    throw new ApiError(
-      409,
-      'Cannot delete customer with existing servers. Deactivate instead.'
-    );
+    const strategy = options.servers;
+    if (strategy === 'reassign') {
+      const target = options.targetCustomerId;
+      if (!target || target === customerId) {
+        throw new ApiError(400, 'A different target customer is required to reassign servers');
+      }
+      const targetCustomer = await prisma.customer.findFirst({ where: { id: target, orgId } });
+      if (!targetCustomer) throw new ApiError(400, 'Target customer not found');
+      await prisma.server.updateMany({ where: { customerId, orgId }, data: { customerId: target } });
+    } else if (strategy !== 'delete') {
+      // No explicit choice — refuse rather than silently cascade-delete servers.
+      throw new ApiError(409, 'Customer has servers; choose to reassign or delete them.');
+    }
+    // strategy 'delete' → servers cascade-delete with the customer below.
   }
+
+  if (options.policies === 'delete') {
+    await prisma.accessPolicy.deleteMany({ where: { orgId, customerId } });
+  } else if (options.policies === 'reassign') {
+    const target = options.policiesTargetCustomerId || options.targetCustomerId;
+    if (!target || target === customerId) {
+      throw new ApiError(400, 'A different target customer is required to reassign policies');
+    }
+    const targetCustomer = await prisma.customer.findFirst({ where: { id: target, orgId } });
+    if (!targetCustomer) throw new ApiError(400, 'Target customer not found for policies');
+    await prisma.accessPolicy.updateMany({ where: { orgId, customerId }, data: { customerId: target } });
+  }
+  // else policies SetNull → become org-wide (handled by the FK on delete).
+
   await prisma.customer.delete({ where: { id: customerId } });
   return { success: true };
 }

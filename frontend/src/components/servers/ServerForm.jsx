@@ -2,6 +2,8 @@ import { useState, useEffect } from 'react';
 import { X, ChevronDown, ChevronRight, Info } from 'lucide-react';
 import { listCustomers } from '@/services/customerService';
 import PrivateIPWarning from './PrivateIPWarning';
+import SearchableSelect from '@/components/ui/SearchableSelect';
+import PasswordInput from '@/components/ui/PasswordInput';
 
 const ENVIRONMENTS = ['demo', 'dev', 'staging', 'prod'];
 const OS_TYPES = ['', 'linux', 'windows', 'macos', 'other'];
@@ -70,6 +72,7 @@ function ServerForm({ server, customerId: initialCustomerId, onSubmit, onCancel 
   // ── Connection ───────────────────────────────────────────────────────────
   const [ipAddress, setIpAddress] = useState(server?.ipAddress || '');
   const [ipError, setIpError]     = useState('');
+  const [dynamicIp, setDynamicIp] = useState(!!server?.dynamicIp);
   const [protocol, setProtocol]   = useState(initialProtocol);
   const [port, setPort]           = useState(server?.port || defaultPort(initialProtocol));
   const [sshUser, setSshUser]     = useState(server?.sshUser || 'root');
@@ -148,7 +151,12 @@ function ServerForm({ server, customerId: initialCustomerId, onSubmit, onCancel 
     setError('');
 
     if (!hostname.trim())                         { setError('Hostname is required'); return; }
-    if (!ipAddress || !ipv4Re.test(ipAddress))    { setError('Valid IPv4 address is required'); return; }
+    // dynamicIp servers resolve their address at connect time — IP optional here.
+    if (dynamicIp) {
+      if (ipAddress && !ipv4Re.test(ipAddress))   { setError('Invalid IPv4 address'); return; }
+    } else if (!ipAddress || !ipv4Re.test(ipAddress)) {
+      setError('Valid IPv4 address is required'); return;
+    }
     if (!customerId)                              { setError('Customer is required'); return; }
 
     const payload = {
@@ -156,6 +164,7 @@ function ServerForm({ server, customerId: initialCustomerId, onSubmit, onCancel 
       displayName:     displayName.trim() || undefined,
       description:     description.trim() || undefined,
       ipAddress,
+      dynamicIp,
       port:            Number(port),
       protocol,
       customerId,
@@ -209,7 +218,7 @@ function ServerForm({ server, customerId: initialCustomerId, onSubmit, onCancel 
       <div className="space-y-3">
         <h4 className={sectionCls}>Basic Info</h4>
         <div>
-          <label className={labelCls}>Hostname</label>
+          <label className={labelCls}>Hostname <span className="text-destructive">*</span></label>
           <input
             className={inputCls}
             value={hostname}
@@ -219,11 +228,12 @@ function ServerForm({ server, customerId: initialCustomerId, onSubmit, onCancel 
           />
         </div>
         <div>
-          <label className={labelCls}>Display Name</label>
+          <label className={labelCls}>Name</label>
           <input
             className={inputCls}
             value={displayName}
             onChange={(e) => setDisplayName(e.target.value)}
+            placeholder="Friendly name (e.g. Acme Prod Web)"
           />
         </div>
         <div>
@@ -243,15 +253,13 @@ function ServerForm({ server, customerId: initialCustomerId, onSubmit, onCancel 
         <div className="grid grid-cols-2 gap-3">
           <div>
             <label className={labelCls}>OS Type</label>
-            <select
-              className={inputCls}
+            <SearchableSelect
               value={osType}
-              onChange={(e) => handleOsTypeChange(e.target.value)}
-            >
-              {OS_TYPES.map((o) => (
-                <option key={o} value={o}>{o || 'Unknown / Not specified'}</option>
-              ))}
-            </select>
+              onChange={(v) => handleOsTypeChange(v)}
+              options={OS_TYPES.map((o) => ({ value: o, label: o || 'Unknown / Not specified' }))}
+              searchable={false}
+              clearable={false}
+            />
           </div>
           <div>
             <label className={labelCls}>OS Version <span className="font-normal text-muted-foreground">(optional)</span></label>
@@ -271,17 +279,31 @@ function ServerForm({ server, customerId: initialCustomerId, onSubmit, onCancel 
 
         {/* IP Address */}
         <div>
-          <label className={labelCls}>IP Address</label>
+          <label className={labelCls}>
+            IP Address {!dynamicIp && <span className="text-destructive">*</span>}
+          </label>
           <input
             className={`${inputCls} font-mono`}
             value={ipAddress}
             onChange={(e) => setIpAddress(e.target.value)}
             onBlur={handleIpBlur}
-            placeholder="10.0.0.1"
-            required
+            placeholder={dynamicIp ? 'Resolved at connect time (optional)' : '10.0.0.1'}
+            required={!dynamicIp}
           />
           {ipError && <p className="mt-1 text-xs text-destructive">{ipError}</p>}
           <PrivateIPWarning ipAddress={ipAddress} variant="note" />
+          <label className="mt-2 flex items-center gap-2 text-sm text-foreground">
+            <input
+              type="checkbox"
+              checked={dynamicIp}
+              onChange={(e) => setDynamicIp(e.target.checked)}
+              className="rounded border-border accent-primary"
+            />
+            IP may change (not static)
+            <span className="text-xs text-muted-foreground">
+              — users can update it at connect time
+            </span>
+          </label>
         </div>
 
         {/* Protocol — filtered by OS type */}
@@ -364,8 +386,7 @@ function ServerForm({ server, customerId: initialCustomerId, onSubmit, onCancel 
                   <span className="font-normal text-muted-foreground">(blank = keep current)</span>
                 )}
               </label>
-              <input
-                type="password"
+              <PasswordInput
                 className={inputCls}
                 value={rdpPassword}
                 onChange={(e) => setRdpPassword(e.target.value)}
@@ -385,31 +406,25 @@ function ServerForm({ server, customerId: initialCustomerId, onSubmit, onCancel 
         <h4 className={sectionCls}>Classification</h4>
         <div className="grid grid-cols-2 gap-3">
           <div>
-            <label className={labelCls}>Customer</label>
-            <select
-              className={inputCls}
+            <label className={labelCls}>Customer <span className="text-destructive">*</span></label>
+            <SearchableSelect
               value={customerId}
-              onChange={(e) => setCustomerId(e.target.value)}
-              required
+              onChange={(v) => setCustomerId(v)}
+              options={customers.map((c) => ({ value: c.id, label: c.name }))}
+              placeholder="Select customer..."
+              clearable={false}
               disabled={!!initialCustomerId && !isEdit}
-            >
-              <option value="">Select customer...</option>
-              {customers.map((c) => (
-                <option key={c.id} value={c.id}>{c.name}</option>
-              ))}
-            </select>
+            />
           </div>
           <div>
             <label className={labelCls}>Environment</label>
-            <select
-              className={inputCls}
+            <SearchableSelect
               value={environment}
-              onChange={(e) => setEnvironment(e.target.value)}
-            >
-              {ENVIRONMENTS.map((env) => (
-                <option key={env} value={env}>{env}</option>
-              ))}
-            </select>
+              onChange={(v) => setEnvironment(v)}
+              options={ENVIRONMENTS.map((env) => ({ value: env, label: env }))}
+              searchable={false}
+              clearable={false}
+            />
           </div>
         </div>
       </div>
@@ -459,15 +474,13 @@ function ServerForm({ server, customerId: initialCustomerId, onSubmit, onCancel 
           <div className="grid grid-cols-2 gap-3">
             <div>
               <label className={labelCls}>Provider</label>
-              <select
-                className={inputCls}
+              <SearchableSelect
                 value={cloudProvider}
-                onChange={(e) => setCloudProvider(e.target.value)}
-              >
-                {CLOUD_PROVIDERS.map((c) => (
-                  <option key={c} value={c}>{c || '-'}</option>
-                ))}
-              </select>
+                onChange={(v) => setCloudProvider(v)}
+                options={CLOUD_PROVIDERS.map((c) => ({ value: c, label: c || '-' }))}
+                searchable={false}
+                clearable={false}
+              />
             </div>
             <div>
               <label className={labelCls}>Region</label>

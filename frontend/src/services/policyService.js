@@ -14,6 +14,8 @@ export const createPolicy = (body) =>
 export const updatePolicy = (id, body) =>
   api.put(`/policies/${id}`, body).then(unwrapPolicy);
 
+export const getPolicyDeleteImpact = (id) =>
+  api.get(`/policies/${id}/delete-impact`).then((r) => r.data.data);
 export const deletePolicy = (id) =>
   api.delete(`/policies/${id}`).then((r) => r.data?.data ?? r.data);
 

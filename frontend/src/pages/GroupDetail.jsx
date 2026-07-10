@@ -217,7 +217,7 @@ function EditGroupModal({ open, group, onClose, onSaved }) {
           </div>
         )}
         <div>
-          <label className="mb-1.5 block text-sm font-medium text-foreground">Name</label>
+          <label className="mb-1.5 block text-sm font-medium text-foreground">Name <span className="text-destructive">*</span></label>
           <Input value={name} onChange={(e) => setName(e.target.value)} required />
         </div>
         <div>

@@ -32,52 +32,53 @@ function AuthCallback() {
     const refreshToken = params.get('refresh_token');
     const errParam = params.get('error');
 
-    if (errParam) {
-      setStatus('error');
-      setErrorMsg(decodeURIComponent(errParam));
-      // Notify opener if popup
-      if (window.opener) {
-        try {
-          window.opener.postMessage(
-            { type: 'shellius:sso', ok: false, error: errParam },
-            window.location.origin
-          );
-        } catch {
-          // ignore cross-origin postMessage errors
-        }
-        setTimeout(() => window.close(), 1500);
-      }
-      return;
-    }
+    // The popup keeps window.name across the cross-origin IdP round-trip even if
+    // COOP severs window.opener — use it to reliably detect popup mode.
+    const isPopup = window.name === 'shellius-sso' || !!(window.opener && window.opener !== window);
 
-    if (!accessToken || !refreshToken) {
-      setStatus('error');
-      setErrorMsg('Missing tokens in SSO callback URL');
-      return;
-    }
+    const payload = errParam
+      ? { type: 'shellius:sso', ok: false, error: decodeURIComponent(errParam) }
+      : accessToken && refreshToken
+        ? { type: 'shellius:sso', ok: true, accessToken, refreshToken }
+        : { type: 'shellius:sso', ok: false, error: 'Missing tokens in SSO callback URL' };
 
-    // Popup mode — hand tokens back to opener and close
-    if (window.opener && window.opener !== window) {
+    if (isPopup) {
+      // Primary: postMessage to opener. Fallback: localStorage fires a `storage`
+      // event in the opener even when window.opener is null (COOP-severed).
       try {
-        window.opener.postMessage(
-          { type: 'shellius:sso', ok: true, accessToken, refreshToken },
-          window.location.origin
-        );
-      } catch (e) {
-        setStatus('error');
-        setErrorMsg('Failed to message parent window');
-        return;
+        window.opener?.postMessage(payload, window.location.origin);
+      } catch {
+        /* ignore */
       }
-      // Give the parent a tick to receive before we close
-      setTimeout(() => window.close(), 200);
+      try {
+        localStorage.setItem('shellius_sso_msg', JSON.stringify({ ...payload, ts: Date.now() }));
+      } catch {
+        /* ignore */
+      }
+      if (!payload.ok) {
+        setStatus('error');
+        setErrorMsg(payload.error);
+      }
+      setTimeout(() => window.close(), payload.ok ? 200 : 1500);
       return;
     }
 
-    // Standalone mode — store directly and continue
+    // Full-page redirect flow (no popup) — store tokens and continue.
+    if (!payload.ok) {
+      setStatus('error');
+      setErrorMsg(payload.error);
+      return;
+    }
+    let dest = '/dashboard';
+    try {
+      const saved = sessionStorage.getItem('sso_redirect');
+      if (saved && saved.startsWith('/') && !saved.startsWith('//')) dest = saved;
+      sessionStorage.removeItem('sso_redirect');
+    } catch {
+      /* ignore */
+    }
     loginWithTokens({ accessToken, refreshToken })
-      .then(() => {
-        navigate('/dashboard', { replace: true });
-      })
+      .then(() => navigate(dest, { replace: true }))
       .catch((e) => {
         setStatus('error');
         setErrorMsg(e?.message || 'Failed to complete SSO login');

@@ -1,17 +1,23 @@
 import { useEffect, useRef, useState } from 'react';
 import { Film, Loader2, AlertCircle } from 'lucide-react';
+// Required for the player to render its terminal grid — without it the player
+// mounts collapsed/empty.
+import 'asciinema-player/dist/bundle/asciinema-player.css';
 
 /**
  * SessionPlayer
  *
  * Renders an asciinema-player for a recorded session.
  * Fetches the .cast recording blob from the API with the auth bearer token,
- * converts it to an object URL, then hands it to AsciinemaPlayer.create().
+ * then hands the text to AsciinemaPlayer.create().
  *
  * Props:
- *   sessionId  {string}  — session ID whose recording to play
+ *   sessionId   {string}    — session ID whose recording to play
+ *   onCast      {function}  — optional, called with the raw .cast text once
+ *                             loaded (so a sibling can derive the command list
+ *                             without re-fetching)
  */
-function SessionPlayer({ sessionId }) {
+function SessionPlayer({ sessionId, onCast }) {
   const containerRef = useRef(null);
   const playerRef = useRef(null);
   const [status, setStatus] = useState('idle'); // idle | loading | ready | error | unavailable
@@ -20,7 +26,6 @@ function SessionPlayer({ sessionId }) {
   useEffect(() => {
     if (!sessionId) return;
 
-    let objectUrl = null;
     let cancelled = false;
 
     async function loadAndPlay() {
@@ -42,10 +47,14 @@ function SessionPlayer({ sessionId }) {
           throw new Error(`Server responded with ${response.status}`);
         }
 
-        const blob = await response.blob();
+        // Read the recording text and hand it to the player INLINE via the
+        // `{ data }` source. This avoids fetching a blob: object URL (which the
+        // player's internal fetch + CSP/worker setup can choke on) — the most
+        // reliable way to play an authenticated, in-memory recording.
+        const castText = await response.text();
         if (cancelled) return;
 
-        objectUrl = URL.createObjectURL(blob);
+        if (onCast) onCast(castText);
 
         // Dynamically import asciinema-player to avoid SSR issues and keep
         // the initial bundle lean.
@@ -54,17 +63,25 @@ function SessionPlayer({ sessionId }) {
 
         if (!containerRef.current) return;
 
-        playerRef.current = AsciinemaPlayer.create(objectUrl, containerRef.current, {
-          cols: 220,
-          rows: 24,
-          autoPlay: false,
-          speed: 1,
-          theme: 'asciinema',
-          fit: 'width',
-          controls: true,
-        });
-
+        // IMPORTANT: flip to "ready" BEFORE create() so the container is
+        // visible (not display:none). asciinema-player measures the element's
+        // width on creation with fit:'width'; if it mounts inside a hidden
+        // element it computes a zero size and renders a collapsed, unclickable
+        // player. Making it visible first is what fixes the "thumbnail shows
+        // but nothing is clickable" bug.
         setStatus('ready');
+
+        playerRef.current = AsciinemaPlayer.create(
+          { data: castText, parser: 'asciicast' },
+          containerRef.current,
+          {
+            autoPlay: false,
+            speed: 1,
+            theme: 'asciinema',
+            fit: 'width',
+            controls: true,
+          }
+        );
       } catch (err) {
         if (!cancelled) {
           setStatus('error');
@@ -81,11 +98,8 @@ function SessionPlayer({ sessionId }) {
         playerRef.current.dispose();
         playerRef.current = null;
       }
-      if (objectUrl) {
-        URL.revokeObjectURL(objectUrl);
-      }
     };
-  }, [sessionId]);
+  }, [sessionId, onCast]);
 
   return (
     <div className="space-y-2">
@@ -110,10 +124,20 @@ function SessionPlayer({ sessionId }) {
         </div>
       )}
 
-      {/* Player mounts here; hidden until ready to avoid layout flash */}
+      {/*
+        The player mounts here. The container stays in the layout flow and
+        visible while create() runs (see note above) — an empty container is
+        simply zero-height, so there is no visible flash before playback.
+
+        data-modal-passthrough: when this player is inside a <Modal>, its clicks
+        must NOT be swallowed by the modal's stopPropagation, or asciinema's
+        (Solid.js) delegated click handlers never fire and playback/controls go
+        dead. See Modal.jsx stopUnlessPassthrough.
+      */}
       <div
         ref={containerRef}
-        className={status === 'ready' ? 'overflow-hidden rounded-md' : 'hidden'}
+        data-modal-passthrough
+        className={status === 'ready' ? 'overflow-hidden rounded-md border border-border' : ''}
       />
     </div>
   );

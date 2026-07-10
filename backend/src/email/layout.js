@@ -4,7 +4,7 @@
  * Shared HTML email layout. Inline styles only — every modern mail
  * client (Gmail, Outlook, Apple Mail, mobile) strips <link> and most
  * <style> tags, so we hand-write the styles inline. Max-width 600px
- * is the de-facto email standard. The dark header + emerald accent
+ * is the de-facto email standard. The dark header + monochrome brand accent
  * matches the Shellius web UI theme.
  *
  * No external dependencies — just template literals.
@@ -74,7 +74,7 @@ export function renderLayout({ title, preheader, bodyHtml, footerHtml }) {
                       <table role="presentation" cellpadding="0" cellspacing="0" border="0">
                         <tr>
                           <td style="vertical-align:middle;padding-right:12px;">
-                            <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="44" height="44" style="background:#10b981;border-radius:10px;">
+                            <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="44" height="44" style="background:#18181b;border:1px solid #3f3f46;border-radius:10px;">
                               <tr>
                                 <td align="center" valign="middle" style="width:44px;height:44px;line-height:0;">
                                   <img src="data:image/svg+xml;utf8,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20width%3D%2224%22%20height%3D%2224%22%20viewBox%3D%220%200%2024%2024%22%20fill%3D%22none%22%20stroke%3D%22%23ffffff%22%20stroke-width%3D%222.5%22%20stroke-linecap%3D%22round%22%20stroke-linejoin%3D%22round%22%3E%3Cpolyline%20points%3D%224%2017%2010%2011%204%205%22%2F%3E%3Cline%20x1%3D%2212%22%20y1%3D%2219%22%20x2%3D%2220%22%20y2%3D%2219%22%2F%3E%3C%2Fsvg%3E" width="24" height="24" alt="" style="display:block;border:0;outline:none;"/>

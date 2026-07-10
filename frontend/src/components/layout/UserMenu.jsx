@@ -91,11 +91,21 @@ function UserMenu({ trigger, align = 'right', verticalAlign = 'below' }) {
           role="menu"
         >
           {/* User identity header */}
-          <div className="border-b border-border px-3 py-2">
-            <p className="truncate text-sm font-medium text-foreground">
-              {user?.name || 'User'}
-            </p>
-            <p className="truncate text-xs text-muted-foreground">{user?.email}</p>
+          <div className="flex items-center gap-2.5 border-b border-border px-3 py-2">
+            {user?.avatarUrl && (
+              <img
+                src={user.avatarUrl}
+                alt=""
+                referrerPolicy="no-referrer"
+                className="h-8 w-8 shrink-0 rounded-full object-cover"
+              />
+            )}
+            <div className="min-w-0">
+              <p className="truncate text-sm font-medium text-foreground">
+                {user?.name || 'User'}
+              </p>
+              <p className="truncate text-xs text-muted-foreground">{user?.email}</p>
+            </div>
           </div>
 
           {/* Profile / Settings */}

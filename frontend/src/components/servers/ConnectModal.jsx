@@ -6,6 +6,8 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import PrivateIPWarning from './PrivateIPWarning';
 import { LINUX_USER_RE } from '@/utils/principal';
+import SearchableSelect from '@/components/ui/SearchableSelect';
+import { updateConnectionIp } from '@/services/serverService';
 
 /**
  * ConnectModal
@@ -25,30 +27,53 @@ import { LINUX_USER_RE } from '@/utils/principal';
 function ConnectModal({ open, onClose, server, intent, currentUser }) {
   const adminOverride = !!intent?.adminCanOverride;
   const allowed = intent?.allowedPrincipals || [];
+  const proto = intent?.protocol || 'SSH';
+  const isRdp = proto === 'RDP';
 
   const [principal, setPrincipal] = useState(() => intent?.preferredPrincipal || '');
   const [overrideOn, setOverrideOn] = useState(false);
+  const [ip, setIp] = useState(server?.ipAddress || '');
+  const [ipErr, setIpErr] = useState('');
+  const [connecting, setConnecting] = useState(false);
 
   // Reset on each open so a stale value from a previous render doesn't leak.
   useEffect(() => {
     if (open) {
       setPrincipal(intent?.preferredPrincipal || '');
       setOverrideOn(false);
+      setIp(server?.ipAddress || '');
+      setIpErr('');
     }
-  }, [open, intent?.preferredPrincipal]);
+  }, [open, intent?.preferredPrincipal, server?.ipAddress]);
 
   const trimmed = (principal || '').trim();
   const isValidFormat = LINUX_USER_RE.test(trimmed);
   const isInAllowList = allowed.includes(trimmed);
   const editable = adminOverride && overrideOn;
 
-  // Non-admins are locked to the preferred principal OR must pick from
+  // RDP connects with the server-side rdpUsername injected by the gateway, so
+  // the Linux-principal validation does not apply — an active request is enough.
+  // For SSH, non-admins are locked to the preferred principal OR must pick from
   // the allowed list via a select dropdown.
   const canSubmit =
-    isValidFormat && (editable || isInAllowList || allowed.length === 0);
+    isRdp || (isValidFormat && (editable || isInAllowList || allowed.length === 0));
 
-  const onConnect = () => {
+  const onConnect = async () => {
     if (!canSubmit || !intent?.activeRequestId) return;
+    // For non-static-IP servers, persist a changed IP first so the connection
+    // (which reads the server's stored IP) targets the right host.
+    if (server?.dynamicIp && ip.trim() && ip.trim() !== server.ipAddress) {
+      setConnecting(true);
+      setIpErr('');
+      try {
+        await updateConnectionIp(server.id, ip.trim());
+      } catch (e) {
+        setIpErr(e.response?.data?.error?.message || 'Failed to update IP');
+        setConnecting(false);
+        return;
+      }
+      setConnecting(false);
+    }
     const params = new URLSearchParams({ requestId: intent.activeRequestId });
     if (trimmed && trimmed !== intent.preferredPrincipal) {
       params.set('principal', trimmed);
@@ -57,10 +82,8 @@ function ConnectModal({ open, onClose, server, intent, currentUser }) {
     onClose();
   };
 
-  const proto = intent?.protocol || 'SSH';
   const port = server?.port || (proto === 'RDP' ? 3389 : 22);
   const jitBadge = intent?.jitEnabled && trimmed.endsWith('_jit');
-  const isRdp = proto === 'RDP';
 
   return (
     <Modal
@@ -81,10 +104,28 @@ function ConnectModal({ open, onClose, server, intent, currentUser }) {
 
         {/* Connection details */}
         <div className="grid grid-cols-3 gap-3">
-          <ReadOnlyField label="Host" value={server?.ipAddress || server?.hostname || '-'} />
+          {server?.dynamicIp ? (
+            <div>
+              <p className="mb-1 text-xs font-medium text-muted-foreground">Host (IP)</p>
+              <input
+                className="h-8 w-full rounded-md border border-input bg-background px-2 font-mono text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
+                value={ip}
+                onChange={(e) => setIp(e.target.value)}
+                placeholder={server?.ipAddress || 'current IP'}
+              />
+            </div>
+          ) : (
+            <ReadOnlyField label="Host" value={server?.ipAddress || server?.hostname || '-'} />
+          )}
           <ReadOnlyField label="Port" value={port} />
           <ReadOnlyField label="Protocol" value={proto} />
         </div>
+        {server?.dynamicIp && (
+          <p className="-mt-2 text-xs text-muted-foreground">
+            This server&apos;s IP can change. Confirm or update it before connecting.
+          </p>
+        )}
+        {ipErr && <p className="text-xs text-destructive">{ipErr}</p>}
 
         {/* Principal picker — only meaningful for SSH */}
         {!isRdp && (
@@ -118,18 +159,17 @@ function ConnectModal({ open, onClose, server, intent, currentUser }) {
                 }
               />
             ) : (
-              <select
+              <SearchableSelect
                 value={principal}
-                onChange={(e) => setPrincipal(e.target.value)}
-                className="flex h-9 w-full rounded-md border border-input bg-background px-3 py-2 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
-              >
-                {allowed.map((p) => (
-                  <option key={p} value={p}>
-                    {p}
-                    {p === intent?.preferredPrincipal ? '  (preferred)' : ''}
-                  </option>
-                ))}
-              </select>
+                onChange={(v) => setPrincipal(v)}
+                options={allowed.map((p) => ({
+                  value: p,
+                  label: p,
+                  sublabel: p === intent?.preferredPrincipal ? 'preferred' : undefined,
+                }))}
+                searchable={false}
+                clearable={false}
+              />
             )}
 
             {jitBadge && (
@@ -170,8 +210,11 @@ function ConnectModal({ open, onClose, server, intent, currentUser }) {
           <Button variant="outline" onClick={onClose}>
             Cancel
           </Button>
-          <Button onClick={onConnect} disabled={!canSubmit}>
-            Connect
+          <Button
+            onClick={onConnect}
+            disabled={!canSubmit || connecting || (server?.dynamicIp && !ip.trim())}
+          >
+            {connecting ? 'Updating IP…' : 'Connect'}
           </Button>
         </div>
       </div>

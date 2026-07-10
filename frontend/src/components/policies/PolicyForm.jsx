@@ -1,11 +1,13 @@
 import { useState, useEffect, useCallback } from 'react';
-import { X, Plus, FlaskConical, Info, CheckCircle2, XCircle } from 'lucide-react';
+import { X, Plus, FlaskConical, Info, CheckCircle2, XCircle, Zap, Siren, Key, Check } from 'lucide-react';
 import Modal from '@/components/shared/Modal';
 import EnvironmentBadge from '@/components/shared/EnvironmentBadge';
 import { listCustomers } from '@/services/customerService';
 import { listServers } from '@/services/serverService';
+import { listGroups } from '@/services/groupService';
 import PolicyEvaluator from '@/components/policies/PolicyEvaluator';
 import SubjectsPicker from '@/components/policies/SubjectsPicker';
+import SearchableSelect from '@/components/ui/SearchableSelect';
 
 const ENVIRONMENTS = ['demo', 'dev', 'staging', 'prod'];
 
@@ -98,19 +100,24 @@ function PolicySummary({ form }) {
           <span className="font-mono">{principals}</span> on {where} for up to{' '}
           <strong>{duration}</strong> per session, {approvalTag}.
           {hasJit && (
-            <span className="block mt-1 text-[11px] opacity-80">
-              ⚡ JIT provisioning enabled — target hosts will auto-create a per-user Linux
-              account for each session.
+            <span className="flex items-start gap-1.5 mt-1 text-[11px] opacity-80">
+              <Zap className="h-3 w-3 mt-0.5 shrink-0" />
+              <span>
+                JIT provisioning enabled — target hosts will auto-create a per-user Linux
+                account for each session.
+              </span>
             </span>
           )}
           {form.isBreakGlass && (
-            <span className="block mt-1 text-[11px] opacity-80">
-              🚨 Marked as a break-glass policy — invoking it notifies all admins.
+            <span className="flex items-start gap-1.5 mt-1 text-[11px] opacity-80">
+              <Siren className="h-3 w-3 mt-0.5 shrink-0" />
+              <span>Marked as a break-glass policy — invoking it notifies all admins.</span>
             </span>
           )}
           {form.allowKeyDownload && (
-            <span className="block mt-1 text-[11px] opacity-80">
-              🔑 SSH key download enabled — users can take credentials offline.
+            <span className="flex items-start gap-1.5 mt-1 text-[11px] opacity-80">
+              <Key className="h-3 w-3 mt-0.5 shrink-0" />
+              <span>SSH key download enabled — users can take credentials offline.</span>
             </span>
           )}
         </div>
@@ -146,7 +153,7 @@ function Step1({ form, onChange, errors }) {
   return (
     <div className="space-y-4">
       <div>
-        <label className={labelCls}>Policy Name *</label>
+        <label className={labelCls}>Policy Name <span className="text-destructive">*</span></label>
         <input
           className={inputCls}
           value={form.name}
@@ -166,7 +173,7 @@ function Step1({ form, onChange, errors }) {
         />
       </div>
       <div>
-        <label className={labelCls}>Effect *</label>
+        <label className={labelCls}>Effect <span className="text-destructive">*</span></label>
         <div className="flex gap-4 mt-1">
           {['ALLOW', 'DENY'].map((eff) => (
             <label key={eff} className="flex items-center gap-2 cursor-pointer">
@@ -225,6 +232,7 @@ function Step1({ form, onChange, errors }) {
 function Step2({ form, onChange, errors }) {
   return (
     <div className="space-y-3">
+      <label className={labelCls}>Subjects <span className="text-destructive">*</span></label>
       <SubjectsPicker
         subjects={form.subjects || []}
         onChange={(next) => onChange('subjects', next)}
@@ -318,21 +326,16 @@ function Step3({ form, onChange, errors }) {
     <div className="space-y-5">
       <div>
         <label className={labelCls}>Customer Scope</label>
-        <select
-          className={inputCls}
+        <SearchableSelect
           value={form.customerId || ''}
-          onChange={(e) => {
-            onChange('customerId', e.target.value || null);
+          onChange={(v) => {
+            onChange('customerId', v || null);
             onChange('targetServerIds', []);
           }}
-        >
-          <option value="">Org-wide (all customers)</option>
-          {customers.map((c) => (
-            <option key={c.id} value={c.id}>
-              {c.name}
-            </option>
-          ))}
-        </select>
+          options={customers.map((c) => ({ value: c.id, label: c.name }))}
+          placeholder="Org-wide (all customers)"
+          clearable={true}
+        />
       </div>
 
       <div>
@@ -390,7 +393,7 @@ function Step3({ form, onChange, errors }) {
                       selected ? 'border-primary bg-primary text-primary-foreground' : 'border-input',
                     ].join(' ')}
                   >
-                    {selected && <span className="text-[10px] font-bold">✓</span>}
+                    {selected && <Check className="h-3 w-3" strokeWidth={3} />}
                   </div>
                   <span className="font-medium text-foreground">{s.hostname}</span>
                   <EnvironmentBadge environment={s.environment} />
@@ -403,7 +406,7 @@ function Step3({ form, onChange, errors }) {
       </div>
 
       <div>
-        <label className={labelCls}>Allowed Principals</label>
+        <label className={labelCls}>Allowed Principals <span className="text-destructive">*</span></label>
         <div className="flex gap-2">
           <input
             className={inputCls}
@@ -471,13 +474,38 @@ function Step3({ form, onChange, errors }) {
 }
 
 // Step 4 ─────────────────────────────────────────────────────────────────────
+const APPROVER_ROLES = ['admin', 'manager'];
+
 function Step4({ form, onChange, errors }) {
   const durationMinutes = Math.round((form.maxSessionDuration || 3600) / 60);
+  const [groups, setGroups] = useState([]);
+
+  useEffect(() => {
+    let active = true;
+    listGroups()
+      .then((res) => {
+        if (!active) return;
+        const items = res?.items || res?.data?.items || res || [];
+        setGroups(Array.isArray(items) ? items : []);
+      })
+      .catch(() => setGroups([]));
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  const toggleApproverRole = (role) => {
+    const cur = form.approverRoles || [];
+    onChange(
+      'approverRoles',
+      cur.includes(role) ? cur.filter((r) => r !== role) : [...cur, role]
+    );
+  };
 
   return (
     <div className="space-y-5">
       <div>
-        <label className={labelCls}>Max Session Duration (minutes)</label>
+        <label className={labelCls}>Max Session Duration (minutes) <span className="text-destructive">*</span></label>
         <input
           className={inputCls}
           type="number"
@@ -523,9 +551,49 @@ function Step4({ form, onChange, errors }) {
         </label>
       </div>
 
+      {/* Approver routing — who can approve when this policy needs approval */}
+      <div className="rounded-md border border-border p-4 space-y-4">
+        <div>
+          <h4 className="text-sm font-semibold text-foreground">Approvers</h4>
+          <p className="text-xs text-muted-foreground mt-0.5">
+            Who may approve requests that match this policy (production included). Leave all
+            empty to fall back to the requester&apos;s manager. Any one resolved approver can act.
+          </p>
+        </div>
+
+        <div>
+          <label className={labelCls}>Approver group</label>
+          <SearchableSelect
+            value={form.approverGroupId || ''}
+            onChange={(v) => onChange('approverGroupId', v || null)}
+            options={groups.map((g) => ({ value: g.id, label: g.name }))}
+            placeholder="— None —"
+            searchable={false}
+            clearable={true}
+          />
+        </div>
+
+        <div>
+          <label className={labelCls}>Approver roles</label>
+          <div className="flex flex-wrap gap-3">
+            {APPROVER_ROLES.map((role) => (
+              <label key={role} className="flex items-center gap-2 text-sm capitalize">
+                <input
+                  type="checkbox"
+                  checked={(form.approverRoles || []).includes(role)}
+                  onChange={() => toggleApproverRole(role)}
+                  className="accent-primary h-4 w-4"
+                />
+                {role}
+              </label>
+            ))}
+          </div>
+        </div>
+      </div>
+
       <div className="rounded-md border border-amber-500/30 bg-amber-500/5 px-4 py-3">
         <p className="text-xs text-amber-600 dark:text-amber-400 font-medium">
-          Production servers always require manager approval regardless of these settings. This is a hard system rule that cannot be overridden by any policy.
+          Production servers always require approval regardless of these settings. This is a hard system rule that cannot be overridden by any policy.
         </p>
       </div>
 
@@ -691,6 +759,9 @@ function PolicyForm({ open, onClose, onSubmit, policy, onEvaluate }) {
     },
     allowKeyDownload: false,
     isBreakGlass: false,
+    approverGroupId: null,
+    approverRoles: [],
+    approverUserIds: [],
   };
 
   const [form, setForm] = useState(defaultForm);
@@ -711,7 +782,7 @@ function PolicyForm({ open, onClose, onSubmit, policy, onEvaluate }) {
           subjects: (policy.subjects || []).map((s) => ({
             subjectType: s.subjectType,
             subjectId: s.subjectId,
-            _label: s.user?.name || s.user?.email || s.group?.name || s.subjectId,
+            _label: s.label || s.user?.name || s.user?.email || s.group?.name || s.subjectId,
           })),
           customerId: policy.customerId || null,
           targetEnvironments: policy.targetEnvironments || [],
@@ -730,6 +801,9 @@ function PolicyForm({ open, onClose, onSubmit, policy, onEvaluate }) {
           },
           allowKeyDownload: !!policy.allowKeyDownload,
           isBreakGlass: !!policy.isBreakGlass,
+          approverGroupId: policy.approverGroupId || null,
+          approverRoles: policy.approverRoles || [],
+          approverUserIds: policy.approverUserIds || [],
         });
       } else {
         setForm(defaultForm);
@@ -787,6 +861,9 @@ function PolicyForm({ open, onClose, onSubmit, policy, onEvaluate }) {
         osProvisioning: form.osProvisioning || {},
         allowKeyDownload: !!form.allowKeyDownload,
         isBreakGlass: !!form.isBreakGlass,
+        approverGroupId: form.approverGroupId || null,
+        approverRoles: form.approverRoles || [],
+        approverUserIds: form.approverUserIds || [],
       };
       await onSubmit(payload);
     } catch (err) {

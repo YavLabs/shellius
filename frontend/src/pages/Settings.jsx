@@ -17,22 +17,20 @@ import {
   Globe,
   FileKey,
   ChevronLeft,
+  HardDrive,
+  ShieldCheck,
 } from 'lucide-react';
 import { SSO_PROVIDERS, getProvider } from '@/config/ssoProviders';
 import ConfirmDialog from '@/components/shared/ConfirmDialog';
 import PageHeader from '@/components/common/PageHeader';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select';
+import SearchableSelect from '@/components/ui/SearchableSelect';
+import PasswordInput from '@/components/ui/PasswordInput';
 import { getPublicKey, getStatus, rotate } from '@/services/caService';
 import { getOrg, updateOrg } from '@/services/orgService';
-import { getSsoConfig, saveSsoConfig, testSsoConnection } from '@/services/ssoConfigService';
+import { getSsoConfig, getSsoEffective, saveSsoConfig, testSsoConnection } from '@/services/ssoConfigService';
+import { listGroups as listOrgGroups } from '@/services/groupService';
 import { getMyPreferences, updateMyPreferences } from '@/services/userPreferencesService';
 import {
   getSmtpConfig,
@@ -40,13 +38,24 @@ import {
   deleteSmtpConfig,
   testSmtpConfig,
 } from '@/services/smtpConfigService';
+import {
+  getStorageConfig,
+  saveStorageConfig,
+  deleteStorageConfig,
+  testStorageConfig,
+} from '@/services/storageConfigService';
+import { getMfaConfig, saveMfaConfig } from '@/services/mfaService';
 import { useAuth } from '@/context/AuthContext';
 import { formatDateTime } from '@/utils/time';
 
-const ROLE_RANK = { super_admin: 4, admin: 3, operator: 2, viewer: 1 };
+const ROLE_RANK = { super_admin: 4, admin: 3, manager: 2, member: 1 };
 function isAtLeast(user, role) {
   return (ROLE_RANK[user?.role] || 0) >= (ROLE_RANK[role] || 0);
 }
+
+// Mirrors the shadcn <Input> default styling so PasswordInput (raw input) matches.
+const SHADCN_INPUT_CLS =
+  'flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50';
 
 // ---------------------------------------------------------------------------
 // Shared sub-components
@@ -170,7 +179,7 @@ function OrgTab() {
           )}
           <div>
             <label className="mb-1.5 block text-sm font-medium text-foreground">
-              Organization Name
+              Organization Name <span className="text-destructive">*</span>
             </label>
             <Input
               value={name}
@@ -419,6 +428,13 @@ function SsoTab() {
   const [formData, setFormData] = useState({});
   const [hasStoredSecret, setHasStoredSecret] = useState(false);
   const [isActive, setIsActive] = useState(true);
+  const [fromEnv, setFromEnv] = useState(false); // prefilled from environment
+
+  // New-user provisioning policy
+  const [defaultRole, setDefaultRole] = useState('member');
+  const [defaultGroupId, setDefaultGroupId] = useState('');
+  const [autoProvision, setAutoProvision] = useState(true);
+  const [orgGroups, setOrgGroups] = useState([]);
 
   // Loading / saving / testing state
   const [loading, setLoading] = useState(true);
@@ -431,34 +447,46 @@ function SsoTab() {
   // Derive the redirect URI for display
   const redirectUri = `${window.location.origin}/api/auth/sso/callback`;
 
-  // On mount, load existing config and jump to step 2 if a presetId is saved
+  // On mount, load existing config + env defaults (for prefill) + groups
   useEffect(() => {
     setLoading(true);
-    getSsoConfig()
-      .then((cfg) => {
+    listOrgGroups()
+      .then((res) => setOrgGroups(res?.items || res?.data?.items || res || []))
+      .catch(() => setOrgGroups([]));
+    getSsoEffective()
+      .then((data) => {
+        const cfg = data?.config || null;
+        const env = data?.effective?.envDefaults || null;
         if (cfg) {
           const preset = cfg.presetId ? getProvider(cfg.presetId) : null;
-          if (preset) {
-            setSelectedProvider(preset);
-          }
-          // Pre-fill form fields from saved config
+          if (preset) setSelectedProvider(preset);
           const initial = {};
           if (cfg.clientId) initial.clientId = cfg.clientId;
-          if (cfg.issuerUrl) {
-            // For generic-oidc, the issuerUrl is a direct field
-            if (!preset || preset.id === 'generic-oidc') {
-              initial.issuerUrl = cfg.issuerUrl;
-            }
+          if (cfg.issuerUrl && (!preset || preset.id === 'generic-oidc')) {
+            initial.issuerUrl = cfg.issuerUrl;
           }
           if (cfg.scopes) initial.scopes = cfg.scopes;
           setFormData(initial);
           setHasStoredSecret(!!cfg.hasSecret);
           setIsActive(cfg.isActive ?? true);
+          setDefaultRole(cfg.defaultRole || 'member');
+          setDefaultGroupId(cfg.defaultGroupId || '');
+          setAutoProvision(cfg.autoProvision ?? true);
+        } else if (env?.presetId) {
+          // No saved row — prefill from environment variables.
+          const preset = getProvider(env.presetId);
+          if (preset) setSelectedProvider(preset);
+          const initial = {};
+          if (env.clientId) initial.clientId = env.clientId;
+          if (env.issuerUrl && (!preset || preset.id === 'generic-oidc')) {
+            initial.issuerUrl = env.issuerUrl;
+          }
+          setFormData(initial);
+          setHasStoredSecret(!!env.hasClientSecret);
+          setFromEnv(true);
         }
       })
-      .catch(() => {
-        // No existing config, start fresh
-      })
+      .catch(() => {})
       .finally(() => setLoading(false));
   }, []);
 
@@ -533,6 +561,9 @@ function SsoTab() {
         clientId: (formData.clientId || '').trim(),
         issuerUrl: issuerUrl.trim(),
         isActive,
+        defaultRole,
+        defaultGroupId: defaultGroupId || null,
+        autoProvision,
       };
       // Scopes — use form field or provider default
       const scopes = (formData.scopes || selectedProvider.defaultScopes || '').trim();
@@ -723,16 +754,24 @@ function SsoTab() {
             return (
               <div key={field}>
                 <label className="mb-1.5 block text-sm font-medium text-foreground">
-                  {label}
+                  {label} <span className="text-destructive">*</span>
                 </label>
-                <Input
-                  value={formData[field] || ''}
-                  onChange={(e) => handleFieldChange(field, e.target.value)}
-                  type={isSecret ? 'password' : 'text'}
-                  autoComplete={isSecret ? 'new-password' : undefined}
-                  placeholder={placeholder}
-                  className={isSecret ? 'font-mono' : undefined}
-                />
+                {isSecret ? (
+                  <PasswordInput
+                    value={formData[field] || ''}
+                    onChange={(e) => handleFieldChange(field, e.target.value)}
+                    autoComplete="new-password"
+                    placeholder={placeholder}
+                    className={`${SHADCN_INPUT_CLS} font-mono`}
+                  />
+                ) : (
+                  <Input
+                    value={formData[field] || ''}
+                    onChange={(e) => handleFieldChange(field, e.target.value)}
+                    type="text"
+                    placeholder={placeholder}
+                  />
+                )}
               </div>
             );
           })}
@@ -757,6 +796,71 @@ function SsoTab() {
               />
             </button>
             <span className="text-sm text-foreground">SSO Active</span>
+          </div>
+
+          {fromEnv && (
+            <div className="rounded-md border border-blue-500/40 bg-blue-500/10 px-3 py-2 text-xs text-blue-700 dark:text-blue-300">
+              Prefilled from environment variables. Save to manage provisioning options below;
+              the client secret stays in the environment.
+            </div>
+          )}
+
+          {/* New-user provisioning */}
+          <div className="rounded-md border border-border p-4 space-y-4">
+            <div>
+              <h4 className="text-sm font-semibold text-foreground">New user provisioning</h4>
+              <p className="text-xs text-muted-foreground mt-0.5">
+                What happens when someone signs in with SSO for the first time.
+              </p>
+            </div>
+
+            <label className="flex items-start gap-3 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={autoProvision}
+                onChange={(e) => setAutoProvision(e.target.checked)}
+                className="mt-0.5 h-4 w-4 accent-primary"
+              />
+              <span>
+                <span className="text-sm font-medium text-foreground">Auto-provision new users</span>
+                <span className="block text-xs text-muted-foreground">
+                  On: any verified SSO email gets an account. Off: only invited / existing users can
+                  sign in — others are told to contact an admin.
+                </span>
+              </span>
+            </label>
+
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+              <div>
+                <label className="mb-1 block text-xs font-medium text-muted-foreground">Default role</label>
+                <SearchableSelect
+                  className="w-full"
+                  value={defaultRole}
+                  onChange={(v) => setDefaultRole(v)}
+                  searchable={false}
+                  clearable={false}
+                  options={[
+                    { value: 'member', label: 'Member' },
+                    { value: 'manager', label: 'Manager' },
+                    { value: 'admin', label: 'Admin' },
+                  ]}
+                />
+              </div>
+              <div>
+                <label className="mb-1 block text-xs font-medium text-muted-foreground">Default group (optional)</label>
+                <SearchableSelect
+                  className="w-full"
+                  value={defaultGroupId}
+                  onChange={(v) => setDefaultGroupId(v)}
+                  searchable={true}
+                  clearable={false}
+                  options={[
+                    { value: '', label: '— None —' },
+                    ...orgGroups.map((g) => ({ value: g.id, label: g.name })),
+                  ]}
+                />
+              </div>
+            </div>
           </div>
 
           {/* Feedback banners */}
@@ -1011,7 +1115,7 @@ function SmtpCard() {
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
             <div>
               <label className="mb-1 flex items-center text-xs font-medium text-muted-foreground">
-                Host {sourceBadge('host')}
+                Host <span className="text-destructive">*</span> {sourceBadge('host')}
               </label>
               <Input value={host} onChange={(e) => setHost(e.target.value)} placeholder="smtp.sendgrid.net" />
             </div>
@@ -1036,8 +1140,8 @@ function SmtpCard() {
               <label className="mb-1 flex items-center text-xs font-medium text-muted-foreground">
                 Password {sourceBadge('password')}
               </label>
-              <Input
-                type="password"
+              <PasswordInput
+                className={SHADCN_INPUT_CLS}
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
                 placeholder={config?.hasPassword ? 'Stored — leave blank to keep' : ''}
@@ -1233,11 +1337,374 @@ function NotificationsTab() {
 // Tabs config
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// Tab — Object Storage (super_admin only)
+// ---------------------------------------------------------------------------
+
+const STORAGE_PROVIDERS = [
+  { value: 'minio', label: 'MinIO (self-hosted, S3-compatible)' },
+  { value: 's3', label: 'AWS S3' },
+  { value: 'azure', label: 'Azure Blob Storage' },
+];
+
+function StorageTab() {
+  const [config, setConfig] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [testing, setTesting] = useState(false);
+  const [error, setError] = useState('');
+  const [saved, setSaved] = useState(false);
+  const [testResult, setTestResult] = useState(null);
+
+  const [provider, setProvider] = useState('minio');
+  const [endpoint, setEndpoint] = useState('');
+  const [region, setRegion] = useState('');
+  const [bucket, setBucket] = useState('');
+  const [accessKey, setAccessKey] = useState('');
+  const [secretKey, setSecretKey] = useState('');
+  const [useSsl, setUseSsl] = useState(false);
+  const [forcePathStyle, setForcePathStyle] = useState(true);
+
+  const refresh = useCallback(() => {
+    setLoading(true);
+    return getStorageConfig()
+      .then((c) => {
+        setConfig(c);
+        setProvider(c?.provider || 'minio');
+        setEndpoint(c?.endpoint || '');
+        setRegion(c?.region || '');
+        setBucket(c?.bucket || '');
+        setAccessKey(c?.accessKey || '');
+        setSecretKey('');
+        setUseSsl(c?.useSsl ?? false);
+        setForcePathStyle(c?.forcePathStyle ?? true);
+      })
+      .catch((err) =>
+        setError(err?.response?.data?.error?.message || err.message || 'Failed to load storage config')
+      )
+      .finally(() => setLoading(false));
+  }, []);
+
+  useEffect(() => {
+    refresh();
+  }, [refresh]);
+
+  const isAzure = provider === 'azure';
+  const isS3 = provider === 's3';
+
+  const handleSave = async () => {
+    setSaving(true);
+    setError('');
+    setSaved(false);
+    try {
+      const body = { provider, endpoint, region, bucket, accessKey, useSsl, forcePathStyle };
+      if (secretKey) body.secretKey = secretKey;
+      await saveStorageConfig(body);
+      setSaved(true);
+      setTimeout(() => setSaved(false), 3000);
+      await refresh();
+    } catch (err) {
+      setError(err?.response?.data?.error?.message || err.message || 'Failed to save storage config');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleTest = async () => {
+    setTesting(true);
+    setTestResult(null);
+    setError('');
+    try {
+      const r = await testStorageConfig();
+      setTestResult({ ok: true, message: `Storage reachable — bucket "${r.bucket}" ready.` });
+    } catch (err) {
+      setTestResult({
+        ok: false,
+        message: err?.response?.data?.error?.message || err.message || 'Test failed',
+      });
+    } finally {
+      setTesting(false);
+    }
+  };
+
+  const handleReset = async () => {
+    if (!window.confirm('Delete the storage override? Falls back to environment defaults.')) return;
+    setError('');
+    try {
+      await deleteStorageConfig();
+      await refresh();
+    } catch (err) {
+      setError(err?.response?.data?.error?.message || err.message || 'Failed to delete storage config');
+    }
+  };
+
+  return (
+    <SectionCard
+      title="Object Storage"
+      description="Where session recordings and uploads are stored. Use the bundled MinIO container, or bring your own AWS S3 / Azure Blob — DB settings here override environment variables with no restart."
+    >
+      {loading ? (
+        <div className="space-y-2 py-2">
+          {[1, 2, 3].map((i) => (
+            <div key={i} className="h-10 animate-pulse rounded bg-muted" />
+          ))}
+        </div>
+      ) : (
+        <div className="space-y-4">
+          {error && (
+            <div className="rounded-md border border-destructive/50 bg-destructive/10 px-3 py-2 text-sm text-destructive">
+              {error}
+            </div>
+          )}
+          {saved && (
+            <div className="rounded-md border border-emerald-500/40 bg-emerald-500/10 px-3 py-2 text-sm text-emerald-700 dark:text-emerald-300">
+              Storage configuration saved.
+            </div>
+          )}
+          {config?.source === 'env' && (
+            <div className="rounded-md border border-blue-500/40 bg-blue-500/10 px-3 py-2 text-sm text-blue-700 dark:text-blue-300">
+              Currently using <strong>environment defaults</strong>. Saving here creates a database
+              override.
+            </div>
+          )}
+          {!config?.configured && (
+            <div className="rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-sm text-amber-700 dark:text-amber-300">
+              Storage not configured — session recordings are disabled until you set a provider and
+              credentials.
+            </div>
+          )}
+
+          <div>
+            <label className="mb-1 flex items-center text-xs font-medium text-muted-foreground">
+              Provider <span className="text-destructive">*</span>
+            </label>
+            <SearchableSelect
+              value={provider}
+              onChange={(v) => setProvider(v)}
+              searchable={false}
+              clearable={false}
+              options={STORAGE_PROVIDERS.map((p) => ({ value: p.value, label: p.label }))}
+            />
+          </div>
+
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+            <div className={isAzure ? 'sm:col-span-2' : ''}>
+              <label className="mb-1 flex items-center text-xs font-medium text-muted-foreground">
+                {isAzure ? 'Blob endpoint (optional)' : 'Endpoint'}
+              </label>
+              <Input
+                value={endpoint}
+                onChange={(e) => setEndpoint(e.target.value)}
+                placeholder={
+                  isAzure
+                    ? 'https://<account>.blob.core.windows.net (blank = default)'
+                    : isS3
+                      ? 'blank for AWS, or https://s3.custom.com'
+                      : 'http://minio:9000'
+                }
+              />
+            </div>
+            {!isAzure && (
+              <div>
+                <label className="mb-1 flex items-center text-xs font-medium text-muted-foreground">
+                  Region
+                </label>
+                <Input value={region} onChange={(e) => setRegion(e.target.value)} placeholder="us-east-1" />
+              </div>
+            )}
+            <div>
+              <label className="mb-1 flex items-center text-xs font-medium text-muted-foreground">
+                {isAzure ? 'Container' : 'Bucket'}
+              </label>
+              <Input value={bucket} onChange={(e) => setBucket(e.target.value)} placeholder="shellius-recordings" />
+            </div>
+            <div>
+              <label className="mb-1 flex items-center text-xs font-medium text-muted-foreground">
+                {isAzure ? 'Account name' : 'Access key'}
+              </label>
+              <Input
+                value={accessKey}
+                onChange={(e) => setAccessKey(e.target.value)}
+                placeholder={isAzure ? 'storageaccount' : 'AKIA... / minioadmin'}
+                autoComplete="off"
+              />
+            </div>
+            <div>
+              <label className="mb-1 flex items-center text-xs font-medium text-muted-foreground">
+                {isAzure ? 'Account key' : 'Secret key'}
+              </label>
+              <PasswordInput
+                className={SHADCN_INPUT_CLS}
+                value={secretKey}
+                onChange={(e) => setSecretKey(e.target.value)}
+                placeholder={config?.hasSecretKey ? 'Stored — leave blank to keep' : ''}
+                autoComplete="new-password"
+              />
+            </div>
+          </div>
+
+          {!isAzure && (
+            <div className="flex flex-wrap gap-5">
+              <label className="flex items-center gap-2 text-sm">
+                <input
+                  type="checkbox"
+                  checked={useSsl}
+                  onChange={(e) => setUseSsl(e.target.checked)}
+                  className="h-4 w-4 accent-primary"
+                />
+                <span className="text-foreground">Use SSL/TLS</span>
+              </label>
+              <label className="flex items-center gap-2 text-sm">
+                <input
+                  type="checkbox"
+                  checked={forcePathStyle}
+                  onChange={(e) => setForcePathStyle(e.target.checked)}
+                  className="h-4 w-4 accent-primary"
+                />
+                <span className="text-foreground">Force path-style addressing (MinIO)</span>
+              </label>
+            </div>
+          )}
+
+          {testResult && (
+            <div
+              className={[
+                'rounded-md border px-3 py-2 text-sm',
+                testResult.ok
+                  ? 'border-emerald-500/40 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300'
+                  : 'border-destructive/50 bg-destructive/10 text-destructive',
+              ].join(' ')}
+            >
+              {testResult.message}
+            </div>
+          )}
+
+          <div className="flex flex-wrap gap-2 pt-1">
+            <Button onClick={handleSave} disabled={saving || !provider}>
+              {saving ? 'Saving...' : 'Save'}
+            </Button>
+            <Button variant="outline" onClick={handleTest} disabled={testing || !config?.configured}>
+              {testing ? 'Testing...' : 'Test connection'}
+            </Button>
+            {config?.source === 'db' && (
+              <Button variant="outline" onClick={handleReset}>
+                Reset to env defaults
+              </Button>
+            )}
+          </div>
+        </div>
+      )}
+    </SectionCard>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Tab — MFA policy (super_admin only)
+// ---------------------------------------------------------------------------
+
+function MfaTab() {
+  const [cfg, setCfg] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [saved, setSaved] = useState(false);
+  const [error, setError] = useState('');
+
+  useEffect(() => {
+    getMfaConfig()
+      .then(setCfg)
+      .catch((e) => setError(e?.response?.data?.error?.message || e.message))
+      .finally(() => setLoading(false));
+  }, []);
+
+  const set = (k, v) => setCfg((p) => ({ ...p, [k]: v }));
+
+  const save = async () => {
+    setSaving(true);
+    setError('');
+    setSaved(false);
+    try {
+      const next = await saveMfaConfig({
+        enabled: !!cfg.enabled,
+        enforced: !!cfg.enforced,
+        allowTotp: cfg.allowTotp !== false,
+        allowEmailOtp: cfg.allowEmailOtp !== false,
+      });
+      setCfg(next);
+      setSaved(true);
+      setTimeout(() => setSaved(false), 3000);
+    } catch (e) {
+      setError(e?.response?.data?.error?.message || e.message);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  if (loading) {
+    return (
+      <SectionCard title="Two-factor authentication">
+        <div className="h-10 animate-pulse rounded bg-muted" />
+      </SectionCard>
+    );
+  }
+
+  const Toggle = ({ label, desc, k, disabled }) => (
+    <label className={`flex items-start gap-3 ${disabled ? 'opacity-50' : 'cursor-pointer'}`}>
+      <input
+        type="checkbox"
+        checked={!!cfg[k]}
+        disabled={disabled}
+        onChange={(e) => set(k, e.target.checked)}
+        className="mt-0.5 h-4 w-4 accent-primary"
+      />
+      <span>
+        <span className="text-sm font-medium text-foreground">{label}</span>
+        <span className="block text-xs text-muted-foreground">{desc}</span>
+      </span>
+    </label>
+  );
+
+  return (
+    <SectionCard
+      title="Two-factor authentication"
+      description="Require a second factor at sign-in. Source: env defaults unless overridden here."
+    >
+      <div className="space-y-4">
+        {error && (
+          <div className="rounded-md border border-destructive/50 bg-destructive/10 px-3 py-2 text-sm text-destructive">
+            {error}
+          </div>
+        )}
+        {saved && (
+          <div className="rounded-md border border-emerald-500/40 bg-emerald-500/10 px-3 py-2 text-sm text-emerald-700 dark:text-emerald-300">
+            MFA policy saved.
+          </div>
+        )}
+        <Toggle label="Enable MFA" desc="Allow users to set up two-factor authentication." k="enabled" />
+        <Toggle
+          label="Enforce MFA"
+          desc="Require every user to enroll before they can use the app."
+          k="enforced"
+          disabled={!cfg.enabled}
+        />
+        <Toggle label="Authenticator apps (TOTP)" desc="Google Authenticator, 1Password, etc." k="allowTotp" disabled={!cfg.enabled} />
+        <Toggle label="Email one-time codes" desc="Email a 6-digit code at sign-in." k="allowEmailOtp" disabled={!cfg.enabled} />
+        <div className="pt-1">
+          <Button onClick={save} disabled={saving}>
+            {saving ? 'Saving...' : 'Save'}
+          </Button>
+        </div>
+      </div>
+    </SectionCard>
+  );
+}
+
 const TABS = [
-  { key: 'org', label: 'Organization', icon: Building2 },
-  { key: 'ca', label: 'CA Management', icon: Shield },
-  { key: 'sso', label: 'SSO', icon: Wifi },
-  { key: 'notifications', label: 'Notifications', icon: Bell },
+  { key: 'org', label: 'Organization', icon: Building2, minRole: 'admin' },
+  { key: 'ca', label: 'CA Management', icon: Shield, minRole: 'super_admin' },
+  { key: 'sso', label: 'SSO', icon: Wifi, minRole: 'super_admin' },
+  { key: 'storage', label: 'Storage', icon: HardDrive, minRole: 'super_admin' },
+  { key: 'mfa', label: 'MFA', icon: ShieldCheck, minRole: 'super_admin' },
+  { key: 'notifications', label: 'Notifications', icon: Bell, minRole: 'super_admin' },
 ];
 
 // ---------------------------------------------------------------------------
@@ -1245,7 +1712,9 @@ const TABS = [
 // ---------------------------------------------------------------------------
 
 function Settings() {
+  const { user } = useAuth();
   const [activeTab, setActiveTab] = useState('org');
+  const visibleTabs = TABS.filter((tab) => !tab.minRole || isAtLeast(user, tab.minRole));
 
   return (
     <div className="space-y-6 p-6">
@@ -1257,7 +1726,7 @@ function Settings() {
 
       {/* Tab bar */}
       <div className="flex flex-wrap items-center gap-1 border-b border-border">
-        {TABS.map((tab) => {
+        {visibleTabs.map((tab) => {
           const Icon = tab.icon;
           return (
             <button
@@ -1278,10 +1747,12 @@ function Settings() {
       </div>
 
       {/* Tab content */}
-      {activeTab === 'org' && <OrgTab />}
-      {activeTab === 'ca' && <CaTab />}
-      {activeTab === 'sso' && <SsoTab />}
-      {activeTab === 'notifications' && <NotificationsTab />}
+      {activeTab === 'org' && isAtLeast(user, 'admin') && <OrgTab />}
+      {activeTab === 'ca' && isAtLeast(user, 'super_admin') && <CaTab />}
+      {activeTab === 'sso' && isAtLeast(user, 'super_admin') && <SsoTab />}
+      {activeTab === 'storage' && isAtLeast(user, 'super_admin') && <StorageTab />}
+      {activeTab === 'mfa' && isAtLeast(user, 'super_admin') && <MfaTab />}
+      {activeTab === 'notifications' && isAtLeast(user, 'super_admin') && <NotificationsTab />}
     </div>
   );
 }

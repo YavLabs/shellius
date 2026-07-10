@@ -15,23 +15,17 @@ import DataTable from '@/components/shared/DataTable';
 import Badge from '@/components/shared/Badge';
 import Modal from '@/components/shared/Modal';
 import ConfirmDialog from '@/components/shared/ConfirmDialog';
+import DeleteUserDialog from '@/components/users/DeleteUserDialog';
 import UserForm from '@/components/users/UserForm';
 import SshKeyDialog from '@/components/users/SshKeyDialog';
 import PageHeader from '@/components/common/PageHeader';
 import { formatLabel } from '@/utils/format';
 import { Button } from '@/components/ui/button';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select';
+import SearchableSelect from '@/components/ui/SearchableSelect';
 import {
   listUsers,
   createUser,
   updateUser,
-  deleteUser,
   uploadSshKey,
   removeSshKey,
   getUser,
@@ -39,14 +33,14 @@ import {
   triggerPasswordReset,
 } from '@/services/userService';
 
-const ROLES = ['super_admin', 'admin', 'operator', 'viewer'];
+const ROLES = ['super_admin', 'admin', 'manager', 'member'];
 const STATUSES = ['active', 'invited', 'suspended', 'deactivated'];
 
 const roleVariant = (role) => {
   switch (role) {
     case 'super_admin': return 'danger';
     case 'admin': return 'info';
-    case 'operator': return 'warning';
+    case 'manager': return 'warning';
     default: return 'default';
   }
 };
@@ -109,6 +103,7 @@ function Users() {
   const [sshUser, setSshUser] = useState(null);
 
   const [confirm, setConfirm] = useState(null);
+  const [deleteTarget, setDeleteTarget] = useState(null);
 
   const [urlModal, setUrlModal] = useState(null);
   const [actionMsg, setActionMsg] = useState('');
@@ -186,19 +181,7 @@ function Users() {
     });
   };
 
-  const handleDelete = (u) => {
-    setConfirm({
-      title: 'Delete user',
-      message: `Permanently delete ${u.name}? This cannot be undone.`,
-      variant: 'destructive',
-      confirmLabel: 'Delete',
-      onConfirm: async () => {
-        await deleteUser(u.id);
-        setConfirm(null);
-        fetchUsers();
-      },
-    });
-  };
+  const handleDelete = (u) => setDeleteTarget(u);
 
   const handleResendInvite = async (u) => {
     try {
@@ -230,20 +213,30 @@ function Users() {
 
   const filterSlot = (
     <>
-      <Select value={role || '_all'} onValueChange={(v) => { setRole(v === '_all' ? '' : v); setPage(1); }}>
-        <SelectTrigger className="w-[160px]"><SelectValue placeholder="All roles" /></SelectTrigger>
-        <SelectContent>
-          <SelectItem value="_all">All roles</SelectItem>
-          {ROLES.map((r) => <SelectItem key={r} value={r}>{formatLabel(r)}</SelectItem>)}
-        </SelectContent>
-      </Select>
-      <Select value={status || '_all'} onValueChange={(v) => { setStatus(v === '_all' ? '' : v); setPage(1); }}>
-        <SelectTrigger className="w-[160px]"><SelectValue placeholder="All statuses" /></SelectTrigger>
-        <SelectContent>
-          <SelectItem value="_all">All statuses</SelectItem>
-          {STATUSES.map((s) => <SelectItem key={s} value={s}>{formatLabel(s)}</SelectItem>)}
-        </SelectContent>
-      </Select>
+      <SearchableSelect
+        className="w-[160px]"
+        value={role}
+        onChange={(v) => { setRole(v); setPage(1); }}
+        options={[
+          { value: '', label: 'All roles' },
+          ...ROLES.map((r) => ({ value: r, label: formatLabel(r) })),
+        ]}
+        placeholder="All roles"
+        searchable={false}
+        clearable={false}
+      />
+      <SearchableSelect
+        className="w-[160px]"
+        value={status}
+        onChange={(v) => { setStatus(v); setPage(1); }}
+        options={[
+          { value: '', label: 'All statuses' },
+          ...STATUSES.map((s) => ({ value: s, label: formatLabel(s) })),
+        ]}
+        placeholder="All statuses"
+        searchable={false}
+        clearable={false}
+      />
     </>
   );
 
@@ -373,6 +366,16 @@ function Users() {
         variant={confirm?.variant}
         onConfirm={confirm?.onConfirm}
         onCancel={() => setConfirm(null)}
+      />
+
+      <DeleteUserDialog
+        user={deleteTarget}
+        open={!!deleteTarget}
+        onClose={() => setDeleteTarget(null)}
+        onDeleted={() => {
+          setDeleteTarget(null);
+          fetchUsers();
+        }}
       />
 
       <Modal

@@ -3,11 +3,12 @@ import { useNavigate } from 'react-router-dom';
 import { Plus, UsersRound, Trash2, Pencil } from 'lucide-react';
 import Modal from '@/components/shared/Modal';
 import ConfirmDialog from '@/components/shared/ConfirmDialog';
+import DeleteGroupDialog from '@/components/groups/DeleteGroupDialog';
 import DataTable from '@/components/shared/DataTable';
 import PageHeader from '@/components/common/PageHeader';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { listGroups, createGroup, deleteGroup } from '@/services/groupService';
+import { listGroups, createGroup } from '@/services/groupService';
 import { relativeTime } from '@/utils/time';
 
 function Groups() {
@@ -16,6 +17,7 @@ function Groups() {
   const [error, setError] = useState('');
   const [createOpen, setCreateOpen] = useState(false);
   const [confirm, setConfirm] = useState(null);
+  const [deleteTarget, setDeleteTarget] = useState(null);
   const navigate = useNavigate();
 
   const fetch = useCallback(async () => {
@@ -35,19 +37,7 @@ function Groups() {
     fetch();
   }, [fetch]);
 
-  const handleDelete = (g) => {
-    setConfirm({
-      title: 'Delete group',
-      message: `Permanently delete "${g.name}"? Members will be removed from this group.`,
-      variant: 'destructive',
-      confirmLabel: 'Delete',
-      onConfirm: async () => {
-        await deleteGroup(g.id);
-        setConfirm(null);
-        fetch();
-      },
-    });
-  };
+  const handleDelete = (g) => setDeleteTarget(g);
 
   const columns = [
     {
@@ -153,6 +143,16 @@ function Groups() {
         variant={confirm?.variant}
         onConfirm={confirm?.onConfirm}
         onCancel={() => setConfirm(null)}
+      />
+
+      <DeleteGroupDialog
+        group={deleteTarget}
+        open={!!deleteTarget}
+        onClose={() => setDeleteTarget(null)}
+        onDeleted={() => {
+          setDeleteTarget(null);
+          fetch();
+        }}
       />
     </div>
   );

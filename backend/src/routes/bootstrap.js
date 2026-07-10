@@ -74,7 +74,7 @@ router.post(
   '/token',
   authenticate,
   tenant,
-  requireRole('admin'),
+  requireRole('super_admin', 'admin', 'manager'),
   asyncHandler(async (req, res) => {
     const { error, value } = tokenSchema.validate(req.body);
     if (error) throw new ApiError(400, error.message);
@@ -167,6 +167,8 @@ router.get(
       caPubKey: caPubKey.trim(),
       hostname: server.hostname,
       sshUser: server.sshUser || 'root',
+      serverId: payload.serverId,
+      orgId: payload.orgId,
     });
 
     res.setHeader('Content-Type', 'text/x-shellscript; charset=utf-8');
@@ -244,7 +246,7 @@ router.post(
   '/uninstall-token',
   authenticate,
   tenant,
-  requireRole('admin'),
+  requireRole('super_admin', 'admin', 'manager'),
   asyncHandler(async (req, res) => {
     const { error, value } = tokenSchema.validate(req.body);
     if (error) throw new ApiError(400, error.message);
@@ -317,7 +319,7 @@ function shEscape(value) {
   return String(value).replace(/'/g, "'\\''");
 }
 
-function buildUnixInstallScript({ apiUrl, agentSecret, caPubKey, hostname, sshUser }) {
+function buildUnixInstallScript({ apiUrl, agentSecret, caPubKey, hostname, sshUser, serverId, orgId }) {
   // Notes for maintainers:
   // - Avoid heredocs where possible — paste-mangling has bitten us before.
   //   We use printf streams (one printf per line) for every file write so the
@@ -390,7 +392,7 @@ if [ "$PLATFORM" = "linux" ] && [ "\$UPGRADE_ONLY" = "0" ]; then
   # Skip if already installed — idempotent, and avoids slow apt refresh on
   # hosts that already have what we need.
   if command -v jq >/dev/null 2>&1 && command -v setfacl >/dev/null 2>&1; then
-    echo "[shellius]   ✓ jq and setfacl already installed — skipping package manager"
+    echo "[shellius]   [OK] jq and setfacl already installed — skipping package manager"
   elif command -v apt-get >/dev/null 2>&1; then
     # Non-interactive + force-keep existing confs so we never hang on a
     # debconf prompt when stdin is an HTTP pipe (curl | sudo bash).
@@ -416,7 +418,7 @@ if [ "$PLATFORM" = "linux" ] && [ "\$UPGRADE_ONLY" = "0" ]; then
   fi
   # Sanity check — both tools must be present to proceed.
   if ! command -v jq >/dev/null 2>&1; then
-    echo "[shellius]   ✗ jq is not installed; aborting." >&2
+    echo "[shellius]   [FAIL] jq is not installed; aborting." >&2
     exit 1
   fi
   if ! command -v setfacl >/dev/null 2>&1; then
@@ -841,41 +843,57 @@ else
 fi
 
 # ---------------------------------------------------------------------------
-# 8. Heartbeat timer (Linux only — skip if already present from prior run)
+# 8. Heartbeat timer (Linux only)
+#
+# Always rewrite the unit so re-onboarding picks up the current API URL — the
+# old behaviour skipped this block if the service file already existed, which
+# left re-bootstrapped hosts heart-beating to a stale endpoint. Writing the
+# unit unconditionally + daemon-reload + enable --now is fully idempotent
+# (mirrors the JIT reaper timer in step 7).
 # ---------------------------------------------------------------------------
 echo "[shellius] [8/12] Installing heartbeat systemd timer"
 if [ "$PLATFORM" = "linux" ] && command -v systemctl >/dev/null 2>&1; then
-  if [ ! -f /etc/systemd/system/shellius-heartbeat.service ]; then
-    {
-      printf '%s\\n' '[Unit]'
-      printf '%s\\n' 'Description=Shellius agent heartbeat'
-      printf '%s\\n' 'After=network.target'
-      printf '%s\\n' ''
-      printf '%s\\n' '[Service]'
-      printf '%s\\n' 'Type=oneshot'
-      printf '%s\\n' 'User=root'
-      printf 'ExecStart=/bin/bash -c '"'"'TOKEN=\$(cat /etc/shellius/agent-token 2>/dev/null); [ -n "\$TOKEN" ] && curl -fsS --max-time 10 -H "x-agent-token: \$TOKEN" -X POST %s/api/hosts/heartbeat >/dev/null 2>&1 || true'"'"'\\n' "${apiUrl}"
-    } > /etc/systemd/system/shellius-heartbeat.service
+  # Heartbeat script — serverId/orgId are baked in (the org-wide agent token
+  # cannot identify the host); agentId/hostname/ip are computed at runtime.
+  # Form-urlencoded (--data-urlencode) avoids JSON quoting in the script.
+  {
+    printf '%s\\n' '#!/bin/bash'
+    printf '%s\\n' 'TOKEN=$(cat /etc/shellius/agent-token 2>/dev/null)'
+    printf '%s\\n' '[ -z "$TOKEN" ] && exit 0'
+    printf '%s\\n' 'HN=$(hostname)'
+    printf '%s\\n' 'IP=$(hostname -I 2>/dev/null)'
+    printf '%s\\n' 'IP=\${IP%% *}'
+    printf '%s\\n' 'curl -fsS --max-time 10 -H "x-agent-token: $TOKEN" -X POST ${apiUrl}/api/hosts/heartbeat --data-urlencode "agentId=$HN" --data-urlencode "serverId=${serverId}" --data-urlencode "orgId=${orgId}" --data-urlencode "hostname=$HN" --data-urlencode "ipAddress=$IP" >/dev/null 2>&1 || true'
+  } > /usr/local/sbin/shellius-heartbeat
+  chmod 755 /usr/local/sbin/shellius-heartbeat
 
-    {
-      printf '%s\\n' '[Unit]'
-      printf '%s\\n' 'Description=Shellius agent heartbeat timer'
-      printf '%s\\n' ''
-      printf '%s\\n' '[Timer]'
-      printf '%s\\n' 'OnBootSec=60s'
-      printf '%s\\n' 'OnUnitActiveSec=60s'
-      printf '%s\\n' 'Unit=shellius-heartbeat.service'
-      printf '%s\\n' ''
-      printf '%s\\n' '[Install]'
-      printf '%s\\n' 'WantedBy=timers.target'
-    } > /etc/systemd/system/shellius-heartbeat.timer
+  {
+    printf '%s\\n' '[Unit]'
+    printf '%s\\n' 'Description=Shellius agent heartbeat'
+    printf '%s\\n' 'After=network.target'
+    printf '%s\\n' ''
+    printf '%s\\n' '[Service]'
+    printf '%s\\n' 'Type=oneshot'
+    printf '%s\\n' 'User=root'
+    printf '%s\\n' 'ExecStart=/usr/local/sbin/shellius-heartbeat'
+  } > /etc/systemd/system/shellius-heartbeat.service
 
-    systemctl daemon-reload 2>/dev/null || true
-    systemctl enable --now shellius-heartbeat.timer 2>/dev/null || true
-    echo "[shellius]   Heartbeat timer installed and enabled"
-  else
-    echo "[shellius]   Heartbeat timer already present — skipping"
-  fi
+  {
+    printf '%s\\n' '[Unit]'
+    printf '%s\\n' 'Description=Shellius agent heartbeat timer'
+    printf '%s\\n' ''
+    printf '%s\\n' '[Timer]'
+    printf '%s\\n' 'OnBootSec=60s'
+    printf '%s\\n' 'OnUnitActiveSec=60s'
+    printf '%s\\n' 'Unit=shellius-heartbeat.service'
+    printf '%s\\n' ''
+    printf '%s\\n' '[Install]'
+    printf '%s\\n' 'WantedBy=timers.target'
+  } > /etc/systemd/system/shellius-heartbeat.timer
+
+  systemctl daemon-reload 2>/dev/null || true
+  systemctl enable --now shellius-heartbeat.timer 2>/dev/null || true
+  echo "[shellius]   Heartbeat timer installed/updated and enabled"
 else
   echo "[shellius]   Skipping heartbeat timer (not Linux or no systemd)"
 fi
@@ -949,23 +967,23 @@ if [ "\$UPGRADE_ONLY" = "0" ]; then
     PRINC_USER_LINE="\$(sshd -T 2>/dev/null | grep -i '^authorizedprincipalscommanduser ' || true)"
 
     if echo "\$TRUST_LINE" | grep -qi "$CA_PUB_PATH"; then
-      echo "[shellius]   ✓ sshd trusts $CA_PUB_PATH"
+      echo "[shellius]   [OK] sshd trusts $CA_PUB_PATH"
     else
-      echo "[shellius]   ✗ TrustedUserCAKeys not effective. sshd -T shows: \${TRUST_LINE:-(missing)}"
+      echo "[shellius]   [FAIL] TrustedUserCAKeys not effective. sshd -T shows: \${TRUST_LINE:-(missing)}"
       SELF_TEST_FAIL=1
     fi
     if echo "\$PRINC_LINE" | grep -qi "$CHECK_PRINCIPALS_PATH"; then
-      echo "[shellius]   ✓ sshd has AuthorizedPrincipalsCommand"
+      echo "[shellius]   [OK] sshd has AuthorizedPrincipalsCommand"
     else
-      echo "[shellius]   ✗ AuthorizedPrincipalsCommand not effective. sshd -T shows: \${PRINC_LINE:-(missing or 'none')}"
+      echo "[shellius]   [FAIL] AuthorizedPrincipalsCommand not effective. sshd -T shows: \${PRINC_LINE:-(missing or 'none')}"
       echo "[shellius]     This usually means sshd rejected an unsupported %-token."
       echo "[shellius]     Check the line in /etc/ssh/sshd_config and validate with: sudo sshd -t -f /etc/ssh/sshd_config"
       SELF_TEST_FAIL=1
     fi
     if echo "\$PRINC_USER_LINE" | grep -qi 'nobody'; then
-      echo "[shellius]   ✓ sshd has AuthorizedPrincipalsCommandUser=nobody"
+      echo "[shellius]   [OK] sshd has AuthorizedPrincipalsCommandUser=nobody"
     else
-      echo "[shellius]   ✗ AuthorizedPrincipalsCommandUser not effective. sshd -T shows: \${PRINC_USER_LINE:-(missing)}"
+      echo "[shellius]   [FAIL] AuthorizedPrincipalsCommandUser not effective. sshd -T shows: \${PRINC_USER_LINE:-(missing)}"
       SELF_TEST_FAIL=1
     fi
   else
@@ -975,9 +993,9 @@ if [ "\$UPGRADE_ONLY" = "0" ]; then
   # 12b. 'nobody' must be able to read the agent token
   if id nobody >/dev/null 2>&1; then
     if sudo -u nobody cat "$AGENT_TOKEN_PATH" >/dev/null 2>&1; then
-      echo "[shellius]   ✓ 'nobody' can read $AGENT_TOKEN_PATH"
+      echo "[shellius]   [OK] 'nobody' can read $AGENT_TOKEN_PATH"
     else
-      echo "[shellius]   ✗ 'nobody' CANNOT read $AGENT_TOKEN_PATH (dir or file perms wrong)"
+      echo "[shellius]   [FAIL] 'nobody' CANNOT read $AGENT_TOKEN_PATH (dir or file perms wrong)"
       ls -ld "$AGENT_DIR" "$AGENT_TOKEN_PATH" >&2
       SELF_TEST_FAIL=1
     fi
@@ -992,7 +1010,7 @@ if [ "\$UPGRADE_ONLY" = "0" ]; then
 
   # 12d. Local user sanity check
   if id "${sshUser}" >/dev/null 2>&1; then
-    echo "[shellius]   ✓ local user '${sshUser}' exists"
+    echo "[shellius]   [OK] local user '${sshUser}' exists"
   else
     echo "[shellius]   ! local user '${sshUser}' does NOT exist on this host."
     echo "[shellius]     Create it with: sudo useradd -m -s /bin/bash ${sshUser}"
@@ -1002,21 +1020,21 @@ fi
 
 # 12e. check-principals script must be executable and contain v2 marker
 if [ -x "$CHECK_PRINCIPALS_PATH" ]; then
-  echo "[shellius]   ✓ check-principals is executable"
+  echo "[shellius]   [OK] check-principals is executable"
   if grep -q 'reap_expired_leases' "$CHECK_PRINCIPALS_PATH" 2>/dev/null; then
-    echo "[shellius]   ✓ check-principals v2 (JIT provisioning) installed"
+    echo "[shellius]   [OK] check-principals v2 (JIT provisioning) installed"
   else
     echo "[shellius]   ! check-principals appears to be v1 (no JIT support)"
   fi
 else
-  echo "[shellius]   ✗ check-principals not found or not executable at $CHECK_PRINCIPALS_PATH"
+  echo "[shellius]   [FAIL] check-principals not found or not executable at $CHECK_PRINCIPALS_PATH"
   SELF_TEST_FAIL=1
 fi
 
 # 12f. JIT reaper timer check
 if [ "$PLATFORM" = "linux" ] && command -v systemctl >/dev/null 2>&1; then
   if systemctl is-enabled shellius-jit-reap.timer >/dev/null 2>&1; then
-    echo "[shellius]   ✓ shellius-jit-reap.timer is enabled"
+    echo "[shellius]   [OK] shellius-jit-reap.timer is enabled"
   else
     echo "[shellius]   ! shellius-jit-reap.timer not enabled — run: systemctl enable --now shellius-jit-reap.timer"
   fi
@@ -1024,13 +1042,13 @@ fi
 
 # 12g. jq availability (required for JIT manifest parsing)
 if command -v jq >/dev/null 2>&1; then
-  echo "[shellius]   ✓ jq available (\$(jq --version 2>/dev/null || echo unknown))"
+  echo "[shellius]   [OK] jq available (\$(jq --version 2>/dev/null || echo unknown))"
 else
   echo "[shellius]   ! jq not found — JIT provisioning will fall back to legacy mode"
 fi
 
 if [ "\$SELF_TEST_FAIL" -ne 0 ]; then
-  echo "[shellius] ✗ Self-test FAILED. Inspect the messages above."
+  echo "[shellius] [FAIL] Self-test FAILED. Inspect the messages above."
   echo "[shellius]   Quick diagnostics:"
   echo "[shellius]     sudo sshd -T | grep -iE 'trustedusercakeys|authorizedprincipals'"
   echo "[shellius]     sudo journalctl -t shellius-check-principals -n 30 --no-pager"
@@ -1038,7 +1056,7 @@ if [ "\$SELF_TEST_FAIL" -ne 0 ]; then
   exit 1
 fi
 
-echo "[shellius] ✓ Bootstrap v2 complete."
+echo "[shellius] [OK] Bootstrap v2 complete."
 echo "[shellius]   Host:              ${hostname}"
 if [ "\$UPGRADE_ONLY" = "0" ]; then
   echo "[shellius]   CA trust:          $CA_PUB_PATH"
@@ -1176,7 +1194,7 @@ fi
 echo "[shellius] [6/6] Validating sshd config"
 if command -v sshd >/dev/null 2>&1; then
   if ! sshd -t 2>/dev/null; then
-    echo "[shellius] ✗ sshd -t FAILED after uninstall."
+    echo "[shellius] [FAIL] sshd -t FAILED after uninstall."
     if [ "$TOUCHED_SSHD" = "1" ] && [ -f "$SSHD_BACKUP" ]; then
       echo "[shellius]   Restoring sshd_config backup from $SSHD_BACKUP"
       cp -a "$SSHD_BACKUP" "$SSHD_CONFIG"
@@ -1187,7 +1205,7 @@ if command -v sshd >/dev/null 2>&1; then
     echo "[shellius]     sudo grep -nE 'Trusted|Authorized|Match' $SSHD_CONFIG"
     exit 1
   fi
-  echo "[shellius]   ✓ sshd -t passes"
+  echo "[shellius]   [OK] sshd -t passes"
 fi
 
 echo "[shellius] Reloading sshd"
@@ -1211,12 +1229,12 @@ if command -v sshd >/dev/null 2>&1 && sshd -T >/dev/null 2>&1; then
   if sshd -T 2>/dev/null | grep -qi "^trustedusercakeys $CA_PUB"; then
     echo "[shellius] ! sshd -T still references $CA_PUB — manual cleanup needed."
   else
-    echo "[shellius] ✓ sshd no longer trusts the Shellius CA"
+    echo "[shellius] [OK] sshd no longer trusts the Shellius CA"
   fi
 fi
 
 echo
-echo "[shellius] ✓ Uninstall complete."
+echo "[shellius] [OK] Uninstall complete."
 if [ \${#REMOVED[@]} -eq 0 ]; then
   echo "[shellius]   Nothing to remove — Shellius was not installed on this host."
 else
@@ -1330,7 +1348,7 @@ if (Test-Path $sshdConfig) {
 Write-Host "[shellius] Restarting sshd..."
 Restart-Service sshd
 
-Write-Host "[shellius] ✓ Bootstrap complete for ${hostname}"
+Write-Host "[shellius] [OK] Bootstrap complete for ${hostname}"
 Write-Host "[shellius]   CA trust:     $caPubPath"
 Write-Host "[shellius]   Check script: $checkPsPath"
 `;

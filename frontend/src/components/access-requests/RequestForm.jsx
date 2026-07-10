@@ -1,11 +1,14 @@
 import { useState, useEffect, useCallback } from 'react';
+import { Loader2 } from 'lucide-react';
 import Modal from '@/components/shared/Modal';
 import EnvironmentBadge from '@/components/shared/EnvironmentBadge';
 import { createAccessRequest, getAccessIntent } from '@/services/accessRequestService';
 import { listServers } from '@/services/serverService';
+import { isServerOnboarded } from '@/lib/serverStatus';
 import { useAuth } from '@/context/AuthContext';
 import { LINUX_USER_RE, defaultPrincipal } from '@/utils/principal';
 import PrivateIPWarning from '@/components/servers/PrivateIPWarning';
+import SearchableSelect from '@/components/ui/SearchableSelect';
 
 const DURATION_UNITS = [
   { label: 'minutes', value: 'minutes', factor: 60 },
@@ -20,14 +23,13 @@ function toSeconds(amount, unit) {
 const inputCls =
   'w-full rounded-md border border-input bg-background px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring disabled:opacity-50';
 const labelCls = 'block text-xs font-medium text-muted-foreground mb-1';
-const selectCls =
-  'rounded-md border border-input bg-background px-3 py-2 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-ring';
 
 function RequestForm({ open, onClose, onSuccess, initialServerId = '' }) {
   const { user } = useAuth();
 
   const [servers, setServers] = useState([]);
   const [loadingServers, setLoadingServers] = useState(false);
+  const [loadingIntent, setLoadingIntent] = useState(false);
 
   const [serverId, setServerId] = useState('');
   const [reason, setReason] = useState('');
@@ -37,14 +39,18 @@ function RequestForm({ open, onClose, onSuccess, initialServerId = '' }) {
   const [protocol, setProtocol] = useState('SSH');
 
   const [submitting, setSubmitting] = useState(false);
+
+  const selectedServer = servers.find((s) => s.id === serverId);
+  const isRdp = protocol === 'RDP';
   const [error, setError] = useState('');
 
   const fetchServers = useCallback(async () => {
     setLoadingServers(true);
     try {
-      const data = await listServers({ limit: 200 });
+      const data = await listServers({ pageSize: 100 });
       const items = data?.items || data || [];
-      setServers(items);
+      // Only onboarded servers can be requested — hide the rest.
+      setServers(items.filter(isServerOnboarded));
     } catch {
       setServers([]);
     } finally {
@@ -70,8 +76,9 @@ function RequestForm({ open, onClose, onSuccess, initialServerId = '' }) {
   // what makes the Request Access button on the Servers page behave
   // intelligently (pre-selects the server + the JIT principal if any).
   useEffect(() => {
-    if (!open || !serverId) return;
+    if (!open || !serverId) return undefined;
     let cancelled = false;
+    setLoadingIntent(true);
     getAccessIntent(serverId)
       .then((intent) => {
         if (cancelled || !intent) return;
@@ -82,11 +89,20 @@ function RequestForm({ open, onClose, onSuccess, initialServerId = '' }) {
       })
       .catch(() => {
         // Non-fatal — fall back to the static default already set.
+      })
+      .finally(() => {
+        if (!cancelled) setLoadingIntent(false);
       });
     return () => {
       cancelled = true;
     };
   }, [open, serverId]);
+
+  // RDP uses the server's configured RDP account (injected by the gateway), not
+  // an SSH/Linux principal — prefill it and don't apply Linux-username rules.
+  useEffect(() => {
+    if (isRdp) setPrincipal(selectedServer?.rdpUsername || 'Administrator');
+  }, [isRdp, serverId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -101,10 +117,16 @@ function RequestForm({ open, onClose, onSuccess, initialServerId = '' }) {
       return;
     }
     const trimmedPrincipal = principal.trim();
-    if (!LINUX_USER_RE.test(trimmedPrincipal)) {
+    // SSH principals must be valid Linux usernames; RDP uses the server's RDP
+    // account (Windows usernames allow different characters), so skip that rule.
+    if (!isRdp && !LINUX_USER_RE.test(trimmedPrincipal)) {
       setError(
         'Principal must be a valid Linux username: lowercase letters, digits, underscore, or hyphen (1-32 chars, must start with a letter or underscore).'
       );
+      return;
+    }
+    if (isRdp && !trimmedPrincipal) {
+      setError('An RDP account is required.');
       return;
     }
     const requestedDuration = toSeconds(durationAmount, durationUnit);
@@ -136,22 +158,20 @@ function RequestForm({ open, onClose, onSuccess, initialServerId = '' }) {
       <form onSubmit={handleSubmit} className="space-y-4">
         {/* Server */}
         <div>
-          <label className={labelCls}>Server</label>
-          <select
-            className={`${selectCls} w-full`}
+          <label className={labelCls}>Server <span className="text-destructive">*</span></label>
+          <SearchableSelect
             value={serverId}
-            onChange={(e) => setServerId(e.target.value)}
+            onChange={(v) => setServerId(v)}
+            options={servers.map((s) => ({
+              value: s.id,
+              label: s.displayName || s.hostname || s.name,
+              sublabel: s.hostname,
+              environment: s.environment,
+            }))}
+            placeholder={loadingServers ? 'Loading servers...' : 'Select a server'}
             disabled={loadingServers}
-          >
-            <option value="">
-              {loadingServers ? 'Loading servers...' : 'Select a server'}
-            </option>
-            {servers.map((s) => (
-              <option key={s.id} value={s.id}>
-                {s.hostname || s.name} ({s.environment || 'unknown'})
-              </option>
-            ))}
-          </select>
+            clearable={false}
+          />
           {serverId && (() => {
             const sel = servers.find((s) => s.id === serverId);
             return sel ? (
@@ -162,6 +182,12 @@ function RequestForm({ open, onClose, onSuccess, initialServerId = '' }) {
           })()}
         </div>
 
+        {serverId && loadingIntent ? (
+          <div className="flex items-center justify-center gap-2 py-12 text-sm text-muted-foreground">
+            <Loader2 className="h-4 w-4 animate-spin" /> Loading access details…
+          </div>
+        ) : (
+          <>
         {/* Protocol */}
         <div>
           <label className={labelCls}>Protocol</label>
@@ -184,7 +210,7 @@ function RequestForm({ open, onClose, onSuccess, initialServerId = '' }) {
 
         {/* Reason */}
         <div>
-          <label className={labelCls}>Reason</label>
+          <label className={labelCls}>Reason <span className="text-destructive">*</span></label>
           <textarea
             className={`${inputCls} min-h-20 resize-none`}
             value={reason}
@@ -196,7 +222,7 @@ function RequestForm({ open, onClose, onSuccess, initialServerId = '' }) {
 
         {/* Duration */}
         <div>
-          <label className={labelCls}>Duration</label>
+          <label className={labelCls}>Duration <span className="text-destructive">*</span></label>
           <div className="flex gap-2">
             <input
               type="number"
@@ -205,41 +231,47 @@ function RequestForm({ open, onClose, onSuccess, initialServerId = '' }) {
               value={durationAmount}
               onChange={(e) => setDurationAmount(e.target.value)}
             />
-            <select
-              className={selectCls}
+            <SearchableSelect
               value={durationUnit}
-              onChange={(e) => setDurationUnit(e.target.value)}
-            >
-              {DURATION_UNITS.map((u) => (
-                <option key={u.value} value={u.value}>
-                  {u.label}
-                </option>
-              ))}
-            </select>
+              onChange={(v) => setDurationUnit(v)}
+              options={DURATION_UNITS.map((u) => ({ value: u.value, label: u.label }))}
+              searchable={false}
+              clearable={false}
+            />
           </div>
         </div>
 
         {/* Principal */}
         <div>
-          <label className={labelCls}>Requested Principal (SSH username)</label>
+          <label className={labelCls}>
+            {isRdp ? 'RDP Account' : 'Requested Principal (SSH username)'}{' '}
+            <span className="text-destructive">*</span>
+          </label>
           <input
             type="text"
             className={`${inputCls} ${
-              principal && !LINUX_USER_RE.test(principal.trim())
+              !isRdp && principal && !LINUX_USER_RE.test(principal.trim())
                 ? 'border-destructive focus:ring-destructive'
                 : ''
             }`}
             value={principal}
             onChange={(e) => setPrincipal(e.target.value)}
-            placeholder="ubuntu"
+            placeholder={isRdp ? 'Administrator' : 'ubuntu'}
             autoComplete="off"
             spellCheck={false}
           />
-          <p className="mt-1 text-[11px] text-muted-foreground">
-            Must match an existing Linux user on the target host. Lowercase
-            letters, digits, underscore, or hyphen (1-32 chars).
-          </p>
-          {principal && !LINUX_USER_RE.test(principal.trim()) && (
+          {isRdp ? (
+            <p className="mt-1 text-[11px] text-muted-foreground">
+              The Windows/RDP account used to sign in. The gateway injects this
+              account&apos;s credentials at connect time.
+            </p>
+          ) : (
+            <p className="mt-1 text-[11px] text-muted-foreground">
+              Must match an existing Linux user on the target host. Lowercase
+              letters, digits, underscore, or hyphen (1-32 chars).
+            </p>
+          )}
+          {!isRdp && principal && !LINUX_USER_RE.test(principal.trim()) && (
             <p className="mt-1 text-[11px] text-destructive">
               Invalid Linux username — example valid values:{' '}
               <code className="font-mono">ubuntu</code>,{' '}
@@ -248,6 +280,8 @@ function RequestForm({ open, onClose, onSuccess, initialServerId = '' }) {
             </p>
           )}
         </div>
+          </>
+        )}
 
         {error && (
           <div className="rounded-md border border-destructive/50 bg-destructive/10 px-3 py-2 text-sm text-destructive">
@@ -265,7 +299,7 @@ function RequestForm({ open, onClose, onSuccess, initialServerId = '' }) {
           </button>
           <button
             type="submit"
-            disabled={submitting}
+            disabled={submitting || (serverId && loadingIntent)}
             className="rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
           >
             {submitting ? 'Submitting...' : 'Submit Request'}

@@ -19,18 +19,18 @@ const server = httpServer.listen(config.port, async () => {
   } catch (err) {
     logger.error('Failed to initialize health check job:', err.message);
   }
-  // Best-effort MinIO bucket provisioning for session recordings.
+  // Best-effort object-storage bucket provisioning for session recordings.
   // Non-fatal on failure — the backend still serves other routes and the
   // web terminal falls back to silent no-op recording writer.
-  if (storageService.isConfigured()) {
-    try {
+  try {
+    if (await storageService.isConfigured()) {
       await storageService.ensureBucket();
-      logger.info(`Recordings bucket ready: ${storageService.recordingsBucket()}`);
-    } catch (err) {
-      logger.warn('storageService.ensureBucket failed (recordings disabled):', err.message);
+      logger.info(`Recordings bucket ready: ${await storageService.recordingsBucket()}`);
+    } else {
+      logger.warn('Object storage not configured — session recording will be disabled');
     }
-  } else {
-    logger.warn('MinIO not configured — session recording will be disabled');
+  } catch (err) {
+    logger.warn('storageService.ensureBucket failed (recordings disabled):', err.message);
   }
 });
 

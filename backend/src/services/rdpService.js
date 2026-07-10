@@ -25,6 +25,7 @@
  */
 
 import net from 'net';
+import crypto from 'crypto';
 import jwt from 'jsonwebtoken';
 
 import { encrypt, decrypt } from '../utils/crypto.js';
@@ -41,6 +42,75 @@ const GUACD_HOST = process.env.GUACD_HOST || '127.0.0.1';
 const GUACD_PORT = parseInt(process.env.GUACD_PORT, 10) || 4822;
 const GATEWAY_TOKEN_TTL = '5m';
 const PUBLIC_GATEWAY_HOST = process.env.PUBLIC_GATEWAY_HOST || 'localhost';
+
+// ---------------------------------------------------------------------------
+// guacamole-lite token encryption
+//
+// The browser tunnels RDP through guacamole-lite (see terminalService). The
+// connection settings (including the decrypted RDP password) are handed to the
+// browser as an AES-256-CBC encrypted, opaque token — only this backend holds
+// the key, so the password is never exposed to the frontend. The format must
+// match guacamole-lite's Crypt.decrypt: base64(JSON({ iv, value })) where value
+// is base64 ciphertext. The key is a 32-byte string derived from the JWT secret
+// and is shared with guacamole-lite via clientOptions.crypt.key.
+// ---------------------------------------------------------------------------
+
+export const GUAC_CRYPT_CYPHER = 'AES-256-CBC';
+export const GUAC_CRYPT_KEY = crypto
+  .createHash('sha256')
+  .update(String(config.jwt.secret))
+  .digest('hex')
+  .slice(0, 32); // 32 ASCII chars = 32 bytes for AES-256
+
+const GUAC_TOKEN_TTL_MS = 5 * 60 * 1000;
+
+/**
+ * Encrypt an arbitrary object into a guacamole-lite connection token.
+ * @param {object} obj
+ * @returns {string} base64(JSON({ iv, value }))
+ */
+export function encryptGuacToken(obj) {
+  const iv = crypto.randomBytes(16);
+  const cipher = crypto.createCipheriv(GUAC_CRYPT_CYPHER.toLowerCase(), Buffer.from(GUAC_CRYPT_KEY), iv);
+  let value = cipher.update(JSON.stringify(obj), 'utf8', 'base64');
+  value += cipher.final('base64');
+  const data = { iv: iv.toString('base64'), value };
+  return Buffer.from(JSON.stringify(data)).toString('base64');
+}
+
+/**
+ * Build the encrypted guacamole-lite token for an RDP server. Carries the guacd
+ * RDP settings plus top-level metadata (orgId/serverId/userId/accessRequestId)
+ * used for session tracking, and an expiration enforced at connect time.
+ *
+ * @param {object} params
+ * @param {object} params.accessRequest  - AccessRequest row (orgId, requesterId, id)
+ * @param {object} params.server         - Server row (incl. rdp* fields)
+ * @returns {string} encrypted token
+ */
+export function buildRdpToken({ accessRequest, server }) {
+  const password = decryptRdpPassword(server) ?? '';
+  const settings = {
+    hostname: server.ipAddress || server.hostname,
+    port: String(server.rdpPort ?? server.port ?? 3389),
+    username: server.rdpUsername ?? '',
+    password,
+    security: 'any',
+    'ignore-cert': 'true',
+    'enable-wallpaper': 'false',
+    'resize-method': 'display-update',
+  };
+  const token = {
+    connection: { type: 'rdp', settings },
+    // top-level metadata (preserved on connectionSettings, not sent to guacd)
+    expiration: Date.now() + GUAC_TOKEN_TTL_MS,
+    orgId: accessRequest.orgId,
+    serverId: server.id,
+    userId: accessRequest.requesterId,
+    accessRequestId: accessRequest.id,
+  };
+  return encryptGuacToken(token);
+}
 
 // ---------------------------------------------------------------------------
 // Guacamole protocol helpers
@@ -214,9 +284,14 @@ export function createGuacdConnection({ server, width = 1280, height = 800, dpi 
             return;
           }
 
-          // Map known parameter names to values
+          // Map known parameter names to values.
+          // guacd connects to the target directly, so it must receive a
+          // routable IP — not the server's display hostname (e.g. "glovius"),
+          // which guacd cannot DNS-resolve. Mirror the SSH path, which prefers
+          // ipAddress. For dynamicIp servers the connect-time override is
+          // already persisted into ipAddress before this handshake runs.
           const knownParams = {
-            hostname: server.hostname,
+            hostname: server.ipAddress || server.hostname,
             port: String(server.rdpPort ?? server.port ?? 3389),
             username: server.rdpUsername ?? '',
             password: rdpPassword ?? '',
@@ -226,7 +301,7 @@ export function createGuacdConnection({ server, width = 1280, height = 800, dpi 
             width: String(width),
             height: String(height),
             dpi: String(dpi),
-            'color-depth': '32',
+            'color-depth': '24',
             'enable-wallpaper': 'false',
             'enable-font-smoothing': 'true',
             'enable-full-window-drag': 'false',
@@ -259,6 +334,7 @@ export function createGuacdConnection({ server, width = 1280, height = 800, dpi 
           logger.info('rdpService.createGuacdConnection: handshake complete', {
             serverId: server.id,
             hostname: server.hostname,
+            connectHost: server.ipAddress || server.hostname,
             guacdHost: GUACD_HOST,
             guacdPort: GUACD_PORT,
           });
@@ -357,13 +433,15 @@ export async function createConnectionForRequest(accessRequestId) {
 
   const server = accessRequest.server;
   if (!server) throw new ApiError(404, 'Server not found on access request');
+  if (!server.rdpPasswordEncrypted) {
+    throw new ApiError(400, 'No RDP password configured for this server');
+  }
 
-  const gatewayToken = issueGatewayToken({
-    accessRequestId,
-    userId: accessRequest.requesterId,
-  });
+  // Encrypted guacamole-lite connection token (carries the RDP settings; the
+  // password stays opaque to the browser).
+  const gatewayToken = buildRdpToken({ accessRequest, server });
 
-  logger.info('rdpService.createConnectionForRequest: gateway token issued', {
+  logger.info('rdpService.createConnectionForRequest: RDP connection token issued', {
     accessRequestId,
     userId: accessRequest.requesterId,
     serverId: server.id,

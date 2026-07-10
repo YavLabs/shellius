@@ -13,3 +13,16 @@ export const getSession = (id) =>
 
 export const terminateSession = (id) =>
   api.post(`/sessions/${id}/terminate`).then(unwrapSession);
+
+// Authenticated blob download of the asciinema .cast recording.
+export async function downloadRecording(id) {
+  const res = await api.get(`/sessions/${id}/recording`, { responseType: 'blob' });
+  const url = URL.createObjectURL(res.data);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `session-${id}.cast`;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+}

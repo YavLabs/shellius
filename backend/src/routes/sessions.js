@@ -48,7 +48,7 @@ router.use(authenticate, tenant);
 
 router.get(
   '/',
-  requireRole('super_admin', 'admin', 'operator'),
+  requireRole('super_admin', 'admin', 'manager'),
   validateQuery(listQuerySchema),
   asyncHandler(async (req, res) => {
     const result = await sessionService.list({
@@ -69,7 +69,7 @@ router.get(
 
 router.get(
   '/active',
-  requireRole('super_admin', 'admin', 'operator'),
+  requireRole('super_admin', 'admin', 'manager'),
   asyncHandler(async (req, res) => {
     const sessions = await sessionService.listActive(req.orgId);
     // Match the shape of GET /api/sessions so the frontend can treat
@@ -92,7 +92,7 @@ router.get(
 
 router.get(
   '/:id',
-  requireRole('super_admin', 'admin', 'operator'),
+  requireRole('super_admin', 'admin', 'manager'),
   asyncHandler(async (req, res) => {
     const session = await sessionService.getById(req.orgId, req.params.id);
     res.json({ success: true, data: { session } });
@@ -105,7 +105,7 @@ router.get(
 
 router.get(
   '/:id/recording',
-  requireRole('super_admin', 'admin', 'operator'),
+  requireRole('super_admin', 'admin', 'manager'),
   asyncHandler(async (req, res) => {
     const session = await sessionService.getById(req.orgId, req.params.id);
 

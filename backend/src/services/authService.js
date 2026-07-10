@@ -8,6 +8,8 @@ import {
   verifyRefreshToken,
   hashToken,
 } from '../utils/jwt.js';
+import * as mfaService from './mfaService.js';
+import * as mfaConfigService from './mfaConfigService.js';
 
 const REFRESH_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 
@@ -15,6 +17,75 @@ function stripUser(user) {
   if (!user) return user;
   const { passwordHash, ...rest } = user;
   return rest;
+}
+
+function maskEmail(email) {
+  const [u, d] = String(email).split('@');
+  if (!d) return email;
+  return `${u.slice(0, 2)}***@${d}`;
+}
+
+/**
+ * Issue a full session (access + refresh tokens) for an authenticated user.
+ * Shared by password login and the MFA verify step.
+ */
+export async function issueSession(user, ipAddress, userAgent) {
+  const accessToken = generateAccessToken({
+    userId: user.id,
+    orgId: user.orgId,
+    role: user.role,
+    email: user.email,
+  });
+  const tokenId = crypto.randomUUID();
+  const refreshToken = generateRefreshToken({ userId: user.id, tokenId });
+  await prisma.refreshToken.create({
+    data: {
+      userId: user.id,
+      tokenHash: hashToken(refreshToken),
+      clientType: 'web',
+      ipAddress,
+      userAgent,
+      expiresAt: new Date(Date.now() + REFRESH_TTL_MS),
+    },
+  });
+  await prisma.user.update({ where: { id: user.id }, data: { lastLoginAt: new Date() } });
+  const safe = stripUser(user);
+  return {
+    accessToken,
+    refreshToken,
+    user: {
+      id: safe.id,
+      email: safe.email,
+      name: safe.name,
+      role: safe.role,
+      status: safe.status,
+      orgId: safe.orgId,
+      organization: safe.organization,
+      avatarUrl: safe.avatarUrl,
+    },
+  };
+}
+
+/**
+ * Decide whether MFA gates this login. Returns a challenge/setup response, or
+ * null to proceed with a normal session. Only diverges when MFA is enabled, so
+ * default deployments are unaffected.
+ */
+export async function mfaGate(user) {
+  const cfg = await mfaConfigService.getEffective(user.orgId);
+  if (!cfg.enabled) return null;
+  const methods = mfaService.availableMethods(user);
+  if (methods.length === 0) {
+    // Not enrolled — let them in; the client enforces setup (see GET /api/mfa
+    // returning policy.enforced) before granting access to the rest of the app.
+    return null;
+  }
+  return {
+    mfaRequired: true,
+    mfaToken: mfaService.issueMfaToken(user),
+    methods,
+    emailHint: maskEmail(user.email),
+  };
 }
 
 export async function login(email, password, ipAddress, userAgent) {
@@ -44,46 +115,47 @@ export async function login(email, password, ipAddress, userAgent) {
     throw new ApiError(403, 'Account is not active');
   }
 
-  const accessToken = generateAccessToken({
-    userId: user.id,
-    orgId: user.orgId,
-    role: user.role,
-    email: user.email,
+  // MFA gate (no-op unless MFA is enabled for the org).
+  const gate = await mfaGate(user);
+  if (gate) return gate;
+
+  return issueSession(user, ipAddress, userAgent);
+}
+
+/**
+ * Complete a password login's MFA challenge: verify the second factor and issue
+ * a full session. Used by POST /auth/mfa/verify.
+ */
+export async function completeMfaLogin({ mfaToken, method, code, ipAddress, userAgent }) {
+  const payload = mfaService.verifyMfaToken(mfaToken);
+  if (!payload) throw new ApiError(401, 'MFA session expired — sign in again');
+  const user = await prisma.user.findUnique({
+    where: { id: payload.userId },
+    include: { organization: true },
   });
+  if (!user || user.status !== 'active') throw new ApiError(401, 'Account not available');
+  const ok = await mfaService.verifyFactor(user, method, code);
+  if (!ok) throw new ApiError(401, 'Invalid verification code');
+  return issueSession(user, ipAddress, userAgent);
+}
 
-  const tokenId = crypto.randomUUID();
-  const refreshToken = generateRefreshToken({ userId: user.id, tokenId });
-
-  await prisma.refreshToken.create({
-    data: {
-      userId: user.id,
-      tokenHash: hashToken(refreshToken),
-      clientType: 'web',
-      ipAddress,
-      userAgent,
-      expiresAt: new Date(Date.now() + REFRESH_TTL_MS),
-    },
+/**
+ * Inspect an email's login state so the UI can branch the email-first login
+ * flow (password field vs SSO vs invite). Returns a deliberately small shape
+ * and never reveals whether the account exists for non-password states.
+ *
+ * @param {string} email
+ * @returns {Promise<{ hasPassword: boolean, ssoLinked: boolean }>}
+ */
+export async function getLoginState(email) {
+  const user = await prisma.user.findFirst({
+    where: { email },
+    select: { passwordHash: true, status: true, ssoProvider: true },
   });
-
-  await prisma.user.update({
-    where: { id: user.id },
-    data: { lastLoginAt: new Date() },
-  });
-
-  const safe = stripUser(user);
-  return {
-    accessToken,
-    refreshToken,
-    user: {
-      id: safe.id,
-      email: safe.email,
-      name: safe.name,
-      role: safe.role,
-      status: safe.status,
-      orgId: safe.orgId,
-      organization: safe.organization,
-    },
-  };
+  if (!user || user.status === 'deleted') {
+    return { hasPassword: false, ssoLinked: false };
+  }
+  return { hasPassword: !!user.passwordHash, ssoLinked: !!user.ssoProvider };
 }
 
 export async function refresh(refreshTokenString, ipAddress, userAgent) {

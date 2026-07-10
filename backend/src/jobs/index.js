@@ -17,6 +17,12 @@ import {
   startSessionCleanupWorker,
 } from './sessionCleanup.js';
 import { seedDefaultPolicies } from './seedDefaultPolicies.js';
+import {
+  startServerOnboardingWorker,
+  registerOnboardingReaper,
+  reconcileStuckImports,
+  startOnboardingReaperWorker,
+} from './serverOnboarding.js';
 import logger from '../utils/logger.js';
 
 export async function startAllJobs() {
@@ -39,6 +45,13 @@ export async function startAllJobs() {
 
   await registerSessionCleanupJob();
   startSessionCleanupWorker();
+
+  // Bulk-import server onboarding (parallel) + ephemeral-credential TTL reaper.
+  startServerOnboardingWorker();
+  await registerOnboardingReaper();
+  startOnboardingReaperWorker();
+  // Unstick any import job left in 'onboarding' from before this fix.
+  reconcileStuckImports().catch(() => {});
 
   // Idempotent one-shot: seed default policies for any org with zero rows.
   // Runs in the background so a slow DB doesn't block boot.

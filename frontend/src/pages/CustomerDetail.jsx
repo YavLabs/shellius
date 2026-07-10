@@ -24,6 +24,7 @@ import {
 import DataTable from '@/components/shared/DataTable';
 import Modal from '@/components/shared/Modal';
 import ConfirmDialog from '@/components/shared/ConfirmDialog';
+import DeleteCustomerDialog from '@/components/customers/DeleteCustomerDialog';
 import EnvironmentBadge from '@/components/shared/EnvironmentBadge';
 import HealthStatusDot from '@/components/shared/HealthStatusDot';
 import CustomerForm from '@/components/customers/CustomerForm';
@@ -36,13 +37,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select';
+import SearchableSelect from '@/components/ui/SearchableSelect';
 import {
   getCustomer,
   updateCustomer,
@@ -53,6 +48,8 @@ import { listServers, createServer } from '@/services/serverService';
 import { listSessions } from '@/services/sessionService';
 import { relativeTime, formatDateTime } from '@/utils/time';
 import Skeleton from '@/components/ui/Skeleton';
+import { useAuth } from '@/context/AuthContext';
+import { roleAtLeast } from '@/lib/permissions';
 
 // ---------------------------------------------------------------------------
 // Sub-components
@@ -151,6 +148,9 @@ const ENV_DOT_COLORS = {
 function CustomerDetail() {
   const { id } = useParams();
   const navigate = useNavigate();
+  const { user } = useAuth();
+  const canManage = roleAtLeast(user, 'manager'); // add/edit servers + customer
+  const canDelete = roleAtLeast(user, 'admin');
 
   const [customer, setCustomer] = useState(null);
   const [stats, setStats] = useState(null);
@@ -229,7 +229,7 @@ function CustomerDetail() {
   const lastHealthCheck = useMemo(() => {
     if (!servers.length) return null;
     const dates = servers
-      .map((s) => s.lastHealthCheckAt)
+      .map((s) => s.lastHealthCheck)
       .filter(Boolean)
       .map((d) => new Date(d).getTime())
       .filter((t) => !isNaN(t));
@@ -254,19 +254,24 @@ function CustomerDetail() {
   const serverColumns = [
     {
       key: 'hostname',
-      label: 'Hostname',
+      label: 'Server',
       sortable: true,
-      searchAccessor: (r) => `${r.hostname} ${r.ipAddress || ''}`,
+      searchAccessor: (r) => `${r.displayName || ''} ${r.hostname} ${r.ipAddress || ''}`,
       render: (r) => {
         const proto = r.protocol || r.type || 'SSH';
         const ProtoIcon = proto === 'RDP' ? Monitor : TerminalIcon;
+        const primary = r.displayName || r.hostname;
+        const showHost = r.displayName && r.hostname && r.displayName !== r.hostname;
         return (
           <button
             onClick={() => navigate(`/servers/${r.id}`)}
-            className="flex items-center gap-2 font-medium text-foreground hover:text-primary"
+            className="flex items-center gap-2 text-left hover:text-primary"
           >
             <ProtoIcon className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
-            {r.hostname}
+            <span className="flex flex-col leading-tight">
+              <span className="font-medium text-foreground">{primary}</span>
+              {showHost && <span className="text-xs text-muted-foreground">{r.hostname}</span>}
+            </span>
           </button>
         );
       },
@@ -306,7 +311,7 @@ function CustomerDetail() {
       hideBelow: 'md',
       render: (r) => (
         <span className="text-xs text-muted-foreground">
-          {relativeTime(r.lastHealthCheckAt)}
+          {relativeTime(r.lastHealthCheck)}
         </span>
       ),
     },
@@ -326,22 +331,18 @@ function CustomerDetail() {
 
   // Environment filter slot for DataTable
   const filterSlot = (
-    <Select
-      value={envFilter || '_all'}
-      onValueChange={(v) => setEnvFilter(v === '_all' ? '' : v)}
-    >
-      <SelectTrigger className="w-[160px]">
-        <SelectValue placeholder="All environments" />
-      </SelectTrigger>
-      <SelectContent>
-        <SelectItem value="_all">All environments</SelectItem>
-        {ENVIRONMENTS.map((e) => (
-          <SelectItem key={e} value={e}>
-            {e}
-          </SelectItem>
-        ))}
-      </SelectContent>
-    </Select>
+    <SearchableSelect
+      className="w-[160px]"
+      value={envFilter || ''}
+      onChange={(v) => setEnvFilter(v)}
+      placeholder="All environments"
+      searchable={false}
+      clearable={false}
+      options={[
+        { value: '', label: 'All environments' },
+        ...ENVIRONMENTS.map((e) => ({ value: e, label: e })),
+      ]}
+    />
   );
 
   // ---------------------------------------------------------------------------
@@ -448,31 +449,41 @@ function CustomerDetail() {
 
         {/* Action group */}
         <div className="flex shrink-0 items-center gap-2">
-          <Button size="sm" onClick={() => setAddServerOpen(true)}>
-            <Plus className="mr-1.5 h-3.5 w-3.5" />
-            Add Server
-          </Button>
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <Button variant="outline" size="icon" className="h-9 w-9">
-                <MoreHorizontal className="h-4 w-4" />
-              </Button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="end" className="w-44">
-              <DropdownMenuItem onClick={() => setEditOpen(true)}>
-                <Pencil className="mr-2 h-4 w-4" />
-                Edit Customer
-              </DropdownMenuItem>
-              <DropdownMenuSeparator />
-              <DropdownMenuItem
-                onClick={() => setConfirmDelete(true)}
-                className="text-destructive focus:text-destructive"
-              >
-                <Trash2 className="mr-2 h-4 w-4" />
-                Delete Customer
-              </DropdownMenuItem>
-            </DropdownMenuContent>
-          </DropdownMenu>
+          {canManage && (
+            <Button size="sm" onClick={() => setAddServerOpen(true)}>
+              <Plus className="mr-1.5 h-3.5 w-3.5" />
+              Add Server
+            </Button>
+          )}
+          {(canManage || canDelete) && (
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button variant="outline" size="icon" className="h-9 w-9">
+                  <MoreHorizontal className="h-4 w-4" />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" className="w-44">
+                {canManage && (
+                  <DropdownMenuItem onClick={() => setEditOpen(true)}>
+                    <Pencil className="mr-2 h-4 w-4" />
+                    Edit Customer
+                  </DropdownMenuItem>
+                )}
+                {canDelete && (
+                  <>
+                    <DropdownMenuSeparator />
+                    <DropdownMenuItem
+                      onClick={() => setConfirmDelete(true)}
+                      className="text-destructive focus:text-destructive"
+                    >
+                      <Trash2 className="mr-2 h-4 w-4" />
+                      Delete Customer
+                    </DropdownMenuItem>
+                  </>
+                )}
+              </DropdownMenuContent>
+            </DropdownMenu>
+          )}
         </div>
       </div>
 
@@ -517,10 +528,12 @@ function CustomerDetail() {
                   ({filteredServers.length}{envFilter ? ` of ${servers.length}` : ''})
                 </span>
               </h3>
-              <Button size="sm" variant="outline" onClick={() => setAddServerOpen(true)}>
-                <Plus className="mr-1.5 h-3.5 w-3.5" />
-                Add Server
-              </Button>
+              {canManage && (
+                <Button size="sm" variant="outline" onClick={() => setAddServerOpen(true)}>
+                  <Plus className="mr-1.5 h-3.5 w-3.5" />
+                  Add Server
+                </Button>
+              )}
             </div>
             {/* Padding around the DataTable so the inner content (search,
                 filters, rows, pagination) never butts up against the card
@@ -637,15 +650,17 @@ function CustomerDetail() {
           {/* Quick Actions card */}
           <SectionCard title="Quick Actions">
             <div className="flex flex-col gap-2">
-              <Button
-                variant="outline"
-                size="sm"
-                className="w-full justify-start gap-2"
-                onClick={() => setAddServerOpen(true)}
-              >
-                <Plus className="h-4 w-4" />
-                Add Server
-              </Button>
+              {canManage && (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="w-full justify-start gap-2"
+                  onClick={() => setAddServerOpen(true)}
+                >
+                  <Plus className="h-4 w-4" />
+                  Add Server
+                </Button>
+              )}
               <Button
                 variant="outline"
                 size="sm"
@@ -664,15 +679,17 @@ function CustomerDetail() {
                 <ExternalLink className="h-4 w-4" />
                 View in Servers
               </Button>
-              <Button
-                variant="ghost"
-                size="sm"
-                className="w-full justify-start gap-2 text-muted-foreground hover:text-foreground"
-                onClick={() => setEditOpen(true)}
-              >
-                <Pencil className="h-4 w-4" />
-                Edit Customer
-              </Button>
+              {canManage && (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="w-full justify-start gap-2 text-muted-foreground hover:text-foreground"
+                  onClick={() => setEditOpen(true)}
+                >
+                  <Pencil className="h-4 w-4" />
+                  Edit Customer
+                </Button>
+              )}
             </div>
           </SectionCard>
 
@@ -702,14 +719,11 @@ function CustomerDetail() {
         />
       </Modal>
 
-      <ConfirmDialog
+      <DeleteCustomerDialog
+        customer={customer}
         open={confirmDelete}
-        title="Delete customer"
-        message={`Permanently delete "${customer.name}"? All associated servers and their audit history will be affected. This cannot be undone.`}
-        confirmLabel="Delete"
-        variant="destructive"
-        onConfirm={handleDelete}
-        onCancel={() => setConfirmDelete(false)}
+        onClose={() => setConfirmDelete(false)}
+        onDeleted={() => navigate('/customers')}
       />
     </div>
   );

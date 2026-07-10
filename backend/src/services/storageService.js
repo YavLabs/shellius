@@ -1,168 +1,278 @@
 /**
  * storageService.js
  *
- * Thin wrapper around the MinIO S3-compatible client. Session recordings
- * (asciinema .cast files) are the primary consumer today; other object-
- * storage callers can reuse the same client.
+ * Provider-agnostic object storage. Session recordings (asciinema .cast files)
+ * are the primary consumer today; other callers can reuse the same client.
  *
- * Design:
- *   - Lazy client: not created until first use.
- *   - Fails soft on boot (ensureBucket is best-effort so a missing MinIO
- *     doesn't crash the backend — web terminal continues to work without
- *     recording).
+ * Backends:
+ *   - 'minio' / 's3' → AWS SDK v3 (@aws-sdk/client-s3). MinIO is just an
+ *     S3-compatible endpoint with path-style addressing (forcePathStyle).
+ *   - 'azure'        → @azure/storage-blob.
+ *
+ * Config comes from storageConfigService.getEffective() (DB row overrides env).
+ *
+ * Design contracts preserved for existing callers:
+ *   - isConfigured() → boolean (now async).
+ *   - getObjectStream() resolves to a Node Readable that supports .pipe() and
+ *     emits 'error'; a missing object throws an error with .code === 'NoSuchKey'.
+ *   - putObjectStream(key, stream, { contentType, metadata }) uploads a stream.
+ *   - ensureBucket() is idempotent and best-effort (boot must not crash).
  *   - Never logs credentials.
  */
 
-import { Client as MinioClient } from 'minio';
+import {
+  S3Client,
+  HeadBucketCommand,
+  CreateBucketCommand,
+  PutBucketPolicyCommand,
+  GetObjectCommand,
+  HeadObjectCommand,
+  DeleteObjectCommand,
+} from '@aws-sdk/client-s3';
+import { Upload } from '@aws-sdk/lib-storage';
+import { BlobServiceClient, StorageSharedKeyCredential } from '@azure/storage-blob';
 import logger from '../utils/logger.js';
+import * as storageConfigService from './storageConfigService.js';
 
-let _client = null;
+// Cache the built backend keyed by a signature of the effective config so we
+// rebuild only when the config actually changes (or is invalidated on save).
+let _cache = null; // { sig, backend }
 
-/**
- * Returns true if MinIO is configured via env vars.
- */
-export function isConfigured() {
-  const { MINIO_ENDPOINT, MINIO_ACCESS_KEY, MINIO_SECRET_KEY } = process.env;
-  return Boolean(MINIO_ENDPOINT && MINIO_ACCESS_KEY && MINIO_SECRET_KEY);
+storageConfigService.onInvalidate(() => {
+  _cache = null;
+});
+
+function notConfiguredError() {
+  const err = new Error('Object storage is not configured');
+  err.statusCode = 503;
+  err.errorCode = 'STORAGE_NOT_CONFIGURED';
+  return err;
 }
 
-/**
- * Returns the default recordings bucket name.
- *
- * Accepts MINIO_RECORDINGS_BUCKET (preferred) or MINIO_BUCKET (used by the
- * prod compose / .env.prod.example) before falling back to the default.
- */
-export function recordingsBucket() {
-  return (
-    process.env.MINIO_RECORDINGS_BUCKET || process.env.MINIO_BUCKET || 'shellius-recordings'
-  );
+function mapMissing(err) {
+  // Normalise "object not found" across SDKs to the contract callers expect.
+  const status = err?.$metadata?.httpStatusCode || err?.statusCode;
+  const name = err?.name || err?.code;
+  if (
+    name === 'NoSuchKey' ||
+    name === 'NotFound' ||
+    name === 'BlobNotFound' ||
+    status === 404
+  ) {
+    err.code = 'NoSuchKey';
+  }
+  return err;
 }
 
-/**
- * Normalise MINIO_ENDPOINT into the { endPoint, port, useSSL } shape the
- * MinIO SDK expects. The SDK's `endPoint` must be a bare host (no scheme),
- * so accept either form:
- *   - a full URL    e.g. "http://minio:9000" / "https://s3.example.com"
- *   - a bare host   e.g. "minio" (with MINIO_PORT / MINIO_USE_SSL alongside)
- * URL form wins for scheme/port; explicit MINIO_PORT / MINIO_USE_SSL are
- * honoured for the bare-host form.
- */
-export function resolveEndpoint() {
-  const raw = (process.env.MINIO_ENDPOINT || '').trim();
-  let endPoint = raw;
-  let port = process.env.MINIO_PORT ? parseInt(process.env.MINIO_PORT, 10) : undefined;
-  let useSSL = process.env.MINIO_USE_SSL === 'true';
-
-  if (/^https?:\/\//i.test(raw)) {
-    const url = new URL(raw);
-    endPoint = url.hostname;
-    useSSL = url.protocol === 'https:';
-    if (url.port) port = parseInt(url.port, 10);
-  }
-
-  if (port === undefined || Number.isNaN(port)) {
-    port = useSSL ? 443 : 9000;
-  }
-  return { endPoint, port, useSSL };
+/** Build a full URL endpoint for the S3 SDK from a bare host or URL form. */
+function s3Endpoint(cfg) {
+  const raw = (cfg.endpoint || '').trim();
+  if (!raw) return undefined; // AWS regional endpoint
+  if (/^https?:\/\//i.test(raw)) return raw;
+  const scheme = cfg.useSsl ? 'https' : 'http';
+  return `${scheme}://${raw}`;
 }
 
-/**
- * Lazily instantiate the MinIO client.
- * Throws a structured 503 if MinIO is not configured.
- */
-export function getClient() {
-  if (!isConfigured()) {
-    const err = new Error('Object storage (MinIO) is not configured');
-    err.statusCode = 503;
-    err.errorCode = 'STORAGE_NOT_CONFIGURED';
-    throw err;
-  }
-  if (!_client) {
-    const { MINIO_ACCESS_KEY, MINIO_SECRET_KEY } = process.env;
-    const { endPoint, port, useSSL } = resolveEndpoint();
-    _client = new MinioClient({
-      endPoint,
-      port,
-      useSSL,
-      accessKey: MINIO_ACCESS_KEY,
-      secretKey: MINIO_SECRET_KEY,
-    });
-    logger.info('storageService: MinIO client initialized', {
-      endpoint: endPoint,
-      port,
-      useSSL,
-    });
-  }
-  return _client;
-}
+// --- S3 / MinIO backend ----------------------------------------------------
 
-/**
- * Ensure a bucket exists with a deny-public policy. Idempotent.
- * Safe to call on every boot.
- */
-export async function ensureBucket(bucket = recordingsBucket()) {
-  const client = getClient();
-  const exists = await client.bucketExists(bucket);
-  if (!exists) {
-    await client.makeBucket(bucket, 'us-east-1');
-    logger.info('storageService: provisioned bucket', { bucket });
+function makeS3Backend(cfg) {
+  const client = new S3Client({
+    region: cfg.region || 'us-east-1',
+    endpoint: s3Endpoint(cfg),
+    forcePathStyle: cfg.forcePathStyle,
+    credentials: { accessKeyId: cfg.accessKey, secretAccessKey: cfg.secretKey },
+  });
+  const defBucket = cfg.bucket;
 
-    // Deny-public bucket policy — recordings must only be served via the
-    // authenticated backend route, never fetched directly from MinIO.
-    const policy = JSON.stringify({
-      Version: '2012-10-17',
-      Statement: [
-        {
-          Effect: 'Deny',
-          Principal: '*',
-          Action: ['s3:GetObject'],
-          Resource: [`arn:aws:s3:::${bucket}/*`],
-          Condition: { StringNotEquals: { 'aws:PrincipalType': 'Service' } },
-        },
-      ],
-    });
-    try {
-      await client.setBucketPolicy(bucket, policy);
-    } catch (err) {
-      // Non-fatal — some MinIO versions reject conditional policies.
-      logger.warn('storageService: setBucketPolicy failed (non-fatal)', {
-        bucket,
-        error: err.message,
-      });
+  // S3 metadata keys must not carry the x-amz-meta- prefix (the SDK adds it).
+  const cleanMeta = (metadata = {}) => {
+    const out = {};
+    for (const [k, v] of Object.entries(metadata)) {
+      out[k.replace(/^x-amz-meta-/i, '')] = String(v);
     }
-  }
-  return bucket;
+    return out;
+  };
+
+  return {
+    provider: cfg.provider,
+    async ensureBucket(bucket = defBucket) {
+      try {
+        await client.send(new HeadBucketCommand({ Bucket: bucket }));
+      } catch (err) {
+        const status = err?.$metadata?.httpStatusCode;
+        if (status && status !== 404 && status !== 403) {
+          // Anything other than missing/forbidden is unexpected — surface it.
+          if (err?.name !== 'NotFound' && err?.name !== 'NoSuchBucket') throw err;
+        }
+        await client.send(new CreateBucketCommand({ Bucket: bucket }));
+        logger.info('storageService: provisioned bucket', { bucket });
+        // Deny-public policy — recordings served only via the authed backend.
+        const policy = JSON.stringify({
+          Version: '2012-10-17',
+          Statement: [
+            {
+              Effect: 'Deny',
+              Principal: '*',
+              Action: ['s3:GetObject'],
+              Resource: [`arn:aws:s3:::${bucket}/*`],
+              Condition: { StringNotEquals: { 'aws:PrincipalType': 'Service' } },
+            },
+          ],
+        });
+        try {
+          await client.send(new PutBucketPolicyCommand({ Bucket: bucket, Policy: policy }));
+        } catch (e) {
+          logger.warn('storageService: setBucketPolicy failed (non-fatal)', {
+            bucket,
+            error: e.message,
+          });
+        }
+      }
+      return bucket;
+    },
+    async putObjectStream(key, stream, { contentType, metadata, bucket = defBucket } = {}) {
+      const upload = new Upload({
+        client,
+        params: {
+          Bucket: bucket,
+          Key: key,
+          Body: stream,
+          ContentType: contentType || 'application/octet-stream',
+          Metadata: cleanMeta(metadata),
+        },
+      });
+      return upload.done();
+    },
+    async getObjectStream(key, { bucket = defBucket } = {}) {
+      try {
+        const res = await client.send(new GetObjectCommand({ Bucket: bucket, Key: key }));
+        return res.Body; // Node Readable in the Node runtime
+      } catch (err) {
+        throw mapMissing(err);
+      }
+    },
+    async statObject(key, { bucket = defBucket } = {}) {
+      try {
+        return await client.send(new HeadObjectCommand({ Bucket: bucket, Key: key }));
+      } catch (err) {
+        throw mapMissing(err);
+      }
+    },
+    async deleteObject(key, { bucket = defBucket } = {}) {
+      return client.send(new DeleteObjectCommand({ Bucket: bucket, Key: key }));
+    },
+  };
 }
 
-/**
- * Upload a stream to MinIO. Returns the ETag on success.
- */
-export async function putObjectStream(
-  key,
-  stream,
-  { contentType = 'application/octet-stream', metadata = {}, bucket = recordingsBucket() } = {}
-) {
-  const client = getClient();
-  const metaHeaders = { 'Content-Type': contentType, ...metadata };
-  // Pass -1 to let the client compute size from the stream.
-  return client.putObject(bucket, key, stream, undefined, metaHeaders);
+// --- Azure Blob backend ----------------------------------------------------
+
+function makeAzureBackend(cfg) {
+  // accessKey = account name, secretKey = account key, bucket = container.
+  const cred = new StorageSharedKeyCredential(cfg.accessKey, cfg.secretKey);
+  const url = cfg.endpoint || `https://${cfg.accessKey}.blob.core.windows.net`;
+  const svc = new BlobServiceClient(url, cred);
+  const defContainer = cfg.bucket;
+
+  return {
+    provider: 'azure',
+    async ensureBucket(container = defContainer) {
+      const cc = svc.getContainerClient(container);
+      await cc.createIfNotExists(); // private access by default
+      return container;
+    },
+    async putObjectStream(key, stream, { contentType, bucket = defContainer } = {}) {
+      const cc = svc.getContainerClient(bucket);
+      const blob = cc.getBlockBlobClient(key);
+      return blob.uploadStream(stream, 4 * 1024 * 1024, 5, {
+        blobHTTPHeaders: { blobContentType: contentType || 'application/octet-stream' },
+      });
+    },
+    async getObjectStream(key, { bucket = defContainer } = {}) {
+      const cc = svc.getContainerClient(bucket);
+      const blob = cc.getBlockBlobClient(key);
+      try {
+        const dl = await blob.download();
+        return dl.readableStreamBody;
+      } catch (err) {
+        throw mapMissing(err);
+      }
+    },
+    async statObject(key, { bucket = defContainer } = {}) {
+      const cc = svc.getContainerClient(bucket);
+      const blob = cc.getBlockBlobClient(key);
+      try {
+        return await blob.getProperties();
+      } catch (err) {
+        throw mapMissing(err);
+      }
+    },
+    async deleteObject(key, { bucket = defContainer } = {}) {
+      const cc = svc.getContainerClient(bucket);
+      return cc.getBlockBlobClient(key).deleteIfExists();
+    },
+  };
 }
 
-/**
- * Return a readable stream for an object. Caller must pipe / consume it.
- * Throws the MinIO error with `.code === 'NoSuchKey'` if the object is missing.
- */
-export async function getObjectStream(key, { bucket = recordingsBucket() } = {}) {
-  const client = getClient();
-  return client.getObject(bucket, key);
+// --- backend resolution ----------------------------------------------------
+
+function sigOf(cfg) {
+  return [
+    cfg.provider, cfg.endpoint, cfg.region, cfg.bucket,
+    cfg.accessKey, cfg.useSsl, cfg.forcePathStyle,
+    cfg.secretKey ? 'k' : '0',
+  ].join('|');
 }
 
-export async function statObject(key, { bucket = recordingsBucket() } = {}) {
-  const client = getClient();
-  return client.statObject(bucket, key);
+async function getBackend() {
+  const cfg = await storageConfigService.getEffective();
+  if (!cfg.configured) throw notConfiguredError();
+  const sig = sigOf(cfg);
+  if (_cache && _cache.sig === sig) return _cache.backend;
+  const backend = cfg.provider === 'azure' ? makeAzureBackend(cfg) : makeS3Backend(cfg);
+  _cache = { sig, backend };
+  logger.info('storageService: client initialized', {
+    provider: cfg.provider,
+    bucket: cfg.bucket,
+    source: cfg.source,
+  });
+  return backend;
 }
 
-export async function deleteObject(key, { bucket = recordingsBucket() } = {}) {
-  const client = getClient();
-  return client.removeObject(bucket, key);
+// --- public API (preserved) ------------------------------------------------
+
+/** True if object storage is configured (env or DB). Async. */
+export async function isConfigured() {
+  const cfg = await storageConfigService.getEffective();
+  return Boolean(cfg.configured);
+}
+
+/** Effective bucket/container name. Async. */
+export async function recordingsBucket() {
+  const cfg = await storageConfigService.getEffective();
+  return cfg.bucket;
+}
+
+export async function ensureBucket(bucket) {
+  const backend = await getBackend();
+  return backend.ensureBucket(bucket);
+}
+
+export async function putObjectStream(key, stream, opts = {}) {
+  const backend = await getBackend();
+  return backend.putObjectStream(key, stream, opts);
+}
+
+export async function getObjectStream(key, opts = {}) {
+  const backend = await getBackend();
+  return backend.getObjectStream(key, opts);
+}
+
+export async function statObject(key, opts = {}) {
+  const backend = await getBackend();
+  return backend.statObject(key, opts);
+}
+
+export async function deleteObject(key, opts = {}) {
+  const backend = await getBackend();
+  return backend.deleteObject(key, opts);
 }

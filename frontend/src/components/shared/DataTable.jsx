@@ -13,13 +13,7 @@ import {
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select';
+import SearchableSelect from '@/components/ui/SearchableSelect';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -49,6 +43,8 @@ function ActionMenu({ actions, row }) {
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end" className="w-48">
         {actions.map((action, idx) => {
+          // Per-row visibility: actions may define hidden(row) => boolean.
+          if (typeof action.hidden === 'function' && action.hidden(row)) return null;
           if (action.separator) {
             return <DropdownMenuSeparator key={`sep-${idx}`} />;
           }
@@ -169,6 +165,12 @@ function DataTable({
   // { sortKey, sortDir, onSortChange: (key, dir) => void }
   serverSort,
 
+  // Server-side search — called (debounced) with the query string. Required for
+  // server-paginated tables, where client-side filtering is skipped (it would
+  // only see the current page). The parent sends it to its list API + resets to
+  // page 1.
+  onSearchChange,
+
   // className for the wrapper
   className,
 }) {
@@ -215,6 +217,15 @@ function DataTable({
     prevSearch.current = search;
     prevSortKey.current = sortKey;
   }, [search, sortKey, isServerPagination]);
+
+  // Server-side search — notify the parent when the debounced query changes.
+  const prevServerSearch = useRef(search);
+  useEffect(() => {
+    if (onSearchChange && prevServerSearch.current !== search) {
+      onSearchChange(search);
+    }
+    prevServerSearch.current = search;
+  }, [search, onSearchChange]);
 
   // -------------------------------------------------------------------
   // Handle sort click
@@ -587,18 +598,14 @@ function DataTable({
           {/* Left: page size selector */}
           <div className="flex items-center gap-2">
             <span className="whitespace-nowrap">Rows per page</span>
-            <Select value={String(pageSize)} onValueChange={handlePageSizeChange}>
-              <SelectTrigger className="h-8 w-[72px] text-xs">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                {pageSizeOptions.map((n) => (
-                  <SelectItem key={n} value={String(n)}>
-                    {n}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+            <SearchableSelect
+              className="h-8 w-[72px] text-xs"
+              value={String(pageSize)}
+              onChange={handlePageSizeChange}
+              searchable={false}
+              clearable={false}
+              options={pageSizeOptions.map((n) => ({ value: String(n), label: String(n) }))}
+            />
           </div>
 
           {/* Center: showing X-Y of Z */}

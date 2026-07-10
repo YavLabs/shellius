@@ -71,7 +71,7 @@ function ApprovalCard({ request, onRefresh }) {
       <div className="rounded-md border border-destructive/30 p-3 space-y-2">
         <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Deny</p>
         <div>
-          <label className={labelCls}>Reason for Denial</label>
+          <label className={labelCls}>Reason for Denial <span className="text-destructive">*</span></label>
           <textarea
             className={`${inputCls} min-h-16 resize-none`}
             rows={2}

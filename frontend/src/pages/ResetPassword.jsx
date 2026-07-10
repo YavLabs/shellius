@@ -118,7 +118,7 @@ function ResetPassword() {
 
               <div>
                 <label htmlFor="password" className="mb-1.5 block text-sm font-medium text-foreground">
-                  New Password
+                  New Password <span className="text-destructive">*</span>
                 </label>
                 <div className="relative">
                   <Lock className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
@@ -148,7 +148,7 @@ function ResetPassword() {
 
               <div>
                 <label htmlFor="confirm" className="mb-1.5 block text-sm font-medium text-foreground">
-                  Confirm New Password
+                  Confirm New Password <span className="text-destructive">*</span>
                 </label>
                 <div className="relative">
                   <Lock className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />

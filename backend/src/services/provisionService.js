@@ -16,9 +16,31 @@ import logger from '../utils/logger.js';
  * @param {function} opts.onOutput     - callback(line: string) for each output line
  * @returns {Promise<void>}
  */
-export async function provisionServer(orgId, serverId, { privateKey, sshUser, sudoPassword, bootstrapUrl, onOutput }) {
+export async function provisionServer(
+  orgId,
+  serverId,
+  { privateKey, passphrase, password, sshUser, sudoPassword, bootstrapUrl, onOutput }
+) {
   const server = await prisma.server.findFirst({ where: { id: serverId, orgId } });
   if (!server) throw new ApiError(404, 'Server not found');
+
+  // Mark provisioning in progress. lastProvisionAt records every attempt;
+  // provisionedAt is only stamped on success below. This makes re-onboarding
+  // idempotent and observable from the UI / bulk-import flow.
+  await prisma.server.update({
+    where: { id: serverId },
+    data: { provisionStatus: 'provisioning', provisionError: null, lastProvisionAt: new Date() },
+  }).catch((e) => logger.warn({ err: e.message, serverId }, 'failed to set provisioning state'));
+
+  const markProvisioned = () =>
+    prisma.server
+      .update({ where: { id: serverId }, data: { provisionStatus: 'provisioned', provisionError: null, provisionedAt: new Date() } })
+      .catch((e) => logger.warn({ err: e.message, serverId }, 'failed to set provisioned state'));
+
+  const markFailed = (message) =>
+    prisma.server
+      .update({ where: { id: serverId }, data: { provisionStatus: 'failed', provisionError: String(message || 'unknown error').slice(0, 500) } })
+      .catch((e) => logger.warn({ err: e.message, serverId }, 'failed to set failed state'));
 
   return new Promise((resolve, reject) => {
     const conn = new Client();
@@ -26,6 +48,10 @@ export async function provisionServer(orgId, serverId, { privateKey, sshUser, su
     const emit = (line) => {
       if (onOutput) onOutput(line);
     };
+
+    // Wrap resolve/reject so provisioning state is persisted before settling.
+    const settleOk = () => markProvisioned().finally(() => resolve());
+    const settleErr = (err) => markFailed(err?.message).finally(() => reject(err));
 
     conn.on('ready', () => {
       emit('[shellius] SSH connection established');
@@ -54,7 +80,7 @@ export async function provisionServer(orgId, serverId, { privateKey, sshUser, su
       conn.exec(cmd, { pty: true }, (err, stream) => {
         if (err) {
           conn.end();
-          return reject(new ApiError(500, `SSH exec failed: ${err.message}`));
+          return settleErr(new ApiError(500, `SSH exec failed: ${err.message}`));
         }
 
         stream.on('data', (data) => {
@@ -75,9 +101,9 @@ export async function provisionServer(orgId, serverId, { privateKey, sshUser, su
           conn.end();
           if (code === 0 || code === null) {
             emit('[shellius] Provisioning completed successfully');
-            resolve();
+            settleOk();
           } else {
-            reject(new ApiError(500, `Bootstrap script exited with code ${code}`));
+            settleErr(new ApiError(500, `Bootstrap script exited with code ${code}`));
           }
         });
       });
@@ -86,14 +112,37 @@ export async function provisionServer(orgId, serverId, { privateKey, sshUser, su
     conn.on('error', (err) => {
       // Log serverId only — never log the private key or credentials
       logger.error({ err: err.message, serverId }, 'SSH provision connection error');
-      reject(new ApiError(500, `SSH connection failed: ${err.message}`));
+      settleErr(new ApiError(500, `SSH connection failed: ${err.message}`));
     });
+
+    // Answer keyboard-interactive prompts (many sshd setups present the login
+    // password this way) with the supplied password.
+    if (password) {
+      conn.on('keyboard-interactive', (name, instructions, lang, prompts, finish) => {
+        finish(prompts.map(() => password));
+      });
+    }
+
+    // Offer whichever methods we have credentials for, in order. ssh2 will try
+    // each and also continue through multi-factor servers that require more than
+    // one (e.g. AuthenticationMethods "publickey,password").
+    const authMethods = [];
+    if (privateKey) {
+      authMethods.push({ type: 'publickey', username: sshUser, key: privateKey, passphrase });
+    }
+    if (password) {
+      authMethods.push({ type: 'password', username: sshUser, password });
+      authMethods.push({ type: 'keyboard-interactive', username: sshUser });
+    }
 
     conn.connect({
       host: server.ipAddress,
       port: 22,
       username: sshUser,
-      privateKey,
+      ...(privateKey ? { privateKey, passphrase } : {}),
+      ...(password ? { password } : {}),
+      tryKeyboard: !!password,
+      ...(authMethods.length ? { authHandler: authMethods } : {}),
       readyTimeout: 20000,
     });
   });

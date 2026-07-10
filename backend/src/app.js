@@ -32,13 +32,34 @@ import bootstrapRouter from './routes/bootstrap.js';
 import hostsRouter from './routes/hosts.js';
 import orgRouter from './routes/org.js';
 import smtpRouter from './routes/smtp.js';
+import storageRouter from './routes/storage.js';
+import approvalsRouter from './routes/approvals.js';
+import importRouter from './routes/import.js';
+import mfaRouter, { configRouter as mfaConfigRouter } from './routes/mfa.js';
 import cliRouter from './routes/cli.js';
 import errorHandler from './middleware/errorHandler.js';
 import { startAllJobs } from './jobs/index.js';
 
 const app = express();
 
-app.use(helmet());
+// Behind reverse proxies (internal nginx + any external proxy/load balancer),
+// so honor X-Forwarded-* headers for real client IP + rate limiting. Configure
+// the hop count via TRUST_PROXY (a number is safest; e.g. 2 for proxy-manager →
+// internal nginx). Defaults to 1 in production, off in dev.
+{
+  const tp = process.env.TRUST_PROXY;
+  if (tp !== undefined && tp !== '') {
+    const n = Number(tp);
+    app.set('trust proxy', Number.isNaN(n) ? tp : n);
+  } else {
+    app.set('trust proxy', config.nodeEnv === 'production' ? 1 : false);
+  }
+}
+
+// 'same-origin-allow-popups' lets the SSO popup keep its window.opener after the
+// cross-origin round-trip to the IdP (default 'same-origin' severs it, which
+// breaks the popup → opener handoff and loads the app inside the popup).
+app.use(helmet({ crossOriginOpenerPolicy: { policy: 'same-origin-allow-popups' } }));
 app.use(cors({ origin: config.corsOrigin, credentials: true }));
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
@@ -72,6 +93,11 @@ app.use('/api/bootstrap', bootstrapRouter);
 app.use('/api/hosts', hostsRouter);
 app.use('/api/org', orgRouter);
 app.use('/api/settings/smtp', smtpRouter);
+app.use('/api/settings/storage', storageRouter);
+app.use('/api/approvals', approvalsRouter);
+app.use('/api/import', importRouter);
+app.use('/api/mfa', mfaRouter);
+app.use('/api/settings/mfa', mfaConfigRouter);
 app.use('/api/cli', cliRouter);
 
 app.use(errorHandler);

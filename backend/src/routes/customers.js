@@ -34,7 +34,7 @@ router.use(authenticate, tenant);
 
 router.get(
   '/',
-  requireRole('super_admin', 'admin', 'operator'),
+  requireRole('super_admin', 'admin', 'manager', 'member'),
   asyncHandler(async (req, res) => {
     const result = await customerService.listCustomers(req.orgId, req.query);
     res.json({ success: true, data: result });
@@ -43,7 +43,7 @@ router.get(
 
 router.get(
   '/:id',
-  requireRole('super_admin', 'admin', 'operator'),
+  requireRole('super_admin', 'admin', 'manager', 'member'),
   asyncHandler(async (req, res) => {
     const customer = await customerService.getCustomer(req.orgId, req.params.id);
     res.json({ success: true, data: { customer } });
@@ -52,7 +52,7 @@ router.get(
 
 router.get(
   '/:id/stats',
-  requireRole('super_admin', 'admin', 'operator'),
+  requireRole('super_admin', 'admin', 'manager', 'member'),
   asyncHandler(async (req, res) => {
     const stats = await customerService.getCustomerStats(req.orgId, req.params.id);
     res.json({ success: true, data: stats });
@@ -61,7 +61,7 @@ router.get(
 
 router.post(
   '/',
-  requireRole('super_admin', 'admin'),
+  requireRole('super_admin', 'admin', 'manager'),
   validate(createSchema),
   asyncHandler(async (req, res) => {
     const customer = await customerService.createCustomer(req.orgId, req.body);
@@ -71,7 +71,7 @@ router.post(
 
 router.put(
   '/:id',
-  requireRole('super_admin', 'admin'),
+  requireRole('super_admin', 'admin', 'manager'),
   validate(updateSchema),
   asyncHandler(async (req, res) => {
     const customer = await customerService.updateCustomer(req.orgId, req.params.id, req.body);
@@ -79,11 +79,20 @@ router.put(
   })
 );
 
+router.get(
+  '/:id/delete-impact',
+  requireRole('super_admin', 'admin'),
+  asyncHandler(async (req, res) => {
+    const impact = await customerService.getDeleteImpact(req.orgId, req.params.id);
+    res.json({ success: true, data: impact });
+  })
+);
+
 router.delete(
   '/:id',
   requireRole('super_admin'),
   asyncHandler(async (req, res) => {
-    await customerService.deleteCustomer(req.orgId, req.params.id);
+    await customerService.deleteCustomer(req.orgId, req.params.id, req.body || {});
     res.json({ success: true, data: { success: true } });
   })
 );
