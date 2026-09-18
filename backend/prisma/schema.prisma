@@ -54,6 +54,9 @@ model Organization {
   accessRequests  AccessRequest[]
   notifications   Notification[]
   sessions        Session[]
+  sshKeys         SshKey[]
+  credentials     Credential[]
+  keyDeployments  KeyDeployment[]
   selfServiceRegistrationEnabled Boolean @default(false) @map("self_service_registration_enabled")
 
   @@map("organizations")
@@ -97,6 +100,17 @@ model User {
   mfaEmailEnabled  Boolean   @default(false) @map("mfa_email_enabled")
   mfaBackupCodes   String[]  @default([]) @map("mfa_backup_codes") // sha256 hashes
   mfaEnrolledAt    DateTime? @map("mfa_enrolled_at")
+  // Unconfirmed TOTP secret during (re-)enrollment. Promoted to
+  // mfaTotpSecretEnc only after the user proves possession, so starting a
+  // re-enroll never invalidates a working authenticator.
+  mfaTotpPendingEnc String?  @map("mfa_totp_pending_enc") @db.Text
+  // Brute-force protection: per-account lockout.
+  failedLoginCount  Int       @default(0) @map("failed_login_count")
+  lastFailedLoginAt DateTime? @map("last_failed_login_at")
+  lockedUntil       DateTime? @map("locked_until")
+  // Access tokens issued (iat) before this instant are rejected. Bumped on
+  // password change/reset, role change, suspension and "sign out everywhere".
+  sessionsValidFrom DateTime? @map("sessions_valid_from")
 
   accessRequestsRequested AccessRequest[] @relation("AccessRequestsRequested")
   accessRequestsToReview  AccessRequest[] @relation("AccessRequestsToReview")
@@ -144,6 +158,11 @@ enum ServerProtocol {
   both
 }
 
+enum ServerAuthMode {
+  certificate
+  credential
+}
+
 enum HealthStatus {
   healthy
   unhealthy
@@ -182,6 +201,15 @@ model Server {
   rdpPasswordEncrypted   String?        @map("rdp_password_encrypted")
   rdpPasswordIv          String?        @map("rdp_password_iv")
   rdpPasswordTag         String?        @map("rdp_password_tag")
+  // How Shellius authenticates to this host. certificate = short-lived cert
+  // signed by the org CA (host must be bootstrapped). credential = a stored
+  // Keystore identity (password and/or private key) — no bootstrap needed.
+  authMode               ServerAuthMode @default(certificate) @map("auth_mode")
+  credentialId           String?        @map("credential_id")
+  // Pinned SSH host key (TOFU on first ssh2 connect; mismatch = refuse).
+  hostKeyFingerprint     String?        @map("host_key_fingerprint") // SHA256:...
+  hostKeyAlgorithm       String?        @map("host_key_algorithm")
+  hostKeyPinnedAt        DateTime?      @map("host_key_pinned_at")
   isActive               Boolean        @default(true) @map("is_active")
   // Onboarding / provisioning state. provisionStatus tracks where the server
   // is in the bootstrap lifecycle so the UI can show progress and bulk-import
@@ -196,6 +224,8 @@ model Server {
 
   organization   Organization    @relation(fields: [orgId], references: [id], onDelete: Cascade)
   customer       Customer        @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  credential     Credential?     @relation(fields: [credentialId], references: [id], onDelete: SetNull)
+  keyDeployments KeyDeployment[]
   certificates   Certificate[]
   accessRequests AccessRequest[]
   sessions       Session[]
@@ -205,6 +235,7 @@ model Server {
   @@index([healthStatus])
   @@index([agentId])
   @@index([orgId, provisionStatus])
+  @@index([credentialId])
   @@map("servers")
 }
 
@@ -217,10 +248,20 @@ model RefreshToken {
   userAgent  String?  @map("user_agent")
   expiresAt  DateTime @map("expires_at")
   createdAt  DateTime @default(now()) @map("created_at")
+  // Rotation family: every refresh token minted from one sign-in shares a
+  // familyId. Reuse of a rotated token revokes the whole family only.
+  familyId         String?   @map("family_id")
+  // When the family (sign-in) started — enforces an absolute session lifetime.
+  sessionStartedAt DateTime  @default(now()) @map("session_started_at")
+  lastUsedAt       DateTime? @map("last_used_at")
+  // Set when rotated/revoked; row kept briefly for reuse detection.
+  revokedAt        DateTime? @map("revoked_at")
+  replacedById     String?   @map("replaced_by_id")
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([userId])
+  @@index([familyId])
   @@map("refresh_tokens")
 }
 
@@ -291,6 +332,11 @@ model SsoConfig {
   defaultRole           String   @default("viewer") @map("default_role")
   defaultGroupId        String?  @map("default_group_id")
   autoProvision         Boolean  @default(true) @map("auto_provision")
+  // Email domains allowed to sign in / be provisioned via SSO. Empty = any.
+  allowedDomains        String[] @default([]) @map("allowed_domains")
+  // Only link an SSO identity to an existing account by email when the IdP
+  // asserts email_verified.
+  requireVerifiedEmail  Boolean  @default(true) @map("require_verified_email")
   isActive              Boolean  @default(true) @map("is_active")
   createdAt             DateTime @default(now()) @map("created_at")
   updatedAt             DateTime @updatedAt @map("updated_at")
@@ -550,10 +596,16 @@ model Session {
   id               String        @id @default(cuid())
   orgId            String        @map("org_id")
   userId           String        @map("user_id")
-  serverId         String        @map("server_id")
+  // Null for Quick Connect sessions to hosts that are not saved servers.
+  serverId         String?       @map("server_id")
   certificateId    String?       @map("certificate_id")
   accessRequestId  String?       @map("access_request_id")
   sessionType      SessionType   @map("session_type")
+  // certificate | credential | quick_connect
+  authMethod       String        @default("certificate") @map("auth_method")
+  targetHost       String?       @map("target_host")
+  targetPort       Int?          @map("target_port")
+  targetUser       String?       @map("target_user")
   status           SessionStatus @default(ACTIVE)
   clientIp         String?       @map("client_ip")
   userAgent        String?       @map("user_agent")
@@ -566,7 +618,7 @@ model Session {
 
   organization   Organization  @relation(fields: [orgId], references: [id], onDelete: Cascade)
   user           User          @relation(fields: [userId], references: [id], onDelete: Cascade)
-  server         Server        @relation(fields: [serverId], references: [id], onDelete: Cascade)
+  server         Server?       @relation(fields: [serverId], references: [id], onDelete: Cascade)
   certificate    Certificate?  @relation(fields: [certificateId], references: [id], onDelete: SetNull)
   accessRequest  AccessRequest? @relation(fields: [accessRequestId], references: [id], onDelete: SetNull)
 
@@ -740,4 +792,99 @@ model StorageConfig {
   updatedAt          DateTime @updatedAt @map("updated_at")
 
   @@map("storage_configs")
+}
+
+
+// ---------------------------------------------------------------------------
+// Keystore — stored SSH keys and reusable identities for hosts that are NOT
+// bootstrapped with the Shellius CA. Documented, admin-sanctioned exception to
+// the "zero static keys" principle: all secret material is AES-256-GCM
+// encrypted at rest (utils/crypto), never returned by list/get endpoints, and
+// decrypted in memory only at connect/deploy time or on an audited export.
+// ---------------------------------------------------------------------------
+
+/// A stored SSH key pair (generated by Shellius or imported).
+model SshKey {
+  id                  String   @id @default(cuid())
+  orgId               String   @map("org_id")
+  name                String
+  description         String?
+  keyType             String   @map("key_type") // ed25519 | rsa | ecdsa
+  bits                Int?
+  publicKey           String   @map("public_key") @db.Text // OpenSSH one-line format
+  privateKeyEncrypted String   @map("private_key_encrypted") @db.Text
+  passphraseEncrypted String?  @map("passphrase_encrypted") @db.Text
+  fingerprint         String   // SHA256:...
+  comment             String?
+  source              String   @default("generated") // generated | imported
+  createdById         String?  @map("created_by_id")
+  lastExportedAt      DateTime? @map("last_exported_at")
+  createdAt           DateTime @default(now()) @map("created_at")
+  updatedAt           DateTime @updatedAt @map("updated_at")
+
+  organization Organization    @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  credentials  Credential[]
+  deployments  KeyDeployment[]
+
+  @@unique([orgId, name])
+  @@index([orgId])
+  @@index([orgId, fingerprint])
+  @@map("ssh_keys")
+}
+
+/// A reusable identity (username + password and/or key) that can be attached
+/// to many servers sharing the same login.
+model Credential {
+  id                String    @id @default(cuid())
+  orgId             String    @map("org_id")
+  name              String
+  description       String?
+  username          String
+  authType          String    @map("auth_type") // password | key | key_password
+  passwordEncrypted String?   @map("password_encrypted") @db.Text
+  sshKeyId          String?   @map("ssh_key_id")
+  tags              String[]  @default([])
+  createdById       String?   @map("created_by_id")
+  lastUsedAt        DateTime? @map("last_used_at")
+  createdAt         DateTime  @default(now()) @map("created_at")
+  updatedAt         DateTime  @updatedAt @map("updated_at")
+
+  organization Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  sshKey       SshKey?      @relation(fields: [sshKeyId], references: [id], onDelete: Restrict)
+  servers      Server[]
+
+  @@unique([orgId, name])
+  @@index([orgId])
+  @@index([sshKeyId])
+  @@map("credentials")
+}
+
+/// One key push/removal against one server. Rows sharing a batchId were
+/// submitted together (bulk deploy / rotation).
+model KeyDeployment {
+  id               String    @id @default(cuid())
+  orgId            String    @map("org_id")
+  batchId          String    @map("batch_id")
+  sshKeyId         String    @map("ssh_key_id")
+  serverId         String    @map("server_id")
+  action           String    @default("deploy") // deploy | remove | rotate
+  targetUser       String    @map("target_user")
+  authMode         String    @map("auth_mode") // server | credential | certificate
+  authCredentialId String?   @map("auth_credential_id")
+  status           String    @default("pending") // pending | running | success | failed
+  error            String?
+  output           String?   @db.Text
+  deployedById     String?   @map("deployed_by_id")
+  startedAt        DateTime? @map("started_at")
+  finishedAt       DateTime? @map("finished_at")
+  createdAt        DateTime  @default(now()) @map("created_at")
+
+  organization Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  sshKey       SshKey       @relation(fields: [sshKeyId], references: [id], onDelete: Cascade)
+  server       Server       @relation(fields: [serverId], references: [id], onDelete: Cascade)
+
+  @@index([orgId, batchId])
+  @@index([sshKeyId])
+  @@index([serverId])
+  @@map("key_deployments")
 }
