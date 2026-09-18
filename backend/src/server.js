@@ -6,6 +6,7 @@ import prisma from './config/db.js';
 import redis from './config/redis.js';
 import { registerHealthCheckJob, startHealthCheckWorker } from './jobs/healthCheck.js';
 import { attachWebSocketServer } from './services/terminalService.js';
+import * as terminalHub from './services/terminalHub.js';
 import * as storageService from './services/storageService.js';
 
 const httpServer = http.createServer(app);
@@ -36,6 +37,16 @@ const server = httpServer.listen(config.port, async () => {
 
 const shutdown = async (signal) => {
   logger.info(`${signal} received — shutting down gracefully`);
+
+  // End every live terminal hub session cleanly (fans 'ended' out to
+  // attached sockets, closes ssh2, finalises recordings) so Session rows
+  // aren't left stuck ACTIVE across a restart/deploy.
+  terminalHub.stopExpiryWatcher();
+  try {
+    await terminalHub.endAll('shutdown');
+  } catch (err) {
+    logger.warn('shutdown: failed to end hub sessions cleanly', { error: err.message });
+  }
 
   server.close(async () => {
     await prisma.$disconnect();

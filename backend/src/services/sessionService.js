@@ -118,9 +118,11 @@ export async function create({
  * @param {string} sessionId
  * @param {object} [opts]
  * @param {'ENDED'|'TERMINATED'} [opts.status='ENDED']
+ * @param {object} [opts.metadataPatch] - merged into the existing Session.metadata JSON
+ *   (e.g. `{ endReason: 'expired' }`) — never overwrites the whole field.
  * @returns {Promise<object>}
  */
-export async function end(sessionId, { status = 'ENDED' } = {}) {
+export async function end(sessionId, { status = 'ENDED', metadataPatch } = {}) {
   if (!sessionId) throw new ApiError(400, 'sessionId is required');
   if (!['ENDED', 'TERMINATED'].includes(status)) {
     throw new ApiError(400, "status must be 'ENDED' or 'TERMINATED'");
@@ -132,13 +134,14 @@ export async function end(sessionId, { status = 'ENDED' } = {}) {
   const now = new Date();
   const durationSeconds = Math.floor((now.getTime() - existing.startedAt.getTime()) / 1000);
 
+  const data = { status, endedAt: now, durationSeconds };
+  if (metadataPatch && typeof metadataPatch === 'object') {
+    data.metadata = { ...(existing.metadata ?? {}), ...metadataPatch };
+  }
+
   const updated = await prisma.session.update({
     where: { id: sessionId },
-    data: {
-      status,
-      endedAt: now,
-      durationSeconds,
-    },
+    data,
     include: SESSION_INCLUDE,
   });
 

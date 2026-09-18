@@ -310,7 +310,26 @@ export async function consumeTicket(ticket, { userId, orgId }) {
     // single-use) ticket payload themselves.
     authType: payload.auth.type,
     credentialId: payload.auth.type === 'credential' ? payload.auth.credentialId : null,
+    // Raw ticket auth + the original (unresolved) host, for terminalHub's
+    // "Duplicate" flow ONLY — it keeps this encrypted in memory (never
+    // persisted, never logged) so a follow-on createTicketFromSpec() call
+    // can re-mint a single-use ticket without ever re-touching the DB/redis
+    // for the original secret. Callers other than terminalHub must not
+    // retain this.
+    rawAuth: payload.auth,
+    expectedHostKey: payload.expectedHostKey || null,
   };
+}
+
+/**
+ * Mint a fresh single-use ticket from connection details already known to
+ * the caller (terminalHub's "Duplicate" flow, reconstructed from a live
+ * session's stored connectSpec). Thin wrapper around createTicket() so every
+ * guard (role/minRole, target validation, prod guard) re-runs exactly as it
+ * would for a brand-new Quick Connect.
+ */
+export async function createTicketFromSpec(orgId, user, { host, port, username, auth, expectedHostKey }) {
+  return createTicket(orgId, user, { host, port, username, auth, expectedHostKey });
 }
 
 // ---------------------------------------------------------------------------
@@ -597,6 +616,7 @@ export default {
   getSettings,
   updateSettings,
   createTicket,
+  createTicketFromSpec,
   consumeTicket,
   saveAsServer,
   assertNotProdHost,

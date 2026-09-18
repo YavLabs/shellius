@@ -70,6 +70,11 @@ export const ACTIONS = {
     start: 'session.start',
     end: 'session.end',
     terminate: 'session.terminate',
+    attach: 'session.attach',
+    detach: 'session.detach',
+    duplicate: 'session.duplicate',
+    rename: 'session.rename',
+    close: 'session.close',
   },
   ca: {
     generate: 'ca.generate',

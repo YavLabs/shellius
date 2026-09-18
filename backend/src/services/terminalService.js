@@ -45,12 +45,14 @@ import { PassThrough } from 'stream';
 import { verifyAccessToken } from '../utils/jwt.js';
 import prisma from '../config/db.js';
 import logger from '../utils/logger.js';
+import ApiError from '../utils/ApiError.js';
 import * as accessRequestService from './accessRequestService.js';
 import * as sessionService from './sessionService.js';
 import * as rdpService from './rdpService.js';
 import * as storageService from './storageService.js';
 import * as sshConnect from './sshConnect.js';
 import * as quickConnectService from './quickConnectService.js';
+import * as hub from './terminalHub.js';
 import GuacamoleLite from 'guacamole-lite';
 
 const GUACD_HOST = process.env.GUACD_HOST || '127.0.0.1';
@@ -152,12 +154,6 @@ async function openRecordingWriter(sessionId, orgId, { rows, cols }) {
     return null;
   }
 }
-
-// ---------------------------------------------------------------------------
-// In-memory map of active connections
-// key: sessionId → { ws, ssh2Client, ssh2Stream }
-// ---------------------------------------------------------------------------
-const activeSessions = new Map();
 
 // ---------------------------------------------------------------------------
 // attachWebSocketServer
@@ -467,132 +463,172 @@ async function runSsh2Session(ws, req, { connect, pinServer, sessionMeta, rows, 
     prisma.credential.update({ where: { id: credentialIdToBump }, data: { lastUsedAt: new Date() } }).catch(() => {});
   }
 
-  sendControl(ws, {
-    type: 'connected',
-    sessionId,
-    authMethod: sessionMeta.authMethod,
-    host: sessionMeta.targetHost,
-    port: sessionMeta.targetPort,
-    username: sessionMeta.targetUser,
-  });
+  const label = sessionMeta.label || `${sessionMeta.targetUser}@${sessionMeta.targetHost}`;
 
-  if (sessionMeta.authMethod === 'quick_connect') {
-    quickConnectService
-      .recordHistory({
-        orgId,
-        userId,
-        host: sessionMeta.targetHost,
-        port: sessionMeta.targetPort,
-        username: sessionMeta.targetUser,
-        authType: sessionMeta.quickConnectAuthType,
-        credentialId: sessionMeta.quickConnectCredentialId,
-        serverId: sessionMeta.quickConnectHistoryServerId,
-        sessionId,
-        status: 'connected',
-      })
-      .catch(() => {});
-  }
-
+  // The 'connected' control frame (and Quick Connect history 'connected'
+  // record) is deliberately sent AFTER the shell is open and the hub has
+  // wired this socket for input (below) — a client that starts sending
+  // keystrokes the instant it sees 'connected' must not race the server
+  // still setting up its message listener.
   logger.info('terminalService: ssh2 session starting', {
     sessionId, orgId, userId, authMethod: sessionMeta.authMethod, host: sessionMeta.targetHost,
   });
 
-  let ended = false;
-  let recordingWriter = null;
+  // Guards the pre-shell client 'close'/'error' fallback below: once the
+  // shell() callback fires (success or failure), the hub (or the manual
+  // failure-path cleanup) owns ending the session — this listener becomes a
+  // no-op so we never double-write the Session row.
+  let shellStarted = false;
 
-  const cleanup = async (statusOverride) => {
-    if (ended) return;
-    ended = true;
-    activeSessions.delete(sessionId);
-    try { client.end(); } catch { /* ignore */ }
-
-    if (recordingWriter) {
-      recordingWriter.close();
-      const upload = await recordingWriter.waitUpload();
-      if (upload) {
-        try {
-          await prisma.session.update({ where: { id: sessionId }, data: { recordingKey: recordingWriter.recordingKey } });
-        } catch (err) {
-          logger.warn('terminalService: failed to persist recordingKey (ssh2)', { sessionId, error: err.message });
-        }
-      }
-      recordingWriter = null;
-    }
-
-    try {
-      await sessionService.end(sessionId, { status: statusOverride ?? 'ENDED' });
-    } catch (err) {
-      logger.warn('terminalService: session end write failed (ssh2)', { sessionId, error: err.message });
-    }
-  };
+  client.on('error', (err) => {
+    if (shellStarted) return;
+    logger.error('terminalService: ssh2 client error (pre-shell)', { sessionId, error: err.message });
+    sendError(ws, `SSH error: ${err.message}`);
+    safeClose(ws, 1011, 'SSH error');
+  });
+  client.on('close', () => {
+    if (shellStarted) return;
+    sessionService
+      .end(sessionId, { status: 'TERMINATED', metadataPatch: { endReason: 'error' } })
+      .catch((endErr) =>
+        logger.warn('terminalService: failed to end session after pre-shell close', { sessionId, error: endErr.message })
+      );
+  });
 
   client.shell({ term: 'xterm-256color', rows, cols }, async (err, stream) => {
+    shellStarted = true;
+
     if (err) {
       logger.error('terminalService: ssh2 shell() failed', { sessionId, error: err.message });
       sendError(ws, `Failed to open shell: ${err.message}`);
       safeClose(ws, 1011, 'Failed to open shell');
-      await cleanup('TERMINATED');
+      try {
+        await sessionService.end(sessionId, { status: 'TERMINATED', metadataPatch: { endReason: 'error' } });
+      } catch (endErr) {
+        logger.warn('terminalService: failed to end session after shell() failure', { sessionId, error: endErr.message });
+      }
+      try { client.end(); } catch { /* ignore */ }
       return;
     }
 
-    recordingWriter = await openRecordingWriter(sessionId, orgId, { rows, cols });
-    activeSessions.set(sessionId, { ws, ssh2Client: client, ssh2Stream: stream });
+    const recordingWriter = await openRecordingWriter(sessionId, orgId, { rows, cols });
 
-    stream.on('data', (chunk) => {
-      if (recordingWriter) recordingWriter.write(chunk);
-      if (ws.readyState === ws.constructor.OPEN) ws.send(chunk);
-    });
-    stream.stderr.on('data', (chunk) => {
-      if (recordingWriter) recordingWriter.write(chunk);
-      if (ws.readyState === ws.constructor.OPEN) ws.send(chunk);
+    hub.create({
+      id: sessionId,
+      orgId,
+      userId,
+      client,
+      stream,
+      rows,
+      cols,
+      recordingWriter,
+      meta: {
+        targetHost: sessionMeta.targetHost,
+        targetPort: sessionMeta.targetPort,
+        targetUser: sessionMeta.targetUser,
+        authMethod: sessionMeta.authMethod,
+        serverId: sessionMeta.serverId || null,
+        accessRequestId: sessionMeta.accessRequestId || null,
+        server: pinServer
+          ? { id: pinServer.id, displayName: pinServer.displayName, hostname: pinServer.hostname, environment: pinServer.environment }
+          : null,
+        label,
+      },
+      connectSpec: buildConnectSpec(sessionMeta),
+      accessRequestExpiresAt: sessionMeta.accessRequestExpiresAt || null,
     });
 
-    stream.on('close', () => {
-      safeClose(ws, 1000, 'ssh2 stream closed');
-      cleanup('ENDED');
-    });
-    stream.on('error', (streamErr) => {
-      logger.warn('terminalService: ssh2 stream error', { sessionId, error: streamErr.message });
-      cleanup('TERMINATED');
+    hub.addSocket(sessionId, ws);
+    wireAttachedSocket(ws, sessionId);
+
+    // Safe to tell the client it's connected — and to accept input — only
+    // now that the socket is actually wired into the hub.
+    sendControl(ws, {
+      type: 'connected',
+      sessionId,
+      authMethod: sessionMeta.authMethod,
+      host: sessionMeta.targetHost,
+      port: sessionMeta.targetPort,
+      username: sessionMeta.targetUser,
+      label,
     });
 
-    ws.on('message', (msg) => {
-      if (stream.destroyed) return;
-      if (typeof msg === 'string') {
-        let parsed;
-        try { parsed = JSON.parse(msg); } catch {
-          stream.write(msg);
-          return;
-        }
-        if (parsed && parsed.type === 'resize') {
-          const r = Math.max(1, parseInt(parsed.rows, 10) || rows);
-          const c = Math.max(1, parseInt(parsed.cols, 10) || cols);
-          try { stream.setWindow(r, c, 0, 0); } catch { /* ignore */ }
-        } else if (parsed && parsed.data !== undefined) {
-          stream.write(String(parsed.data));
-        }
-      } else {
-        stream.write(msg);
+    if (sessionMeta.authMethod === 'quick_connect') {
+      quickConnectService
+        .recordHistory({
+          orgId,
+          userId,
+          host: sessionMeta.targetHost,
+          port: sessionMeta.targetPort,
+          username: sessionMeta.targetUser,
+          authType: sessionMeta.quickConnectAuthType,
+          credentialId: sessionMeta.quickConnectCredentialId,
+          serverId: sessionMeta.quickConnectHistoryServerId,
+          sessionId,
+          status: 'connected',
+        })
+        .catch(() => {});
+    }
+  });
+}
+
+/**
+ * Build the hub's `connectSpec` (used by "Duplicate") from a runSsh2Session
+ * sessionMeta. Quick Connect carries raw auth material — the hub encrypts it
+ * at rest in memory; everything else is just IDs.
+ */
+function buildConnectSpec(sessionMeta) {
+  if (sessionMeta.authMethod === 'quick_connect') {
+    return {
+      type: 'quick_connect',
+      host: sessionMeta.targetHost,
+      port: sessionMeta.targetPort,
+      username: sessionMeta.targetUser,
+      auth: sessionMeta.quickConnectRawAuth,
+      expectedHostKey: sessionMeta.quickConnectExpectedHostKey || null,
+    };
+  }
+  if (sessionMeta.accessRequestId) {
+    return {
+      type: 'access_request',
+      requestId: sessionMeta.accessRequestId,
+      principal: sessionMeta.targetUser,
+    };
+  }
+  return null;
+}
+
+/**
+ * Wire a WebSocket that is attached to a hub session (either the initiating
+ * socket of a new session, or a reattach) — input/resize/close frames flow
+ * through the hub; socket drop = detach (session keeps running).
+ */
+function wireAttachedSocket(ws, sessionId) {
+  ws.on('message', (msg) => {
+    if (typeof msg === 'string') {
+      let parsed;
+      try { parsed = JSON.parse(msg); } catch {
+        hub.write(sessionId, msg);
+        return;
       }
-    });
-
-    ws.on('close', () => { try { stream.close(); } catch { /* ignore */ } cleanup('ENDED'); });
-    ws.on('error', (wsErr) => {
-      logger.warn('terminalService: WebSocket error (ssh2)', { sessionId, error: wsErr.message });
-      try { stream.close(); } catch { /* ignore */ }
-      cleanup('TERMINATED');
-    });
+      if (parsed && parsed.type === 'resize') {
+        hub.resize(sessionId, parsed.rows, parsed.cols);
+      } else if (parsed && parsed.type === 'close') {
+        hub.end(sessionId, 'closed').catch((err) =>
+          logger.warn('terminalService: end(closed) failed', { sessionId, error: err.message })
+        );
+      } else if (parsed && parsed.data !== undefined) {
+        hub.write(sessionId, String(parsed.data));
+      }
+    } else {
+      hub.write(sessionId, msg);
+    }
   });
 
-  client.on('error', (err) => {
-    logger.error('terminalService: ssh2 client error', { sessionId, error: err.message });
-    sendError(ws, `SSH error: ${err.message}`);
-    safeClose(ws, 1011, 'SSH error');
-    cleanup('TERMINATED');
-  });
-  client.on('close', () => {
-    // 'close' also fires on a clean end() — cleanup() is idempotent (ended guard).
-    cleanup('ENDED');
+  ws.on('close', () => { hub.detach(sessionId, ws); });
+  ws.on('error', (wsErr) => {
+    logger.warn('terminalService: WebSocket error', { sessionId, error: wsErr.message });
+    hub.detach(sessionId, ws);
   });
 }
 
@@ -610,7 +646,7 @@ async function handleConnection(ws, req) {
     return;
   }
 
-  const { token, requestId, ticket, principal: principalOverride } = query;
+  const { token, requestId, ticket, attach: attachSessionId, principal: principalOverride } = query;
   const rows = Math.max(1, parseInt(query.rows, 10) || 24);
   const cols = Math.max(1, parseInt(query.cols, 10) || 80);
 
@@ -618,8 +654,8 @@ async function handleConnection(ws, req) {
     safeClose(ws, 1008, 'Missing token');
     return;
   }
-  if (!requestId && !ticket) {
-    safeClose(ws, 1008, 'Missing requestId or ticket');
+  if (!requestId && !ticket && !attachSessionId) {
+    safeClose(ws, 1008, 'Missing requestId, ticket, or attach');
     return;
   }
 
@@ -638,6 +674,27 @@ async function handleConnection(ws, req) {
   const user = await prisma.user.findFirst({ where: { id: userId, orgId } });
   if (!user) {
     safeClose(ws, 1008, 'User not found');
+    return;
+  }
+
+  // ── Reattach path — WS re-joins a live hub session ─────────────────────
+  if (attachSessionId) {
+    let publicShape;
+    try {
+      publicShape = hub.attach(attachSessionId, ws, { userId, orgId }, { rows, cols });
+    } catch (err) {
+      if (err instanceof hub.HubError) {
+        safeClose(ws, err.wsCode, err.message);
+      } else {
+        logger.error('terminalService: attach failed', { sessionId: attachSessionId, error: err.message });
+        safeClose(ws, 1011, 'Failed to attach to session');
+      }
+      return;
+    }
+    wireAttachedSocket(ws, attachSessionId);
+    logger.info('terminalService: socket attached to hub session', {
+      sessionId: attachSessionId, orgId, userId, attachedCount: publicShape.attachedCount,
+    });
     return;
   }
 
@@ -692,6 +749,10 @@ async function handleConnection(ws, req) {
         quickConnectAuthType: connect.authType,
         quickConnectCredentialId: connect.credentialId || null,
         quickConnectHistoryServerId: historyServerId,
+        // Kept only long enough for runSsh2Session to hand it to the hub
+        // (encrypted at rest there) — for the "Duplicate" flow. Never logged.
+        quickConnectRawAuth: connect.rawAuth,
+        quickConnectExpectedHostKey: connect.expectedHostKey || null,
       },
       rows,
       cols,
@@ -751,6 +812,7 @@ async function handleConnection(ws, req) {
         targetHost: connectOpts.host,
         targetPort: connectOpts.port,
         targetUser: connectOpts.username,
+        accessRequestExpiresAt: accessRequest.expiresAt,
       },
       rows,
       cols,
@@ -806,6 +868,7 @@ async function handleConnection(ws, req) {
       targetHost: connectHost,
       targetPort: credentials.port,
       targetUser: credentials.username,
+      accessRequestExpiresAt: accessRequest.expiresAt,
     },
     rows,
     cols,
@@ -817,34 +880,24 @@ async function handleConnection(ws, req) {
 // ---------------------------------------------------------------------------
 
 /**
- * Force-close an active WebSocket/SSH session by sessionId.
- * Delegates DB update to sessionService.terminate.
+ * Force-close an active session by sessionId — SSH sessions are ended via
+ * the hub (fans 'ended' out to every attached socket, closes ssh2, finalises
+ * the recording and the Session row); RDP (and any stray DB-only ACTIVE
+ * session with no live hub entry) falls back to the old direct path.
  *
  * @param {string} sessionId
  * @param {string} byUserId
  * @returns {Promise<object>} Updated session row
  */
 export async function terminateSession(sessionId, byUserId) {
+  if (hub.has(sessionId)) {
+    const updated = await hub.end(sessionId, 'terminated', { terminatedBy: byUserId });
+    if (!updated) throw new ApiError(409, 'Session is not active');
+    return updated;
+  }
+
   // Update DB first — will throw if not ACTIVE
   const updated = await sessionService.terminate(sessionId, byUserId);
-
-  // Force-close in-memory handles (ssh2 client or RDP socket)
-  const entry = activeSessions.get(sessionId);
-  if (entry) {
-    activeSessions.delete(sessionId);
-    // ssh2 client (all SSH modes — certificate, credential, Quick Connect)
-    try {
-      if (entry.ssh2Stream) entry.ssh2Stream.close();
-    } catch { /* ignore */ }
-    try {
-      if (entry.ssh2Client) entry.ssh2Client.end();
-    } catch { /* ignore */ }
-    // RDP handle
-    try {
-      if (entry.guacdSocket) rdpService.revokeConnection(entry.guacdSocket);
-    } catch { /* ignore */ }
-    safeClose(entry.ws, 1001, 'Session terminated by administrator');
-  }
 
   // Force-close a live RDP (guacamole-lite) connection for this session.
   const rdpConn = rdpConnBySession.get(sessionId);
