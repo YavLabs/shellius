@@ -394,8 +394,26 @@ async function runSsh2Session(ws, req, { connect, pinServer, sessionMeta, rows, 
     });
     client = result.client;
   } catch (err) {
-    sendError(ws, humanizeConnectError(err, sessionMeta.authMethod, sessionMeta.targetHost));
+    const humanMsg = humanizeConnectError(err, sessionMeta.authMethod, sessionMeta.targetHost);
+    sendError(ws, humanMsg);
     safeClose(ws, 1011, 'SSH connection failed');
+    if (sessionMeta.authMethod === 'quick_connect') {
+      quickConnectService
+        .recordHistory({
+          orgId: sessionMeta.orgId,
+          userId: sessionMeta.userId,
+          host: sessionMeta.targetHost,
+          port: sessionMeta.targetPort,
+          username: sessionMeta.targetUser,
+          authType: sessionMeta.quickConnectAuthType,
+          credentialId: sessionMeta.quickConnectCredentialId,
+          serverId: sessionMeta.quickConnectHistoryServerId,
+          sessionId: null,
+          status: 'failed',
+          error: humanMsg,
+        })
+        .catch(() => {});
+    }
     return;
   }
 
@@ -457,6 +475,23 @@ async function runSsh2Session(ws, req, { connect, pinServer, sessionMeta, rows, 
     port: sessionMeta.targetPort,
     username: sessionMeta.targetUser,
   });
+
+  if (sessionMeta.authMethod === 'quick_connect') {
+    quickConnectService
+      .recordHistory({
+        orgId,
+        userId,
+        host: sessionMeta.targetHost,
+        port: sessionMeta.targetPort,
+        username: sessionMeta.targetUser,
+        authType: sessionMeta.quickConnectAuthType,
+        credentialId: sessionMeta.quickConnectCredentialId,
+        serverId: sessionMeta.quickConnectHistoryServerId,
+        sessionId,
+        status: 'connected',
+      })
+      .catch(() => {});
+  }
 
   logger.info('terminalService: ssh2 session starting', {
     sessionId, orgId, userId, authMethod: sessionMeta.authMethod, host: sessionMeta.targetHost,
@@ -634,6 +669,14 @@ async function handleConnection(ws, req) {
       },
     });
 
+    // Quick Connect history's `serverId` is a slightly stricter match than
+    // the pinning lookup above (host+port, non-prod) — it's a soft link for
+    // display only, not the actual Session.serverId.
+    const historyServerId =
+      matchedServer && matchedServer.port === connect.port && matchedServer.environment !== 'prod'
+        ? matchedServer.id
+        : null;
+
     await runSsh2Session(ws, req, {
       connect,
       pinServer: matchedServer || null,
@@ -646,6 +689,9 @@ async function handleConnection(ws, req) {
         targetHost: displayHost,
         targetPort: connect.port,
         targetUser: connect.username,
+        quickConnectAuthType: connect.authType,
+        quickConnectCredentialId: connect.credentialId || null,
+        quickConnectHistoryServerId: historyServerId,
       },
       rows,
       cols,

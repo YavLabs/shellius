@@ -113,6 +113,51 @@ router.post(
   })
 );
 
+const historyListQuerySchema = Joi.object({
+  limit: Joi.number().integer().min(1).max(100).default(10),
+});
+
+router.get(
+  '/history',
+  asyncHandler(async (req, res) => {
+    const { error, value } = historyListQuerySchema.validate(req.query, { abortEarly: false, stripUnknown: true });
+    if (error) throw new ApiError(400, error.details.map((d) => d.message).join(', '));
+    const items = await quickConnectService.listHistory(req.orgId, req.user.userId, { limit: value.limit });
+    res.json({ success: true, data: { items } });
+  })
+);
+
+router.post(
+  '/history/:id/reconnect',
+  audit('quick_connect.history.reconnect', 'QuickConnect'),
+  asyncHandler(async (req, res) => {
+    const result = await quickConnectService.reconnectFromHistory(
+      req.orgId,
+      { id: req.user.userId, role: req.user.role },
+      req.params.id
+    );
+    res.status(201).json({ success: true, data: result });
+  })
+);
+
+router.delete(
+  '/history/:id',
+  audit('quick_connect.history.delete', 'QuickConnectHistory'),
+  asyncHandler(async (req, res) => {
+    const result = await quickConnectService.deleteHistory(req.orgId, req.user.userId, req.params.id);
+    res.json({ success: true, data: result });
+  })
+);
+
+router.delete(
+  '/history',
+  audit('quick_connect.history.clear', 'QuickConnectHistory'),
+  asyncHandler(async (req, res) => {
+    const result = await quickConnectService.clearHistory(req.orgId, req.user.userId);
+    res.json({ success: true, data: result });
+  })
+);
+
 router.post(
   '/save',
   requireRole('super_admin', 'admin', 'manager'),

@@ -33,6 +33,7 @@ import { log as auditLog } from './auditService.js';
 const ROLE_RANK = { super_admin: 4, admin: 3, manager: 2, member: 1 };
 const VALID_ROLES = Object.keys(ROLE_RANK);
 const TICKET_TTL_SECONDS = 60;
+const HISTORY_RETENTION_DAYS = 7;
 
 const HOSTNAME_RE =
   /^[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(?:\.[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)*$/;
@@ -301,7 +302,15 @@ export async function consumeTicket(ticket, { userId, orgId }) {
     if (cred.sshKey?.certificate) connect.certificate = cred.sshKey.certificate;
   }
 
-  return { ...connect, displayHost: payload.host };
+  return {
+    ...connect,
+    displayHost: payload.host,
+    // Exposed so callers (terminalService quick-connect history) can record
+    // what kind of auth was used without re-parsing the (already consumed,
+    // single-use) ticket payload themselves.
+    authType: payload.auth.type,
+    credentialId: payload.auth.type === 'credential' ? payload.auth.credentialId : null,
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -429,4 +438,171 @@ export async function saveAsServer(orgId, actor, body) {
   return { server: result };
 }
 
-export default { getSettings, updateSettings, createTicket, consumeTicket, saveAsServer, assertNotProdHost };
+// ---------------------------------------------------------------------------
+// History — per-user "Recent Quick Connects" (no secrets, 7-day retention)
+// ---------------------------------------------------------------------------
+
+/**
+ * Upsert one row per (user, host, port, username) when a Quick Connect
+ * ticket is redeemed by the terminal WebSocket. `connectCount` is only
+ * incremented for an actual new session (status 'connected', i.e. the ssh2
+ * connection came up and a Session row was created) — a 'failed' call is
+ * just a status update on the existing row (or a fresh row with
+ * connectCount 0 if this host has never been reached successfully).
+ *
+ * Never pass secret material here — only ids/metadata.
+ */
+export async function recordHistory({
+  orgId, userId, host, port, username, authType, credentialId, serverId, sessionId, status, error,
+}) {
+  if (!orgId || !userId || !host || !port || !username || !authType) {
+    logger.warn('quickConnectService: recordHistory called with missing required fields — skipping');
+    return null;
+  }
+  const isNewSession = status === 'connected' && !!sessionId;
+  const lastError = status === 'failed' ? (error ? String(error).slice(0, 500) : null) : null;
+  const now = new Date();
+
+  try {
+    return await prisma.quickConnectHistory.upsert({
+      where: { userId_host_port_username: { userId, host, port, username } },
+      create: {
+        orgId,
+        userId,
+        host,
+        port,
+        username,
+        authType,
+        credentialId: credentialId || null,
+        serverId: serverId || null,
+        lastSessionId: sessionId || null,
+        lastStatus: status || 'connected',
+        lastError,
+        connectCount: isNewSession ? 1 : 0,
+        lastConnectedAt: now,
+      },
+      update: {
+        authType,
+        credentialId: credentialId || null,
+        serverId: serverId || null,
+        lastSessionId: sessionId || null,
+        lastStatus: status || 'connected',
+        lastError,
+        lastConnectedAt: now,
+        ...(isNewSession ? { connectCount: { increment: 1 } } : {}),
+      },
+    });
+  } catch (err) {
+    // History is best-effort — never let a recording failure break a live
+    // terminal session.
+    logger.warn('quickConnectService: recordHistory failed', { error: err.message });
+    return null;
+  }
+}
+
+export async function listHistory(orgId, userId, { limit = 10 } = {}) {
+  const take = Math.min(Math.max(parseInt(limit, 10) || 10, 1), 100);
+  const cutoff = new Date(Date.now() - HISTORY_RETENTION_DAYS * 24 * 60 * 60 * 1000);
+
+  const rows = await prisma.quickConnectHistory.findMany({
+    where: { orgId, userId, lastConnectedAt: { gte: cutoff } },
+    orderBy: { lastConnectedAt: 'desc' },
+    take,
+  });
+  if (rows.length === 0) return [];
+
+  const credentialIds = [...new Set(rows.map((r) => r.credentialId).filter(Boolean))];
+  const serverIds = [...new Set(rows.map((r) => r.serverId).filter(Boolean))];
+
+  const [credentials, servers] = await Promise.all([
+    credentialIds.length
+      ? prisma.credential.findMany({ where: { id: { in: credentialIds }, orgId }, select: { id: true, name: true } })
+      : [],
+    serverIds.length
+      ? prisma.server.findMany({
+          where: { id: { in: serverIds }, orgId },
+          select: { id: true, displayName: true, hostname: true, environment: true },
+        })
+      : [],
+  ]);
+  const credentialById = new Map(credentials.map((c) => [c.id, c]));
+  const serverById = new Map(servers.map((s) => [s.id, s]));
+
+  return rows.map((r) => ({
+    id: r.id,
+    host: r.host,
+    port: r.port,
+    username: r.username,
+    authType: r.authType,
+    // Gracefully handle a deleted identity/server — just null it out rather
+    // than throwing (the reference is a soft link, not an FK).
+    credential: r.credentialId ? credentialById.get(r.credentialId) || null : null,
+    server: r.serverId ? serverById.get(r.serverId) || null : null,
+    lastStatus: r.lastStatus,
+    lastError: r.lastError,
+    connectCount: r.connectCount,
+    lastConnectedAt: r.lastConnectedAt,
+    lastSessionId: r.lastSessionId,
+  }));
+}
+
+export async function deleteHistory(orgId, userId, id) {
+  const row = await prisma.quickConnectHistory.findFirst({ where: { id, orgId, userId } });
+  if (!row) throw new ApiError(404, 'Quick Connect history entry not found');
+  await prisma.quickConnectHistory.delete({ where: { id } });
+  return { id };
+}
+
+export async function clearHistory(orgId, userId) {
+  const result = await prisma.quickConnectHistory.deleteMany({ where: { orgId, userId } });
+  return { count: result.count };
+}
+
+/**
+ * Re-issue a ticket for a history entry — only possible when the original
+ * connection used a stored identity (nothing else is retained). Reuses
+ * createTicket() end to end so every existing guard (role/minRole, target
+ * guard, prod guard) re-runs exactly as it would for a fresh Quick Connect.
+ */
+export async function reconnectFromHistory(orgId, user, id) {
+  const row = await prisma.quickConnectHistory.findFirst({ where: { id, orgId, userId: user.id } });
+  if (!row) throw new ApiError(404, 'Quick Connect history entry not found');
+
+  if (row.authType !== 'credential' || !row.credentialId) {
+    throw new ApiError(
+      409,
+      'This Quick Connect used a one-off password or key that was never stored — reconnect from the Quick Connect dialog.',
+      { code: 'SECRET_REQUIRED' }
+    );
+  }
+
+  const cred = await prisma.credential.findFirst({ where: { id: row.credentialId, orgId } });
+  if (!cred) {
+    throw new ApiError(
+      409,
+      'The identity used for this connection no longer exists — reconnect from the Quick Connect dialog.',
+      { code: 'SECRET_REQUIRED' }
+    );
+  }
+
+  return createTicket(orgId, user, {
+    host: row.host,
+    port: row.port,
+    username: row.username,
+    auth: { type: 'credential', credentialId: row.credentialId },
+  });
+}
+
+export default {
+  getSettings,
+  updateSettings,
+  createTicket,
+  consumeTicket,
+  saveAsServer,
+  assertNotProdHost,
+  recordHistory,
+  listHistory,
+  deleteHistory,
+  clearHistory,
+  reconnectFromHistory,
+};

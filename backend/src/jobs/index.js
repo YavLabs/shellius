@@ -16,6 +16,10 @@ import {
   registerSessionCleanupJob,
   startSessionCleanupWorker,
 } from './sessionCleanup.js';
+import {
+  registerQuickConnectHistoryPruneJob,
+  startQuickConnectHistoryPruneWorker,
+} from './quickConnectHistoryPrune.js';
 import { seedDefaultPolicies } from './seedDefaultPolicies.js';
 import {
   startServerOnboardingWorker,
@@ -46,6 +50,9 @@ export async function startAllJobs() {
 
   await registerSessionCleanupJob();
   startSessionCleanupWorker();
+
+  await registerQuickConnectHistoryPruneJob();
+  startQuickConnectHistoryPruneWorker();
 
   // Bulk-import server onboarding (parallel) + ephemeral-credential TTL reaper.
   startServerOnboardingWorker();
