@@ -11,6 +11,17 @@ function stripRdpSecrets(server) {
   const result = { ...server };
   result.hasRdpPassword = !!result.rdpPasswordEncrypted;
   for (const f of RDP_SENSITIVE_FIELDS) delete result[f];
+  // Per-host agent token signal for the UI (ServerDetail "deprecated agent
+  // auth" notice) — never expose the raw hash itself.
+  //   'per-host' — Server.agentTokenHash is set (bootstrapped post per-host-
+  //                token change, or re-bootstrapped/--upgrade since).
+  //   'legacy'   — no per-host token yet, but the agent has successfully
+  //                authenticated before (agentLastSeen set) — the only way
+  //                that's possible without a per-host token is the global
+  //                AGENT_SHARED_SECRET fallback in middleware/agentAuth.js.
+  //   'none'     — never bootstrapped / no agent auth activity observed yet.
+  result.agentAuth = result.agentTokenHash ? 'per-host' : (result.agentLastSeen ? 'legacy' : 'none');
+  delete result.agentTokenHash;
   return result;
 }
 

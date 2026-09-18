@@ -375,6 +375,26 @@ function truncate(str) {
 }
 
 /**
+ * Defence-in-depth for KeyDeployment.output/error: the sudo password is only
+ * ever sent over the exec channel's stdin (never placed on the command
+ * line — see buildDeployCommand), so it should never appear in remote
+ * stdout/stderr. But sudo prompts, shell tracing (`set -x` in a profile
+ * script we don't control), or an unexpected remote error message could
+ * still echo it back. Strip any literal occurrence of the known secrets
+ * used for this deployment attempt before the text is ever persisted.
+ */
+function redactKnownSecrets(text, secrets = []) {
+  if (!text) return text;
+  let out = text;
+  for (const secret of secrets) {
+    if (typeof secret === 'string' && secret.length >= 4) {
+      out = out.split(secret).join('[REDACTED]');
+    }
+  }
+  return out;
+}
+
+/**
  * Run one command against a server via ssh2 (credential / server-credential
  * auth) or by shelling out to the real `ssh` client with an ephemeral CA
  * cert (certificate-mode servers — ssh2 cannot do OpenSSH cert auth, see
@@ -531,6 +551,20 @@ export async function processDeployment(deploymentId) {
   const meta = await loadBatchMeta(row.batchId);
   const useSudo = !!meta.useSudo;
 
+  // Resolved once, purely to know which literal secret values (sudo
+  // password / SSH login password / passphrase) to strip from stored
+  // output — never logged or persisted itself. Best-effort: if it fails,
+  // deployment proceeds as normal via execDeployStep's own resolution.
+  const secretsToRedact = [];
+  try {
+    const authForRedaction = await resolveDeployAuth(row, server);
+    if (authForRedaction?.sudoPassword) secretsToRedact.push(authForRedaction.sudoPassword);
+    if (authForRedaction?.authOpts?.password) secretsToRedact.push(authForRedaction.authOpts.password);
+    if (authForRedaction?.authOpts?.passphrase) secretsToRedact.push(authForRedaction.authOpts.passphrase);
+  } catch {
+    /* best-effort — see comment above */
+  }
+
   try {
     let output = '';
 
@@ -563,7 +597,7 @@ export async function processDeployment(deploymentId) {
       if (res.code !== 0) throw new Error(`Command exited with code ${res.code}: ${res.stderr || res.stdout}`);
     }
 
-    await finishRow(row, 'success', { output });
+    await finishRow(row, 'success', { output: redactKnownSecrets(output, secretsToRedact) });
 
     await auditLog({
       orgId: row.orgId,
@@ -578,17 +612,18 @@ export async function processDeployment(deploymentId) {
       await maybeFinalizeRotateBatch(row.batchId, row.orgId, meta);
     }
   } catch (err) {
+    const safeErrorMessage = redactKnownSecrets(err.message, secretsToRedact);
     logger.warn('keyDeploymentService: deployment failed', {
-      deploymentId, serverId: row.serverId, batchId: row.batchId, error: err.message,
+      deploymentId, serverId: row.serverId, batchId: row.batchId, error: safeErrorMessage,
     });
-    await finishRow(row, 'failed', { error: err.message });
+    await finishRow(row, 'failed', { error: safeErrorMessage });
     await auditLog({
       orgId: row.orgId,
       actorId: row.deployedById,
       action: `keystore.deployment.${row.action}.failed`,
       resourceType: 'Server',
       resourceId: row.serverId,
-      metadata: { deploymentId: row.id, batchId: row.batchId, error: err.message },
+      metadata: { deploymentId: row.id, batchId: row.batchId, error: safeErrorMessage },
     });
   }
 }

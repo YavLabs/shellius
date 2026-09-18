@@ -60,6 +60,12 @@ const config = {
 
   encryption: {
     key: process.env.SERVER_ENCRYPTION_KEY || '',
+    // Comma-separated list of previously-active keys, kept around so
+    // decrypt() can still read rows encrypted before a key rotation.
+    previousKeys: (process.env.SERVER_ENCRYPTION_KEY_PREVIOUS || '')
+      .split(',')
+      .map((k) => k.trim())
+      .filter(Boolean),
   },
 
   bcryptRounds: 12,
@@ -94,15 +100,30 @@ if (config.nodeEnv === 'production') {
         'Set both to strong, unique random values.'
     );
   }
-  if (!config.encryption.key) {
-    // eslint-disable-next-line no-console
-    console.warn(
-      '[config] WARNING: SERVER_ENCRYPTION_KEY is not set in production. ' +
-        'A fallback key derived from a constant will be used, which is NOT secure ' +
-        'for encrypted-at-rest secrets (CA keys, SSO client secrets, MFA secrets). ' +
-        'Set SERVER_ENCRYPTION_KEY — changing it later will orphan already-encrypted data.'
+  // SERVER_ENCRYPTION_KEY must be set and strong: either a 64-char hex
+  // string (32 raw bytes) or any string of at least 32 characters (hashed
+  // with SHA-256 to derive the AES-256 key). This is a hard requirement in
+  // production — every encrypted-at-rest secret (CA private key, SSH keys,
+  // credentials, SSO client secrets, MFA secrets, RDP passwords) depends on
+  // it, and the insecure dev fallback key is a publicly-known constant.
+  const encKey = config.encryption.key;
+  const isHex64 = /^[0-9a-fA-F]{64}$/.test(encKey);
+  const isStrongEncryptionKey = !!encKey && (isHex64 || encKey.length >= 32);
+  if (!isStrongEncryptionKey) {
+    throw new Error(
+      'Refusing to start in production without a strong SERVER_ENCRYPTION_KEY. ' +
+        'Set it to a 64-character hex string (32 random bytes) or a random string ' +
+        'of at least 32 characters. Generate one with: ' +
+        "node -e \"console.log(require('crypto').randomBytes(32).toString('hex'))\""
     );
   }
+} else if (!config.encryption.key) {
+  // eslint-disable-next-line no-console
+  console.warn(
+    '[config] WARNING: SERVER_ENCRYPTION_KEY is not set. Falling back to an insecure, ' +
+      'publicly-known development key for encryption. This is only acceptable outside ' +
+      'production — set SERVER_ENCRYPTION_KEY in any environment with real data.'
+  );
 }
 
 export default config;

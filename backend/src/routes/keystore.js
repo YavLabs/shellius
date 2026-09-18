@@ -9,6 +9,7 @@ import requireRole from '../middleware/rbac.js';
 import audit from '../middleware/audit.js';
 import * as keystoreService from '../services/keystoreService.js';
 import * as keyDeploymentService from '../services/keyDeploymentService.js';
+import { userRateLimiter } from '../middleware/rateLimiter.js';
 
 const router = express.Router();
 
@@ -97,9 +98,14 @@ router.post(
   })
 );
 
+const inspectLimiter = userRateLimiter({ keyPrefix: 'rl:key-inspect', windowSeconds: 60, max: 30 });
+const importLimiter = userRateLimiter({ keyPrefix: 'rl:key-import', windowSeconds: 60, max: 30 });
+const credentialTestLimiter = userRateLimiter({ keyPrefix: 'rl:credential-test', windowSeconds: 60, max: 30 });
+
 router.post(
   '/keys/inspect',
   requireRole(...VIEW_ROLES),
+  inspectLimiter,
   validate(inspectKeySchema),
   asyncHandler(async (req, res) => {
     const result = await keystoreService.inspectKey(req.body);
@@ -110,6 +116,7 @@ router.post(
 router.post(
   '/keys/import',
   requireRole(...ADMIN_ROLES),
+  importLimiter,
   audit('keystore.key.import', 'SshKey'),
   validate(importKeySchema),
   asyncHandler(async (req, res) => {
@@ -254,6 +261,7 @@ router.delete(
 router.post(
   '/credentials/:id/test',
   requireRole(...VIEW_ROLES),
+  credentialTestLimiter,
   audit('keystore.credential.test', 'Credential'),
   validate(testCredentialSchema),
   asyncHandler(async (req, res) => {

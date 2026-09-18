@@ -436,8 +436,8 @@ router.post(
     });
 
     // A password reset is a credential-compromise-recovery action — kill
-    // every other outstanding session.
-    await authService.revokeAllSessions(updatedUser.id);
+    // every other outstanding session (and any live terminal sessions).
+    await authService.revokeAllSessions(updatedUser.id, updatedUser.orgId, 'password_reset');
 
     await auditLog({
       orgId: updatedUser.orgId,

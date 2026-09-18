@@ -114,6 +114,24 @@ function connectTerminalWs(query) {
   return ws;
 }
 
+/**
+ * WS URLs carry only a single-use, 30s ws-ticket (`t=`) — never the access
+ * JWT (B-6/B-7 hardening). Mint one via the authenticated REST endpoint,
+ * bound to the calling user + the intended connect params, then open the
+ * socket with just `t=<ticket>&cols&rows`.
+ */
+async function connectTerminalWsWithTicket(token, params, { cols = 80, rows = 24 } = {}) {
+  const { status, json } = await api('POST', '/api/terminal/ws-ticket', {
+    token,
+    body: { purpose: 'ssh', params },
+  });
+  if (status !== 201 || !json?.success) {
+    throw new Error(`ws-ticket mint failed: ${status} ${JSON.stringify(json)}`);
+  }
+  const wsTicket = json.data.ticket;
+  return connectTerminalWs(`t=${encodeURIComponent(wsTicket)}&cols=${cols}&rows=${rows}`);
+}
+
 /** Wait for the first control frame matching `type`, or a close event. Times out. */
 function waitForFrame(ws, type, timeoutMs = 15000) {
   return new Promise((resolve, reject) => {
@@ -252,7 +270,7 @@ async function main() {
 
   await step('Quick Connect: WS connects and shell opens', async () => {
     const ticket = await mintTicket(admin.accessToken);
-    ws = connectTerminalWs(`token=${encodeURIComponent(admin.accessToken)}&ticket=${encodeURIComponent(ticket)}&cols=80&rows=24`);
+    ws = await connectTerminalWsWithTicket(admin.accessToken, { ticket });
     const connected = await waitForFrame(ws, 'connected');
     assert(connected.sessionId, 'connected frame missing sessionId');
     sessionId = connected.sessionId;
@@ -281,7 +299,7 @@ async function main() {
 
   let ws2;
   await step('reattach: replay contains marker1', async () => {
-    ws2 = connectTerminalWs(`token=${encodeURIComponent(admin.accessToken)}&attach=${encodeURIComponent(sessionId)}&cols=80&rows=24`);
+    ws2 = await connectTerminalWsWithTicket(admin.accessToken, { attach: sessionId });
     // Listen for both BEFORE anything arrives: the replay follows the
     // 'attached' frame immediately and often lands in the same read.
     const attachedP = waitForFrame(ws2, 'attached');
@@ -300,13 +318,13 @@ async function main() {
   });
 
   await step('a second user (different owner) cannot attach — 4403/4404', async () => {
-    const wsOther = connectTerminalWs(`token=${encodeURIComponent(other.accessToken)}&attach=${encodeURIComponent(sessionId)}&cols=80&rows=24`);
+    const wsOther = await connectTerminalWsWithTicket(other.accessToken, { attach: sessionId });
     const { code } = await waitForClose(wsOther);
     assert(code === 4403 || code === 4404, `expected close code 4403/4404, got ${code}`);
   });
 
   await step('attaching a bogus session id fails with 4404', async () => {
-    const wsBogus = connectTerminalWs(`token=${encodeURIComponent(admin.accessToken)}&attach=does-not-exist&cols=80&rows=24`);
+    const wsBogus = await connectTerminalWsWithTicket(admin.accessToken, { attach: 'does-not-exist' });
     const { code } = await waitForClose(wsBogus);
     assert(code === 4404, `expected close code 4404, got ${code}`);
   });
@@ -319,7 +337,7 @@ async function main() {
     const { ticket } = json.data.connect;
     assert(ticket, 'duplicate did not return a ticket for a quick_connect session');
 
-    wsDup = connectTerminalWs(`token=${encodeURIComponent(admin.accessToken)}&ticket=${encodeURIComponent(ticket)}&cols=80&rows=24`);
+    wsDup = await connectTerminalWsWithTicket(admin.accessToken, { ticket });
     const connected = await waitForFrame(wsDup, 'connected');
     dupSessionId = connected.sessionId;
     assert(dupSessionId && dupSessionId !== sessionId, 'duplicate session should have a different id');

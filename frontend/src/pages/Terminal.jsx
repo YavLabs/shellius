@@ -149,7 +149,7 @@ function Terminal() {
               <span className="text-sm font-semibold text-foreground">{serverName}</span>
               {environment && <EnvironmentBadge environment={environment} />}
               {isRdp && <Badge tone="info">RDP</Badge>}
-              {ticket && <Badge tone="warning" icon={Zap}>Quick Connect</Badge>}
+              {ticket && <Badge tone="warning" icon={Zap}>Quick connect</Badge>}
               {attach && <Badge tone="accent">Re-attached</Badge>}
               {userName && (
                 <>

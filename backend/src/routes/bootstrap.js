@@ -11,7 +11,7 @@
  *   2. User runs the one-liner on the target host. The one-liner pipes
  *      GET /api/bootstrap/install.sh?token=... (or install.ps1) to the
  *      appropriate shell, which installs the CA pub key, the agent
- *      shared secret, the check-principals script, and updates sshd_config.
+ *      per-host agent token, the check-principals script, and updates sshd_config.
  *
  * The install endpoints are public (no Bearer auth) but require a valid
  * bootstrap JWT in the ?token query parameter. The JWT binds the script
@@ -29,6 +29,8 @@ import requireRole from '../middleware/rbac.js';
 import config from '../config/index.js';
 import prisma from '../config/db.js';
 import * as caService from '../services/caService.js';
+import { generateAgentToken } from '../utils/agentToken.js';
+import logger from '../utils/logger.js';
 
 const router = express.Router();
 
@@ -64,6 +66,27 @@ function getPublicBaseUrl(req) {
   return `${proto}://${host}`;
 }
 
+/**
+ * Mint a fresh per-host agent token for a server and persist only its hash.
+ * Called every time an install script is actually generated (install.sh /
+ * install.ps1 GET) — including on --upgrade and on re-runs, which is how
+ * this credential "rotates": the old token's hash is overwritten, so the
+ * previous plaintext (if ever exfiltrated) stops working immediately.
+ * Returns the ONE-TIME plaintext token to embed in the script. Never log it.
+ *
+ * @param {string} serverId
+ * @returns {Promise<string>} plaintext agent token (shag_...)
+ */
+async function mintAgentToken(serverId) {
+  const { token, hash } = generateAgentToken();
+  await prisma.server.update({
+    where: { id: serverId },
+    data: { agentTokenHash: hash, agentTokenIssuedAt: new Date() },
+  });
+  logger.info('bootstrap: minted per-host agent token', { serverId });
+  return token;
+}
+
 // ---------------------------------------------------------------------------
 // POST /api/bootstrap/token — authenticated
 // ---------------------------------------------------------------------------
@@ -84,10 +107,6 @@ router.post(
       select: { id: true, hostname: true, osType: true, sshUser: true, protocol: true },
     });
     if (!server) throw new ApiError(404, 'Server not found');
-
-    if (!process.env.AGENT_SHARED_SECRET) {
-      throw new ApiError(500, 'AGENT_SHARED_SECRET is not configured on the backend');
-    }
 
     // Auto-provision the org's SSH CA on first bootstrap if missing — the
     // install script needs the CA public key baked in. Without this, the user
@@ -151,19 +170,18 @@ router.get(
 
     const server = await prisma.server.findFirst({
       where: { id: payload.serverId, orgId: payload.orgId },
-      select: { hostname: true, sshUser: true },
+      select: { id: true, hostname: true, sshUser: true },
     });
     if (!server) throw new ApiError(404, 'Server not found');
 
     const caPubKey = await caService.getPublicKey(payload.orgId);
-    const agentSecret = process.env.AGENT_SHARED_SECRET;
-    if (!agentSecret) throw new ApiError(500, 'AGENT_SHARED_SECRET not configured');
+    const agentToken = await mintAgentToken(server.id);
 
     const apiUrl = getPublicBaseUrl(req);
 
     const script = buildUnixInstallScript({
       apiUrl,
-      agentSecret,
+      agentToken,
       caPubKey: caPubKey.trim(),
       hostname: server.hostname,
       sshUser: server.sshUser || 'root',
@@ -196,19 +214,18 @@ router.get(
 
     const server = await prisma.server.findFirst({
       where: { id: payload.serverId, orgId: payload.orgId },
-      select: { hostname: true, sshUser: true, protocol: true },
+      select: { id: true, hostname: true, sshUser: true, protocol: true },
     });
     if (!server) throw new ApiError(404, 'Server not found');
 
     const caPubKey = await caService.getPublicKey(payload.orgId);
-    const agentSecret = process.env.AGENT_SHARED_SECRET;
-    if (!agentSecret) throw new ApiError(500, 'AGENT_SHARED_SECRET not configured');
+    const agentToken = await mintAgentToken(server.id);
 
     const apiUrl = getPublicBaseUrl(req);
 
     const script = buildWindowsInstallScript({
       apiUrl,
-      agentSecret,
+      agentToken,
       caPubKey: caPubKey.trim(),
       hostname: server.hostname,
       protocol: server.protocol,
@@ -319,7 +336,7 @@ function shEscape(value) {
   return String(value).replace(/'/g, "'\\''");
 }
 
-function buildUnixInstallScript({ apiUrl, agentSecret, caPubKey, hostname, sshUser, serverId, orgId }) {
+function buildUnixInstallScript({ apiUrl, agentToken, caPubKey, hostname, sshUser, serverId, orgId }) {
   // Notes for maintainers:
   // - Avoid heredocs where possible — paste-mangling has bitten us before.
   //   We use printf streams (one printf per line) for every file write so the
@@ -382,7 +399,7 @@ JIT_LOG=/var/log/shellius-jit.log
 
 # Encoded payloads — base64 to bypass heredoc/quoting hazards entirely.
 CA_PUB_B64='${Buffer.from(caPubKey + '\n', 'utf8').toString('base64')}'
-AGENT_SECRET_B64='${Buffer.from(agentSecret + '\n', 'utf8').toString('base64')}'
+AGENT_SECRET_B64='${Buffer.from(agentToken + '\n', 'utf8').toString('base64')}'
 
 # ---------------------------------------------------------------------------
 # 0. Prerequisites — jq and acl tools (Linux only; skip on macOS)
@@ -441,26 +458,34 @@ fi
 
 # ---------------------------------------------------------------------------
 # 2. Agent token + directory perms
+#
+# Unlike CA trust (step 1), this step ALWAYS runs — including on --upgrade —
+# because --upgrade is precisely how a per-host token gets minted/rotated for
+# a host that was bootstrapped before this change (or whose token needs
+# rotating). Every script generation (GET /api/bootstrap/install.sh) mints a
+# fresh token server-side and overwrites Server.agentTokenHash, so the value
+# baked into THIS script invalidates whatever token was written here before.
 # ---------------------------------------------------------------------------
-if [ "\$UPGRADE_ONLY" = "0" ]; then
-  echo "[shellius] [2/12] Writing agent shared secret → $AGENT_TOKEN_PATH"
-  install -d "$AGENT_DIR"
-  # Force mode 755 even if the directory existed from an earlier run.
-  # 'install -d -m 755' only applies the mode on creation; a previously-created
-  # 750 directory would silently block 'nobody' from chdir-ing in.
-  chmod 755 "$AGENT_DIR"
-  chown root:0 "$AGENT_DIR" 2>/dev/null || chown root:wheel "$AGENT_DIR" 2>/dev/null || true
-  echo "$AGENT_SECRET_B64" | base64 -d > "$AGENT_TOKEN_PATH"
-  # sshd's AuthorizedPrincipalsCommand MUST run as an unprivileged user
-  # ('nobody') per OpenSSH security policy. The check-principals script reads
-  # this token to call /api/certificates/verify, so it must be readable by that
-  # user. The token only authorizes read-only cert verification — world-readable
-  # on the host is an acceptable trade-off vs. complex per-distro group setups.
-  chmod 644 "$AGENT_TOKEN_PATH"
-  chown root:0 "$AGENT_TOKEN_PATH" 2>/dev/null || chown root:wheel "$AGENT_TOKEN_PATH" 2>/dev/null || true
-else
-  echo "[shellius] [2/12] Skipping agent token (--upgrade)"
-fi
+echo "[shellius] [2/12] Writing agent token → $AGENT_TOKEN_PATH"
+install -d "$AGENT_DIR"
+# Force mode 755 even if the directory existed from an earlier run.
+# 'install -d -m 755' only applies the mode on creation; a previously-created
+# 750 directory would silently block 'nobody' from chdir-ing in.
+chmod 755 "$AGENT_DIR"
+chown root:0 "$AGENT_DIR" 2>/dev/null || chown root:wheel "$AGENT_DIR" 2>/dev/null || true
+echo "$AGENT_SECRET_B64" | base64 -d > "$AGENT_TOKEN_PATH"
+# sshd's AuthorizedPrincipalsCommand MUST run as an unprivileged user
+# ('nobody') per OpenSSH security policy, so check-principals — which reads
+# this token to call /api/certificates/verify — must be able to read it too.
+# We keep the file world-readable (644) rather than chasing a dedicated
+# per-distro group for 'nobody': this token is per-host and read-only (cert
+# verification + heartbeat), so a local read of it only lets an attacker who
+# already has host-local access impersonate THIS host's agent — it can no
+# longer authenticate against any OTHER host or org's certificates (that's
+# the actual fix here; see certificateService.verify's host-binding check).
+# world-readable is therefore an acceptable, bounded trade-off.
+chmod 644 "$AGENT_TOKEN_PATH"
+chown root:0 "$AGENT_TOKEN_PATH" 2>/dev/null || chown root:wheel "$AGENT_TOKEN_PATH" 2>/dev/null || true
 
 # ---------------------------------------------------------------------------
 # 3. JIT working directories
@@ -1061,6 +1086,7 @@ echo "[shellius]   Host:              ${hostname}"
 if [ "\$UPGRADE_ONLY" = "0" ]; then
   echo "[shellius]   CA trust:          $CA_PUB_PATH"
 fi
+echo "[shellius]   Agent token:       $AGENT_TOKEN_PATH (rotated this run)"
 echo "[shellius]   Check script:      $CHECK_PRINCIPALS_PATH"
 echo "[shellius]   JIT lease dir:     $JIT_DIR"
 echo "[shellius]   JIT log:           $JIT_LOG"
@@ -1251,7 +1277,7 @@ echo "[shellius]     - any other Include directive or drop-in"
 `;
 }
 
-function buildWindowsInstallScript({ apiUrl, agentSecret, caPubKey, hostname, protocol }) {
+function buildWindowsInstallScript({ apiUrl, agentToken, caPubKey, hostname, protocol }) {
   // For RDP-only servers, there's nothing to do on the host — Shellius injects
   // credentials via Guacamole. We still emit a friendly message.
   if (protocol === 'rdp') {
@@ -1306,7 +1332,7 @@ ${caPubKey}
 [System.IO.File]::WriteAllText($caPubPath, $caPub, [System.Text.UTF8Encoding]::new($false))
 
 $agentToken = @'
-${agentSecret}
+${agentToken}
 '@
 [System.IO.File]::WriteAllText($tokenPath, $agentToken, [System.Text.UTF8Encoding]::new($false))
 

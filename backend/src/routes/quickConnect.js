@@ -8,8 +8,11 @@ import tenant from '../middleware/tenant.js';
 import requireRole from '../middleware/rbac.js';
 import audit from '../middleware/audit.js';
 import * as quickConnectService from '../services/quickConnectService.js';
+import { userRateLimiter } from '../middleware/rateLimiter.js';
 
 const router = express.Router();
+
+const ticketsLimiter = userRateLimiter({ keyPrefix: 'rl:qc-ticket', windowSeconds: 60, max: 30 });
 
 const validate = (schema) => (req, res, next) => {
   const { error, value } = schema.validate(req.body, { abortEarly: false, stripUnknown: true });
@@ -101,6 +104,7 @@ router.put(
 
 router.post(
   '/tickets',
+  ticketsLimiter,
   audit('quick_connect.ticket', 'QuickConnect'),
   validate(ticketSchema),
   asyncHandler(async (req, res) => {

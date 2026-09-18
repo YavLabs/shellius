@@ -18,3 +18,10 @@ export const renameTerminalSession = (id, label) =>
 
 export const closeTerminalSession = (id) =>
   api.post(`/terminal/sessions/${id}/close`).then((r) => r.data?.data);
+
+// Mint a single-use, ~30s WebSocket connect ticket — the access JWT never
+// appears in a WS URL (B-6/B-7 hardening). `purpose` is 'ssh' (RDP keeps its
+// own short-lived Guacamole gateway token, sent over the tunnel, not a URL).
+// Returns { ticket, expiresIn }.
+export const requestWsTicket = (purpose, params) =>
+  api.post('/terminal/ws-ticket', { purpose, params }).then((r) => r.data?.data);

@@ -616,6 +616,33 @@ startExpiryWatcher();
 // endAll — graceful shutdown
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// endAllForUser — kill every live hub (SSH) session belonging to a user,
+// e.g. on suspend/deactivate/delete/role-change/revoke-sessions/password
+// change/reset. Scoped to orgId when provided (defense in depth — userId is
+// already globally unique). Does NOT touch RDP sessions (those aren't
+// tracked in this module) — see terminalService.endAllSessionsForUser.
+// ---------------------------------------------------------------------------
+
+export async function endAllForUser(userId, orgId, reason = 'revoked') {
+  const ids = [];
+  for (const rec of sessions.values()) {
+    if (rec.ended) continue;
+    if (rec.userId !== userId) continue;
+    if (orgId && rec.orgId !== orgId) continue;
+    ids.push(rec.id);
+  }
+  await Promise.all(
+    ids.map((id) =>
+      end(id, reason).catch((err) => logger.warn('terminalHub: endAllForUser failed', { sessionId: id, error: err.message }))
+    )
+  );
+  if (ids.length) {
+    logger.info('terminalHub: ended all sessions for user', { userId, orgId, reason, count: ids.length });
+  }
+  return ids.length;
+}
+
 export async function endAll(reason) {
   const ids = [...sessions.keys()];
   await Promise.all(
@@ -641,6 +668,7 @@ export default {
   getPublic,
   getConnectSpec,
   list,
+  endAllForUser,
   startExpiryWatcher,
   stopExpiryWatcher,
   endAll,

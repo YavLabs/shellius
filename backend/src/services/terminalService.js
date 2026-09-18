@@ -6,20 +6,30 @@
  * via sshConnect.connectSsh() — see sshConnect.js for how OpenSSH
  * user-certificate auth is made to work correctly on ssh2.
  *
- * Upgrade paths:
- *   GET /api/terminal/ssh?token=<JWT>&requestId=<id>[&cols&rows][&principal=]
+ * Upgrade paths (all take `?t=<wsTicket>&cols&rows` — a single-use, 30s
+ * ticket minted by an authenticated `POST /api/terminal/ws-ticket`; see
+ * routes/terminal.js and wsTicketService.js. The access JWT is NEVER in a
+ * WebSocket URL — B-6/B-7 hardening):
+ *   GET /api/terminal/ssh?t=<ticket>  (ticket params: { requestId, principal? })
  *     - certificate-mode servers: generateSshCredentials() issues an
  *       ephemeral Ed25519 key + CA-signed cert per connection; we connect
  *       via ssh2 with { privateKey, certificate }.
  *     - credential-mode (Keystore) servers: connects via ssh2 using the
  *       server's stored identity (sshConnect.resolveServerAuth), which may
  *       itself carry a certificate (imported key with SshKey.certificate).
- *   GET /api/terminal/ssh?token=<JWT>&ticket=<quickConnectTicket>[&cols&rows]
- *     - Quick Connect: consumes a single-use ticket (quickConnectService.js)
- *       and connects via ssh2 with the ad-hoc auth material it carries.
+ *   GET /api/terminal/ssh?t=<ticket>  (ticket params: { ticket: quickConnectTicket })
+ *     - Quick Connect: consumes a single-use Quick Connect ticket (a second,
+ *       independent single-use secret — quickConnectService.js) and connects
+ *       via ssh2 with the ad-hoc auth material it carries.
+ *   GET /api/terminal/ssh?t=<ticket>  (ticket params: { attach: sessionId })
+ *     - attach to a live hub session.
  *
  * Security:
- *   - JWT verified before upgrade is accepted
+ *   - ws-ticket verified (single-use, 30s, bound to userId+orgId+purpose)
+ *     before upgrade is accepted; caller is then re-checked live (status,
+ *     sessionsValidFrom) exactly like middleware/auth.js.
+ *   - Origin header checked against the configured public origin(s) before
+ *     the upgrade is accepted (see attachWebSocketServer).
  *   - Certificate path: access request must be APPROVED and not expired;
  *     generateSshCredentials is called per-connection (ephemeral Ed25519 +
  *     CA cert); the private key string reference is dropped after use (best
@@ -42,8 +52,8 @@ import { WebSocketServer } from 'ws';
 import { URL } from 'url';
 import { PassThrough } from 'stream';
 
-import { verifyAccessToken } from '../utils/jwt.js';
 import prisma from '../config/db.js';
+import config from '../config/index.js';
 import logger from '../utils/logger.js';
 import ApiError from '../utils/ApiError.js';
 import * as accessRequestService from './accessRequestService.js';
@@ -52,11 +62,56 @@ import * as rdpService from './rdpService.js';
 import * as storageService from './storageService.js';
 import * as sshConnect from './sshConnect.js';
 import * as quickConnectService from './quickConnectService.js';
+import * as wsTicketService from './wsTicketService.js';
 import * as hub from './terminalHub.js';
 import GuacamoleLite from 'guacamole-lite';
 
 const GUACD_HOST = process.env.GUACD_HOST || '127.0.0.1';
 const GUACD_PORT = parseInt(process.env.GUACD_PORT, 10) || 4822;
+
+// ---------------------------------------------------------------------------
+// Origin allowlist — defense in depth alongside the ws-ticket (B-6/B-7). A
+// WebSocket upgrade from a browser always carries an Origin header; we
+// reject any *mismatched* one before the upgrade completes. Missing Origin
+// (non-browser clients: TUI, e2e/test scripts, health checks) is allowed —
+// the ws-ticket is the actual authentication control here, this only stops
+// a malicious page in the browser from opening a cross-origin WS with a
+// leaked ticket.
+// ---------------------------------------------------------------------------
+
+// Production: only the configured public origin(s). The Vite dev origins are
+// allowed only outside production.
+const DEV_WS_ORIGINS = ['http://localhost:5173', 'http://127.0.0.1:5173'];
+function originOf(url) {
+  try {
+    return new URL(url).origin;
+  } catch {
+    return null;
+  }
+}
+const ALLOWED_WS_ORIGINS = new Set(
+  [
+    ...String(config.corsOrigin || '').split(',').map((o) => originOf(o.trim())),
+    originOf(config.publicBaseUrl),
+    originOf(config.frontendUrl),
+    ...(config.nodeEnv === 'production' ? [] : DEV_WS_ORIGINS),
+  ].filter(Boolean)
+);
+
+function isAllowedOrigin(req) {
+  const origin = req.headers.origin;
+  if (!origin) return true;
+  return ALLOWED_WS_ORIGINS.has(origin);
+}
+
+function rejectUpgrade(socket, status, message) {
+  try {
+    socket.write(`HTTP/1.1 ${status} ${message}\r\nConnection: close\r\n\r\n`);
+  } catch {
+    /* ignore */
+  }
+  socket.destroy();
+}
 
 // ---------------------------------------------------------------------------
 // Recording helpers
@@ -182,6 +237,20 @@ export function attachWebSocketServer(httpServer) {
       pathname = new URL(req.url, 'http://localhost').pathname;
     } catch {
       socket.destroy();
+      return;
+    }
+
+    if (pathname !== '/api/terminal/ssh' && pathname !== '/api/terminal/rdp') {
+      socket.destroy();
+      return;
+    }
+
+    if (!isAllowedOrigin(req)) {
+      logger.warn('terminalService: rejected WS upgrade — Origin not allowed', {
+        pathname,
+        origin: req.headers.origin,
+      });
+      rejectUpgrade(socket, 403, 'Forbidden');
       return;
     }
 
@@ -656,36 +725,54 @@ async function handleConnection(ws, req) {
     return;
   }
 
-  const { token, requestId, ticket, attach: attachSessionId, principal: principalOverride } = query;
+  const { t: wsTicket } = query;
   const rows = Math.max(1, parseInt(query.rows, 10) || 24);
   const cols = Math.max(1, parseInt(query.cols, 10) || 80);
 
-  if (!token) {
-    safeClose(ws, 1008, 'Missing token');
+  if (!wsTicket) {
+    safeClose(ws, 1008, 'Missing connection ticket');
     return;
   }
+
+  // ── 2. Consume the single-use, 30s ws-ticket — see routes/terminal.js
+  // POST /ws-ticket and services/wsTicketService.js. This is the ONLY thing
+  // that authenticates this upgrade; the long-lived access JWT never
+  // appears in a WebSocket URL (B-6/B-7 hardening).
+  let ticketPayload;
+  try {
+    ticketPayload = await wsTicketService.consume(wsTicket, 'ssh');
+  } catch {
+    safeClose(ws, 4401, 'Invalid or expired connection ticket');
+    return;
+  }
+
+  const { userId, orgId, params } = ticketPayload;
+  const { requestId, ticket, attach: attachSessionId, principal: principalOverride } = params || {};
+
   if (!requestId && !ticket && !attachSessionId) {
     safeClose(ws, 1008, 'Missing requestId, ticket, or attach');
     return;
   }
 
-  // ── 2. Verify JWT ─────────────────────────────────────────────────────
-  let decoded;
-  try {
-    decoded = verifyAccessToken(token);
-  } catch {
-    safeClose(ws, 1008, 'Invalid or expired token');
-    return;
-  }
-
-  const { userId, orgId, role } = decoded;
-
-  // ── 3. Load user from DB ──────────────────────────────────────────────
+  // ── 3. Load user from DB — same liveness checks as middleware/auth.js:
+  // a revoked/suspended/deactivated/deleted user, or a ticket minted before
+  // the last "sign out everywhere" (sessionsValidFrom), must not be able to
+  // open (or keep) a shell. See docs — B-3 hardening.
   const user = await prisma.user.findFirst({ where: { id: userId, orgId } });
-  if (!user) {
-    safeClose(ws, 1008, 'User not found');
+  if (!user || user.status !== 'active') {
+    safeClose(ws, 4401, 'Session has been revoked');
     return;
   }
+  if (
+    user.sessionsValidFrom &&
+    typeof ticketPayload.issuedAt === 'number' &&
+    ticketPayload.issuedAt < user.sessionsValidFrom.getTime()
+  ) {
+    safeClose(ws, 4401, 'Session has been revoked');
+    return;
+  }
+
+  const role = user.role; // DB-authoritative, matches middleware/auth.js
 
   // ── Reattach path — WS re-joins a live hub session ─────────────────────
   if (attachSessionId) {
@@ -837,7 +924,7 @@ async function handleConnection(ws, req) {
     credentials = await accessRequestService.generateSshCredentials({
       requestId,
       callerId: userId,
-      callerRole: decoded.role,
+      callerRole: role,
       principalOverride,
     });
   } catch (err) {
@@ -895,19 +982,30 @@ async function handleConnection(ws, req) {
  * the recording and the Session row); RDP (and any stray DB-only ACTIVE
  * session with no live hub entry) falls back to the old direct path.
  *
+ * Org-scoped: `orgId` is required and checked against both the live hub
+ * record and the DB row — cross-tenant callers get a 404, never a 409/403
+ * that would confirm the session exists in another org (B-4 hardening).
+ *
+ * @param {string} orgId
  * @param {string} sessionId
  * @param {string} byUserId
  * @returns {Promise<object>} Updated session row
  */
-export async function terminateSession(sessionId, byUserId) {
+export async function terminateSession(orgId, sessionId, byUserId) {
+  if (!orgId) throw new ApiError(400, 'orgId is required');
+
   if (hub.has(sessionId)) {
+    const rec = hub.get(sessionId);
+    if (!rec || rec.orgId !== orgId) {
+      throw new ApiError(404, 'Session not found');
+    }
     const updated = await hub.end(sessionId, 'terminated', { terminatedBy: byUserId });
     if (!updated) throw new ApiError(409, 'Session is not active');
     return updated;
   }
 
-  // Update DB first — will throw if not ACTIVE
-  const updated = await sessionService.terminate(sessionId, byUserId);
+  // Update DB first — will throw if not found in this org, or not ACTIVE
+  const updated = await sessionService.terminate(orgId, sessionId, byUserId);
 
   // Force-close a live RDP (guacamole-lite) connection for this session.
   const rdpConn = rdpConnBySession.get(sessionId);
@@ -939,7 +1037,7 @@ export async function terminateActiveSessionsFor(orgId, where, byUserId) {
   let terminated = 0;
   for (const { id } of active) {
     try {
-      await terminateSession(id, byUserId);
+      await terminateSession(orgId, id, byUserId);
       terminated += 1;
     } catch (err) {
       logger.warn('terminalService: terminateActiveSessionsFor: failed to terminate', {
@@ -949,6 +1047,59 @@ export async function terminateActiveSessionsFor(orgId, where, byUserId) {
     }
   }
   return terminated;
+}
+
+/**
+ * End every live session (SSH hub + RDP) belonging to a user, immediately —
+ * used by userService/authService hooks (suspend, deactivate, delete, role
+ * change, admin revoke-sessions, password change/reset) so a revoked user
+ * can't keep using an already-open terminal. See docs/terminal-workspace.md
+ * and B-3 hardening notes. Best-effort: never throws.
+ *
+ * @param {string} orgId
+ * @param {string} userId
+ * @param {string} [reason='revoked']
+ * @returns {Promise<number>} sessions ended
+ */
+export async function endAllSessionsForUser(orgId, userId, reason = 'revoked') {
+  let ended = 0;
+  try {
+    ended += await hub.endAllForUser(userId, orgId, reason);
+  } catch (err) {
+    logger.warn('terminalService: endAllSessionsForUser: hub.endAllForUser failed', { orgId, userId, error: err.message });
+  }
+
+  // RDP sessions aren't tracked in the hub — find any still-ACTIVE RDP rows
+  // for this user/org and force-close the guacamole-lite connection.
+  try {
+    const activeRdp = await prisma.session.findMany({
+      where: { orgId, userId, status: 'ACTIVE', sessionType: 'RDP' },
+      select: { id: true },
+    });
+    for (const { id } of activeRdp) {
+      const conn = rdpConnBySession.get(id);
+      if (conn) {
+        rdpConnBySession.delete(id);
+        rdpSessionByConn.forEach((sid, connId) => {
+          if (sid === id) rdpSessionByConn.delete(connId);
+        });
+        try { conn.close(); } catch { /* ignore */ }
+      }
+      try {
+        await sessionService.end(id, { status: 'TERMINATED', metadataPatch: { endReason: reason } });
+        ended += 1;
+      } catch (err) {
+        logger.warn('terminalService: endAllSessionsForUser: failed to end RDP session', { sessionId: id, error: err.message });
+      }
+    }
+  } catch (err) {
+    logger.warn('terminalService: endAllSessionsForUser: RDP lookup failed', { orgId, userId, error: err.message });
+  }
+
+  if (ended) {
+    logger.info('terminalService: ended all live sessions for user', { orgId, userId, reason, count: ended });
+  }
+  return ended;
 }
 
 // ---------------------------------------------------------------------------
@@ -975,4 +1126,4 @@ function safeClose(ws, code, reason) {
   }
 }
 
-export default { attachWebSocketServer, terminateSession, terminateActiveSessionsFor };
+export default { attachWebSocketServer, terminateSession, terminateActiveSessionsFor, endAllSessionsForUser };

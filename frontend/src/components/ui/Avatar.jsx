@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { isSafeImageUrl } from '@/utils/safeUrl';
 
 /**
  * Avatar — circular user avatar. Renders the user's profile picture
@@ -32,7 +33,11 @@ export function initialsOf(name, email) {
 }
 
 export default function Avatar({ name, email, src, avatarUrl, size = 'md', ring = true, className = '' }) {
-  const imgSrc = src || avatarUrl;
+  const rawSrc = src || avatarUrl;
+  // Only ever render https:// or raster data:image/* URLs — guards against
+  // a malicious SSO `picture` claim or imported record smuggling a
+  // javascript:/data:text/html URL into an <img src>.
+  const imgSrc = isSafeImageUrl(rawSrc) ? rawSrc : null;
   const [errored, setErrored] = useState(false);
 
   // Reset the error flag if the image source changes (e.g. after a profile

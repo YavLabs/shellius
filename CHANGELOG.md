@@ -9,38 +9,61 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 Tracked here as work lands on `main`; moved into a dated section on release
 (`node scripts/version.mjs bump <major|minor|patch>`).
 
-### Security
-
-- **In progress:** per-host agent tokens are replacing the single, org-wide
-  `AGENT_SHARED_SECRET` used by `check-principals` on every target host. Each
-  host will get its own credential issued at bootstrap time instead of
-  sharing one fleet-wide secret. Hosts already bootstrapped will need to
-  re-run `scripts/bootstrap.sh --upgrade` after upgrading to pick up their
-  per-host token; a legacy shared-secret compatibility mode (env-var-gated,
-  name TBD) will keep un-upgraded agents working in the meantime.
-  <!-- TODO(security release): finalize the compat-mode env var name and the
-       exact bootstrap flag, then update this entry, docs/DEPLOYMENT.md
-       ("Upgrading an existing deployment" + security checklist), and
-       .env.prod.example accordingly. -->
-- **In progress:** `SERVER_ENCRYPTION_KEY` becomes a hard-required startup
-  check in production (the server already refuses default/placeholder JWT
-  secrets; this closes the same gap for the encryption key that protects the
-  CA private key, stored credentials, and RDP passwords).
-  <!-- TODO(security release): confirm the exact failure mode (refuse to boot
-       vs. warn) and document it under Migration notes below once merged. -->
-- **In progress:** Terminal WebSocket connections (`/api/terminal/ssh`,
-  `/api/terminal/rdp`) are moving to single-use connection tickets instead of
-  a reusable query-string token, closing a token-replay/URL-logging exposure
-  window.
-  <!-- TODO(security release): document the new connect flow (any client-side
-       changes for the TUI?) and add a migration note once merged. -->
-
 ## [1.1.0] - 2026-09-18
 
 This is a large release: a full secrets/credentials manager (Keystore), a new
 in-app terminal workspace, multi-provider SSO, and a broad authentication
 hardening pass. Everyone will need to sign in again after upgrading (see
 Breaking changes).
+
+### Security
+
+- **Fixed:** per-host agent tokens replace the single, org-wide
+  `AGENT_SHARED_SECRET` used by `check-principals` and `/api/hosts/heartbeat`
+  on every target host. Previously, a certificate minted for an *approved*
+  access request on one server (e.g. a dev box) could also authenticate on
+  any other server in the org — including production — because verification
+  never checked which host was asking, and every host shared one fleet-wide
+  secret. Certificates are now bound to the exact server they were issued
+  for (`Certificate.issuedForId`), and each host authenticates with its own
+  token (hash-only, stored in `Server.agentTokenHash`), minted fresh every
+  time its bootstrap script is generated. **Hosts already bootstrapped must
+  re-run the install one-liner with `--upgrade`** (from the server's
+  "Bootstrap" panel: `curl -fsSL "<install-url>" | sudo bash -s -- --upgrade`)
+  to pick up their per-host token. Until then, `AGENT_LEGACY_SHARED_SECRET`
+  (default `warn`) keeps un-upgraded hosts working against the old
+  `AGENT_SHARED_SECRET`, logging a rate-limited deprecation warning and
+  setting `x-shellius-agent-deprecated: 1` on responses; set it to `deny` to
+  cut legacy hosts off immediately. **`AGENT_LEGACY_SHARED_SECRET` will
+  default to `deny` in the next release** — re-bootstrap all hosts before
+  upgrading again. See `docs/deployment.md` → "Upgrade notes: per-host agent
+  tokens".
+- **Fixed:** the backend now **refuses to start in production** without a
+  strong `SERVER_ENCRYPTION_KEY` (64 hex chars, or at least 32 characters).
+  Previously it only warned and fell back to a key derived from a constant in
+  the source tree. Encrypted values now use a versioned envelope
+  (`v2:<keyId>:…`); legacy values are still read. Rotate keys by setting the
+  new key in `SERVER_ENCRYPTION_KEY`, the old one(s) in
+  `SERVER_ENCRYPTION_KEY_PREVIOUS`, and running `npm run crypto:reencrypt`
+  (supports `--dry-run`).
+- **Fixed:** terminal WebSockets no longer carry the access token in the URL.
+  The browser first calls `POST /api/terminal/ws-ticket` and connects with a
+  single-use, 30-second ticket bound to the user, org and connection target;
+  the upgrade is also rejected (403) when the `Origin` header doesn't match
+  the configured public origin. nginx access logs no longer record query
+  strings.
+- **Fixed:** suspending, deactivating or deleting a user, changing their role,
+  revoking their sessions, or changing/resetting their password now **ends
+  their live terminal sessions immediately**; new terminal connections apply
+  the same account-status and session-revocation checks as the REST API.
+- **Fixed:** admins could terminate another organization's session by id;
+  terminate is now scoped to the caller's organization.
+- **Fixed:** secrets are masked in application logs and audit-log metadata;
+  key-export output is scrubbed of the credentials used for that export;
+  CLI device-login codes are stored hashed and the device flow is rate
+  limited; Quick Connect tickets, WebSocket tickets, key inspect/import and
+  identity tests are rate limited per user; avatar images only load from
+  `https:` or raster `data:` URLs.
 
 ### Added
 

@@ -14,6 +14,7 @@ import {
   RotateCw,
   PlugZap,
   Send,
+  AlertTriangle,
 } from 'lucide-react';
 import Modal from '@/components/shared/Modal';
 import ConfirmDialog from '@/components/shared/ConfirmDialog';
@@ -406,7 +407,22 @@ function ServerDetail() {
           <Card title="Agent">
             <Field label="Agent ID" value={server.agentId} mono />
             <Field label="Version" value={server.agentVersion} />
-            <Field label="Last Seen" value={formatDateTime(server.agentLastSeenAt)} />
+            <Field label="Last seen" value={formatDateTime(server.agentLastSeenAt)} />
+            {server.agentAuth === 'legacy' && (
+              <div className="mt-2 flex items-start gap-2 rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2.5 text-sm text-amber-800 dark:text-amber-200">
+                <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+                <div className="flex-1">
+                  <p className="font-medium">Deprecated shared agent token</p>
+                  <p className="mt-0.5 text-xs text-amber-700/90 dark:text-amber-300/90">
+                    This host uses the deprecated shared agent token — re-run the bootstrap
+                    with <code className="font-mono">--upgrade</code> to switch it to a
+                    per-host token. Click &quot;Bootstrap&quot; above, then run the copied
+                    command with <code className="font-mono">-s -- --upgrade</code> appended,
+                    e.g. <code className="font-mono">curl -fsSL "&lt;url&gt;" | sudo bash -s -- --upgrade</code>.
+                  </p>
+                </div>
+              </div>
+            )}
           </Card>
         )}
 
@@ -431,7 +447,7 @@ function ServerDetail() {
       <Modal
         open={editOpen}
         onClose={() => setEditOpen(false)}
-        title="Edit Server"
+        title="Edit server"
         size="lg"
       >
         <ServerForm

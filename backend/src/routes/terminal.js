@@ -22,10 +22,50 @@ import audit from '../middleware/audit.js';
 import prisma from '../config/db.js';
 import * as hub from '../services/terminalHub.js';
 import * as quickConnectService from '../services/quickConnectService.js';
+import * as wsTicketService from '../services/wsTicketService.js';
+import { userRateLimiter } from '../middleware/rateLimiter.js';
 
 const router = express.Router();
 
 router.use(authenticate, tenant);
+
+const wsTicketLimiter = userRateLimiter({ keyPrefix: 'rl:ws-ticket', windowSeconds: 60, max: 30 });
+
+// ---------------------------------------------------------------------------
+// POST /api/terminal/ws-ticket — mint a single-use, 30s WebSocket connect
+// ticket. Every /api/terminal/ssh upgrade authenticates with `?t=<ticket>`
+// instead of the access JWT, so the long-lived bearer token never appears in
+// a URL (and therefore never in a reverse-proxy access log). See
+// services/wsTicketService.js and docs/terminal-workspace.md.
+// ---------------------------------------------------------------------------
+
+const sshParamsSchema = Joi.alternatives().try(
+  Joi.object({ attach: Joi.string().required() }),
+  Joi.object({ ticket: Joi.string().required() }),
+  Joi.object({ requestId: Joi.string().required(), principal: Joi.string().allow('', null) })
+);
+
+const wsTicketSchema = Joi.object({
+  purpose: Joi.string().valid('ssh').required(), // RDP tunnels its own short-lived, single-use Guacamole gateway token over the tunnel (never the URL) — see services/rdpService.js
+  params: sshParamsSchema.required(),
+});
+
+router.post(
+  '/ws-ticket',
+  wsTicketLimiter,
+  asyncHandler(async (req, res) => {
+    const { error, value } = wsTicketSchema.validate(req.body, { abortEarly: false, stripUnknown: true });
+    if (error) throw new ApiError(400, error.details.map((d) => d.message).join(', '));
+
+    const result = await wsTicketService.issue({
+      userId: req.user.userId,
+      orgId: req.orgId,
+      purpose: value.purpose,
+      params: value.params,
+    });
+    res.status(201).json({ success: true, data: result });
+  })
+);
 
 function mapHubError(err) {
   if (err instanceof hub.HubError) {

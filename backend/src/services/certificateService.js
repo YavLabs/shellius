@@ -281,11 +281,18 @@ export async function revoke(orgId, certId, revokedById) {
  * Never throws; returns { valid: false, reason } on any invalid condition.
  *
  * @param {object} params
- * @param {string|bigint} params.serial    - Certificate serial number
- * @param {string}        params.principal - Principal name to check membership for
+ * @param {string|bigint} params.serial      - Certificate serial number
+ * @param {string}        params.principal   - Principal name to check membership for
+ * @param {{id: string, orgId: string}|null} [params.agentServer] - The host asking,
+ *   resolved from a per-host agent token by middleware/agentAuth.js. When
+ *   present, the cert MUST belong to this org AND be bound to this exact
+ *   host (Certificate.issuedForId === agentServer.id) — this is what stops a
+ *   cert minted for server A from authenticating on server B/C. When null
+ *   (legacy shared-secret caller, or unauthenticated internal caller), host
+ *   binding cannot be enforced and is skipped — see middleware/agentAuth.js.
  * @returns {Promise<{ valid: boolean, reason?: string, principals?: string[], validBefore?: Date }>}
  */
-export async function verify({ serial, principal }) {
+export async function verify({ serial, principal, agentServer = null }) {
   try {
     if (!serial) return { valid: false, reason: 'serial is required' };
     if (!principal) return { valid: false, reason: 'principal is required' };
@@ -318,36 +325,64 @@ export async function verify({ serial, principal }) {
       return { valid: false, reason: 'principal not in certificate' };
     }
 
+    // --- Per-host binding (B-1 fix) -----------------------------------
+    // Only enforceable when the caller authenticated with a per-host agent
+    // token (agentServer set by middleware/agentAuth.js). A cert must have
+    // been issued for THIS org and THIS server — never any other host in
+    // the org, even one with a matching local principal. Certs without a
+    // server binding (issuedForId null — e.g. ad-hoc /certificates/issue
+    // calls made without a serverId) are denied in this mode: there is no
+    // safe way to know which host they're allowed on.
+    if (agentServer) {
+      if (cert.orgId !== agentServer.orgId || cert.issuedForId !== agentServer.id) {
+        logger.warn('certificateService.verify: certificate/host binding mismatch', {
+          certId: cert.id,
+          serial: serialBig.toString(),
+          certOrgId: cert.orgId,
+          certIssuedForId: cert.issuedForId,
+          agentOrgId: agentServer.orgId,
+          agentServerId: agentServer.id,
+        });
+        return { valid: false, reason: 'certificate not issued for this host' };
+      }
+    }
+
     const result = {
       valid: true,
       principals: cert.principals,
       validBefore: cert.validBefore,
     };
 
-    // Phase 21A — attach optional JIT provisioning manifest. Only
-    // populated when a matching policy has non-empty osProvisioning.
-    // Existing hosts ignore unknown fields; future check-principals
-    // will consume the manifest. Errors are swallowed so verify stays
-    // fast and never fails on manifest issues.
+    // Phase 21A — attach optional JIT provisioning manifest, and (per-host
+    // mode only) re-check that the AccessRequest this cert was issued under
+    // is still APPROVED and unexpired so a revocation/expiry takes effect
+    // immediately, without waiting on the cert's own status to catch up.
+    // Only populated when a matching policy has non-empty osProvisioning.
+    // Existing hosts ignore unknown fields; future check-principals will
+    // consume the manifest. Errors here are swallowed (fail open) so verify
+    // stays fast and available — same trade-off this block already made
+    // before per-host binding existed; the binding check above is what
+    // actually closes the access-control gap and never fails open.
     try {
-      // Find the approved access request this cert was issued for.
       const ar = await prisma.accessRequest.findFirst({
-        where: {
-          certificateId: cert.id,
-          status: 'APPROVED',
-          expiresAt: { gt: new Date() },
-        },
-        select: { id: true },
+        where: { certificateId: cert.id },
+        select: { id: true, status: true, expiresAt: true },
       });
       if (ar) {
-        const jitManifestService = await import('./jitManifestService.js');
-        const manifest = await jitManifestService.buildManifest({ accessRequestId: ar.id });
-        if (manifest) {
-          result.manifest = manifest;
+        const arValid = ar.status === 'APPROVED' && (!ar.expiresAt || ar.expiresAt > new Date());
+        if (agentServer && !arValid) {
+          return { valid: false, reason: 'access request is no longer approved' };
+        }
+        if (arValid) {
+          const jitManifestService = await import('./jitManifestService.js');
+          const manifest = await jitManifestService.buildManifest({ accessRequestId: ar.id });
+          if (manifest) {
+            result.manifest = manifest;
+          }
         }
       }
     } catch (err) {
-      logger.warn('certificateService.verify: manifest lookup failed (non-fatal)', {
+      logger.warn('certificateService.verify: AR/manifest lookup failed (non-fatal)', {
         error: err.message,
       });
     }

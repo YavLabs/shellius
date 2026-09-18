@@ -6,6 +6,7 @@ import authenticate from '../middleware/auth.js';
 import tenant from '../middleware/tenant.js';
 import requireRole from '../middleware/rbac.js';
 import audit from '../middleware/audit.js';
+import agentAuth from '../middleware/agentAuth.js';
 import * as certificateService from '../services/certificateService.js';
 
 const router = express.Router();
@@ -58,24 +59,8 @@ const verifySchema = Joi.object({
 });
 
 // ---------------------------------------------------------------------------
-// Agent token auth — used exclusively by check-principals on target hosts
-// ---------------------------------------------------------------------------
-
-function agentAuth(req, res, next) {
-  const token = req.headers['x-agent-token'];
-  const secret = process.env.AGENT_SHARED_SECRET;
-
-  if (!secret) {
-    return next(new ApiError(500, 'AGENT_SHARED_SECRET is not configured'));
-  }
-  if (!token || token !== secret) {
-    return next(new ApiError(401, 'Invalid or missing agent token'));
-  }
-  next();
-}
-
-// ---------------------------------------------------------------------------
-// POST /api/certificates/verify — agent auth (x-agent-token header).
+// POST /api/certificates/verify — agent auth (x-agent-token header, per-host
+// token or legacy AGENT_SHARED_SECRET — see middleware/agentAuth.js).
 // Registered FIRST so it takes priority over /:id for the literal segment.
 // Called per SSH connection by check-principals on target hosts.
 // ---------------------------------------------------------------------------
@@ -87,6 +72,7 @@ router.post(
     const result = await certificateService.verify({
       serial: req.body.serial,
       principal: req.body.principal,
+      agentServer: req.agentServer || null,
     });
     res.json({ success: true, data: result });
   })

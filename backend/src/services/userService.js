@@ -175,7 +175,7 @@ export async function updateUser(orgId, userId, data, actorUserId, actorRole) {
   // outstanding session/access-token for the affected user rather than
   // waiting for their tokens to naturally expire.
   if (updateData.role !== undefined || updateData.status !== undefined) {
-    await authService.revokeAllSessions(userId);
+    await authService.revokeAllSessions(userId, orgId, updateData.status !== undefined ? 'account_disabled' : 'role_changed');
   }
 
   return strip(updated);
@@ -205,7 +205,7 @@ export async function adminRevokeSessions(orgId, userId, actorRole) {
   if (ROLE_RANK[user.role] > ROLE_RANK[actorRole]) {
     throw new ApiError(403, 'Cannot revoke sessions for a user with a higher role than your own');
   }
-  await authService.revokeAllSessions(userId);
+  await authService.revokeAllSessions(userId, orgId, 'admin_revoked');
   return { success: true };
 }
 
@@ -429,7 +429,7 @@ export async function changePassword(userId, currentPassword, newPassword, ipAdd
     },
   });
 
-  await authService.revokeAllSessions(userId);
+  await authService.revokeAllSessions(userId, user.orgId, 'password_changed');
   const session = await authService.issueSession(updated, ipAddress, userAgent, 'web');
   return { accessToken: session.accessToken, refreshToken: session.refreshToken };
 }
@@ -578,7 +578,9 @@ export async function softDeleteSelf(orgId, userId) {
     },
   });
 
-  // Delete all refresh tokens
+  // Sign out everywhere AND end any live terminal sessions (a deleted
+  // account must not keep an open shell), then drop the refresh tokens.
+  await authService.revokeAllSessions(userId, orgId, 'account_deleted');
   await prisma.refreshToken.deleteMany({ where: { userId } });
 
   // Mark user as deleted

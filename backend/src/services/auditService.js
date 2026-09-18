@@ -6,7 +6,7 @@
  */
 
 import prisma from '../config/db.js';
-import logger from '../utils/logger.js';
+import logger, { redactValue } from '../utils/logger.js';
 
 // ---------------------------------------------------------------------------
 // Action taxonomy
@@ -119,6 +119,10 @@ export async function log({
     const mergedMeta = userAgent
       ? { ...(metadata ?? {}), userAgent }
       : (metadata ?? null);
+    // AuditLog is immutable (no UPDATE/DELETE) and often surfaced directly
+    // in the UI/export — never let a caller accidentally persist a secret
+    // (password, token, private key, etc.) via metadata.
+    const safeMeta = mergedMeta ? redactValue(mergedMeta) : mergedMeta;
 
     await prisma.auditLog.create({
       data: {
@@ -127,7 +131,7 @@ export async function log({
         action,
         resourceType,
         resourceId: resourceId ?? null,
-        metadata: mergedMeta,
+        metadata: safeMeta,
         ipAddress: ipAddress ?? null,
       },
     });

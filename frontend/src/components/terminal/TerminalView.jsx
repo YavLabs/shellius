@@ -4,6 +4,7 @@ import { FitAddon } from '@xterm/addon-fit';
 import { WebLinksAddon } from '@xterm/addon-web-links';
 import { Loader2, X } from 'lucide-react';
 import { useAuth } from '@/context/AuthContext';
+import { requestWsTicket } from '@/services/terminalService';
 import '@xterm/xterm/css/xterm.css';
 
 // Global shortcuts the terminal workspace needs even while a pane has
@@ -174,17 +175,22 @@ const TerminalView = forwardRef(function TerminalView(
       term.open(containerRef.current);
     }
 
+    const failBeforeConnect = (message) => {
+      if (signal.cancelled) return;
+      setError((prev) => prev || message);
+      emitState('error', message);
+    };
+
     (async () => {
-      let token = localStorage.getItem('accessToken');
       try {
-        const refreshed = await refresh();
-        if (refreshed?.accessToken) token = refreshed.accessToken;
+        await refresh();
       } catch {
-        // fall back to stored token; backend will reject if it's stale
+        // fall back to the stored access token already on the axios client;
+        // the ws-ticket request below will 401 if it's stale.
       }
       if (signal.cancelled) return;
 
-      setTimeout(() => {
+      setTimeout(async () => {
         if (signal.cancelled || termRef.current !== term) return;
         try {
           fitAddon.fit();
@@ -192,18 +198,35 @@ const TerminalView = forwardRef(function TerminalView(
           /* zero-size container (inactive pane) — cols/rows fall back to defaults */
         }
         const { cols, rows } = term;
-        const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-        const params = new URLSearchParams({ token, cols: String(cols), rows: String(rows) });
+
+        // The connect spec becomes the ws-ticket's bound `params` — minted by
+        // an authenticated REST call (JWT stays in the Authorization header,
+        // never the WS URL). See services/terminalService.js requestWsTicket
+        // and backend routes/terminal.js POST /ws-ticket (B-6/B-7 hardening).
+        let sshParams;
         if (connect.attach) {
-          params.set('attach', connect.attach);
+          sshParams = { attach: connect.attach };
         } else if (connect.ticket) {
-          params.set('ticket', connect.ticket);
+          sshParams = { ticket: connect.ticket };
         } else if (connect.requestId) {
-          params.set('requestId', connect.requestId);
-          if (connect.principal) params.set('principal', connect.principal);
+          sshParams = { requestId: connect.requestId, ...(connect.principal ? { principal: connect.principal } : {}) };
         } else {
           return;
         }
+
+        let wsTicket;
+        try {
+          wsTicket = await requestWsTicket('ssh', sshParams);
+        } catch (err) {
+          failBeforeConnect(
+            err.response?.data?.error?.message || err.message || 'Failed to start the terminal session.'
+          );
+          return;
+        }
+        if (signal.cancelled || termRef.current !== term) return;
+
+        const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+        const params = new URLSearchParams({ t: wsTicket.ticket, cols: String(cols), rows: String(rows) });
         const url = `${wsProtocol}//${window.location.host}/api/terminal/ssh?${params.toString()}`;
         openWs(url, term, signal);
       }, 50);

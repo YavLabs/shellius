@@ -249,14 +249,19 @@ export async function getById(orgId, id) {
  * Returns the updated session row; the caller (terminalService) is responsible
  * for closing the associated WebSocket and SSH connections.
  *
+ * Org-scoped — a sessionId belonging to another org 404s rather than leaking
+ * existence (B-4 hardening).
+ *
+ * @param {string} orgId
  * @param {string} sessionId
  * @param {string} byUserId  - ID of the admin performing the termination
  * @returns {Promise<object>}
  */
-export async function terminate(sessionId, byUserId) {
+export async function terminate(orgId, sessionId, byUserId) {
+  if (!orgId) throw new ApiError(400, 'orgId is required');
   if (!sessionId) throw new ApiError(400, 'sessionId is required');
 
-  const existing = await prisma.session.findUnique({ where: { id: sessionId } });
+  const existing = await prisma.session.findFirst({ where: { id: sessionId, orgId } });
   if (!existing) throw new ApiError(404, 'Session not found');
 
   if (existing.status !== 'ACTIVE') {

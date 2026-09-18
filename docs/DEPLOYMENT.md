@@ -138,7 +138,8 @@ platform's env var UI, never commit it). Full precedent copies live in
 | `JWT_REFRESH_EXPIRY` | No | `7d` | No | Refresh token lifetime. `30d` recommended for self-hosted single-team use |
 | `SESSION_ABSOLUTE_TTL` | No | `2592000` (30d) | No | Absolute refresh-token-family lifetime in seconds, independent of rotation |
 | `SERVER_ENCRYPTION_KEY` | **Yes** | — | **Yes, critical** | AES-256-GCM key protecting the CA private key, stored Keystore credentials, RDP passwords, cloud connector secrets, and SMTP passwords at rest. `openssl rand -hex 32`. **See the warning below — never change this without a re-encryption migration.** |
-| `AGENT_SHARED_SECRET` | Yes, if any server uses certificate/bootstrap auth | — | **Yes** | Shared secret target hosts use to call `POST /api/certificates/verify` (check-principals). `openssl rand -hex 32` |
+| `AGENT_SHARED_SECRET` | No (legacy fallback only) | — | **Yes** | Legacy fleet-wide secret from before per-host agent tokens. Every bootstrapped host now gets its own token, minted at `install.sh`/`install.ps1` generation and stored hashed on `Server.agentTokenHash` — `AGENT_SHARED_SECRET` is no longer required for new installs. Only set this if you still have hosts that haven't been re-bootstrapped with `--upgrade`; see §5 "Upgrade notes: per-host agent tokens". `openssl rand -hex 32` |
+| `AGENT_LEGACY_SHARED_SECRET` | No | `warn` | No | Governs whether `AGENT_SHARED_SECRET` is still accepted from hosts that haven't been re-bootstrapped: `warn` (default this release) accepts it and logs a rate-limited deprecation warning + `x-shellius-agent-deprecated: 1` response header; `deny` rejects it outright (401). **Will default to `deny` in the next release** — re-bootstrap all hosts (`--upgrade`) before then. |
 | `METRICS_TOKEN` | No | — (endpoint disabled if unset) | **Yes** | Bearer token for `GET /api/metrics`. `openssl rand -hex 16` |
 
 > **`SERVER_ENCRYPTION_KEY` must never change once you have real data.**
@@ -440,11 +441,36 @@ docker compose -f docker-compose.prod.yml --env-file .env.prod up -d
 - See `CHANGELOG.md`'s `[1.1.0]` section for the full list of new environment
   variables and breaking changes.
 
-<!-- TODO(security release): add version-specific upgrade notes here once
-     merged — per-host agent tokens (bootstrap --upgrade requirement),
-     mandatory SERVER_ENCRYPTION_KEY in production, and single-use terminal
-     WebSocket tickets. See CHANGELOG.md [Unreleased] > Security for the
-     current placeholder text. -->
+### Upgrade notes: per-host agent tokens
+
+Every target host used to share one org-wide `AGENT_SHARED_SECRET` for
+`check-principals` cert verification and heartbeat. Each host now gets its
+own token instead (hash-only, stored on `Server.agentTokenHash`), and
+`POST /api/certificates/verify` now checks that a certificate was actually
+issued **for the specific host asking** — closing a gap where a certificate
+approved for one server (e.g. dev) could also authenticate on any other
+server in the org, including production.
+
+1. **No action is required immediately** — `AGENT_LEGACY_SHARED_SECRET`
+   defaults to `warn` this release, so hosts still running the old shared
+   secret keep working (with a logged deprecation warning) until you
+   re-bootstrap them.
+2. **Re-bootstrap every host** to mint its per-host token: open the server in
+   Shellius → **Bootstrap** → copy the one-liner it gives you → append
+   `-s -- --upgrade` before running it, e.g.:
+   ```bash
+   curl -fsSL "<install-url-from-the-Bootstrap-panel>" | sudo bash -s -- --upgrade
+   ```
+   `--upgrade` only rewrites the agent token + check-principals script; it
+   does not touch CA trust or sshd config, so it's safe to run any time.
+   ServerDetail shows a "Deprecated shared agent token" notice on any host
+   still in legacy mode.
+3. Once every host is re-bootstrapped, you may remove `AGENT_SHARED_SECRET`
+   from `.env.prod` entirely, or set `AGENT_LEGACY_SHARED_SECRET=deny` to cut
+   over immediately without waiting for the next release's default flip.
+4. **The next release will default `AGENT_LEGACY_SHARED_SECRET` to `deny`.**
+   Any host not yet re-bootstrapped by then will lose SSH access (cert
+   verification and heartbeats will 401) until you run `--upgrade` on it.
 
 ---
 
@@ -580,11 +606,13 @@ UI's terminal and run the same `pg_dump` command from §5.
 - [ ] Reverse proxy access logs retained per your log-retention policy —
       Shellius's own `AuditLog` is immutable and covers in-app actions, but
       proxy-level logs cover raw request volume/IPs
-- [ ] Bootstrap hosts' `AGENT_SHARED_SECRET` is the production value, not a
-      value copied from a dev/staging `.env`
-<!-- TODO(security release): add a line here once per-host agent tokens ship
-     (replacing the single shared AGENT_SHARED_SECRET) and once single-use
-     terminal WebSocket tickets ship. -->
+- [ ] All hosts re-bootstrapped with `--upgrade` to pick up a per-host agent
+      token (see §5 "Upgrade notes: per-host agent tokens") — check
+      ServerDetail for any host still flagged with the deprecated
+      shared-agent-token notice
+- [ ] `AGENT_LEGACY_SHARED_SECRET` set to `deny` once all hosts are upgraded
+      (defaults to `warn` this release so un-upgraded hosts keep working —
+      it will default to `deny` in the next release regardless)
 
 ---
 

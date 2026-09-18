@@ -9,6 +9,16 @@ const DEVICE_TTL_MS = 15 * 60 * 1000;
 const DEFAULT_INTERVAL = 5;
 const FRONTEND_URL = config.frontendUrl;
 
+// deviceCode is a bearer-style credential (whoever holds it can complete the
+// login), so it is stored hashed — the raw UUID is only ever returned to the
+// polling client, never persisted. Lookups hash the incoming value and match
+// against the stored hash. SHA-256 (not bcrypt) is appropriate here: the
+// input is a high-entropy random UUID, not a low-entropy human secret, so
+// there's nothing for an offline dictionary attack to exploit.
+function hashDeviceCode(deviceCode) {
+  return crypto.createHash('sha256').update(deviceCode).digest('hex');
+}
+
 export function generateUserCode() {
   const bytes = crypto.randomBytes(8);
   let out = '';
@@ -40,7 +50,7 @@ export async function createDeviceRequest(orgSlug, clientId, scope) {
 
   await prisma.deviceAuthRequest.create({
     data: {
-      deviceCode,
+      deviceCode: hashDeviceCode(deviceCode),
       userCode,
       clientId: clientId || 'shellius-tui',
       scope: scope || '',
@@ -62,7 +72,9 @@ export async function createDeviceRequest(orgSlug, clientId, scope) {
 }
 
 export async function pollDeviceRequest(deviceCode, ipAddress, userAgent) {
-  const req = await prisma.deviceAuthRequest.findUnique({ where: { deviceCode } });
+  const req = await prisma.deviceAuthRequest.findUnique({
+    where: { deviceCode: hashDeviceCode(deviceCode) },
+  });
   if (!req) throw new ApiError(400, 'invalid_grant');
 
   const now = new Date();

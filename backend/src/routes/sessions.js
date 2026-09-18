@@ -161,7 +161,8 @@ router.post(
   audit('session.terminate', 'Session'),
   asyncHandler(async (req, res) => {
     // terminateSession updates DB and force-closes in-memory WS/SSH handles
-    const session = await terminateSession(req.params.id, req.user.userId);
+    // (org-scoped — see B-4 hardening in services/terminalService.js)
+    const session = await terminateSession(req.orgId, req.params.id, req.user.userId);
     res.json({ success: true, data: { session } });
   })
 );

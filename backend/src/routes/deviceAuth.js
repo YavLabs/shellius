@@ -4,6 +4,7 @@ import asyncHandler from '../utils/asyncHandler.js';
 import ApiError from '../utils/ApiError.js';
 import authenticate from '../middleware/auth.js';
 import * as deviceAuthService from '../services/deviceAuthService.js';
+import { authLimiter, tokenActionLimiter, deviceAuthPollLimiter } from '../middleware/rateLimiter.js';
 
 const router = express.Router();
 
@@ -32,6 +33,7 @@ const codeSchema = Joi.object({
 
 router.post(
   '/authorize',
+  authLimiter,
   validate(authorizeSchema),
   asyncHandler(async (req, res) => {
     const { org_slug, client_id, scope } = req.body;
@@ -42,6 +44,7 @@ router.post(
 
 router.post(
   '/poll',
+  deviceAuthPollLimiter,
   validate(pollSchema),
   asyncHandler(async (req, res) => {
     const { device_code } = req.body;
@@ -62,6 +65,7 @@ router.post(
 router.post(
   '/approve',
   authenticate,
+  tokenActionLimiter,
   validate(codeSchema),
   asyncHandler(async (req, res) => {
     const { user_code } = req.body;
@@ -73,6 +77,7 @@ router.post(
 router.post(
   '/deny',
   authenticate,
+  tokenActionLimiter,
   validate(codeSchema),
   asyncHandler(async (req, res) => {
     const { user_code } = req.body;

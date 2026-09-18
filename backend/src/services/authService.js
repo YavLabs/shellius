@@ -11,6 +11,8 @@ import {
 } from '../utils/jwt.js';
 import * as mfaService from './mfaService.js';
 import { log as auditLog, ACTIONS } from './auditService.js';
+import * as terminalService from './terminalService.js';
+import logger from '../utils/logger.js';
 
 const REFRESH_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 
@@ -145,10 +147,27 @@ export async function bumpSessionsValidFrom(userId) {
  * Full "sign out everywhere" — revokes every session and invalidates every
  * outstanding access token. Used by password change/reset, role change,
  * suspend/deactivate/delete, and admin-triggered revoke-sessions.
+ *
+ * Also ends any live terminal (SSH/RDP) sessions for the user immediately —
+ * otherwise a revoked user could keep using an already-open shell until it
+ * happened to close (B-3 hardening). `orgId` is optional only for legacy
+ * call sites; omitting it skips the live-session kill, so pass it whenever
+ * available.
  */
-export async function revokeAllSessions(userId) {
+export async function revokeAllSessions(userId, orgId, reason = 'session_revoked') {
   await revokeAllFamiliesForUser(userId);
   await bumpSessionsValidFrom(userId);
+  if (orgId) {
+    try {
+      await terminalService.endAllSessionsForUser(orgId, userId, reason);
+    } catch (err) {
+      logger.warn('authService.revokeAllSessions: failed to end live terminal sessions', {
+        userId,
+        orgId,
+        error: err.message,
+      });
+    }
+  }
 }
 
 async function cleanupOldRevoked(familyId) {
