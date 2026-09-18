@@ -30,7 +30,7 @@ function ThemeMenu() {
             <DropdownMenuTrigger asChild>
               <button
                 type="button"
-                className="flex h-9 w-9 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground transition-colors"
+                className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md border border-input bg-background text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
                 aria-label="Theme"
               >
                 <Icon className="h-[18px] w-[18px]" />

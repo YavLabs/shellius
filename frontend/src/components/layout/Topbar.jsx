@@ -48,7 +48,7 @@ function Topbar() {
       </div>
 
       {/* Actions */}
-      <div className="flex shrink-0 items-center gap-1.5 sm:gap-2">
+      <div className="flex shrink-0 items-center gap-2">
         {/* Global search trigger — opens the command palette. */}
         <button
           type="button"
@@ -66,7 +66,7 @@ function Topbar() {
           type="button"
           onClick={openPalette}
           aria-label="Search"
-          className="flex h-9 w-9 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground md:hidden"
+          className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md border border-input bg-background text-muted-foreground transition-colors hover:bg-accent hover:text-foreground md:hidden"
         >
           <Search className="h-4 w-4" />
         </button>
@@ -98,9 +98,9 @@ function Topbar() {
                     aria-haspopup="menu"
                     aria-expanded={open}
                     aria-label={`Account menu (${user?.name || 'User'})`}
-                    className="flex items-center justify-center rounded-full focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
+                    className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
                   >
-                    <Avatar name={user?.name} email={user?.email} avatarUrl={user?.avatarUrl} size="sm" />
+                    <Avatar name={user?.name} email={user?.email} avatarUrl={user?.avatarUrl} size="md" />
                   </button>
                 </TooltipTrigger>
                 <TooltipContent side="bottom">Account menu ({user?.name || 'User'})</TooltipContent>
