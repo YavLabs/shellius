@@ -604,25 +604,35 @@ function buildConnectSpec(sessionMeta) {
  * through the hub; socket drop = detach (session keeps running).
  */
 function wireAttachedSocket(ws, sessionId) {
-  ws.on('message', (msg) => {
-    if (typeof msg === 'string') {
-      let parsed;
-      try { parsed = JSON.parse(msg); } catch {
-        hub.write(sessionId, msg);
-        return;
-      }
+  // ws v8 delivers TEXT frames as a Buffer too (with isBinary=false), never as
+  // a string — so control messages must be detected from the decoded text.
+  // Only an exact control object ({"type":"resize"|"close"...}) is treated as
+  // control; everything else is terminal input, byte for byte.
+  ws.on('message', (data, isBinary) => {
+    if (isBinary) {
+      hub.write(sessionId, data);
+      return;
+    }
+    const text = Buffer.isBuffer(data) ? data.toString('utf8') : String(data);
+    if (text.startsWith('{"type":')) {
+      let parsed = null;
+      try { parsed = JSON.parse(text); } catch { parsed = null; }
       if (parsed && parsed.type === 'resize') {
         hub.resize(sessionId, parsed.rows, parsed.cols);
-      } else if (parsed && parsed.type === 'close') {
+        return;
+      }
+      if (parsed && parsed.type === 'close') {
         hub.end(sessionId, 'closed').catch((err) =>
           logger.warn('terminalService: end(closed) failed', { sessionId, error: err.message })
         );
-      } else if (parsed && parsed.data !== undefined) {
-        hub.write(sessionId, String(parsed.data));
+        return;
       }
-    } else {
-      hub.write(sessionId, msg);
+      if (parsed && parsed.type === 'data' && parsed.data !== undefined) {
+        hub.write(sessionId, String(parsed.data));
+        return;
+      }
     }
+    hub.write(sessionId, text);
   });
 
   ws.on('close', () => { hub.detach(sessionId, ws); });
