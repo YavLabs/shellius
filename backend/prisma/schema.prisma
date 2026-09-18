@@ -193,6 +193,13 @@ model Server {
   agentId         String?        @unique @map("agent_id")
   agentVersion    String?        @map("agent_version")
   agentLastSeen   DateTime?      @map("agent_last_seen")
+  // Per-host agent credential (check-principals + heartbeat). Only the
+  // SHA-256 hash is stored; the token is written to the host at bootstrap.
+  // Replaces the single global AGENT_SHARED_SECRET, and lets
+  // /api/certificates/verify bind a certificate to the host asking.
+  agentTokenHash     String?   @unique @map("agent_token_hash")
+  agentTokenIssuedAt DateTime? @map("agent_token_issued_at")
+  agentTokenLastUsedAt DateTime? @map("agent_token_last_used_at")
   healthStatus    HealthStatus   @default(unknown) @map("health_status")
   lastHealthCheck DateTime?      @map("last_health_check")
   healthMessage   String?        @map("health_message")
