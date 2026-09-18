@@ -5,6 +5,7 @@ import { Input } from '@/components/ui/input';
 import { Tooltip, TooltipTrigger, TooltipContent, TooltipProvider } from '@/components/ui/tooltip';
 import EnvironmentBadge from '@/components/shared/EnvironmentBadge';
 import RequestForm from '@/components/access-requests/RequestForm';
+import RunningSessionsList from '@/components/workspace/RunningSessionsList';
 import { useTerminalWorkspace } from '@/context/TerminalWorkspaceContext';
 import { useQuickConnect } from '@/context/QuickConnectContext';
 import { listServers } from '@/services/serverService';
@@ -14,12 +15,13 @@ import { cn } from '@/lib/utils';
 import { getHistory, reconnectHistory } from '@/services/quickConnectService';
 
 /**
- * NewConnectionDialog — the "+" tab-bar action. Search list of servers
- * (Connect for servers with active access, Request access otherwise), plus
- * recent Quick Connects and a "Quick Connect..." shortcut.
+ * NewConnectionDialog — the "+" tab-bar action. Running sessions not open in
+ * a tab (Attach / Attach all), a search list of servers (Connect for servers
+ * with active access, Request access otherwise), recent Quick Connects and
+ * a "Quick Connect..." shortcut.
  */
 function NewConnectionDialog({ open, onClose }) {
-  const { openTab, openTabForAccessRequest } = useTerminalWorkspace();
+  const { openTab, openTabForAccessRequest, refreshLiveSessions } = useTerminalWorkspace();
   const { allowed: quickConnectAllowed, openQuickConnect } = useQuickConnect();
 
   const [query, setQuery] = useState('');
@@ -36,6 +38,7 @@ function NewConnectionDialog({ open, onClose }) {
     if (!open) return;
     setQuery('');
     setError('');
+    refreshLiveSessions();
     getHistory({ limit: 5 })
       .then(setRecent)
       .catch(() => setRecent([]));
@@ -154,6 +157,10 @@ function NewConnectionDialog({ open, onClose }) {
                 {error}
               </div>
             )}
+
+            {/* Sessions still running but not open in a tab: re-attach instead
+                of starting a new one (or requesting access again). */}
+            {!query && <RunningSessionsList onAttached={onClose} />}
 
             <div className="relative">
               <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />

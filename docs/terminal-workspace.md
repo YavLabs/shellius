@@ -62,6 +62,53 @@ Resize from any attached socket applies to the PTY (last writer wins).
   dropped when the session ends). Certificate/identity server sessions re-resolve credentials.
 - `PATCH /api/terminal/sessions/:id` `{ label }` → rename (shown in tabs, max 60 chars).
 - `POST /api/terminal/sessions/:id/close` → end the session (same as the `close` frame).
+- `GET /api/terminal/sessions/:id/recovery` → what happened to a tab's session and what will
+  work now, based on the caller's *current* access (owner only, else 404). `endReason` is one of
+  `server_restart | shutdown | expired | terminated | revoked | detached_timeout | exit | closed |
+  error`. `action` is one of:
+  - `attach`: still live.
+  - `reconnect`: the same, or another, approved unexpired request for the server; or a Quick
+    Connect that used a saved Keystore identity.
+  - `pending`: a request for the server awaits approval.
+  - `request_access`: access expired, was revoked, or was denied.
+  - `quick_connect`: a one-off password/key; returns a `prefill` with host/port/username/auth
+    type only, never the secret.
+  - `none`.
+- `POST /api/terminal/sessions/:id/reconnect` → `{ connect }` for `attach`/`reconnect` (409
+  `CANNOT_RECONNECT` otherwise). Quick Connect gets a fresh single-use ticket through the normal
+  ticket path (prod-host guard included). Rate limited with the ws-ticket limiter; audited as
+  `session.reconnect`.
+- Session rows record what recovery needs, with no secrets: `metadata.principal`
+  (certificate sessions) and `metadata.quickConnect = { authType, credentialId }`.
+- **Startup sweep:** hub sessions live in memory, so on boot the backend marks every SSH
+  `Session` still `ACTIVE` as `ENDED` with `endReason: 'server_restart'`
+  (`reconcileOrphanedSessions`). A graceful shutdown already ends them with `shutdown`. This
+  assumes one backend process, the same limitation as the hub.
+
+### Recovery and reconnection (frontend)
+
+| What happened | What the user sees |
+|---|---|
+| Network blip, laptop sleep, proxy hiccup | Amber "Connection lost. Reconnecting…" bar and **automatic re-attach** (1s, 2s, 4s, 8s, then every 15s; immediately when the browser is back online), with a "Retry now" button. Replayed output replaces the screen, so nothing is printed twice. |
+| Shellius restarted or crashed | Re-attach finds the session gone (4404), and the tab becomes **lost** with a recovery card: "Shellius restarted" plus the action above. |
+| Access expired / revoked | "Access ended" plus **Request access again**. An auto-approved request (non-prod, or an admin's audited prod bypass) connects in the same tab; otherwise the tab turns into the request's status tab. |
+| A newer approved or pending request exists | **Reconnect** on it, or **View request**. |
+| Quick Connect with a one-off password/key | **Quick Connect again**, prefilled; the result reconnects in the *same* tab. |
+| Quick Connect with a saved identity | **Reconnect** directly. |
+| Admin terminated, sessions revoked, detach timeout, `exit` | Explains why, then offers whichever action applies. |
+| Couldn't connect at all (host down, auth failed) | **Retry** (access-request tabs) or **Edit and retry** (Quick Connect). |
+| Reload after any of the above | Restored tabs whose session is gone open straight on the card (no failing attach). |
+| Several tabs affected | Banner "N terminals lost their sessions" with **Reconnect all**, which handles every tab whose access is still valid and reports how many need attention. It also has **Show** and **Close all**. |
+| Request status tab can't load (Shellius restarting) | Retries every 5s by itself. |
+
+Every recovery action reuses the tab, so its place in the tab bar and its split are kept.
+
+**Re-attaching running sessions:** live sessions not open in a tab are listed under "Running
+sessions" in the empty workspace **and** in the "+" New connection dialog, each with Attach, plus
+**Attach all**. The Sessions button in the tab bar shows how many there are.
+
+**Per-user storage:** workspace state is stored under `shellius.workspace.v2:<userId>`, so another
+person signing in on the same browser never inherits tabs.
 
 ## 2. Workspace UI — frontend
 
@@ -90,8 +137,8 @@ Resize from any attached socket applies to the PTY (last writer wins).
 - A side panel / section lists **all live sessions** (including detached ones not open in any
   tab) with Attach, Duplicate, End.
 - Workspace state (open tabs → sessionIds, labels, layout) persists in `localStorage`
-  (`shellius.workspace.v2`: tabs + split groups; v1's single layout is migrated. No secrets; stale sessionIds are pruned against
-  `GET /api/terminal/sessions`). Leaving `/terminals` or reloading re-attaches every tab and
+  (`shellius.workspace.v2:<userId>`: tabs + split groups; v1's single layout is migrated. No
+  secrets. Tabs whose session is no longer live open on the recovery card). Leaving `/terminals` or reloading re-attaches every tab and
   replays recent output.
 - Every "Connect" entry point (server Connect modal, Quick Connect, dashboard "Connect again",
   command palette) opens a **tab in the workspace** by default; "Open in new window" remains as

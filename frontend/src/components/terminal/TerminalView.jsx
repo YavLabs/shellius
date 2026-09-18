@@ -51,7 +51,16 @@ const XTERM_THEME = {
  *   { attach: sessionId }      — attach to a live hub session
  *
  * Reports lifecycle via onSession({sessionId,...}) and onStateChange(state,
- * extra) where state is 'connecting' | 'live' | 'ended' | 'error'. Unmount
+ * extra) where state is:
+ *   'connecting'   opening the socket / SSH handshake
+ *   'live'         shell is up
+ *   'reconnecting' socket dropped; re-attaching automatically with backoff
+ *   'lost'         the session no longer exists (backend restart, detach
+ *                  timeout…); extra = 'not_found' | 'forbidden'
+ *   'ended'        the hub ended it; extra = reason (exit, expired, …)
+ *   'error'        couldn't connect (no session was ever established)
+ * `statusOverlay={false}` hides the built-in ended/lost overlay (the
+ * workspace shows a recovery card instead). Unmount
  * only closes the socket (server-side: detach). Callers that want an
  * explicit end must call the imperative `close()` handle (sends
  * `{type:'close'}`), which is distinct from unmounting.
@@ -64,7 +73,7 @@ const XTERM_THEME = {
  * pressing e.g. ctrl+tab from any pane works).
  */
 const TerminalView = forwardRef(function TerminalView(
-  { connect, visible = true, onSession, onStateChange, onHostKey, className = '' },
+  { connect, visible = true, onSession, onStateChange, onHostKey, statusOverlay = true, className = '' },
   ref
 ) {
   const { refresh } = useAuth();
@@ -143,12 +152,19 @@ const TerminalView = forwardRef(function TerminalView(
   // connect spec to {attach: <that session>} (so a remount — e.g. navigating
   // away and back — re-attaches instead of reusing a spent ticket or opening a
   // brand-new session). That spec change must NOT reconnect the live view, so
-  // "attach to the session I'm already on" keeps the previous key.
+  // "attach to the session I'm already on" keeps the previous key. A spec
+  // carrying `retry` (an explicit Reconnect/Retry from the workspace) always
+  // reconnects.
   const rawConnectKey = connect ? JSON.stringify(connect) : null;
   const connectKey =
-    connect?.attach && connect.attach === liveSessionRef.current && connectKeyRef.current
+    connect?.attach && !connect.retry && connect.attach === liveSessionRef.current && connectKeyRef.current
       ? connectKeyRef.current
       : rawConnectKey;
+
+  // Automatic re-attach after the socket drops (network blip, laptop sleep,
+  // proxy/backend restart). { attempt, delayMs, offline } while retrying.
+  const [reconnect, setReconnect] = useState(null);
+  const retryNowRef = useRef(null);
 
   useEffect(() => {
     if (!connect) return undefined;
@@ -157,10 +173,14 @@ const TerminalView = forwardRef(function TerminalView(
     const signal = { cancelled: false };
     setError('');
     setEndedReason('');
+    setReconnect(null);
     statusRef.current = 'connecting';
     emitState('connecting');
 
     let cleanupResize = () => {};
+    let retryTimer = null;
+    let attempt = 0;
+    let onlineListener = null;
 
     const term = new XTerm({
       cursorBlink: true,
@@ -182,62 +202,111 @@ const TerminalView = forwardRef(function TerminalView(
       term.open(containerRef.current);
     }
 
+    // Keystrokes go to whichever socket is current (it changes on re-attach).
+    term.onData((data) => {
+      const ws = wsRef.current;
+      if (ws && ws.readyState === WebSocket.OPEN) ws.send(data);
+    });
+    term.onResize(({ cols, rows }) => sendResize(cols, rows));
+
     const failBeforeConnect = (message) => {
       if (signal.cancelled) return;
       setError((prev) => prev || message);
       emitState('error', message);
     };
 
-    (async () => {
-      try {
-        await refresh();
-      } catch {
-        // fall back to the stored access token already on the axios client;
-        // the ws-ticket request below will 401 if it's stale.
-      }
+    const markLost = (reason) => {
       if (signal.cancelled) return;
+      clearTimeout(retryTimer);
+      setReconnect(null);
+      setEndedReason(reason || '');
+      emitState('lost', reason || 'not_found');
+    };
 
-      setTimeout(async () => {
-        if (signal.cancelled || termRef.current !== term) return;
+    const sessionToResume = () => liveSessionRef.current || connect.attach || null;
+
+    // Re-attach loop: 1s, 2s, 4s, 8s, then every 15s, and immediately when the
+    // browser comes back online. Only a session that is really gone (4404/4403)
+    // stops it; the workspace then offers recovery.
+    function scheduleReconnect() {
+      if (signal.cancelled) return;
+      const sid = sessionToResume();
+      if (!sid) return;
+      attempt += 1;
+      const delayMs = Math.min(15000, 1000 * 2 ** Math.min(attempt - 1, 4));
+      const offline = typeof navigator !== 'undefined' && navigator.onLine === false;
+      setReconnect({ attempt, delayMs, offline });
+      if (statusRef.current !== 'reconnecting') emitState('reconnecting');
+      clearTimeout(retryTimer);
+      if (onlineListener) window.removeEventListener('online', onlineListener);
+      const go = () => {
+        if (onlineListener) window.removeEventListener('online', onlineListener);
+        onlineListener = null;
+        clearTimeout(retryTimer);
+        start({ attach: sid }, { reattach: true });
+      };
+      retryNowRef.current = go;
+      onlineListener = go;
+      window.addEventListener('online', onlineListener);
+      if (!offline) retryTimer = setTimeout(go, delayMs);
+    }
+
+    function start(sshParams, { reattach }) {
+      (async () => {
         try {
-          fitAddon.fit();
+          await refresh();
         } catch {
-          /* zero-size container (inactive pane) — cols/rows fall back to defaults */
-        }
-        const { cols, rows } = term;
-
-        // The connect spec becomes the ws-ticket's bound `params` — minted by
-        // an authenticated REST call (JWT stays in the Authorization header,
-        // never the WS URL). See services/terminalService.js requestWsTicket
-        // and backend routes/terminal.js POST /ws-ticket (B-6/B-7 hardening).
-        let sshParams;
-        if (connect.attach) {
-          sshParams = { attach: connect.attach };
-        } else if (connect.ticket) {
-          sshParams = { ticket: connect.ticket };
-        } else if (connect.requestId) {
-          sshParams = { requestId: connect.requestId, ...(connect.principal ? { principal: connect.principal } : {}) };
-        } else {
-          return;
-        }
-
-        let wsTicket;
-        try {
-          wsTicket = await requestWsTicket('ssh', sshParams);
-        } catch (err) {
-          failBeforeConnect(
-            err.response?.data?.error?.message || err.message || 'Failed to start the terminal session.'
-          );
-          return;
+          // fall back to the stored access token already on the axios client;
+          // the ws-ticket request below will 401 if it's stale.
         }
         if (signal.cancelled || termRef.current !== term) return;
 
-        const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-        const params = new URLSearchParams({ t: wsTicket.ticket, cols: String(cols), rows: String(rows) });
-        const url = `${wsProtocol}//${window.location.host}/api/terminal/ssh?${params.toString()}`;
-        openWs(url, term, signal);
-      }, 50);
-    })();
+        setTimeout(async () => {
+          if (signal.cancelled || termRef.current !== term) return;
+          try {
+            fitAddon.fit();
+          } catch {
+            /* zero-size container (inactive pane) — cols/rows fall back to defaults */
+          }
+          const { cols, rows } = term;
+
+          // The connect spec becomes the ws-ticket's bound `params`, minted by
+          // an authenticated REST call (JWT stays in the Authorization header,
+          // never the WS URL). See services/terminalService.js requestWsTicket
+          // and backend routes/terminal.js POST /ws-ticket (B-6/B-7 hardening).
+          let wsTicket;
+          try {
+            wsTicket = await requestWsTicket('ssh', sshParams);
+          } catch (err) {
+            const st = err.response?.status;
+            // Backend down / restarting / rate limited: keep trying to re-attach.
+            const transient = !err.response || st >= 500 || st === 429 || st === 408;
+            if (reattach && transient) {
+              scheduleReconnect();
+              return;
+            }
+            failBeforeConnect(
+              err.response?.data?.error?.message || err.message || 'Failed to start the terminal session.'
+            );
+            return;
+          }
+          if (signal.cancelled || termRef.current !== term) return;
+
+          const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+          const params = new URLSearchParams({ t: wsTicket.ticket, cols: String(cols), rows: String(rows) });
+          const url = `${wsProtocol}//${window.location.host}/api/terminal/ssh?${params.toString()}`;
+          openWs(url, { reattach });
+        }, 50);
+      })();
+    }
+
+    let sshParams;
+    if (connect.attach) sshParams = { attach: connect.attach };
+    else if (connect.ticket) sshParams = { ticket: connect.ticket };
+    else if (connect.requestId) {
+      sshParams = { requestId: connect.requestId, ...(connect.principal ? { principal: connect.principal } : {}) };
+    }
+    if (sshParams) start(sshParams, { reattach: !!connect.attach });
 
     const handleResize = () => {
       // A hidden tab (moved into the workspace's display:none holder) has a
@@ -272,7 +341,7 @@ const TerminalView = forwardRef(function TerminalView(
       resizeObserverRef.current?.disconnect();
     };
 
-    function openWs(url, term, signal) {
+    function openWs(url, { reattach }) {
       const ws = new WebSocket(url);
       wsRef.current = ws;
       lastSizeRef.current = null; // new socket: next resize must go through
@@ -280,20 +349,30 @@ const TerminalView = forwardRef(function TerminalView(
       const isCurrent = () => wsRef.current === ws && !signal.cancelled;
 
       let sshUp = false;
+      // A socket that fails once we had a session is retried, not reported.
+      const resumable = () => reattach || !!liveSessionRef.current;
       const markUp = (info) => {
         if (!isCurrent()) return;
         if (info?.sessionId) liveSessionRef.current = info.sessionId;
+        const wasUp = sshUp;
         sshUp = true;
         clearTimeout(openTimer);
         clearTimeout(handshakeTimer);
-        emitState('live');
-        onSession?.(info);
-        term.focus();
+        if (!wasUp) {
+          attempt = 0;
+          setReconnect(null);
+          setError('');
+          emitState('live');
+          onSession?.(info);
+          term.focus();
+        }
       };
       const fail = (message) => {
         if (!isCurrent()) return;
-        setError((prev) => prev || message);
-        emitState('error', message);
+        if (!resumable()) {
+          setError((prev) => prev || message);
+          emitState('error', message);
+        }
         try {
           ws.close(4000, 'client timeout');
         } catch {
@@ -356,10 +435,16 @@ const TerminalView = forwardRef(function TerminalView(
               return;
             }
             if (msg?.type === 'attached') {
+              // The hub replays its recent-output buffer next. On a re-attach
+              // this xterm already shows that output, so start clean instead
+              // of printing it twice.
+              if (reattach && term.buffer.active.length > 1) term.reset();
               markUp({ sessionId: msg.sessionId, attached: true });
               return;
             }
             if (msg?.type === 'ended') {
+              clearTimeout(retryTimer);
+              setReconnect(null);
               setEndedReason(msg.reason || 'closed');
               emitState('ended', msg.reason);
               return;
@@ -373,32 +458,48 @@ const TerminalView = forwardRef(function TerminalView(
       };
 
       ws.onerror = () => {
-        if (!isCurrent()) return;
-        clearTimeout(openTimer);
-        clearTimeout(handshakeTimer);
-        setError((prev) => prev || 'WebSocket connection error. Check your network or try reconnecting.');
-        emitState('error');
+        // onclose always follows and decides between retry / lost / error.
       };
 
       ws.onclose = (evt) => {
         clearTimeout(openTimer);
         clearTimeout(handshakeTimer);
         if (!isCurrent()) return;
-        // A prior 'ended' control frame already reported the real reason —
-        // don't downgrade it to a generic close error.
-        if (statusRef.current !== 'ended' && evt.code !== 1000 && evt.code !== 1001) {
-          setError((prev) => prev || (evt.reason ? evt.reason : `Connection closed (code ${evt.code}).`));
+        if (statusRef.current === 'ended') return;
+        // The session no longer exists in the hub (backend restarted, detach
+        // timeout, ended elsewhere) or isn't ours: nothing to re-attach to.
+        if (evt.code === 4404 || evt.code === 4403) {
+          markLost(evt.code === 4403 ? 'forbidden' : 'not_found');
+          return;
+        }
+        if (resumable()) {
+          scheduleReconnect();
+          return;
+        }
+        if (evt.code !== 1000 && evt.code !== 1001) {
+          const message = evt.reason ? evt.reason : `Connection closed (code ${evt.code}).`;
+          setError((prev) => prev || message);
+          emitState('error', message);
         }
       };
-
-      term.onData((data) => {
-        if (ws.readyState === WebSocket.OPEN) ws.send(data);
-      });
-      term.onResize(({ cols, rows }) => sendResize(cols, rows));
     }
+
+    // Laptop wake / network change: a socket the browser hasn't noticed is
+    // dead yet gets retried as soon as we're back online.
+    const onBackOnline = () => {
+      const ws = wsRef.current;
+      if (statusRef.current === 'live' && ws && ws.readyState !== WebSocket.OPEN && sessionToResume()) {
+        scheduleReconnect();
+      }
+    };
+    window.addEventListener('online', onBackOnline);
 
     return () => {
       signal.cancelled = true;
+      clearTimeout(retryTimer);
+      if (onlineListener) window.removeEventListener('online', onlineListener);
+      window.removeEventListener('online', onBackOnline);
+      retryNowRef.current = null;
       cleanupResize();
       if (wsRef.current) {
         // Unmount = detach only. The hub keeps the SSH session alive; no
@@ -416,11 +517,32 @@ const TerminalView = forwardRef(function TerminalView(
 
   return (
     <div className={`relative flex h-full min-h-0 flex-col bg-[#0a0a0a] ${className}`}>
-      {error && status !== 'ended' && (
+      {error && status !== 'ended' && status !== 'reconnecting' && (
         <div className="flex shrink-0 items-center justify-between gap-3 border-b border-red-500/20 bg-red-500/10 px-3 py-1.5">
           <p className="flex-1 text-xs text-red-400">{error}</p>
           <button onClick={() => setError('')} className="rounded p-0.5 text-red-400 hover:text-red-300">
             <X className="h-3 w-3" />
+          </button>
+        </div>
+      )}
+
+      {status === 'reconnecting' && reconnect && (
+        <div
+          role="status"
+          className="flex shrink-0 items-center justify-between gap-3 border-b border-amber-500/20 bg-amber-500/10 px-3 py-1.5"
+        >
+          <p className="flex flex-1 items-center gap-2 text-xs text-amber-300">
+            <Loader2 className="h-3 w-3 animate-spin" />
+            {reconnect.offline
+              ? "You're offline. Reconnecting when the network is back…"
+              : `Connection lost. Reconnecting${reconnect.attempt > 1 ? ` (attempt ${reconnect.attempt})` : ''}…`}
+          </p>
+          <button
+            type="button"
+            onClick={() => retryNowRef.current?.()}
+            className="rounded px-1.5 py-0.5 text-xs font-medium text-amber-200 hover:bg-amber-500/20"
+          >
+            Retry now
           </button>
         </div>
       )}
@@ -433,10 +555,19 @@ const TerminalView = forwardRef(function TerminalView(
         </div>
       )}
 
-      {status === 'ended' && (
+      {/* The workspace renders its own recovery card for these (statusOverlay=false). */}
+      {statusOverlay && (status === 'ended' || status === 'lost') && (
         <div className="absolute inset-0 z-10 flex flex-col items-center justify-center gap-2 bg-[#0a0a0a]/95 text-center">
-          <p className="text-sm font-medium text-foreground">Session ended</p>
-          <p className="text-xs text-muted-foreground">{endedReason ? `Reason: ${endedReason}` : ''}</p>
+          <p className="text-sm font-medium text-foreground">
+            {status === 'lost' ? 'This session is no longer running' : 'Session ended'}
+          </p>
+          <p className="text-xs text-muted-foreground">
+            {status === 'lost'
+              ? 'Shellius may have restarted, or the session timed out while detached.'
+              : endedReason
+                ? `Reason: ${endedReason}`
+                : ''}
+          </p>
         </div>
       )}
 

@@ -10,6 +10,7 @@ import { QuickConnectProvider } from '@/context/QuickConnectContext';
 import { TerminalWorkspaceProvider } from '@/context/TerminalWorkspaceContext';
 import useKeyboardShortcuts from '@/hooks/useKeyboardShortcuts';
 import useDocumentTitle from '@/hooks/useDocumentTitle';
+import { useAuth } from '@/context/AuthContext';
 
 /**
  * GlobalShortcuts — mounts useKeyboardShortcuts() as a descendant of
@@ -39,6 +40,8 @@ function AppLayout() {
   // non-scrolling, min-h-0-constrained `main` too (see the min-h-0 comment
   // below for why this matters).
   const isTerminalsRoute = location.pathname === '/terminals' || location.pathname === '/terminal';
+  // Keyed by user: a different sign-in gets a fresh workspace (own tabs, own storage).
+  const { user } = useAuth();
 
   return (
     // TerminalWorkspaceProvider must be the outermost of these two:
@@ -47,7 +50,7 @@ function AppLayout() {
     // useTerminalWorkspace() to open tabs — it only has TerminalWorkspace
     // context available if that provider is an ancestor of QuickConnectProvider
     // itself, not just of its children.
-    <TerminalWorkspaceProvider>
+    <TerminalWorkspaceProvider key={user?.id || 'anon'}>
       <QuickConnectProvider>
         <CommandPaletteProvider>
           <GlobalShortcuts />

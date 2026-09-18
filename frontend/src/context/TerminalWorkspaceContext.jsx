@@ -1,5 +1,6 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
+import { useAuth } from '@/context/AuthContext';
 import {
   listTerminalSessions,
   duplicateTerminalSession,
@@ -9,9 +10,11 @@ import {
 import * as L from '@/lib/workspaceLayout';
 
 // v2: layout is per split group (see lib/workspaceLayout.js). v1 had a single
-// global layout and is migrated on load.
-const STORAGE_KEY = 'shellius.workspace.v2';
-const LEGACY_STORAGE_KEY = 'shellius.workspace.v1';
+// global layout and is migrated on load. Stored per user (`:<userId>`), so a
+// different person signing in on the same browser never inherits tabs.
+const STORAGE_PREFIX = 'shellius.workspace.v2';
+const UNSCOPED_KEYS = ['shellius.workspace.v2', 'shellius.workspace.v1'];
+const storageKey = (userId) => `${STORAGE_PREFIX}:${userId || 'anon'}`;
 
 const TerminalWorkspaceContext = createContext(null);
 
@@ -23,16 +26,22 @@ function uuid() {
 // Workspace state persists tab metadata (never tickets/secrets) so a reload
 // re-attaches every tab and replays recent output. Tabs without a live
 // sessionId yet (still connecting when the page unloaded) are dropped.
-function loadPersisted() {
+function loadPersisted(userId) {
   try {
-    for (const key of [STORAGE_KEY, LEGACY_STORAGE_KEY]) {
+    const own = localStorage.getItem(storageKey(userId));
+    if (own) {
+      const parsed = JSON.parse(own);
+      if (parsed && Array.isArray(parsed.tabs)) return parsed;
+    }
+    // One-time pickup of the old, unscoped keys (pre per-user storage).
+    for (const key of UNSCOPED_KEYS) {
       const raw = localStorage.getItem(key);
       if (!raw) continue;
+      localStorage.removeItem(key);
       const parsed = JSON.parse(raw);
       if (!parsed || !Array.isArray(parsed.tabs)) continue;
-      if (key === LEGACY_STORAGE_KEY) {
+      if (parsed.layout) {
         const migrated = L.migrateLegacyLayout(parsed.layout, parsed.activeTabId);
-        localStorage.removeItem(LEGACY_STORAGE_KEY);
         return { tabs: parsed.tabs, groups: migrated.groups, activeTabId: migrated.activeTabId };
       }
       return parsed;
@@ -43,8 +52,8 @@ function loadPersisted() {
   }
 }
 
-function buildInitialState() {
-  const persisted = loadPersisted();
+function buildInitialState(userId) {
+  const persisted = loadPersisted(userId);
   const tabs = (persisted?.tabs || [])
     .filter((t) => t && (t.sessionId || (t.kind === 'request' && t.accessRequestId)))
     .map((t) =>
@@ -87,8 +96,10 @@ export function TerminalWorkspaceProvider({ children }) {
   const location = useLocation();
   const onTerminalsPage = location.pathname === '/terminals';
 
+  const { user } = useAuth();
+  const userId = user?.id || null;
   const initialRef = useRef(null);
-  if (!initialRef.current) initialRef.current = buildInitialState();
+  if (!initialRef.current) initialRef.current = buildInitialState(userId);
 
   const [tabs, setTabs] = useState(initialRef.current.tabs);
   // { groups, activeTabId } — split groups + the tab on screen. The visible
@@ -127,15 +138,21 @@ export function TerminalWorkspaceProvider({ children }) {
     listTerminalSessions()
       .then((sessions) => {
         const liveIds = new Set(sessions.map((s) => s.id));
+        // Restored tabs whose session is gone (backend restarted, detach
+        // timeout…) don't try to attach at all. They open straight on the
+        // recovery card (SessionRecoveryCard) instead of a failing connect.
         setTabsMirrored((prev) =>
           prev.map((t) =>
             t.kind !== 'request' && t.sessionId && !liveIds.has(t.sessionId)
-              ? { ...t, state: 'ended', error: 'Session ended' }
+              ? { ...t, state: 'lost', endReason: 'not_found', skipConnect: true, error: null }
               : t
           )
         );
       })
-      .catch(() => {});
+      .catch(() => {
+        // Backend unreachable right now: tabs attach normally, and TerminalView
+        // keeps retrying until it's back (or reports the session lost).
+      });
   }, []);
 
   // Persist (best-effort — never tickets/secrets, only ids + display meta).
@@ -155,23 +172,28 @@ export function TerminalWorkspaceProvider({ children }) {
           host: t.host,
           username: t.username,
         }));
-      localStorage.setItem(STORAGE_KEY, JSON.stringify({ tabs: persistTabs, groups: ws.groups, activeTabId: ws.activeTabId }));
+      localStorage.setItem(storageKey(userId), JSON.stringify({ tabs: persistTabs, groups: ws.groups, activeTabId: ws.activeTabId }));
     } catch {
       /* ignore quota/serialization errors — workspace state is best-effort */
     }
-  }, [tabs, ws]);
+  }, [tabs, ws, userId]);
 
   // Poll the live session list — feeds the Sessions panel + sidebar badge.
   // 15s while the workspace page is open, 60s elsewhere (cheap).
+  const [liveSessions, setLiveSessions] = useState([]);
+  const pollRef = useRef(() => {});
   useEffect(() => {
     let cancelled = false;
     const poll = () => {
       listTerminalSessions()
         .then((sessions) => {
-          if (!cancelled) setLiveCount(sessions.length);
+          if (cancelled) return;
+          setLiveCount(sessions.length);
+          setLiveSessions(sessions);
         })
         .catch(() => {});
     };
+    pollRef.current = poll;
     poll();
     const id = setInterval(poll, onTerminalsPage ? 15000 : 60000);
     return () => {
@@ -179,6 +201,7 @@ export function TerminalWorkspaceProvider({ children }) {
       clearInterval(id);
     };
   }, [onTerminalsPage]);
+  const refreshLiveSessions = useCallback(() => pollRef.current(), []);
 
   // Show a tab: its split if it's in one, otherwise full size.
   // `fillEmptyPane` (tab-bar clicks): a focused empty pane in the split on
@@ -273,6 +296,59 @@ export function TerminalWorkspaceProvider({ children }) {
           : t
       )
     );
+  }, []);
+
+  // Recovery: give an existing tab a new connect spec (Reconnect / Retry /
+  // Quick Connect again) so it keeps its place in the tab bar and its split.
+  // `retry` forces TerminalView to reconnect even for the same spec.
+  const reconnectTab = useCallback((id, connect, meta = {}) => {
+    setTabsMirrored((prev) =>
+      prev.map((t) =>
+        t.id === id
+          ? {
+              ...t,
+              kind: 'terminal',
+              accessRequestId: undefined,
+              connect: { ...connect, retry: Date.now() },
+              sessionId: null,
+              state: 'connecting',
+              error: null,
+              endReason: null,
+              skipConnect: false,
+              label: meta.label || t.label,
+              env: meta.env || t.env,
+              host: meta.host || t.host,
+              username: meta.username || t.username,
+            }
+          : t
+      )
+    );
+    setWs((prev) => L.selectTab(prev, id));
+  }, []);
+
+  // Recovery: turn a terminal tab into an access-request status tab in place
+  // (a new request is pending approval).
+  const convertTabToRequest = useCallback((id, accessRequest, meta = {}) => {
+    setTabsMirrored((prev) =>
+      prev.map((t) =>
+        t.id === id
+          ? {
+              ...t,
+              kind: 'request',
+              accessRequestId: accessRequest.id,
+              connect: null,
+              sessionId: null,
+              state: 'pending',
+              error: null,
+              endReason: null,
+              skipConnect: false,
+              label: meta.label || t.label,
+              env: meta.env || accessRequest.server?.environment || t.env,
+            }
+          : t
+      )
+    );
+    setWs((prev) => L.selectTab(prev, id));
   }, []);
 
   // Shared entry point for "an access request was just created/resolved" —
@@ -389,13 +465,16 @@ export function TerminalWorkspaceProvider({ children }) {
 
   const attachSession = useCallback(
     (sessionId, meta = {}) => {
+      const focus = meta.focus !== false;
       const existing = tabsRef.current.find((t) => t.sessionId === sessionId);
       if (existing) {
-        selectTab(existing.id);
-        navigate('/terminals');
+        if (focus) {
+          selectTab(existing.id);
+          navigate('/terminals');
+        }
         return existing.id;
       }
-      return openTab({ attach: sessionId }, { ...meta, sessionId, focus: true });
+      return openTab({ attach: sessionId }, { ...meta, sessionId, focus });
     },
     [openTab, selectTab, navigate]
   );
@@ -429,8 +508,8 @@ export function TerminalWorkspaceProvider({ children }) {
       prev.map((t) => {
         if (t.id !== id) return t;
         if (state === 'error') return { ...t, state, error: extra || t.error || 'Connection error' };
-        if (state === 'ended') return { ...t, state, error: extra ? `Session ended (${extra})` : 'Session ended' };
-        return { ...t, state, error: null };
+        if (state === 'ended' || state === 'lost') return { ...t, state, endReason: extra || null, error: null };
+        return { ...t, state, error: null, endReason: null };
       })
     );
   }, []);
@@ -460,6 +539,10 @@ export function TerminalWorkspaceProvider({ children }) {
       focusedPane,
       splitInfo,
       liveCount,
+      liveSessions,
+      refreshLiveSessions,
+      reconnectTab,
+      convertTabToRequest,
       draggedTabId,
       setDraggedTabId,
       selectTab,
@@ -492,6 +575,10 @@ export function TerminalWorkspaceProvider({ children }) {
       focusedPane,
       splitInfo,
       liveCount,
+      liveSessions,
+      refreshLiveSessions,
+      reconnectTab,
+      convertTabToRequest,
       draggedTabId,
       selectTab,
       setFocusedPane,

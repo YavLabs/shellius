@@ -25,3 +25,14 @@ export const closeTerminalSession = (id) =>
 // Returns { ticket, expiresIn }.
 export const requestWsTicket = (purpose, params) =>
   api.post('/terminal/ws-ticket', { purpose, params }).then((r) => r.data?.data);
+
+// A tab lost its live session (backend restart, expiry, admin terminate,
+// detach timeout, remote exit…). Returns what happened and the next step:
+// { action: 'attach'|'reconnect'|'pending'|'request_access'|'quick_connect'|'none',
+//   endReason, actionDetail, server, target, prefill?, requestId?, accessExpiresAt? }
+export const getSessionRecovery = (id) =>
+  api.get(`/terminal/sessions/${id}/recovery`).then((r) => r.data?.data);
+
+// Connect spec for a new session replacing a lost one (action reconnect/attach).
+export const reconnectSession = (id) =>
+  api.post(`/terminal/sessions/${id}/reconnect`).then((r) => r.data?.data?.connect);

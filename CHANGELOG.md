@@ -9,6 +9,24 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 Tracked here as work lands on `main`; moved into a dated section on release
 (`node scripts/version.mjs bump <major|minor|patch>`).
 
+### Added
+
+- Terminal workspace **session recovery**:
+  - Tabs re-attach automatically after network drops, with backoff and offline awareness.
+  - When a session is really gone (Shellius restarted, access expired or revoked, admin
+    terminated, detach timeout, remote `exit`), the tab shows a recovery card. It explains
+    what happened and offers what will work with your *current* access: Reconnect, View
+    request, Request access again, or Quick Connect again (prefilled; one-off passwords are
+    never stored).
+  - Recovery happens in the same tab, so its place and split are kept.
+  - A banner offers **Reconnect all** when several tabs are affected.
+  - New `GET /api/terminal/sessions/:id/recovery` and `POST /api/terminal/sessions/:id/reconnect`.
+- On startup, SSH sessions left `ACTIVE` by a crashed or killed backend are closed with reason
+  `server_restart`.
+- Running sessions that aren't open in a tab can be re-attached from the **"+" New connection
+  dialog** as well as the empty workspace, with **Attach all**. The Sessions button shows how many
+  are waiting.
+
 ### Changed
 
 - Terminal workspace: **splits now belong to their tabs** instead of being one layout for the
@@ -23,6 +41,10 @@ Tracked here as work lands on `main`; moved into a dated section on release
   That produced "Too many requests" errors after a few quick switches or a reload with several
   tabs, and stray prompt lines from resizes while a tab was hidden. Terminals also stop sending
   no-op or zero-size resizes to the remote shell.
+- Terminal workspace: saved tabs are now per user, so another person signing in on the same
+  browser no longer inherits them.
+- Access request status tabs retry by themselves when Shellius is briefly unreachable, and
+  "Request again" reuses the tab.
 - Access requests: the sidebar badge showed the unread-notification count. It now shows
   requests waiting for your review, the same number as the "Pending reviews" tab, and updates
   after you approve or deny.

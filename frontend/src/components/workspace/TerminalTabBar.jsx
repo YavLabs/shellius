@@ -36,6 +36,8 @@ const STATUS_DOT = {
   detached: 'bg-muted-foreground/60',
   ended: 'bg-red-500',
   error: 'bg-red-500',
+  reconnecting: 'bg-amber-500 animate-pulse',
+  lost: 'bg-red-500',
   // Access-request tab states (see RequestStatusCard).
   pending: 'bg-amber-500 animate-pulse',
   denied: 'bg-red-500',
@@ -87,6 +89,7 @@ function TabItem({ tab, index, active, split, onSelect, onClose, menu, dragProps
       tabIndex={0}
       data-tab-id={tab.id}
       data-tab-index={index}
+      data-tab-state={tab.state}
       draggable
       onDragStart={(e) => dragProps.onDragStart(e, tab.id, index)}
       onDragEnd={dragProps.onDragEnd}
@@ -237,6 +240,8 @@ function TerminalTabBar({ tabs, activeTabId, onSelect, workspace, onNewConnectio
   const [insertBefore, setInsertBefore] = useState(null);
   const scrollRef = useRef(null);
   const scrollRafRef = useRef(null);
+  const openSessionIds = new Set(tabs.map((t) => t.sessionId).filter(Boolean));
+  const detachedCount = (workspace.liveSessions || []).filter((s) => !openSessionIds.has(s.id)).length;
 
   const menu = {
     onRename: workspace.renameTab,
@@ -400,17 +405,27 @@ function TerminalTabBar({ tabs, activeTabId, onSelect, workspace, onNewConnectio
                 <button
                   type="button"
                   onClick={onToggleSessions}
+                  data-detached-count={detachedCount}
                   aria-label="Toggle sessions panel"
                   aria-pressed={sessionsOpen}
                   className={cn(
-                    'flex h-6 w-6 items-center justify-center rounded text-muted-foreground hover:bg-accent hover:text-foreground',
+                    'relative flex h-6 w-6 items-center justify-center rounded text-muted-foreground hover:bg-accent hover:text-foreground',
                     sessionsOpen && 'bg-accent text-foreground'
                   )}
                 >
                   <PanelRight className="h-3.5 w-3.5" />
+                  {detachedCount > 0 && (
+                    <span className="absolute -right-1 -top-1 flex h-3.5 min-w-3.5 items-center justify-center rounded-full bg-primary px-0.5 text-[9px] font-semibold text-primary-foreground">
+                      {detachedCount}
+                    </span>
+                  )}
                 </button>
               </TooltipTrigger>
-              <TooltipContent side="bottom">Sessions</TooltipContent>
+              <TooltipContent side="bottom">
+                {detachedCount > 0
+                  ? `Sessions (${detachedCount} running but not open in a tab)`
+                  : 'Sessions'}
+              </TooltipContent>
             </Tooltip>
           </div>
         )}

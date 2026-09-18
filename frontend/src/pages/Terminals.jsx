@@ -1,5 +1,4 @@
 import { useCallback, useEffect, useState } from 'react';
-import { listTerminalSessions } from '@/services/terminalService';
 import { SquareTerminal, Zap, Plus } from 'lucide-react';
 import { useTerminalWorkspace } from '@/context/TerminalWorkspaceContext';
 import { useQuickConnect } from '@/context/QuickConnectContext';
@@ -7,6 +6,8 @@ import TerminalTabBar from '@/components/workspace/TerminalTabBar';
 import TerminalPaneArea from '@/components/workspace/TerminalPaneArea';
 import SessionsPanel from '@/components/workspace/SessionsPanel';
 import NewConnectionDialog from '@/components/workspace/NewConnectionDialog';
+import RunningSessionsList from '@/components/workspace/RunningSessionsList';
+import DisconnectedBanner from '@/components/workspace/DisconnectedBanner';
 import { getHistory, reconnectHistory } from '@/services/quickConnectService';
 
 function EmptyState({ onNewConnection }) {
@@ -19,7 +20,10 @@ function EmptyState({ onNewConnection }) {
       .catch(() => setRecent([]));
   }, []);
 
-  const { attachSession, openTab } = useTerminalWorkspace();
+  const { openTab, refreshLiveSessions } = useTerminalWorkspace();
+  useEffect(() => {
+    refreshLiveSessions();
+  }, [refreshLiveSessions]);
 
   const reconnect = async (item) => {
     if (item.authType !== 'credential') {
@@ -33,30 +37,6 @@ function EmptyState({ onNewConnection }) {
       openQuickConnect({ host: item.host, port: item.port, username: item.username, authTab: 'credential' });
     }
   };
-  // Live sessions not open in any tab (e.g. detached after a reload or when
-  // the browser tab was closed) — surfaced here so they can be re-attached.
-  const [running, setRunning] = useState([]);
-  useEffect(() => {
-    let cancelled = false;
-    const load = () =>
-      listTerminalSessions()
-        .then((list) => !cancelled && setRunning(list || []))
-        .catch(() => !cancelled && setRunning([]));
-    load();
-    const id = setInterval(load, 15000);
-    return () => {
-      cancelled = true;
-      clearInterval(id);
-    };
-  }, []);
-  const attach = (session) =>
-    attachSession(session.id, {
-      label: session.label || session.server?.displayName || session.host,
-      env: session.server?.environment,
-      host: session.host,
-      username: session.username,
-    });
-
   return (
     <div className="flex h-full flex-col items-center justify-center gap-4 p-6 text-center">
       <SquareTerminal className="h-10 w-10 text-muted-foreground/40" />
@@ -83,35 +63,9 @@ function EmptyState({ onNewConnection }) {
         )}
       </div>
 
-      {running.length > 0 && (
-        <div className="mt-4 w-full max-w-md text-left">
-          <p className="mb-1.5 text-xs font-medium text-muted-foreground">Running sessions</p>
-          <ul className="divide-y divide-border rounded-md border border-border bg-card">
-            {running.map((session) => (
-              <li key={session.id} className="flex items-center gap-3 px-3 py-2">
-                <span
-                  className={`h-2 w-2 shrink-0 rounded-full ${session.state === 'attached' ? 'bg-emerald-500' : 'bg-muted-foreground/50'}`}
-                  aria-hidden="true"
-                />
-                <span className="min-w-0 flex-1">
-                  <span className="block truncate text-sm text-foreground">{session.label || session.host}</span>
-                  <span className="block truncate font-mono text-xs text-muted-foreground">
-                    {session.username}@{session.host}
-                    {session.state === 'detached' ? ' · detached' : ''}
-                  </span>
-                </span>
-                <button
-                  type="button"
-                  onClick={() => attach(session)}
-                  className="inline-flex h-7 items-center rounded-md bg-primary px-2.5 text-xs font-medium text-primary-foreground hover:bg-primary/90"
-                >
-                  Attach
-                </button>
-              </li>
-            ))}
-          </ul>
-        </div>
-      )}
+      {/* Live sessions not open in any tab (detached after closing a tab, a
+          reload, or another window). */}
+      <RunningSessionsList className="mt-4 w-full max-w-md" />
 
       {recent.length > 0 && (
         <div className="mt-4 w-full max-w-md text-left">
@@ -219,6 +173,8 @@ function Terminals() {
         sessionsOpen={sessionsOpen}
         onToggleSessions={() => setSessionsOpen((v) => !v)}
       />
+
+      <DisconnectedBanner workspace={workspace} />
 
       <div className="flex min-h-0 flex-1">
         <div className="min-w-0 flex-1">

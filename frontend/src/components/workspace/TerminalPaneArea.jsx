@@ -10,6 +10,7 @@ import {
 import EnvironmentBadge from '@/components/shared/EnvironmentBadge';
 import TerminalView from '@/components/terminal/TerminalView';
 import RequestStatusCard from '@/components/workspace/RequestStatusCard';
+import SessionRecoveryCard from '@/components/workspace/SessionRecoveryCard';
 import { cn } from '@/lib/utils';
 
 const MAX_MOUNTED = 12;
@@ -46,6 +47,13 @@ function zoneFromPoint(rect, clientX, clientY) {
   if (x > 0.35 && x < 0.65 && y > 0.35 && y < 0.65) return 'center';
   const d = { left: x, right: 1 - x, top: y, bottom: 1 - y };
   return Object.entries(d).sort((a, b) => a[1] - b[1])[0][0];
+}
+
+// Lost / ended sessions, and connects that failed before any session
+// existed, get the recovery card over the (still visible) terminal.
+function needsRecovery(tab) {
+  if (tab.state === 'lost' || tab.state === 'ended') return true;
+  return tab.state === 'error' && !tab.sessionId;
 }
 
 function DropOverlay({ zone, label }) {
@@ -322,17 +330,25 @@ function TerminalPaneArea({ workspace }) {
         const paneIndex = layout.panes.indexOf(tab.id);
         const visible = paneIndex !== -1;
         return createPortal(
-          <div className="h-full min-h-0" onMouseDownCapture={() => visible && setFocusedPane(paneIndex)}>
+          <div className="relative h-full min-h-0" onMouseDownCapture={() => visible && setFocusedPane(paneIndex)}>
             {tab.kind === 'request' ? (
               <RequestStatusCard tab={tab} focused={visible && focusedPane === paneIndex} />
             ) : (
-              <TerminalView
-                connect={tab.connect}
-                visible={visible}
-                onSession={(info) => setTabSessionInfo(tab.id, info)}
-                onStateChange={(state, extra) => setTabState(tab.id, state, extra)}
-                className="h-full"
-              />
+              <>
+                <TerminalView
+                  // Restored tabs whose session is already known to be gone
+                  // don't attempt a doomed attach; the recovery card is shown.
+                  connect={tab.skipConnect ? null : tab.connect}
+                  visible={visible}
+                  statusOverlay={false}
+                  onSession={(info) => setTabSessionInfo(tab.id, info)}
+                  onStateChange={(state, extra) => setTabState(tab.id, state, extra)}
+                  className="h-full"
+                />
+                {needsRecovery(tab) && (
+                  <SessionRecoveryCard key={`${tab.sessionId || 'none'}:${tab.state}:${tab.endReason || ''}`} tab={tab} />
+                )}
+              </>
             )}
           </div>,
           hostFor(tab.id),

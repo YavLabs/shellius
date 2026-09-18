@@ -521,7 +521,25 @@ async function runSsh2Session(ws, req, { connect, pinServer, sessionMeta, rows, 
       targetUser: sessionMeta.targetUser,
       clientIp,
       userAgent,
-      metadata: { rows, cols, host: sessionMeta.targetHost, port: sessionMeta.targetPort, username: sessionMeta.targetUser },
+      metadata: {
+        rows,
+        cols,
+        host: sessionMeta.targetHost,
+        port: sessionMeta.targetPort,
+        username: sessionMeta.targetUser,
+        // What "reconnect" needs after the live session is gone (server
+        // restart, expiry…). No secrets: an auth *type* and a Keystore
+        // identity id, never a password or key. See terminalRecoveryService.
+        ...(sessionMeta.principal ? { principal: sessionMeta.principal } : {}),
+        ...(sessionMeta.authMethod === 'quick_connect'
+          ? {
+              quickConnect: {
+                authType: sessionMeta.quickConnectAuthType || null,
+                credentialId: sessionMeta.quickConnectCredentialId || null,
+              },
+            }
+          : {}),
+      },
     });
   } catch (err) {
     logger.error('terminalService: failed to create session row (ssh2)', { error: err.message });
@@ -966,6 +984,7 @@ async function handleConnection(ws, req) {
       certificateId: accessRequest.certificateId ?? null,
       accessRequestId: requestId,
       authMethod: 'certificate',
+      principal: principalOverride || null,
       targetHost: connectHost,
       targetPort: credentials.port,
       targetUser: credentials.username,
@@ -974,6 +993,44 @@ async function handleConnection(ws, req) {
     rows,
     cols,
   });
+}
+
+// ---------------------------------------------------------------------------
+// reconcileOrphanedSessions — startup sweep
+// ---------------------------------------------------------------------------
+
+/**
+ * Live SSH sessions exist only in this process's terminalHub. A crash, OOM
+ * kill or `node --watch` restart skips graceful shutdown (which ends them
+ * with reason 'shutdown'), leaving Session rows ACTIVE for sessions that
+ * can no longer exist. Close those rows at boot with endReason
+ * 'server_restart', so audit/Sessions pages stop showing them as live and
+ * the workspace can explain what happened and offer recovery.
+ *
+ * Only SSH rows: RDP (guacamole) sessions are not tracked by the hub.
+ * Assumes a single backend process (same documented limitation as the hub).
+ *
+ * @param {object} [opts]
+ * @param {string} [opts.orgId] - limit to one org (tests); startup passes nothing
+ * @returns {Promise<number>} number of sessions closed
+ */
+export async function reconcileOrphanedSessions({ orgId } = {}) {
+  const orphaned = await prisma.session.findMany({
+    where: { status: 'ACTIVE', sessionType: 'SSH', ...(orgId ? { orgId } : {}) },
+    select: { id: true },
+  });
+  let closed = 0;
+  for (const { id } of orphaned) {
+    if (hub.has(id)) continue;
+    try {
+      await sessionService.end(id, { status: 'ENDED', metadataPatch: { endReason: 'server_restart' } });
+      closed += 1;
+    } catch (err) {
+      logger.warn('terminalService: failed to close orphaned session', { sessionId: id, error: err.message });
+    }
+  }
+  if (closed) logger.info(`terminalService: closed ${closed} SSH session(s) left open by a previous run`);
+  return closed;
 }
 
 // ---------------------------------------------------------------------------
@@ -1130,4 +1187,4 @@ function safeClose(ws, code, reason) {
   }
 }
 
-export default { attachWebSocketServer, terminateSession, terminateActiveSessionsFor, endAllSessionsForUser };
+export default { attachWebSocketServer, terminateSession, terminateActiveSessionsFor, endAllSessionsForUser, reconcileOrphanedSessions };

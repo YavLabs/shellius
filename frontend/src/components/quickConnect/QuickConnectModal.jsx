@@ -45,7 +45,7 @@ function parseHostPaste(raw) {
 function QuickConnectModal({ open, onClose, prefill }) {
   const navigate = useNavigate();
   const { user: currentUser } = useAuth();
-  const { openTab } = useTerminalWorkspace();
+  const { openTab, reconnectTab, tabs } = useTerminalWorkspace();
   const canCreateIdentity = roleAtLeast(currentUser, 'admin');
 
   const [host, setHost] = useState('');
@@ -153,7 +153,15 @@ function QuickConnectModal({ open, onClose, prefill }) {
         expectedHostKey: expectedHostKey.trim() || undefined,
       });
       const label = `${username.trim() || 'user'}@${host.trim()}`;
-      openTab({ ticket: resp.ticket }, { label, host: host.trim(), username: username.trim(), focus: true });
+      // Opened from a tab's recovery card ("Quick Connect again"): reconnect in
+      // that same tab so it keeps its place and split.
+      const replaceTabId = prefill?.replaceTabId;
+      if (replaceTabId && tabs.some((t) => t.id === replaceTabId)) {
+        reconnectTab(replaceTabId, { ticket: resp.ticket }, { label, host: host.trim(), username: username.trim() });
+        navigate('/terminals');
+      } else {
+        openTab({ ticket: resp.ticket }, { label, host: host.trim(), username: username.trim(), focus: true });
+      }
       onClose();
     } catch (err) {
       const code = err.response?.data?.error?.code;

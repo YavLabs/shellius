@@ -17,7 +17,7 @@ const POLL_MS = 10000;
  * automatically (if this tab is the focused one) or on demand via Connect.
  */
 function RequestStatusCard({ tab, focused }) {
-  const { convertRequestTabToTerminal, closeTab, openTabForAccessRequest, setTabState } = useTerminalWorkspace();
+  const { convertRequestTabToTerminal, convertTabToRequest, setTabState } = useTerminalWorkspace();
   const [ar, setAr] = useState(null);
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState('');
@@ -53,6 +53,13 @@ function RequestStatusCard({ tab, focused }) {
     const id = setInterval(load, POLL_MS);
     return () => clearInterval(id);
   }, [ar, load]);
+
+  // Couldn't load (e.g. Shellius is restarting): keep trying quietly.
+  useEffect(() => {
+    if (!err || ar) return undefined;
+    const id = setInterval(load, 5000);
+    return () => clearInterval(id);
+  }, [err, ar, load]);
 
   const connect = useCallback(() => {
     if (!ar || autoConnectedRef.current) return;
@@ -185,8 +192,13 @@ function RequestStatusCard({ tab, focused }) {
           initialServerId={ar.serverId}
           onSuccess={(created) => {
             setReRequestOpen(false);
-            closeTab(tab.id);
-            if (created) openTabForAccessRequest(created, { focus: true });
+            if (!created) return;
+            // Reuse this tab: auto-approved → connect here, else track the new request here.
+            if (created.status === 'APPROVED') {
+              convertRequestTabToTerminal(tab.id, { requestId: created.id }, { env: ar.server?.environment });
+            } else {
+              convertTabToRequest(tab.id, created, { env: ar.server?.environment });
+            }
           }}
         />
       )}

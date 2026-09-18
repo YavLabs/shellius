@@ -23,6 +23,7 @@ import prisma from '../config/db.js';
 import * as hub from '../services/terminalHub.js';
 import * as quickConnectService from '../services/quickConnectService.js';
 import * as wsTicketService from '../services/wsTicketService.js';
+import * as recoveryService from '../services/terminalRecoveryService.js';
 import { userRateLimiter } from '../middleware/rateLimiter.js';
 
 const router = express.Router();
@@ -83,6 +84,42 @@ router.get(
   asyncHandler(async (req, res) => {
     const sessions = hub.list(req.user.userId, req.orgId);
     res.json({ success: true, data: { sessions } });
+  })
+);
+
+// ---------------------------------------------------------------------------
+// GET /api/terminal/sessions/:id/recovery — a workspace tab lost its live
+// session (backend restart, expiry, admin terminate, detach timeout, remote
+// exit…). Says what happened and the one next step that will work, based on
+// the user's *current* access. Owner only (a foreign id is 404). See
+// services/terminalRecoveryService.js.
+// ---------------------------------------------------------------------------
+
+router.get(
+  '/sessions/:id/recovery',
+  asyncHandler(async (req, res) => {
+    const data = await recoveryService.describe(req.params.id, { userId: req.user.userId, orgId: req.orgId });
+    res.json({ success: true, data });
+  })
+);
+
+// ---------------------------------------------------------------------------
+// POST /api/terminal/sessions/:id/reconnect — connect spec for a NEW session
+// replacing a lost one ({requestId, principal?} or a fresh single-use Quick
+// Connect ticket for saved-identity connections). Same limiter as ws-ticket.
+// ---------------------------------------------------------------------------
+
+router.post(
+  '/sessions/:id/reconnect',
+  wsTicketLimiter,
+  audit('session.reconnect', 'Session'),
+  asyncHandler(async (req, res) => {
+    const data = await recoveryService.reconnect(req.params.id, {
+      userId: req.user.userId,
+      orgId: req.orgId,
+      role: req.user.role,
+    });
+    res.status(201).json({ success: true, data });
   })
 );
 
