@@ -6,10 +6,14 @@ import config from '../config/index.js';
 const errorHandler = (err, req, res, _next) => {
   let statusCode = 500;
   let message = 'Internal Server Error';
+  let code;
+  let details;
 
   if (err instanceof ApiError) {
     statusCode = err.statusCode;
     message = err.message;
+    code = err.code;
+    details = err.details;
   } else if (err instanceof Prisma.PrismaClientKnownRequestError) {
     switch (err.code) {
       case 'P2002':
@@ -35,8 +39,9 @@ const errorHandler = (err, req, res, _next) => {
   const response = {
     success: false,
     error: {
-      code: statusCode,
+      code: code || statusCode,
       message,
+      ...(details ? { details } : {}),
     },
   };
 
