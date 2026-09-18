@@ -127,9 +127,18 @@ export async function revokeOtherFamilies(userId, keepFamilyId) {
   return families.length;
 }
 
-/** Bump sessionsValidFrom — every access token issued before "now" becomes invalid immediately. */
+/**
+ * Bump sessionsValidFrom — every access token issued before "now" becomes
+ * invalid immediately.
+ *
+ * Truncated to whole seconds because JWT `iat` is second-precision: a token
+ * minted right after the bump (e.g. the fresh pair returned by password
+ * change/reset) shares the same second and must stay valid. Tokens from the
+ * same second *before* the bump survive too — an accepted sub-second window.
+ */
 export async function bumpSessionsValidFrom(userId) {
-  await prisma.user.update({ where: { id: userId }, data: { sessionsValidFrom: new Date() } });
+  const nowSec = new Date(Math.floor(Date.now() / 1000) * 1000);
+  await prisma.user.update({ where: { id: userId }, data: { sessionsValidFrom: nowSec } });
 }
 
 /**

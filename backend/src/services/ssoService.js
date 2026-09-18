@@ -186,7 +186,10 @@ export function ssoError(code, message, statusCode = 403) {
 
 export async function reconcileOidcUser({ orgId, cfg, idClaims, userinfo }) {
   const email = String(userinfo.email || idClaims.email || '').toLowerCase().trim();
-  const emailVerified = userinfo.email_verified ?? idClaims.email_verified ?? false;
+  // Some IdPs (e.g. Cognito) send email_verified as the string "true".
+  const rawVerified = userinfo.email_verified ?? idClaims.email_verified ?? false;
+  const emailVerified = rawVerified === true || rawVerified === 'true';
+  const requireVerified = cfg.requireVerifiedEmail !== false;
   const sub = idClaims.sub || userinfo.sub;
 
   if (!sub) {
@@ -206,7 +209,6 @@ export async function reconcileOidcUser({ orgId, cfg, idClaims, userinfo }) {
 
   // 2. Fall back to matching an existing local/invited account by email.
   if (!user && email) {
-    const requireVerified = cfg.requireVerifiedEmail !== false;
     const candidate = await prisma.user.findFirst({ where: { orgId, email } });
     if (candidate) {
       if (candidate.ssoSub && candidate.ssoSub !== sub) {
@@ -228,6 +230,11 @@ export async function reconcileOidcUser({ orgId, cfg, idClaims, userinfo }) {
     }
     if (!email) {
       throw ssoError('sso_failed', 'OIDC response is missing an email claim');
+    }
+    // allowedDomains is only meaningful if the email is verified — never
+    // provision an account from an unverified email claim.
+    if (requireVerified && !emailVerified) {
+      throw ssoError('email_not_verified', 'Your identity provider did not assert a verified email for this account');
     }
     const defaultRole = safeDefaultRole(cfg.defaultRole);
     const created = await prisma.user.create({
