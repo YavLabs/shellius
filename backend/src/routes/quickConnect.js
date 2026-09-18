@@ -31,6 +31,9 @@ const ticketAuthSchema = Joi.alternatives().try(
     type: Joi.string().valid('key').required(),
     privateKey: Joi.string().required(),
     passphrase: Joi.string().allow('', null),
+    // Optional — covers hosts requiring BOTH a key and a password
+    // (AuthenticationMethods publickey,password).
+    password: Joi.string().allow('', null),
   }),
   Joi.object({ type: Joi.string().valid('credential').required(), credentialId: Joi.string().required() })
 );
@@ -49,6 +52,7 @@ const newIdentityAuthSchema = Joi.alternatives().try(
     type: Joi.string().valid('key').required(),
     privateKey: Joi.string().required(),
     passphrase: Joi.string().allow('', null),
+    password: Joi.string().allow('', null),
   })
 );
 

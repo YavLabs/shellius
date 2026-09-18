@@ -393,44 +393,6 @@ async function runOverSsh2({ server, authOpts, command, stdin }) {
   }
 }
 
-// The certificate-mode path needs its own ephemeral key pair per invocation
-// (spawning the real `ssh` client, mirroring terminalService.js — ssh2 can't
-// do OpenSSH cert auth). See execDeployStep() below for the full flow.
-async function execViaOpenSshClient({ host, port, username, privateKeyText, certText, command }) {
-  const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'shellius-deploy-'));
-  try {
-    const keyPath = path.join(tmpDir, 'id_ed25519');
-    const certPath = path.join(tmpDir, 'id_ed25519-cert.pub');
-    await fs.writeFile(keyPath, privateKeyText.endsWith('\n') ? privateKeyText : privateKeyText + '\n', { mode: 0o600 });
-    await fs.writeFile(certPath, certText.endsWith('\n') ? certText : certText + '\n', { mode: 0o644 });
-
-    const args = [
-      '-o', `CertificateFile=${certPath}`,
-      '-o', 'IdentitiesOnly=yes',
-      '-o', 'BatchMode=yes',
-      '-o', 'StrictHostKeyChecking=accept-new',
-      '-o', `UserKnownHostsFile=${path.join(tmpDir, 'known_hosts')}`,
-      '-o', 'ConnectTimeout=10',
-      '-i', keyPath,
-      '-p', String(port),
-      `${username}@${host}`,
-      command,
-    ];
-
-    return await new Promise((resolve, reject) => {
-      const proc = spawn('ssh', args, { stdio: ['ignore', 'pipe', 'pipe'] });
-      let stdout = '';
-      let stderr = '';
-      proc.stdout.on('data', (d) => { stdout += d.toString('utf8'); });
-      proc.stderr.on('data', (d) => { stderr += d.toString('utf8'); });
-      proc.on('error', reject);
-      proc.on('close', (code) => resolve({ code, stdout, stderr }));
-    });
-  } finally {
-    await fs.rm(tmpDir, { recursive: true, force: true });
-  }
-}
-
 /**
  * Resolve { authOpts } (ssh2 connect fragment) or a cert-mode descriptor for
  * one deployment row, based on its stored authMode.
@@ -473,7 +435,7 @@ async function execDeployStep({ row, server, action, publicKey, targetUser, useS
   }
 
   // certificate mode — sign a short-lived ephemeral cert for auth.principal
-  // and shell out to the real ssh client (mirrors terminalService.js).
+  // and connect via ssh2 (sshConnect.connectSsh's certificate auth path).
   const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'shellius-deploykey-'));
   let privateKeyBuf;
   try {
@@ -501,12 +463,9 @@ async function execDeployStep({ row, server, action, publicKey, targetUser, useS
     // Passwordless sudo only — no stored password exists for cert-mode auth.
     const { command } = buildDeployCommand({ action, publicKey, targetUser, useSudo, sudoPassword: null });
 
-    const result = await execViaOpenSshClient({
-      host: server.ipAddress || server.hostname,
-      port: server.port || 22,
-      username: auth.principal,
-      privateKeyText,
-      certText: signedCert,
+    const result = await runOverSsh2({
+      server,
+      authOpts: { username: auth.principal, privateKey: privateKeyText, certificate: signedCert },
       command,
     });
     return { code: result.code, stdout: result.stdout, stderr: result.stderr };

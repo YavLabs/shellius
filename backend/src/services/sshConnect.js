@@ -1,23 +1,44 @@
 /**
  * sshConnect.js
  *
- * Shared ssh2 connection helper for the Keystore / Quick Connect / Key
- * Deployment flows (as opposed to the certificate-based path, which shells
- * out to the OpenSSH client — see terminalService.js for why).
+ * THE single outbound SSH engine for Shellius (ssh2). Every SSH connection the
+ * backend makes — web terminal (certificate, credential and Quick Connect
+ * modes), key deployment, credential tests and auto-provisioning — goes
+ * through connectSsh() below. The OpenSSH `ssh` binary is never spawned.
  *
  * Responsibilities:
- *   - connectSsh(): open an ssh2 Client with password / key(+passphrase) /
- *     keyboard-interactive auth, computing the host key SHA256 fingerprint
- *     + algorithm via the hostVerifier hook.
- *   - resolveServerAuth(): decrypt a Server's Credential (+ SshKey) into
- *     connect() options.
+ *   - connectSsh(): open an ssh2 Client with certificate / key(+passphrase) /
+ *     password / keyboard-interactive auth (in that order), computing the
+ *     host key SHA256 fingerprint + algorithm via the hostVerifier hook.
+ *   - The OpenSSH user-certificate auth patch (see "Certificate auth" below):
+ *     ssh2@1.17.0's Protocol#authPK() writes the same algorithm name into both
+ *     the userauth publickey-algorithm field AND the signature blob's
+ *     algorithm field. For certificate auth those must differ (userauth field
+ *     = the cert type, e.g. `ssh-ed25519-cert-v01@openssh.com`; signature
+ *     blob = the base signing algorithm, e.g. `ssh-ed25519`) — sshd silently
+ *     rejects the mismatched signature otherwise. We install a narrowly
+ *     scoped override of Protocol.prototype.authPK that only activates for
+ *     keys we've explicitly marked as carrying a certificate, and delegates
+ *     to the original implementation for everything else (plain key auth,
+ *     agent auth, hostbased auth are untouched).
+ *   - resolveTarget(): DNS-resolve a host once and refuse loopback,
+ *     link-local (incl. cloud metadata 169.254.169.254), unspecified and
+ *     multicast addresses (TARGET_NOT_ALLOWED). RFC1918 private ranges are
+ *     allowed. Connections are made to the resolved IP — never re-resolved —
+ *     to avoid DNS-rebinding races between the check and the connect.
+ *   - resolveServerAuth(): decrypt a Server's Credential (+ SshKey [+
+ *     certificate]) into connect() options.
  *   - Host-key pinning helpers (TOFU): pin on first connect, refuse on
  *     mismatch until an admin resets the pin.
  *   - execCommand(): run a single command over an established connection.
  *
  * Security: decrypted secrets only ever live in local variables passed
- * straight into ssh2; nothing here logs key/password material.
+ * straight into ssh2; nothing here logs key/password/certificate material.
  */
+
+import { createRequire } from 'module';
+import dns from 'dns/promises';
+import net from 'net';
 
 import { Client } from 'ssh2';
 import sshpk from 'sshpk';
@@ -26,6 +47,251 @@ import prisma from '../config/db.js';
 import ApiError from '../utils/ApiError.js';
 import logger from '../utils/logger.js';
 import { decrypt } from '../utils/crypto.js';
+
+const require = createRequire(import.meta.url);
+
+// ---------------------------------------------------------------------------
+// Certificate auth — ssh2 Protocol#authPK() override
+// ---------------------------------------------------------------------------
+
+// ssh2 is pinned to this exact version in package.json. The override below
+// pokes at module-private internals (Protocol.prototype, keyParser symbols)
+// that are not part of ssh2's public API, so we hard-fail at import time if a
+// different version sneaks in rather than silently sending broken cert auth.
+const SUPPORTED_SSH2_VERSION = '1.17.0';
+
+const CERT_MARKER = Symbol('shellius:sshCertAuth');
+
+// Map OpenSSH certificate key-type names to the base (non-cert) signature
+// algorithm to use for the signature blob, and (for RSA) a forced digest.
+// ed25519 and ecdsa reuse the same signing path plain (non-cert) key auth
+// already uses correctly in ssh2 — only the wire algorithm *names* differ.
+// RSA has no server-negotiated rsa-sha2-*/ssh-rsa fallback available to us at
+// this layer (that negotiation lives in ssh2's private client.js closure), so
+// we force the modern rsa-sha2-512 digest, which is what current OpenSSH
+// servers expect for certificate auth.
+const CERT_BASE_ALGO = {
+  'ssh-ed25519-cert-v01@openssh.com': { base: 'ssh-ed25519', hash: null },
+  'ssh-rsa-cert-v01@openssh.com': { base: 'rsa-sha2-512', hash: 'sha512' },
+  'ecdsa-sha2-nistp256-cert-v01@openssh.com': { base: 'ecdsa-sha2-nistp256', hash: null },
+  'ecdsa-sha2-nistp384-cert-v01@openssh.com': { base: 'ecdsa-sha2-nistp384', hash: null },
+  'ecdsa-sha2-nistp521-cert-v01@openssh.com': { base: 'ecdsa-sha2-nistp521', hash: null },
+};
+
+let installCertAuthPatch;
+let parseSsh2Key; // ssh2's own key parser — required so signing/prototype methods line up
+
+(function initCertAuthPatch() {
+  let Protocol;
+  let parseKeyFn;
+  let convertSignature;
+  let sendPacket;
+  let writeUInt32BE;
+  let MESSAGE;
+  let ssh2Version;
+
+  try {
+    ssh2Version = require('ssh2/package.json').version;
+    Protocol = require('ssh2/lib/protocol/Protocol.js');
+    ({ parseKey: parseKeyFn } = require('ssh2/lib/protocol/keyParser.js'));
+    ({ convertSignature, sendPacket, writeUInt32BE } = require('ssh2/lib/protocol/utils.js'));
+    ({ MESSAGE } = require('ssh2/lib/protocol/constants.js'));
+  } catch (err) {
+    throw new Error(
+      `sshConnect: failed to load ssh2 internals required for OpenSSH certificate auth ` +
+        `(expected ssh2@${SUPPORTED_SSH2_VERSION}): ${err.message}`
+    );
+  }
+
+  if (ssh2Version !== SUPPORTED_SSH2_VERSION) {
+    throw new Error(
+      `sshConnect: ssh2@${ssh2Version} is installed, but the OpenSSH certificate-auth override ` +
+        `was only written and verified against ssh2@${SUPPORTED_SSH2_VERSION}. Pin ssh2 to that ` +
+        `exact version in package.json, or re-verify/update the override in sshConnect.js (see the ` +
+        `"Certificate auth" comment at the top of this file) before deploying.`
+    );
+  }
+  if (typeof Protocol?.prototype?.authPK !== 'function') {
+    throw new Error('sshConnect: ssh2 internals look different than expected (Protocol.prototype.authPK missing) — refusing to install the certificate-auth patch.');
+  }
+
+  parseSsh2Key = parseKeyFn;
+
+  installCertAuthPatch = () => {
+    if (Protocol.prototype.__shelliusCertAuthPatched) return;
+
+    const originalAuthPK = Protocol.prototype.authPK;
+
+    Protocol.prototype.authPK = function patchedAuthPK(username, pubKey, keyAlgo, cbSign) {
+      const marker = pubKey && pubKey[CERT_MARKER];
+      if (!marker) {
+        return originalAuthPK.call(this, username, pubKey, keyAlgo, cbSign);
+      }
+
+      if (this._server) throw new Error('Client-only method called in server mode');
+
+      const parsed = parseKeyFn(pubKey);
+      if (parsed instanceof Error) throw new Error('Invalid key');
+
+      const certAlgoName = parsed.type; // e.g. ssh-ed25519-cert-v01@openssh.com
+      const sigAlgoName = marker.baseAlgo; // e.g. ssh-ed25519
+      const pubKeyBlob = parsed.getPublicSSH(); // cert wire blob
+
+      if (typeof keyAlgo === 'function') {
+        cbSign = keyAlgo;
+        keyAlgo = undefined;
+      }
+      if (!keyAlgo) keyAlgo = certAlgoName;
+
+      const userLen = Buffer.byteLength(username);
+      const algoLen = Buffer.byteLength(keyAlgo);
+      const pubKeyLen = pubKeyBlob.length;
+      const sessionID = this._kex.sessionID;
+      const sesLen = sessionID.length;
+      const payloadLen =
+        (cbSign ? 4 + sesLen : 0)
+          + 1 + 4 + userLen + 4 + 14 + 4 + 9 + 1 + 4 + algoLen + 4 + pubKeyLen;
+      let packet;
+      let p;
+      if (cbSign) {
+        packet = Buffer.allocUnsafe(payloadLen);
+        p = 0;
+        writeUInt32BE(packet, sesLen, p);
+        packet.set(sessionID, p += 4);
+        p += sesLen;
+      } else {
+        packet = this._packetRW.write.alloc(payloadLen);
+        p = this._packetRW.write.allocStart;
+      }
+
+      packet[p] = MESSAGE.USERAUTH_REQUEST;
+      writeUInt32BE(packet, userLen, ++p);
+      packet.utf8Write(username, p += 4, userLen);
+      writeUInt32BE(packet, 14, p += userLen);
+      packet.utf8Write('ssh-connection', p += 4, 14);
+      writeUInt32BE(packet, 9, p += 14);
+      packet.utf8Write('publickey', p += 4, 9);
+      packet[p += 9] = (cbSign ? 1 : 0);
+      writeUInt32BE(packet, algoLen, ++p);
+      packet.utf8Write(keyAlgo, p += 4, algoLen);
+      writeUInt32BE(packet, pubKeyLen, p += algoLen);
+      packet.set(pubKeyBlob, p += 4);
+
+      if (!cbSign) {
+        this._authsQueue.push('publickey');
+        this._debug && this._debug('Outbound: Sending USERAUTH_REQUEST (publickey -- check) [cert]');
+        sendPacket(this, this._packetRW.write.finalize(packet));
+        return;
+      }
+
+      cbSign(packet, (signature) => {
+        signature = convertSignature(signature, sigAlgoName);
+        if (signature === false) throw new Error('Error while converting handshake signature');
+
+        const sigAlgoLen = Buffer.byteLength(sigAlgoName);
+        const sigLen = signature.length;
+        p = this._packetRW.write.allocStart;
+        packet = this._packetRW.write.alloc(
+          1 + 4 + userLen + 4 + 14 + 4 + 9 + 1 + 4 + algoLen + 4 + pubKeyLen + 4
+            + 4 + sigAlgoLen + 4 + sigLen
+        );
+
+        packet[p] = MESSAGE.USERAUTH_REQUEST;
+        writeUInt32BE(packet, userLen, ++p);
+        packet.utf8Write(username, p += 4, userLen);
+        writeUInt32BE(packet, 14, p += userLen);
+        packet.utf8Write('ssh-connection', p += 4, 14);
+        writeUInt32BE(packet, 9, p += 14);
+        packet.utf8Write('publickey', p += 4, 9);
+        packet[p += 9] = 1;
+        writeUInt32BE(packet, algoLen, ++p);
+        packet.utf8Write(keyAlgo, p += 4, algoLen);
+        writeUInt32BE(packet, pubKeyLen, p += algoLen);
+        packet.set(pubKeyBlob, p += 4);
+
+        // NOTE: this is the actual fix — the signature blob's own algorithm
+        // name field uses the BASE algorithm (sigAlgoName), not the cert
+        // type (keyAlgo), which is what stock ssh2@1.17.0 gets wrong.
+        writeUInt32BE(packet, 4 + sigAlgoLen + 4 + sigLen, p += pubKeyLen);
+        writeUInt32BE(packet, sigAlgoLen, p += 4);
+        packet.utf8Write(sigAlgoName, p += 4, sigAlgoLen);
+        writeUInt32BE(packet, sigLen, p += sigAlgoLen);
+        packet.set(signature, p += 4);
+
+        this._authsQueue.push('publickey');
+        this._debug && this._debug('Outbound: Sending USERAUTH_REQUEST (publickey) [cert]');
+        sendPacket(this, this._packetRW.write.finalize(packet));
+      });
+    };
+
+    Protocol.prototype.__shelliusCertAuthPatched = true;
+    logger.info('sshConnect: installed OpenSSH certificate-auth override for ssh2@' + ssh2Version);
+  };
+})();
+
+installCertAuthPatch();
+
+/**
+ * Parse an OpenSSH certificate text ("<algo> <base64> [comment]") into its
+ * algorithm name and raw wire-format blob.
+ */
+function parseCertificateText(certText) {
+  const trimmed = String(certText || '').trim();
+  const parts = trimmed.split(/\s+/);
+  if (parts.length < 2) throw new ApiError(400, 'Malformed certificate text');
+  const [algoName, b64] = parts;
+  if (!CERT_BASE_ALGO[algoName]) {
+    throw new ApiError(400, `Unsupported certificate type: ${algoName}`, { code: 'CERT_UNSUPPORTED_TYPE' });
+  }
+  let blob;
+  try {
+    blob = Buffer.from(b64, 'base64');
+  } catch {
+    throw new ApiError(400, 'Malformed certificate text');
+  }
+  if (!blob.length) throw new ApiError(400, 'Malformed certificate text');
+  return { algoName, blob, baseInfo: CERT_BASE_ALGO[algoName] };
+}
+
+/**
+ * Build a "certified" key object ssh2 will treat as a normal parsed
+ * publickey-auth key, except:
+ *   - .type reports the CERTIFICATE algorithm (so the userauth request's
+ *     publickey-algorithm field is correct)
+ *   - .getPublicSSH() returns the certificate's wire blob (not the bare
+ *     public key) — this is what actually gets sent as "the public key"
+ *   - .sign() is pinned to the base algorithm's digest (relevant for RSA,
+ *     where ssh2's server-negotiated rsa-sha2 selection lives in a closure
+ *     we can't reach from here)
+ *   - carries CERT_MARKER so our authPK patch (and only our patch) knows to
+ *     use the base signature algorithm name for the signature blob.
+ *
+ * @param {string|Buffer} privateKey  - OpenSSH/PEM/PPK private key text
+ * @param {string} [passphrase]
+ * @param {string} certificate        - OpenSSH certificate text
+ * @returns {object} ssh2-compatible parsed key, usable as connect().privateKey
+ */
+function buildCertifiedKey(privateKey, passphrase, certificate) {
+  const parsedKey = parseSsh2Key(privateKey, passphrase);
+  if (parsedKey instanceof Error) {
+    const msg = /passphrase/i.test(parsedKey.message || '')
+      ? 'Private key is encrypted and requires a passphrase, or the passphrase is incorrect'
+      : `Could not parse private key: ${parsedKey.message}`;
+    throw new ApiError(400, msg, { code: 'KEY_PASSPHRASE_INVALID' });
+  }
+  if (!parsedKey.isPrivateKey()) {
+    throw new ApiError(400, 'certificate auth requires a private key, not a public key');
+  }
+
+  const { algoName, blob, baseInfo } = parseCertificateText(certificate);
+
+  const wrapper = Object.create(parsedKey);
+  wrapper.type = algoName;
+  wrapper.getPublicSSH = () => blob;
+  wrapper.sign = (data, algo) => parsedKey.sign(data, baseInfo.hash || algo);
+  wrapper[CERT_MARKER] = { baseAlgo: baseInfo.base };
+  return wrapper;
+}
 
 // ---------------------------------------------------------------------------
 // Host key fingerprinting
@@ -52,23 +318,174 @@ function describeHostKey(keyBuf) {
 }
 
 // ---------------------------------------------------------------------------
+// Target guard — resolveTarget()
+// ---------------------------------------------------------------------------
+
+// Escape hatch for local dev, where Shellius itself commonly runs alongside
+// throwaway SSH containers bound to 127.0.0.1. Off by default in every real
+// deployment. See .env.example. Read live (not cached at import time) so
+// tests can toggle it per-case.
+function loopbackAllowed() {
+  return String(process.env.SSH_TARGET_ALLOW_LOOPBACK || '').toLowerCase() === 'true';
+}
+
+/**
+ * Classify a literal IPv4/IPv6 address.
+ * @returns {'loopback'|'unspecified'|'linklocal'|'multicast'|'private'|'public'}
+ */
+export function classifyIp(ip) {
+  const fam = net.isIP(ip);
+  if (fam === 4) {
+    const o = ip.split('.').map(Number);
+    if (o[0] === 127) return 'loopback';
+    if (o[0] === 0) return 'unspecified';
+    if (o[0] === 169 && o[1] === 254) return 'linklocal'; // covers 169.254.169.254 cloud metadata
+    if (o[0] >= 224 && o[0] <= 239) return 'multicast';
+    if (o[0] === 255 && o[1] === 255 && o[2] === 255 && o[3] === 255) return 'multicast'; // broadcast
+    if (o[0] === 10) return 'private';
+    if (o[0] === 172 && o[1] >= 16 && o[1] <= 31) return 'private';
+    if (o[0] === 192 && o[1] === 168) return 'private';
+    return 'public';
+  }
+  if (fam === 6) {
+    const lower = ip.toLowerCase();
+    if (lower === '::' || lower === '0:0:0:0:0:0:0:0') return 'unspecified';
+    if (lower === '::1' || lower === '0:0:0:0:0:0:0:1') return 'loopback';
+    if (lower.startsWith('::ffff:')) {
+      const v4 = lower.slice(7);
+      if (net.isIP(v4) === 4) return classifyIp(v4);
+    }
+    // fe80::/10
+    if (/^fe[89ab]/.test(lower)) return 'linklocal';
+    // ff00::/8
+    if (lower.startsWith('ff')) return 'multicast';
+    // fc00::/7 (unique local — "private" equivalent for IPv6)
+    if (lower.startsWith('fc') || lower.startsWith('fd')) return 'private';
+    return 'public';
+  }
+  return 'public';
+}
+
+/**
+ * Resolve `host` (hostname or IP literal) to its address(es) exactly once,
+ * and refuse targets in disallowed categories. RFC1918/ULA private ranges
+ * are allowed (SSH targets are usually on private networks).
+ *
+ * @param {string} host
+ * @returns {Promise<{ hostname: string, ip: string, addresses: string[] }>}
+ *   `hostname` is the original input (for display); `ip` is the address to
+ *   actually connect to (first resolved address); `addresses` is every
+ *   resolved address, all of which were checked.
+ */
+export async function resolveTarget(host) {
+  if (!host || typeof host !== 'string') {
+    throw new ApiError(400, 'host is required');
+  }
+
+  let records;
+  if (net.isIP(host)) {
+    records = [{ address: host }];
+  } else {
+    try {
+      records = await dns.lookup(host, { all: true, verbatim: true });
+    } catch (err) {
+      throw new ApiError(400, `Could not resolve host "${host}": ${err.message}`, { code: 'DNS_RESOLUTION_FAILED' });
+    }
+  }
+
+  if (!records || records.length === 0) {
+    throw new ApiError(400, `Could not resolve host "${host}"`, { code: 'DNS_RESOLUTION_FAILED' });
+  }
+
+  for (const { address } of records) {
+    const category = classifyIp(address);
+    if (category === 'loopback' && loopbackAllowed()) continue;
+    if (category !== 'public' && category !== 'private') {
+      throw new ApiError(
+        403,
+        `Target host "${host}" resolves to a disallowed address (${address} — ${category}).`,
+        { code: 'TARGET_NOT_ALLOWED', details: { host, address, category } }
+      );
+    }
+  }
+
+  return { hostname: host, ip: records[0].address, addresses: records.map((r) => r.address) };
+}
+
+// ---------------------------------------------------------------------------
+// Auth ordering — pure, unit-testable
+// ---------------------------------------------------------------------------
+
+/**
+ * Build the ordered list of ssh2 auth attempts for connectSsh(): certificate
+ * → publickey → password → keyboard-interactive. Each present credential
+ * contributes at most the attempts it enables; omitted ones are skipped
+ * entirely (e.g. no privateKey ⇒ no publickey attempt).
+ *
+ * @returns {Array<{type: 'publickey'|'password'|'keyboard-interactive', username: string, [key]: any, [password]: string, [passphrase]: string}>}
+ */
+export function buildAuthQueue({ username, password, privateKey, passphrase, certificate }) {
+  const queue = [];
+  if (certificate && privateKey) {
+    queue.push({ type: 'publickey', username, key: buildCertifiedKey(privateKey, passphrase, certificate) });
+  }
+  if (privateKey) {
+    queue.push({ type: 'publickey', username, key: privateKey, passphrase });
+  }
+  if (password) {
+    queue.push({ type: 'password', username, password });
+    queue.push({ type: 'keyboard-interactive', username });
+  }
+  return queue;
+}
+
+/**
+ * ssh2 authHandler step function: pop attempts off `queue` (mutating it)
+ * until one whose `type` the server still accepts (`authsLeft`) is found, or
+ * the queue is exhausted (`false`, meaning "give up"). `authsLeft` is
+ * `undefined`/empty on the very first call (server hasn't rejected anything
+ * yet); after a partial success it narrows to exactly what's still required
+ * (e.g. `['password']` after publickey succeeded on a
+ * `AuthenticationMethods publickey,password` server) — this is what makes
+ * "needs both a key and a password" work without hardcoding the pair.
+ *
+ * @param {Array<object>} queue      - mutated (shifted) in place
+ * @param {string[]} [authsLeft]
+ * @returns {object|false}
+ */
+export function pickNextAuth(queue, authsLeft) {
+  while (queue.length) {
+    const next = queue.shift();
+    if (Array.isArray(authsLeft) && authsLeft.length && !authsLeft.includes(next.type)) {
+      continue;
+    }
+    return next;
+  }
+  return false;
+}
+
+// ---------------------------------------------------------------------------
 // connectSsh
 // ---------------------------------------------------------------------------
 
 /**
- * Open an ssh2 connection with password / private-key(+passphrase) auth.
+ * Open an ssh2 connection. Auth order: certificate (key+certificate) →
+ * publickey (key alone) → password → keyboard-interactive (answers prompts
+ * containing "password" with the password). Servers requiring BOTH a key and
+ * a password (`AuthenticationMethods publickey,password`) are supported via
+ * ssh2's authHandler function form, which reacts to SSH partial success.
  *
  * @param {object} opts
- * @param {string} opts.host
+ * @param {string} opts.host                 - hostname OR resolved IP; NOT re-resolved here
  * @param {number} [opts.port=22]
  * @param {string} opts.username
  * @param {string} [opts.password]
  * @param {string|Buffer} [opts.privateKey]
  * @param {string} [opts.passphrase]
- * @param {string} [opts.expectedFingerprint]  - "SHA256:...". If set and the
- *   presented host key doesn't match, the connection is refused.
+ * @param {string} [opts.certificate]         - OpenSSH cert text; requires privateKey
+ * @param {string} [opts.expectedFingerprint] - "SHA256:...". If set and the presented host key doesn't match, the connection is refused.
+ * @param {string} [opts.pinContext]          - free-form label for logs (e.g. serverId) — not sent over the wire
  * @param {(info: {fingerprint:string, algorithm:string}) => void} [opts.onHostKey]
- *   Called as soon as the host key is seen (before auth completes).
  * @param {number} [opts.readyTimeout=15000]
  * @returns {Promise<{ client: import('ssh2').Client, hostKey: {fingerprint:string, algorithm:string} }>}
  */
@@ -79,7 +496,9 @@ export function connectSsh({
   password,
   privateKey,
   passphrase,
+  certificate,
   expectedFingerprint,
+  pinContext,
   onHostKey,
   readyTimeout = 15000,
 } = {}) {
@@ -88,6 +507,23 @@ export function connectSsh({
   if (!password && !privateKey) {
     throw new ApiError(400, 'Either a password or a private key is required');
   }
+  if (certificate && !privateKey) {
+    throw new ApiError(400, 'certificate requires a matching privateKey');
+  }
+
+  // Ordered list of auth attempts. ssh2's authHandler function form is called
+  // every time the server responds with USERAUTH_FAILURE, with the set of
+  // methods it still accepts (authsLeft) and whether a partial success just
+  // happened — this is what lets us satisfy `AuthenticationMethods
+  // publickey,password` without hardcoding a fixed pair of attempts.
+  let queue;
+  try {
+    queue = buildAuthQueue({ username, password, privateKey, passphrase, certificate });
+  } catch (err) {
+    return Promise.reject(err instanceof ApiError ? err : new ApiError(400, err.message));
+  }
+
+  const authHandler = (authsLeft) => pickNextAuth(queue, authsLeft);
 
   return new Promise((resolve, reject) => {
     const conn = new Client();
@@ -114,15 +550,12 @@ export function connectSsh({
 
     if (password) {
       conn.on('keyboard-interactive', (_name, _instructions, _lang, prompts, finish) => {
-        finish(prompts.map(() => password));
+        // Most keyboard-interactive setups present a single "Password:"
+        // prompt; answer that (and any other prompt whose text mentions
+        // "password") with the password, everything else with an empty
+        // response rather than guessing.
+        finish(prompts.map((pr) => (prompts.length === 1 || /password/i.test(pr?.prompt || '') ? password : '')));
       });
-    }
-
-    const authMethods = [];
-    if (privateKey) authMethods.push({ type: 'publickey', username, key: privateKey, passphrase });
-    if (password) {
-      authMethods.push({ type: 'password', username, password });
-      authMethods.push({ type: 'keyboard-interactive', username });
     }
 
     let connectOpts;
@@ -131,16 +564,13 @@ export function connectSsh({
         host,
         port,
         username,
-        ...(privateKey ? { privateKey, passphrase } : {}),
-        ...(password ? { password } : {}),
-        tryKeyboard: !!password,
-        ...(authMethods.length ? { authHandler: authMethods } : {}),
+        authHandler,
         readyTimeout,
         hostVerifier: (keyBuf, verify) => {
           try {
             hostKeyInfo = describeHostKey(keyBuf);
           } catch (err) {
-            logger.warn('sshConnect: failed to parse host key', { host, error: err.message });
+            logger.warn('sshConnect: failed to parse host key', { host, pinContext, error: err.message });
             verify(false);
             return;
           }
@@ -222,7 +652,7 @@ export function execCommand(client, cmd, { stdin, timeoutMs = 30000 } = {}) {
  *
  * @param {object} server  - Prisma Server row, must include `credential` with
  *   its `sshKey` relation (or will be loaded here if missing).
- * @returns {Promise<{ host: string, port: number, username: string, password?: string, privateKey?: string, passphrase?: string }>}
+ * @returns {Promise<{ host: string, port: number, username: string, password?: string, privateKey?: string, passphrase?: string, certificate?: string }>}
  */
 export async function resolveServerAuth(server) {
   if (!server) throw new ApiError(404, 'Server not found');
@@ -240,9 +670,6 @@ export async function resolveServerAuth(server) {
   if (!credential) {
     throw new ApiError(400, 'This server has no identity (Credential) configured');
   }
-  if (credential.authType !== 'key' && !credential.sshKey) {
-    // password | key_password both may carry an sshKey; only 'password' never does
-  }
 
   const opts = {
     host: server.ipAddress || server.hostname,
@@ -257,6 +684,9 @@ export async function resolveServerAuth(server) {
     opts.privateKey = decrypt(credential.sshKey.privateKeyEncrypted);
     if (credential.sshKey.passphraseEncrypted) {
       opts.passphrase = decrypt(credential.sshKey.passphraseEncrypted);
+    }
+    if (credential.sshKey.certificate) {
+      opts.certificate = credential.sshKey.certificate;
     }
   }
 
@@ -343,4 +773,8 @@ export default {
   resolveServerAuth,
   checkAndPinHostKey,
   mapSshError,
+  resolveTarget,
+  classifyIp,
+  buildAuthQueue,
+  pickNextAuth,
 };

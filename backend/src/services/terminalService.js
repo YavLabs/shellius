@@ -1,15 +1,19 @@
 /**
  * terminalService.js
  *
- * WebSocket-to-SSH proxy for the Shellius web terminal.
+ * WebSocket-to-SSH proxy for the Shellius web terminal. Every SSH connection
+ * (certificate, credential, Quick Connect) goes through ONE engine — ssh2,
+ * via sshConnect.connectSsh() — see sshConnect.js for how OpenSSH
+ * user-certificate auth is made to work correctly on ssh2.
  *
  * Upgrade paths:
  *   GET /api/terminal/ssh?token=<JWT>&requestId=<id>[&cols&rows][&principal=]
- *     - certificate-mode servers: spawns the real `ssh` client with an
- *       ephemeral CA-signed cert (ssh2 can't do OpenSSH cert auth — see the
- *       note above the cert-path code below).
+ *     - certificate-mode servers: generateSshCredentials() issues an
+ *       ephemeral Ed25519 key + CA-signed cert per connection; we connect
+ *       via ssh2 with { privateKey, certificate }.
  *     - credential-mode (Keystore) servers: connects via ssh2 using the
- *       server's stored identity (sshConnect.js).
+ *       server's stored identity (sshConnect.resolveServerAuth), which may
+ *       itself carry a certificate (imported key with SshKey.certificate).
  *   GET /api/terminal/ssh?token=<JWT>&ticket=<quickConnectTicket>[&cols&rows]
  *     - Quick Connect: consumes a single-use ticket (quickConnectService.js)
  *       and connects via ssh2 with the ad-hoc auth material it carries.
@@ -18,10 +22,12 @@
  *   - JWT verified before upgrade is accepted
  *   - Certificate path: access request must be APPROVED and not expired;
  *     generateSshCredentials is called per-connection (ephemeral Ed25519 +
- *     CA cert), private key string is zeroed after use.
- *   - Credential / Quick Connect (ssh2) paths: host key is verified against
- *     the server's pinned fingerprint (TOFU — see sshConnect.checkAndPinHostKey);
- *     a mismatch refuses the connection.
+ *     CA cert); the private key string reference is dropped after use (best
+ *     effort — see sshConnect.js header for the limits of "zeroing" JS
+ *     strings).
+ *   - All three paths: host key is verified against the server's pinned
+ *     fingerprint (TOFU — see sshConnect.checkAndPinHostKey); a mismatch
+ *     refuses the connection.
  *   - Session is created ACTIVE on connect, ended on any close/error, for
  *     every path (including Quick Connect, where serverId may be null).
  *
@@ -33,12 +39,8 @@
  */
 
 import { WebSocketServer } from 'ws';
-import { spawn } from 'child_process';
-import os from 'os';
 import { URL } from 'url';
 import { PassThrough } from 'stream';
-import path from 'path';
-import { mkdtemp, writeFile, rm } from 'fs/promises';
 
 import { verifyAccessToken } from '../utils/jwt.js';
 import prisma from '../config/db.js';
@@ -153,8 +155,7 @@ async function openRecordingWriter(sessionId, orgId, { rows, cols }) {
 
 // ---------------------------------------------------------------------------
 // In-memory map of active connections
-// key: sessionId → { ws, sshProc } (certificate-mode)
-//                | { ws, ssh2Client, ssh2Stream } (credential-mode / Quick Connect)
+// key: sessionId → { ws, ssh2Client, ssh2Stream }
 // ---------------------------------------------------------------------------
 const activeSessions = new Map();
 
@@ -342,15 +343,32 @@ function buildGuacamoleServer() {
 }
 
 // ---------------------------------------------------------------------------
-// runSsh2Session — shared ssh2-based PTY session (credential-mode servers +
-// Quick Connect). The certificate path (below, in handleConnection) still
-// shells out to the real `ssh` client — ssh2 can't do OpenSSH cert auth.
+// runSsh2Session — shared ssh2-based PTY session for all three connection
+// modes (certificate, credential, Quick Connect).
 // ---------------------------------------------------------------------------
 
 function sendControl(ws, obj) {
   try {
     if (ws.readyState === ws.constructor.OPEN) ws.send(JSON.stringify(obj));
   } catch { /* ignore */ }
+}
+
+/**
+ * Add mode-specific guidance to an ssh2 auth failure so users know what to
+ * fix, without changing the underlying error for anything else.
+ */
+function humanizeConnectError(err, authMethod, host) {
+  const msg = err?.message || 'SSH connection failed';
+  if (err?.code === 'SSH_CONNECT_FAILED' && /authentication failed/i.test(msg)) {
+    if (authMethod === 'certificate') {
+      return `${msg} Verify the target host has been bootstrapped with the Shellius CA and sshd was reloaded, and that the requested principal matches an existing local user.`;
+    }
+    if (authMethod === 'credential') {
+      return `${msg} Verify the identity's username, key, and/or password for ${host}.`;
+    }
+    return `${msg} Verify the username, key, and/or password for ${host}.`;
+  }
+  return msg;
 }
 
 /**
@@ -376,7 +394,7 @@ async function runSsh2Session(ws, req, { connect, pinServer, sessionMeta, rows, 
     });
     client = result.client;
   } catch (err) {
-    sendError(ws, err.message || 'SSH connection failed');
+    sendError(ws, humanizeConnectError(err, sessionMeta.authMethod, sessionMeta.targetHost));
     safeClose(ws, 1011, 'SSH connection failed');
     return;
   }
@@ -407,7 +425,7 @@ async function runSsh2Session(ws, req, { connect, pinServer, sessionMeta, rows, 
       orgId,
       userId,
       serverId: sessionMeta.serverId || null,
-      certificateId: null,
+      certificateId: sessionMeta.certificateId || null,
       accessRequestId: sessionMeta.accessRequestId || null,
       sessionType: 'SSH',
       authMethod: sessionMeta.authMethod,
@@ -601,10 +619,18 @@ async function handleConnection(ws, req) {
     // If this host matches a saved server, link the session to it and pin/
     // verify against its host key. assertNotProdHost already refused prod
     // hosts at ticket-creation time, so any match here is guaranteed non-prod.
+    // `connect.host` is the resolved IP (what we actually connect to);
+    // `connect.displayHost` is the original hostname/IP the user typed —
+    // match against both so a saved server keyed by hostname still links.
+    const displayHost = connect.displayHost || connect.host;
     const matchedServer = await prisma.server.findFirst({
       where: {
         orgId,
-        OR: [{ ipAddress: connect.host }, { hostname: { equals: connect.host, mode: 'insensitive' } }],
+        OR: [
+          { ipAddress: connect.host },
+          { ipAddress: displayHost },
+          { hostname: { equals: displayHost, mode: 'insensitive' } },
+        ],
       },
     });
 
@@ -617,7 +643,7 @@ async function handleConnection(ws, req) {
         serverId: matchedServer?.id || null,
         accessRequestId: null,
         authMethod: 'quick_connect',
-        targetHost: connect.host,
+        targetHost: displayHost,
         targetPort: connect.port,
         targetUser: connect.username,
       },
@@ -706,306 +732,39 @@ async function handleConnection(ws, req) {
     return;
   }
 
-  const { hostname, port, username, expiresAt } = credentials;
-  // Use IP address for the actual TCP connect — the container running the
+  // Use the IP address for the actual TCP connect — the container running the
   // backend may not resolve arbitrary hostnames.
-  const connectHost = credentials.address || hostname;
+  const connectHost = credentials.address || credentials.hostname;
   const privateKeyText = credentials.privateKey;
-  const certificate = credentials.certificate;
-  // Null the string reference on the credentials object
+  const certificateText = credentials.certificate;
+  // Drop the reference on the credentials object — best-effort; see
+  // sshConnect.js header for why a JS string can't truly be zeroed.
   credentials.privateKey = null;
 
-  // ── 6. Create Session row ────────────────────────────────────────────
-  const clientIp =
-    req.headers['x-forwarded-for']?.split(',')[0]?.trim() ||
-    req.socket?.remoteAddress ||
-    null;
-  const userAgent = req.headers['user-agent'] || null;
-
-  let session;
-  try {
-    session = await sessionService.create({
+  await runSsh2Session(ws, req, {
+    connect: {
+      host: connectHost,
+      port: credentials.port,
+      username: credentials.username,
+      privateKey: privateKeyText,
+      certificate: certificateText,
+    },
+    pinServer: fullServer,
+    sessionMeta: {
       orgId,
       userId,
       serverId: accessRequest.serverId,
       certificateId: accessRequest.certificateId ?? null,
       accessRequestId: requestId,
-      sessionType: 'SSH',
-      clientIp,
-      userAgent,
-      metadata: { rows, cols, hostname, port, username },
-    });
-  } catch (err) {
-    logger.error('terminalService: failed to create session row', { error: err.message });
-    safeClose(ws, 1011, 'Failed to create session');
-    return;
-  }
-
-  const sessionId = session.id;
-  logger.info('terminalService: SSH session starting', {
-    sessionId,
-    userId,
-    orgId,
-    hostname,
-    port,
-  });
-
-  // ── 7. Spawn the openssh client as a subprocess ──────────────────────
-  //
-  // We previously tried to use the `ssh2` Node library, but it does not
-  // implement OpenSSH user-cert authentication correctly: monkey-patching
-  // a parsed key to advertise the cert algorithm gets the public-key blob
-  // right but emits a signature wrapped with the cert algo name instead
-  // of the underlying signature algorithm, which sshd silently rejects.
-  // Verified by issuing a real cert and connecting with the openssh CLI:
-  // it works perfectly. So we just shell out to the real client.
-  //
-  // Strategy: write the ephemeral private key + cert to a tmp dir, spawn
-  // `ssh -tt -o ...`, and pipe stdin/stdout/stderr to the WebSocket. The
-  // `-tt` flag forces a PTY allocation so we get an interactive shell.
-
-  let ended = false;
-  let recordingWriter = null;
-  let tmpDir = null;
-  let sshProc = null;
-
-  const cleanup = async (statusOverride) => {
-    if (ended) return;
-    ended = true;
-    activeSessions.delete(sessionId);
-
-    if (sshProc && !sshProc.killed) {
-      try { sshProc.kill('SIGTERM'); } catch { /* ignore */ }
-    }
-
-    if (recordingWriter) {
-      recordingWriter.close();
-      const upload = await recordingWriter.waitUpload();
-      if (upload) {
-        try {
-          await prisma.session.update({
-            where: { id: sessionId },
-            data: { recordingKey: recordingWriter.recordingKey },
-          });
-        } catch (err) {
-          logger.warn('terminalService: failed to persist recordingKey', {
-            sessionId,
-            error: err.message,
-          });
-        }
-      }
-      recordingWriter = null;
-    }
-
-    if (tmpDir) {
-      try {
-        await rm(tmpDir, { recursive: true, force: true });
-      } catch { /* ignore */ }
-      tmpDir = null;
-    }
-
-    try {
-      await sessionService.end(sessionId, { status: statusOverride ?? 'ENDED' });
-    } catch (err) {
-      logger.warn('terminalService: session end write failed', {
-        sessionId,
-        error: err.message,
-      });
-    }
-  };
-
-  // Write key + cert to a per-session tmp dir with strict perms.
-  try {
-    tmpDir = await mkdtemp(path.join(os.tmpdir(), 'shellius-ssh-'));
-    const keyPath = path.join(tmpDir, 'id_ed25519');
-    const certPath = path.join(tmpDir, 'id_ed25519-cert.pub');
-    // The OpenSSH private key MUST end with a newline; the issuer trims
-    // it before encryption, so re-add here just in case.
-    const keyText = privateKeyText.endsWith('\n') ? privateKeyText : privateKeyText + '\n';
-    const certText = certificate.endsWith('\n') ? certificate : certificate + '\n';
-    await writeFile(keyPath, keyText, { mode: 0o600 });
-    await writeFile(certPath, certText, { mode: 0o644 });
-  } catch (err) {
-    logger.error('terminalService: failed to write key/cert tmp files', {
-      sessionId,
-      error: err.message,
-    });
-    sendError(ws, `Failed to prepare SSH credentials: ${err.message}`);
-    safeClose(ws, 1011, 'Failed to prepare SSH credentials');
-    await cleanup('TERMINATED');
-    return;
-  }
-
-  const keyPath = path.join(tmpDir, 'id_ed25519');
-  const certPath = path.join(tmpDir, 'id_ed25519-cert.pub');
-
-  // Spawn ssh with all the safety flags. -tt forces PTY allocation.
-  // BatchMode=yes ensures it never prompts for a password.
-  // StrictHostKeyChecking=accept-new accepts the host key on first contact.
-  const sshArgs = [
-    '-tt',
-    '-i', keyPath,
-    '-o', `CertificateFile=${certPath}`,
-    '-o', 'IdentitiesOnly=yes',
-    '-o', 'BatchMode=yes',
-    '-o', 'StrictHostKeyChecking=accept-new',
-    '-o', `UserKnownHostsFile=${path.join(tmpDir, 'known_hosts')}`,
-    '-o', 'ServerAliveInterval=30',
-    '-o', 'ServerAliveCountMax=3',
-    '-o', `ConnectTimeout=10`,
-    '-p', String(port),
-    `${username}@${connectHost}`,
-  ];
-
-  logger.info('terminalService: spawning ssh client', {
-    sessionId,
-    host: connectHost,
-    port,
-    username,
-  });
-
-  try {
-    sshProc = spawn('ssh', sshArgs, {
-      env: {
-        ...process.env,
-        TERM: 'xterm-256color',
-        LINES: String(rows),
-        COLUMNS: String(cols),
-      },
-      stdio: ['pipe', 'pipe', 'pipe'],
-    });
-  } catch (err) {
-    logger.error('terminalService: spawn ssh failed', { sessionId, error: err.message });
-    sendError(ws, `Failed to spawn ssh: ${err.message}`);
-    safeClose(ws, 1011, 'Failed to spawn ssh');
-    await cleanup('TERMINATED');
-    return;
-  }
-
-  // Open asciinema recording writer once the process is up.
-  recordingWriter = await openRecordingWriter(sessionId, orgId, { rows, cols });
-
-  activeSessions.set(sessionId, { ws, sshProc });
-
-  // Buffer collected stderr so we can attach it to the close reason if the
-  // process exits early (auth failure / DNS / connect refused).
-  let stderrBuf = '';
-  let connected = false;
-
-  // ── ssh stdout → WebSocket ──
-  sshProc.stdout.on('data', (chunk) => {
-    if (!connected) {
-      connected = true;
-      // Send a structured "connected" frame so the frontend can flip status.
-      // Browser-side STATUS.CONNECTED is set on ws.onopen, but the user only
-      // cares about output flowing — once stdout has bytes, we know the
-      // shell is live.
-    }
-    if (recordingWriter) recordingWriter.write(chunk);
-    if (ws.readyState === ws.constructor.OPEN) {
-      ws.send(chunk);
-    }
-  });
-
-  // ── ssh stderr → WebSocket (and capture for diagnostics) ──
-  sshProc.stderr.on('data', (chunk) => {
-    const text = chunk.toString('utf8');
-    stderrBuf += text;
-    if (stderrBuf.length > 4096) stderrBuf = stderrBuf.slice(-4096);
-    // Forward stderr to the user too — most users want to see ssh's
-    // own messages (banner, "Permission denied", etc).
-    if (recordingWriter) recordingWriter.write(chunk);
-    if (ws.readyState === ws.constructor.OPEN) {
-      ws.send(chunk);
-    }
-  });
-
-  sshProc.on('error', (err) => {
-    logger.error('terminalService: ssh process error', { sessionId, error: err.message });
-    sendError(ws, `ssh process error: ${err.message}`);
-    safeClose(ws, 1011, 'ssh process error');
-    cleanup('TERMINATED');
-  });
-
-  sshProc.on('exit', (code, signal) => {
-    logger.info('terminalService: ssh process exited', { sessionId, code, signal });
-    if (!connected && (code !== 0 || stderrBuf)) {
-      // Process exited before producing any stdout — almost certainly an
-      // auth or connect failure. Surface ssh's own stderr verbatim.
-      const reason = humanizeSshExitError(stderrBuf, connectHost, port, code);
-      sendError(ws, reason);
-      safeClose(ws, 1011, reason.slice(0, 120));
-    } else {
-      safeClose(ws, 1000, `ssh exited (code ${code ?? signal})`);
-    }
-    cleanup(code === 0 ? 'ENDED' : 'TERMINATED');
-  });
-
-  // ── WebSocket → ssh stdin ──
-  ws.on('message', (msg) => {
-    if (!sshProc || sshProc.killed) return;
-    if (typeof msg === 'string') {
-      // Try to parse as JSON control message (resize)
-      let parsed;
-      try { parsed = JSON.parse(msg); } catch {
-        sshProc.stdin.write(msg);
-        return;
-      }
-      if (parsed && parsed.type === 'resize') {
-        // openssh client doesn't expose a runtime resize signal over stdin.
-        // SIGWINCH on the local process tells it to re-poll its controlling
-        // tty, but since we're spawned without a real PTY (just pipes), the
-        // remote side won't see the change. Best-effort: send SIGWINCH so
-        // future flows that switch to node-pty pick this up.
-        try { sshProc.kill('SIGWINCH'); } catch { /* ignore */ }
-      } else if (parsed && parsed.data !== undefined) {
-        sshProc.stdin.write(String(parsed.data));
-      }
-    } else {
-      // Binary Buffer — raw stdin bytes
-      sshProc.stdin.write(msg);
-    }
-  });
-
-  ws.on('close', () => {
-    if (sshProc && !sshProc.killed) {
-      try { sshProc.kill('SIGTERM'); } catch { /* ignore */ }
-    }
-    cleanup('ENDED');
-  });
-
-  ws.on('error', (err) => {
-    logger.warn('terminalService: WebSocket error', { sessionId, error: err.message });
-    if (sshProc && !sshProc.killed) {
-      try { sshProc.kill('SIGTERM'); } catch { /* ignore */ }
-    }
-    cleanup('TERMINATED');
+      authMethod: 'certificate',
+      targetHost: connectHost,
+      targetPort: credentials.port,
+      targetUser: credentials.username,
+    },
+    rows,
+    cols,
   });
 }
-
-function humanizeSshExitError(stderr, host, port, code) {
-  const txt = (stderr || '').trim();
-  if (/Permission denied/i.test(txt)) {
-    return `SSH authentication denied at ${host}. Verify the target host has been bootstrapped with the Shellius CA, the principal matches an existing local user, and sshd was reloaded.\n${txt}`;
-  }
-  if (/Host key verification failed/i.test(txt)) {
-    return `Host key verification failed for ${host}. Inspect with: ssh-keyscan -p ${port} ${host}\n${txt}`;
-  }
-  if (/Connection refused/i.test(txt)) {
-    return `Connection refused at ${host}:${port}. Nothing is listening on the SSH port.`;
-  }
-  if (/Could not resolve hostname|Name or service not known/i.test(txt)) {
-    return `DNS lookup failed for ${host}. The Shellius backend cannot resolve this hostname — set the server's IP address in Shellius.`;
-  }
-  if (/Connection timed out|timeout/i.test(txt)) {
-    return `Timed out connecting to ${host}:${port}. Likely blocked by a firewall or the host is offline.`;
-  }
-  if (/Network is unreachable|No route to host/i.test(txt)) {
-    return `${host} is not reachable from the Shellius backend network. Check firewall / routing.`;
-  }
-  return `SSH client exited with code ${code} connecting to ${host}:${port}.${txt ? '\n' + txt : ''}`;
-}
-
 
 // ---------------------------------------------------------------------------
 // terminateSession — admin force-close
@@ -1023,15 +782,11 @@ export async function terminateSession(sessionId, byUserId) {
   // Update DB first — will throw if not ACTIVE
   const updated = await sessionService.terminate(sessionId, byUserId);
 
-  // Force-close in-memory handles (SSH subprocess or RDP socket)
+  // Force-close in-memory handles (ssh2 client or RDP socket)
   const entry = activeSessions.get(sessionId);
   if (entry) {
     activeSessions.delete(sessionId);
-    // SSH subprocess (certificate-mode path)
-    try {
-      if (entry.sshProc && !entry.sshProc.killed) entry.sshProc.kill('SIGTERM');
-    } catch { /* ignore */ }
-    // ssh2 client (credential-mode / Quick Connect path)
+    // ssh2 client (all SSH modes — certificate, credential, Quick Connect)
     try {
       if (entry.ssh2Stream) entry.ssh2Stream.close();
     } catch { /* ignore */ }
@@ -1099,30 +854,6 @@ function sendError(ws, message, details) {
   } catch {
     /* ignore */
   }
-}
-
-function humanizeSshError(err, host, port) {
-  const code = err?.code;
-  const lvl = err?.level;
-  if (code === 'ENOTFOUND' || code === 'EAI_AGAIN') {
-    return `DNS lookup failed for ${host}. The Shellius backend cannot resolve this hostname — set the server's IP address in Shellius or make the name resolvable from inside the backend container.`;
-  }
-  if (code === 'ECONNREFUSED') {
-    return `Connection refused at ${host}:${port}. The target host is reachable but nothing is listening on the SSH port.`;
-  }
-  if (code === 'EHOSTUNREACH' || code === 'ENETUNREACH') {
-    return `${host} is not reachable from the Shellius backend network. Check firewall / routing.`;
-  }
-  if (code === 'ETIMEDOUT' || /timed?\s*out/i.test(err?.message || '')) {
-    return `Timed out connecting to ${host}:${port}. Likely blocked by a firewall or the host is offline.`;
-  }
-  if (lvl === 'client-authentication' || /authentication/i.test(err?.message || '')) {
-    return `SSH authentication failed at ${host}. Verify (1) the target host has been bootstrapped with the Shellius CA, (2) the principal you requested matches an existing local user on the host, and (3) sshd was reloaded after bootstrap.`;
-  }
-  if (/Handshake failed/i.test(err?.message || '')) {
-    return `SSH handshake failed at ${host}: ${err.message}`;
-  }
-  return `SSH error connecting to ${host}:${port} — ${err?.message || 'unknown error'}`;
 }
 
 function safeClose(ws, code, reason) {

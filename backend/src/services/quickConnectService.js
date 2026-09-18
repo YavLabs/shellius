@@ -18,6 +18,7 @@
 
 import crypto from 'crypto';
 import net from 'net';
+import dns from 'dns/promises';
 
 import prisma from '../config/db.js';
 import ApiError from '../utils/ApiError.js';
@@ -25,6 +26,7 @@ import logger from '../utils/logger.js';
 import redis from '../config/redis.js';
 import { encrypt, decrypt } from '../utils/crypto.js';
 import * as sshKeysUtil from '../utils/sshKeys.js';
+import * as sshConnect from './sshConnect.js';
 import { resolveCredentialAuth } from './keystoreService.js';
 import { log as auditLog } from './auditService.js';
 
@@ -85,21 +87,75 @@ export async function updateSettings(orgId, { enabled, minRole }, actorId) {
 // Prod guard
 // ---------------------------------------------------------------------------
 
-async function assertNotProdHost(orgId, host) {
-  const match = await prisma.server.findFirst({
-    where: {
-      orgId,
-      environment: 'prod',
-      OR: [{ ipAddress: host }, { hostname: { equals: host, mode: 'insensitive' } }],
-    },
-    select: { id: true },
+/**
+ * Refuse a target that matches a saved prod server — by the exact
+ * string (ipAddress/hostname, as before) AND by resolved IP, so
+ * `prod-box.internal` can't be reached by IP and `10.0.0.5` can't be reached
+ * by a hostname that happens to resolve to it. DNS failures for a prod
+ * server's own hostname are tolerated (best-effort; the string check still
+ * catches the common case).
+ *
+ * @param {string} orgId
+ * @param {string} host
+ * @param {string[]} resolvedIps  - every IP `host` resolved to (from resolveTarget)
+ */
+export async function assertNotProdHost(orgId, host, resolvedIps = []) {
+  const prodServers = await prisma.server.findMany({
+    where: { orgId, environment: 'prod' },
+    select: { id: true, ipAddress: true, hostname: true },
   });
-  if (match) {
+  if (prodServers.length === 0) return;
+
+  const resolvedSet = new Set(resolvedIps);
+
+  const stringMatch = prodServers.find(
+    (s) => (s.ipAddress && s.ipAddress === host) || (s.hostname && s.hostname.toLowerCase() === host.toLowerCase())
+  );
+  if (stringMatch) {
     throw new ApiError(
       403,
       'This host is a production server — use the access request flow instead of Quick Connect.',
-      { code: 'PROD_HOST_REQUIRES_APPROVAL', details: { serverId: match.id } }
+      { code: 'PROD_HOST_REQUIRES_APPROVAL', details: { serverId: stringMatch.id } }
     );
+  }
+
+  if (resolvedSet.size === 0) return;
+
+  // Cache resolved IPs per prod server's own ipAddress/hostname for the life
+  // of this single guard call (a batch import could otherwise re-resolve the
+  // same prod hostnames repeatedly).
+  const dnsCache = new Map();
+  const resolveHostname = async (hostname) => {
+    if (dnsCache.has(hostname)) return dnsCache.get(hostname);
+    let ips = [];
+    try {
+      const records = await dns.lookup(hostname, { all: true, verbatim: true });
+      ips = records.map((r) => r.address);
+    } catch (err) {
+      logger.warn('quickConnectService: prod guard DNS lookup failed (tolerated)', { hostname, error: err.message });
+    }
+    dnsCache.set(hostname, ips);
+    return ips;
+  };
+
+  for (const server of prodServers) {
+    if (server.ipAddress && resolvedSet.has(server.ipAddress)) {
+      throw new ApiError(
+        403,
+        'This host resolves to a production server — use the access request flow instead of Quick Connect.',
+        { code: 'PROD_HOST_REQUIRES_APPROVAL', details: { serverId: server.id } }
+      );
+    }
+    if (server.hostname) {
+      const prodIps = await resolveHostname(server.hostname);
+      if (prodIps.some((ip) => resolvedSet.has(ip))) {
+        throw new ApiError(
+          403,
+          'This host resolves to a production server — use the access request flow instead of Quick Connect.',
+          { code: 'PROD_HOST_REQUIRES_APPROVAL', details: { serverId: server.id } }
+        );
+      }
+    }
   }
 }
 
@@ -113,6 +169,8 @@ function validateAuthShape(auth) {
     if (!auth.password) throw new ApiError(400, 'auth.password is required for auth.type "password"');
   } else if (auth.type === 'key') {
     if (!auth.privateKey) throw new ApiError(400, 'auth.privateKey is required for auth.type "key"');
+    // auth.password is optional alongside a key — covers hosts that require
+    // BOTH (AuthenticationMethods publickey,password).
   } else if (auth.type === 'credential') {
     if (!auth.credentialId) throw new ApiError(400, 'auth.credentialId is required for auth.type "credential"');
   } else {
@@ -145,17 +203,27 @@ export async function createTicket(orgId, user, { host, port, username, auth, ex
       throw new ApiError(400, 'username is required and must be a valid SSH username');
     }
     if (auth.type === 'key') {
-      // Fail fast on an obviously broken key/passphrase rather than at connect time.
-      await sshKeysUtil.importPrivateKey({ privateKey: auth.privateKey, passphrase: auth.passphrase });
+      // Fail fast on a broken key/passphrase, and normalise any supported
+      // input format (PKCS#8, PuTTY v2/v3, …) to OpenSSH so ssh2 can use it
+      // at redemption. The normalised key keeps the same passphrase.
+      const normalized = await sshKeysUtil.normalizePrivateKey({
+        privateKey: auth.privateKey,
+        passphrase: auth.passphrase,
+      });
+      auth = { ...auth, privateKey: normalized.privateKey };
     }
   }
 
-  await assertNotProdHost(orgId, host);
+  // Resolve once here; the same resolved IP is what we'll actually connect
+  // to on redemption (no re-resolution / DNS-rebinding window).
+  const resolved = await sshConnect.resolveTarget(host);
+  await assertNotProdHost(orgId, host, resolved.addresses);
 
   const payload = {
     orgId,
     userId: user.id,
     host,
+    resolvedIp: resolved.ip,
     port: effectivePort,
     username: effectiveUsername,
     auth,
@@ -202,7 +270,15 @@ export async function consumeTicket(ticket, { userId, orgId }) {
     throw new ApiError(403, 'This Quick Connect ticket does not belong to your session');
   }
 
-  const connect = { host: payload.host, port: payload.port, expectedFingerprint: payload.expectedHostKey || undefined };
+  // Connect to the IP resolved at ticket-creation time — never re-resolved —
+  // so there's no DNS-rebinding window between the target-guard check and
+  // the actual connection. `host` (the original hostname) is kept separately
+  // by callers for display / Server matching.
+  const connect = {
+    host: payload.resolvedIp || payload.host,
+    port: payload.port,
+    expectedFingerprint: payload.expectedHostKey || undefined,
+  };
 
   if (payload.auth.type === 'password') {
     connect.username = payload.username;
@@ -211,6 +287,7 @@ export async function consumeTicket(ticket, { userId, orgId }) {
     connect.username = payload.username;
     connect.privateKey = payload.auth.privateKey;
     connect.passphrase = payload.auth.passphrase || undefined;
+    if (payload.auth.password) connect.password = payload.auth.password;
   } else if (payload.auth.type === 'credential') {
     const cred = await prisma.credential.findFirst({
       where: { id: payload.auth.credentialId, orgId },
@@ -221,9 +298,10 @@ export async function consumeTicket(ticket, { userId, orgId }) {
     connect.username = payload.username || cred.username;
     if (opts.password) connect.password = opts.password;
     if (opts.privateKey) { connect.privateKey = opts.privateKey; connect.passphrase = opts.passphrase; }
+    if (cred.sshKey?.certificate) connect.certificate = cred.sshKey.certificate;
   }
 
-  return connect;
+  return { ...connect, displayHost: payload.host };
 }
 
 // ---------------------------------------------------------------------------
@@ -237,6 +315,7 @@ export async function saveAsServer(orgId, actor, body) {
   } = body;
 
   if (!isValidHost(host)) throw new ApiError(400, 'host must be a valid hostname, IPv4, or IPv6 address');
+  await sshConnect.resolveTarget(host);
   if (!customerId) throw new ApiError(400, 'customerId is required');
   const customer = await prisma.customer.findFirst({ where: { id: customerId, orgId } });
   if (!customer) throw new ApiError(400, 'Customer not found in organization');
@@ -266,7 +345,7 @@ export async function saveAsServer(orgId, actor, body) {
 
       let sshKeyId = null;
       if (identity.auth.type === 'key') {
-        const parsed = await sshKeysUtil.importPrivateKey({
+        const parsed = await sshKeysUtil.normalizePrivateKey({
           privateKey: identity.auth.privateKey,
           passphrase: identity.auth.passphrase,
         });
@@ -277,9 +356,11 @@ export async function saveAsServer(orgId, actor, body) {
             keyType: parsed.keyType,
             bits: parsed.bits,
             publicKey: parsed.publicKey,
-            privateKeyEncrypted: encrypt(identity.auth.privateKey),
+            // Store the normalised OpenSSH text (same passphrase), never the raw input.
+            privateKeyEncrypted: encrypt(parsed.privateKey),
             passphraseEncrypted: identity.auth.passphrase ? encrypt(identity.auth.passphrase) : null,
             fingerprint: parsed.fingerprint,
+            originalFormat: parsed.format,
             source: 'imported',
             createdById: actor.id,
           },
@@ -287,13 +368,18 @@ export async function saveAsServer(orgId, actor, body) {
         sshKeyId = key.id;
       }
 
+      const hasPassword = !!identity.auth.password;
+      const authType =
+        identity.auth.type === 'key' ? (hasPassword ? 'key_password' : 'key') : 'password';
+
       const cred = await tx.credential.create({
         data: {
           orgId,
           name: identity.name,
           username,
-          authType: identity.auth.type === 'key' ? 'key' : 'password',
-          passwordEncrypted: identity.auth.type === 'password' ? encrypt(identity.auth.password) : null,
+          authType,
+          passwordEncrypted:
+            identity.auth.type === 'password' || hasPassword ? encrypt(identity.auth.password) : null,
           sshKeyId,
           createdById: actor.id,
         },
@@ -343,4 +429,4 @@ export async function saveAsServer(orgId, actor, body) {
   return { server: result };
 }
 
-export default { getSettings, updateSettings, createTicket, consumeTicket, saveAsServer };
+export default { getSettings, updateSettings, createTicket, consumeTicket, saveAsServer, assertNotProdHost };
