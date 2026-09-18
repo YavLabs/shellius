@@ -817,6 +817,12 @@ model SshKey {
   fingerprint         String   // SHA256:...
   comment             String?
   source              String   @default("generated") // generated | imported
+  // Format the key was imported from (normalised to OpenSSH on import):
+  // openssh | pkcs1 | pkcs8 | sec1 | ppk2 | ppk3
+  originalFormat      String?  @map("original_format")
+  // Optional OpenSSH user certificate (…-cert-v01@openssh.com) paired with
+  // this key. When present, connections authenticate with the certificate.
+  certificate         String?  @db.Text
   createdById         String?  @map("created_by_id")
   lastExportedAt      DateTime? @map("last_exported_at")
   createdAt           DateTime @default(now()) @map("created_at")
