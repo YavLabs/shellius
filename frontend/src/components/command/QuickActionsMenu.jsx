@@ -15,6 +15,7 @@ import { useAuth } from '@/context/AuthContext';
 import { useQuickConnect } from '@/context/QuickConnectContext';
 import { useCommandPalette } from '@/context/CommandPaletteContext';
 import { QUICK_ACTIONS, isQuickActionVisible } from '@/lib/commands';
+import { runQuickAction } from '@/lib/runQuickAction';
 
 const isMac =
   typeof navigator !== 'undefined' && /Mac|iPhone|iPod|iPad/i.test(navigator.platform || navigator.userAgent || '');
@@ -37,21 +38,7 @@ function QuickActionsMenu() {
 
   if (visible.length === 0) return null;
 
-  const run = (action) => {
-    if (action.action === 'quick-connect') {
-      openQuickConnect();
-      return;
-    }
-    if (action.action === 'command-palette') {
-      openPalette();
-      return;
-    }
-    if (action.action === 'shortcuts-help') {
-      window.dispatchEvent(new CustomEvent('shellius:open-shortcuts'));
-      return;
-    }
-    if (action.href) navigate(action.href);
-  };
+  const run = (action) => runQuickAction(action, { navigate, openQuickConnect, openPalette });
 
   return (
     <DropdownMenu>

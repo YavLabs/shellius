@@ -14,6 +14,7 @@ const QuickConnectContext = createContext(null);
 export function QuickConnectProvider({ children }) {
   const [allowed, setAllowed] = useState(false);
   const [open, setOpen] = useState(false);
+  const [prefill, setPrefill] = useState(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -29,18 +30,24 @@ export function QuickConnectProvider({ children }) {
     };
   }, []);
 
-  const openQuickConnect = useCallback(() => setOpen(true), []);
+  // `prefillData` (optional): { host, port, username, authTab } — used by the
+  // dashboard's Recent Quick Connects widget to reopen the modal pre-filled
+  // for history rows that need a secret re-entered (password / key auth).
+  const openQuickConnect = useCallback((prefillData) => {
+    setPrefill(prefillData || null);
+    setOpen(true);
+  }, []);
   const closeQuickConnect = useCallback(() => setOpen(false), []);
 
   const value = useMemo(
-    () => ({ allowed, open, openQuickConnect, closeQuickConnect }),
-    [allowed, open, openQuickConnect, closeQuickConnect]
+    () => ({ allowed, open, openQuickConnect, closeQuickConnect, prefill }),
+    [allowed, open, openQuickConnect, closeQuickConnect, prefill]
   );
 
   return (
     <QuickConnectContext.Provider value={value}>
       {children}
-      <QuickConnectModal open={open} onClose={closeQuickConnect} />
+      <QuickConnectModal open={open} onClose={closeQuickConnect} prefill={prefill} />
     </QuickConnectContext.Provider>
   );
 }

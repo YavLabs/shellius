@@ -10,7 +10,11 @@ import {
 } from 'lucide-react';
 import PageHeader from '@/components/common/PageHeader';
 import MyAccessWidget from '@/components/dashboard/MyAccessWidget';
+import MetricCard from '@/components/dashboard/MetricCard';
+import RecentQuickConnectsWidget from '@/components/dashboard/RecentQuickConnectsWidget';
+import QuickActionsWidget from '@/components/dashboard/QuickActionsWidget';
 import { useAuth } from '@/context/AuthContext';
+import { useQuickConnect } from '@/context/QuickConnectContext';
 import { getServerStats } from '@/services/serverService';
 import { listSessions } from '@/services/sessionService';
 import { listAccessRequests } from '@/services/accessRequestService';
@@ -24,82 +28,6 @@ import { auditCategoryTone, environmentTone } from '@/lib/badgeTones';
 const ROLE_RANK = { super_admin: 4, admin: 3, manager: 2, member: 1 };
 function isAtLeast(user, role) {
   return (ROLE_RANK[user?.role] || 0) >= (ROLE_RANK[role] || 0);
-}
-
-// Accent palette per card — icon tile + hover ring color.
-const STAT_ACCENTS = {
-  primary: { bg: 'bg-primary/10', text: 'text-primary', ring: 'group-hover:border-primary/40' },
-  emerald: { bg: 'bg-emerald-500/10', text: 'text-emerald-600 dark:text-emerald-400', ring: 'group-hover:border-emerald-500/40' },
-  amber: { bg: 'bg-amber-500/10', text: 'text-amber-600 dark:text-amber-400', ring: 'group-hover:border-amber-500/40' },
-  violet: { bg: 'bg-violet-500/10', text: 'text-violet-600 dark:text-violet-400', ring: 'group-hover:border-violet-500/40' },
-};
-
-function StatCard({
-  title,
-  value,
-  description,
-  icon: Icon,
-  loading,
-  footer,
-  accent = 'primary',
-  to,
-  onClick,
-}) {
-  const navigate = useNavigate();
-  const interactive = !!to || !!onClick;
-  const handleClick = () => {
-    if (onClick) onClick();
-    else if (to) navigate(to);
-  };
-  const accentCls = STAT_ACCENTS[accent] || STAT_ACCENTS.primary;
-
-  const Wrapper = interactive ? 'button' : 'div';
-  const baseCls =
-    'group relative flex h-full w-full flex-col rounded-lg border border-border bg-card p-5 text-left transition-all';
-  const interactiveCls = interactive
-    ? ` hover:shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${accentCls.ring}`
-    : '';
-
-  return (
-    <Wrapper
-      {...(interactive ? { type: 'button', onClick: handleClick } : {})}
-      className={baseCls + interactiveCls}
-    >
-      {/* Header: icon tile + title */}
-      <div className="flex items-center gap-3">
-        <div
-          className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-lg ${accentCls.bg} ${accentCls.text}`}
-        >
-          <Icon className="h-5 w-5" />
-        </div>
-        <p className="text-sm font-medium text-muted-foreground">{title}</p>
-      </div>
-
-      {/* Big number */}
-      <div className="mt-4">
-        {loading ? (
-          <Skeleton className="h-9 w-20" />
-        ) : (
-          <p className="text-3xl font-semibold tracking-tight text-foreground tabular-nums">
-            {value}
-          </p>
-        )}
-      </div>
-
-      {/* Description */}
-      {description && (
-        <p className="mt-1.5 text-xs text-muted-foreground">{description}</p>
-      )}
-
-      {/* Footer strip — anchored to bottom with a top border so all four
-          cards render their extras at identical Y positions */}
-      {footer && (
-        <div className="mt-auto pt-4 border-t border-border/50">
-          {footer}
-        </div>
-      )}
-    </Wrapper>
-  );
 }
 
 // Badge for audit action verbs — reuses the shared audit category tone map.
@@ -187,33 +115,11 @@ function AuditRow({ item }) {
   );
 }
 
-function QuickActionCard({ icon: Icon, label, description, to }) {
-  const navigate = useNavigate();
-  return (
-    <button
-      onClick={() => navigate(to)}
-      className="group flex items-center justify-between rounded-lg border border-border bg-card px-5 py-4 text-left transition-all hover:border-primary/40 hover:shadow-sm"
-    >
-      <div className="flex items-center gap-3">
-        <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md bg-primary/10 text-primary">
-          <Icon className="h-5 w-5" />
-        </div>
-        <div>
-          <p className="text-sm font-semibold text-foreground">{label}</p>
-          {description && (
-            <p className="text-xs text-muted-foreground">{description}</p>
-          )}
-        </div>
-      </div>
-      <ArrowRight className="h-4 w-4 text-muted-foreground opacity-0 transition-opacity group-hover:opacity-100" />
-    </button>
-  );
-}
-
 function Dashboard() {
   const navigate = useNavigate();
   const { user } = useAuth();
   const isAdmin = isAtLeast(user, 'admin');
+  const { allowed: quickConnectAllowed } = useQuickConnect();
 
   const [statsLoading, setStatsLoading] = useState(true);
   const [serverStats, setServerStats] = useState({ total: 0, byEnv: {} });
@@ -286,36 +192,34 @@ function Dashboard() {
         subtitle="Overview of your infrastructure and access management."
       helpKey="dashboard" />
 
-      {/* Stat cards — auto-rows-fr makes all four cards the same height */}
-      <div className="grid grid-cols-1 auto-rows-fr gap-4 sm:grid-cols-2 lg:grid-cols-4">
-        <StatCard
+      {/* Metric cards */}
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+        <MetricCard
           title="Total Servers"
           value={serverStats.total}
-          description="Managed infrastructure"
+          subtitle="Managed infrastructure"
           icon={Server}
           accent="primary"
           loading={statsLoading}
           to="/servers"
           footer={
             !statsLoading && Object.entries(byEnv).some(([, v]) => v > 0) ? (
-              <div className="flex flex-wrap items-center gap-1.5">
-                {Object.entries(byEnv)
-                  .filter(([, v]) => v > 0)
-                  .map(([env, count]) => (
-                    <Badge key={env} tone={environmentTone(env).tone} uppercase>
-                      {env}
-                      <span className="normal-case tracking-normal text-foreground tabular-nums">{count}</span>
-                    </Badge>
-                  ))}
-              </div>
+              Object.entries(byEnv)
+                .filter(([, v]) => v > 0)
+                .map(([env, count]) => (
+                  <Badge key={env} tone={environmentTone(env).tone} uppercase>
+                    {env}
+                    <span className="normal-case tracking-normal text-foreground tabular-nums">{count}</span>
+                  </Badge>
+                ))
             ) : null
           }
         />
 
-        <StatCard
+        <MetricCard
           title="Active Sessions"
           value={activeSessions}
-          description="Currently connected"
+          subtitle="Currently connected"
           icon={Terminal}
           accent="emerald"
           loading={statsLoading}
@@ -329,10 +233,10 @@ function Dashboard() {
           }
         />
 
-        <StatCard
+        <MetricCard
           title="Pending Requests"
           value={pendingRequests}
-          description="Awaiting your review"
+          subtitle="Awaiting your review"
           icon={KeyRound}
           accent="amber"
           loading={statsLoading}
@@ -346,46 +250,31 @@ function Dashboard() {
           }
         />
 
-        <StatCard
+        <MetricCard
           title="Certificates Issued"
           value={activeCerts}
-          description="Currently active"
+          subtitle="Currently active"
           icon={FileKey}
           accent="violet"
           loading={statsLoading}
           to="/certificates?status=ACTIVE"
           footer={
             !statsLoading ? (
-              <span className="text-[11px] text-muted-foreground">
-                Signed by the org CA
-              </span>
+              <span className="text-[11px] text-muted-foreground">Signed by the org CA</span>
             ) : null
           }
         />
       </div>
 
-      {/* Quick actions */}
-      <div>
-        <h2 className="mb-3 text-sm font-semibold text-foreground">Quick Actions</h2>
-        <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
-          <QuickActionCard
-            icon={KeyRound}
-            label="Request Access"
-            description="Open a new access request"
-            to="/access-requests"
-          />
-          <QuickActionCard
-            icon={FileKey}
-            label="My Certificates"
-            description="View active and past certificates"
-            to="/certificates"
-          />
-          <QuickActionCard
-            icon={Server}
-            label="Browse Servers"
-            description="Explore managed infrastructure"
-            to="/servers"
-          />
+      {/* Recent Quick Connects (wide) + Quick actions (narrow) */}
+      <div className={`grid grid-cols-1 gap-4 ${quickConnectAllowed ? 'lg:grid-cols-3' : ''}`}>
+        {quickConnectAllowed && (
+          <div className="lg:col-span-2">
+            <RecentQuickConnectsWidget />
+          </div>
+        )}
+        <div>
+          <QuickActionsWidget />
         </div>
       </div>
 

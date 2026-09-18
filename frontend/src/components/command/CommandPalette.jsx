@@ -41,6 +41,7 @@ import { QUICK_ACTIONS, NAV_ITEMS, isQuickActionVisible, isNavItemVisible, match
 import { globalSearch } from '@/services/searchService';
 import { getAccessIntent } from '@/services/accessRequestService';
 import { getRecentPaletteResults, addRecentPaletteResult } from '@/lib/paletteRecent';
+import { runQuickAction as runQuickActionShared } from '@/lib/runQuickAction';
 
 const isMac =
   typeof navigator !== 'undefined' && /Mac|iPhone|iPod|iPad/i.test(navigator.platform || navigator.userAgent || '');
@@ -230,20 +231,13 @@ function CommandPalette() {
   }, []);
 
   const runQuickAction = useCallback(
-    (action) => {
-      if (action.action === 'quick-connect') {
-        closeAll();
-        openQuickConnect();
-        return;
-      }
-      if (action.action === 'shortcuts-help') {
-        closeAll();
-        window.dispatchEvent(new CustomEvent('shellius:open-shortcuts'));
-        return;
-      }
-      if (action.href) goTo(action.href);
-    },
-    [closeAll, goTo, openQuickConnect]
+    (action) =>
+      runQuickActionShared(action, {
+        navigate,
+        openQuickConnect,
+        onBeforeRun: closeAll,
+      }),
+    [closeAll, navigate, openQuickConnect]
   );
 
   // --- Result actions ----------------------------------------------------

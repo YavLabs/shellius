@@ -7,11 +7,11 @@ import PasswordInput from '@/components/ui/PasswordInput';
 import SearchableSelect from '@/components/ui/SearchableSelect';
 import PrivateKeyInput from '@/components/keystore/PrivateKeyInput';
 import SaveServerFields from './SaveServerFields';
-import { createQuickConnectTicket, saveQuickConnectServer } from '@/services/quickConnectService';
+import { createQuickConnectTicket, saveQuickConnectServer, getHistory } from '@/services/quickConnectService';
 import { listCredentials } from '@/services/keystoreService';
 import { useAuth } from '@/context/AuthContext';
 import { roleAtLeast } from '@/lib/permissions';
-import { getRecentConnections, addRecentConnection } from '@/lib/quickConnectRecent';
+import { openBlankTerminalTab, openTicketTerminal, closeBlankTerminalTab } from '@/lib/quickConnectLaunch';
 
 const AUTH_TABS = [
   { value: 'password', label: 'Password' },
@@ -42,7 +42,7 @@ function parseHostPaste(raw) {
   return { host: rest || null, user, port };
 }
 
-function QuickConnectModal({ open, onClose }) {
+function QuickConnectModal({ open, onClose, prefill }) {
   const navigate = useNavigate();
   const { user: currentUser } = useAuth();
   const canCreateIdentity = roleAtLeast(currentUser, 'admin');
@@ -72,25 +72,27 @@ function QuickConnectModal({ open, onClose }) {
 
   useEffect(() => {
     if (!open) return;
-    setHost('');
-    setPort('22');
-    setUsername('');
-    setAuthTab('password');
+    setHost(prefill?.host || '');
+    setPort(prefill?.port ? String(prefill.port) : '22');
+    setUsername(prefill?.username || '');
+    setAuthTab(prefill?.authTab || 'password');
     setPassword('');
     setPrivateKey('');
     setKeyPassphrase('');
     setKeyAlsoPassword('');
-    setCredentialId('');
+    setCredentialId(prefill?.credentialId || '');
     setAdvancedOpen(false);
     setExpectedHostKey('');
     setSaveOn(false);
     setSaveValues({ identityMode: 'existing', environment: 'dev' });
     setError(null);
-    setRecent(getRecentConnections());
+    getHistory({ limit: 8 })
+      .then(setRecent)
+      .catch(() => setRecent([]));
     listCredentials()
       .then(setIdentities)
       .catch(() => setIdentities([]));
-  }, [open]);
+  }, [open, prefill]);
 
   const handleHostPaste = (e) => {
     const text = e.clipboardData?.getData('text');
@@ -108,9 +110,13 @@ function QuickConnectModal({ open, onClose }) {
     setHost(r.host);
     setPort(String(r.port || 22));
     setUsername(r.username || '');
-    if (r.identityId) {
+    if (r.authType === 'credential' && r.credential) {
       setAuthTab('credential');
-      setCredentialId(r.identityId);
+      setCredentialId(r.credential.id);
+    } else if (r.authType === 'key') {
+      setAuthTab('key');
+    } else {
+      setAuthTab('password');
     }
   };
 
@@ -139,7 +145,7 @@ function QuickConnectModal({ open, onClose }) {
     setConnecting(true);
     // Open a blank tab synchronously (before the await) so popup blockers
     // don't kick in once we're back from the network call.
-    const win = window.open('', '_blank');
+    const win = openBlankTerminalTab();
     try {
       const resp = await createQuickConnectTicket({
         host: host.trim(),
@@ -148,19 +154,11 @@ function QuickConnectModal({ open, onClose }) {
         auth: buildAuth(),
         expectedHostKey: expectedHostKey.trim() || undefined,
       });
-      addRecentConnection({
-        host: host.trim(),
-        port: Number(port) || 22,
-        username: username.trim(),
-        identityId: authTab === 'credential' ? credentialId : null,
-      });
       const label = `${username.trim() || 'user'}@${host.trim()}`;
-      const url = `/terminal?ticket=${encodeURIComponent(resp.ticket)}&label=${encodeURIComponent(label)}`;
-      if (win) win.location = url;
-      else window.open(url, '_blank');
+      openTicketTerminal(win, { ticket: resp.ticket, label });
       onClose();
     } catch (err) {
-      if (win) win.close();
+      closeBlankTerminalTab(win);
       const code = err.response?.data?.error?.code;
       if (code === 'PROD_HOST_REQUIRES_APPROVAL') {
         setError({
@@ -251,13 +249,18 @@ function QuickConnectModal({ open, onClose }) {
               <Clock className="h-3 w-3" /> Recent
             </p>
             <div className="flex flex-wrap gap-1.5">
-              {recent.map((r, i) => (
+              {recent.map((r) => (
                 <button
-                  key={`${r.host}:${r.port}:${r.username}:${i}`}
+                  key={r.id}
                   type="button"
                   onClick={() => applyRecent(r)}
-                  className="rounded-full border border-border bg-muted/40 px-2.5 py-1 font-mono text-xs text-foreground hover:bg-accent"
+                  className="inline-flex items-center gap-1.5 rounded-full border border-border bg-muted/40 px-2.5 py-1 font-mono text-xs text-foreground hover:bg-accent"
                 >
+                  <span
+                    className={`h-1.5 w-1.5 shrink-0 rounded-full ${
+                      r.lastStatus === 'connected' ? 'bg-emerald-500' : 'bg-red-500'
+                    }`}
+                  />
                   {r.username ? `${r.username}@` : ''}
                   {r.host}
                   {r.port && r.port !== 22 ? `:${r.port}` : ''}
