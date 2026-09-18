@@ -59,13 +59,11 @@ function QuickActionsMenu() {
         <Tooltip>
           <TooltipTrigger asChild>
             <DropdownMenuTrigger asChild>
-              <Button
-                variant="ghost"
-                size="icon"
-                className="h-9 w-9 text-muted-foreground hover:text-foreground"
-                aria-label="Quick actions"
-              >
+              {/* Outline button (vs. the solid primary Quick Connect next to
+                  it) so the two read as different kinds of action. */}
+              <Button variant="outline" size="sm" className="h-9 gap-1.5" aria-label="Quick actions">
                 <Plus className="h-4 w-4" />
+                <span className="hidden sm:inline">Quick actions</span>
               </Button>
             </DropdownMenuTrigger>
           </TooltipTrigger>

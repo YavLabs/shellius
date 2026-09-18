@@ -101,7 +101,7 @@ function DeployWizardModal({
     let cancelled = false;
     const poll = async () => {
       try {
-        const data = await listDeployments({ batchId, pageSize: 500 });
+        const data = await listDeployments({ batchId, pageSize: 100 });
         if (!cancelled) setDeployments(data.deployments || []);
       } catch {
         /* ignore transient errors */

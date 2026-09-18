@@ -75,14 +75,18 @@ function BatchRow({ batch, canRetry, onChanged, defaultOpen, highlighted, rowRef
   const [open, setOpen] = useState(!!defaultOpen);
   const [deployments, setDeployments] = useState([]);
   const [loading, setLoading] = useState(false);
+  const [loadError, setLoadError] = useState('');
 
   const loadDeployments = useCallback(async () => {
     setLoading(true);
     try {
-      const data = await listDeployments({ batchId: batch.batchId, pageSize: 500 });
+      // API caps pageSize at 100 (a batch targets at most that many servers
+      // per page); asking for more returns 400 and left the panel empty.
+      const data = await listDeployments({ batchId: batch.batchId, pageSize: 100 });
       setDeployments(data.deployments || []);
-    } catch {
-      /* ignore */
+      setLoadError('');
+    } catch (err) {
+      setLoadError(err.response?.data?.error?.message || err.message || 'Failed to load servers for this export');
     } finally {
       setLoading(false);
     }
@@ -145,7 +149,11 @@ function BatchRow({ batch, canRetry, onChanged, defaultOpen, highlighted, rowRef
       </button>
       {open && (
         <div className="border-t border-border">
-          {loading && deployments.length === 0 ? (
+          {loadError ? (
+            <p className="px-4 py-3 text-sm text-destructive">{loadError}</p>
+          ) : !loading && deployments.length === 0 ? (
+            <p className="px-4 py-3 text-sm text-muted-foreground">No servers in this export.</p>
+          ) : loading && deployments.length === 0 ? (
             <div className="space-y-2 p-3">
               {[1, 2, 3].map((i) => (
                 <div key={i} className="h-8 animate-pulse rounded bg-muted" />
