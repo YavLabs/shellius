@@ -144,7 +144,9 @@ router.post(
     }
 
     if (spec.type === 'access_request') {
-      const ar = await prisma.accessRequest.findFirst({ where: { id: spec.requestId, orgId: req.orgId } });
+      const ar = await prisma.accessRequest.findFirst({
+        where: { id: spec.requestId, orgId: req.orgId, requesterId: req.user.userId },
+      });
       if (!ar || ar.status !== 'APPROVED' || !ar.expiresAt || ar.expiresAt <= new Date()) {
         throw new ApiError(
           409,

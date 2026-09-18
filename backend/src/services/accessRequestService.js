@@ -1171,12 +1171,14 @@ export async function list({ orgId, userId, role, tab = 'mine', status, page = 1
  * @param {string} params.callerRole
  * @returns {Promise<object>}
  */
-export async function getById({ requestId, callerId, callerRole }) {
+export async function getById({ requestId, orgId, callerId, callerRole }) {
   if (!requestId) throw new ApiError(400, 'requestId is required');
+  if (!orgId) throw new ApiError(400, 'orgId is required');
   if (!callerId) throw new ApiError(400, 'callerId is required');
 
-  const accessRequest = await prisma.accessRequest.findUnique({
-    where: { id: requestId },
+  // Org-scoped: an admin's "can view any request" applies to their own org only.
+  const accessRequest = await prisma.accessRequest.findFirst({
+    where: { id: requestId, orgId },
     include: REQUEST_INCLUDE,
   });
 

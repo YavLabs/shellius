@@ -85,6 +85,19 @@ Resize from any attached socket applies to the PTY (last writer wins).
   (`reconcileOrphanedSessions`). A graceful shutdown already ends them with `shutdown`. This
   assumes one backend process, the same limitation as the hub.
 
+### Per-user isolation
+
+Every terminal session belongs to the user who opened it, whatever the connection type (Quick
+Connect, certificate/access-request, or Keystore identity). Two people on the same server get two
+independent SSH sessions.
+- `GET /api/terminal/sessions` lists only the caller's own sessions.
+- Attach, rename, duplicate, close, recovery and reconnect all check the owner. Someone else's
+  session id gets 4403 on attach, 404 over REST, **admins included**.
+- An access request can only be used to connect by its requester (WS close 1008 otherwise).
+- WS tickets are bound to the user who minted them.
+- The only org-wide views are the admin/manager **Sessions** audit pages. Admin terminate is
+  audited, and deleting a server or user ends that server's or user's sessions.
+
 ### Recovery and reconnection (frontend)
 
 | What happened | What the user sees |

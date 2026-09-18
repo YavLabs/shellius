@@ -884,6 +884,7 @@ async function handleConnection(ws, req) {
   try {
     accessRequest = await accessRequestService.getById({
       requestId,
+      orgId,
       callerId: userId,
       callerRole: role,
     });
@@ -892,6 +893,15 @@ async function handleConnection(ws, req) {
     return;
   }
 
+  // Sessions are per user: only the person who requested (and was granted)
+  // access may open a terminal with it. Admins/reviewers can *view* any
+  // request in their org, but must not be able to use someone else's
+  // approval (credential-mode servers would otherwise connect with the
+  // server's Keystore identity as the admin/reviewer).
+  if (accessRequest.requesterId !== userId) {
+    safeClose(ws, 1008, 'Only the requester can open a session with this access request');
+    return;
+  }
   if (accessRequest.status !== 'APPROVED') {
     safeClose(ws, 1008, `Access request is not approved (status: ${accessRequest.status})`);
     return;

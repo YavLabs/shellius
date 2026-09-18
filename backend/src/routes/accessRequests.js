@@ -266,6 +266,7 @@ router.get(
   asyncHandler(async (req, res) => {
     const accessRequest = await accessRequestService.getById({
       requestId: req.params.id,
+      orgId: req.orgId,
       callerId: req.user.userId,
       callerRole: req.user.role,
     });
@@ -436,6 +437,7 @@ router.post(
     // Verify caller is the requester and request is accessible
     const accessRequest = await accessRequestService.getById({
       requestId: id,
+      orgId: req.orgId,
       callerId: req.user.userId,
       callerRole: req.user.role,
     });
@@ -467,6 +469,7 @@ router.post(
     // Verify caller is the requester and request is approved (delegate to getById)
     const accessRequest = await accessRequestService.getById({
       requestId: id,
+      orgId: req.orgId,
       callerId: req.user.userId,
       callerRole: req.user.role,
     });

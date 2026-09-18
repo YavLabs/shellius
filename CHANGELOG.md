@@ -44,6 +44,12 @@ Tracked here as work lands on `main`; moved into a dated section on release
 
 ### Fixed
 
+- **Security:** only the person who requested access can open a terminal with an approved access
+  request. Before, an admin (who can view every request) or the request's reviewer could use
+  someone else's approval to open a shell on a Keystore (credential-mode) server as themselves.
+  Certificate servers were already protected.
+- **Security:** `GET /api/access-requests/:id` (and its RDP-token/connect variants) are now
+  org-scoped. Before, an admin could read another organization's request by id.
 - Terminal workspace: switching tabs or layouts no longer reconnects every terminal it moves.
   That produced "Too many requests" errors after a few quick switches or a reload with several
   tabs, and stray prompt lines from resizes while a tab was hidden. Terminals also stop sending
