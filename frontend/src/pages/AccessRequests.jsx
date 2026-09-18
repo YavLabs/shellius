@@ -248,11 +248,15 @@ function AccessRequests() {
   const [searchParams, setSearchParams] = useSearchParams();
 
   useEffect(() => {
-    if (searchParams.get('new') === '1') {
+    // Supports both the legacy `?new=1` trigger and the documented
+    // `?action=new` deep-link contract (components/command/CommandPalette.jsx,
+    // components/command/QuickActionsMenu.jsx).
+    if (searchParams.get('new') === '1' || searchParams.get('action') === 'new') {
       setInitialServerId(searchParams.get('serverId') || '');
       setFormOpen(true);
       const next = new URLSearchParams(searchParams);
       next.delete('new');
+      next.delete('action');
       next.delete('serverId');
       setSearchParams(next, { replace: true });
     }

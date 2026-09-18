@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import {
   Plus,
   KeyRound,
@@ -117,6 +118,35 @@ function Users() {
 
   const [urlModal, setUrlModal] = useState(null);
   const [actionMsg, setActionMsg] = useState('');
+  const [searchParams, setSearchParams] = useSearchParams();
+
+  // Deep links: /users?action=invite opens the invite modal; ?highlight=<id>
+  // opens that user's edit modal (no inline row-highlight affordance in
+  // DataTable, so this is the closest equivalent).
+  useEffect(() => {
+    const action = searchParams.get('action');
+    const highlightId = searchParams.get('highlight');
+    if (action === 'invite') {
+      setEditingUser(null);
+      setFormOpen(true);
+    } else if (highlightId) {
+      getUser(highlightId)
+        .then((u) => {
+          if (u) {
+            setEditingUser(u);
+            setFormOpen(true);
+          }
+        })
+        .catch(() => {});
+    }
+    if (action || highlightId) {
+      const next = new URLSearchParams(searchParams);
+      next.delete('action');
+      next.delete('highlight');
+      setSearchParams(next, { replace: true });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const fetchUsers = useCallback(async () => {
     setLoading(true);

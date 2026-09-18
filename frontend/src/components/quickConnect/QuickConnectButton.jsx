@@ -1,37 +1,25 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef } from 'react';
 import { Zap } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Tooltip, TooltipContent, TooltipTrigger, TooltipProvider } from '@/components/ui/tooltip';
-import QuickConnectModal from './QuickConnectModal';
-import { getQuickConnectSettings } from '@/services/quickConnectService';
+import { useQuickConnect } from '@/context/QuickConnectContext';
 
 /**
  * QuickConnectButton — compact trigger shown in the Topbar and on the
  * Servers page header. Hidden entirely when Quick Connect is disabled org-wide
  * or the caller's role doesn't meet the configured minimum.
  *
+ * The "allowed" check and the modal itself now live in QuickConnectContext
+ * (mounted once in AppLayout) so the Quick Actions menu and command palette
+ * can open the same modal programmatically via useQuickConnect().
+ *
  * Keyboard shortcut: "g" then "q" (mirrors the g-chord nav shortcuts in
  * useKeyboardShortcuts, but opens a modal instead of navigating, so it's
  * handled locally rather than in that hook).
  */
 function QuickConnectButton({ variant = 'outline', size = 'sm', className }) {
-  const [allowed, setAllowed] = useState(false);
-  const [open, setOpen] = useState(false);
+  const { allowed, openQuickConnect } = useQuickConnect();
   const gPressedAt = useRef(null);
-
-  useEffect(() => {
-    let cancelled = false;
-    getQuickConnectSettings()
-      .then((data) => {
-        if (!cancelled) setAllowed(!!data?.allowed);
-      })
-      .catch(() => {
-        if (!cancelled) setAllowed(false);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, []);
 
   useEffect(() => {
     if (!allowed) return undefined;
@@ -50,13 +38,13 @@ function QuickConnectButton({ variant = 'outline', size = 'sm', className }) {
         gPressedAt.current = null;
         if (elapsed <= 500 && e.key === 'q') {
           e.preventDefault();
-          setOpen(true);
+          openQuickConnect();
         }
       }
     }
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [allowed]);
+  }, [allowed, openQuickConnect]);
 
   if (!allowed) return null;
 
@@ -64,14 +52,13 @@ function QuickConnectButton({ variant = 'outline', size = 'sm', className }) {
     <TooltipProvider delayDuration={300}>
       <Tooltip>
         <TooltipTrigger asChild>
-          <Button variant={variant} size={size} className={className} onClick={() => setOpen(true)}>
+          <Button variant={variant} size={size} className={className} onClick={openQuickConnect}>
             <Zap className="mr-1.5 h-4 w-4" />
             Quick Connect
           </Button>
         </TooltipTrigger>
         <TooltipContent side="bottom">Ad-hoc SSH connection · shortcut: g q</TooltipContent>
       </Tooltip>
-      <QuickConnectModal open={open} onClose={() => setOpen(false)} />
     </TooltipProvider>
   );
 }

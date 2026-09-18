@@ -12,13 +12,20 @@ const CHORD_ROUTES = {
  * useKeyboardShortcuts
  *
  * Registers global keyboard shortcuts:
- *   /           → focus first [data-global-search] input
  *   g then d    → navigate /dashboard
  *   g then s    → navigate /servers
  *   g then a    → navigate /access-requests
  *   g then c    → navigate /certificates
+ *   g then q    → open Quick Connect (registered in
+ *                 components/quickConnect/QuickConnectButton.jsx, not here,
+ *                 since it opens a modal rather than navigating)
  *
- * Shortcuts are ignored when an input, textarea, or select is focused.
+ * NOT handled here (registered by components/command/CommandPalette.jsx,
+ * which is mounted once in AppLayout and needs CommandPaletteContext):
+ *   ⌘K / Ctrl+K → open the command palette (works even while typing)
+ *   /           → open the command palette (only when not typing)
+ *
+ * Shortcuts below are ignored when an input, textarea, or select is focused.
  */
 function useKeyboardShortcuts() {
   const navigate = useNavigate();
@@ -32,14 +39,6 @@ function useKeyboardShortcuts() {
 
     function handleKeyDown(e) {
       if (isInputFocused()) return;
-
-      // / → focus search
-      if (e.key === '/') {
-        e.preventDefault();
-        const searchEl = document.querySelector('[data-global-search]');
-        if (searchEl) searchEl.focus();
-        return;
-      }
 
       // g chord: wait up to 500ms for second key
       if (e.key === 'g') {

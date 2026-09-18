@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import {
   Plus,
   Pencil,
@@ -79,6 +79,23 @@ function Servers() {
   const [bootstrapServer, setBootstrapServer] = useState(null);
   const [uninstallServer, setUninstallServer] = useState(null);
   const [deployWizardOpen, setDeployWizardOpen] = useState(false);
+  const [newServerCustomerId, setNewServerCustomerId] = useState('');
+  const [searchParams, setSearchParams] = useSearchParams();
+
+  // Deep link: /servers?action=new[&customerId=] — open the create modal,
+  // optionally prefilling the customer.
+  useEffect(() => {
+    if (searchParams.get('action') === 'new' && canManage) {
+      setEditing(null);
+      setNewServerCustomerId(searchParams.get('customerId') || '');
+      setFormOpen(true);
+      const next = new URLSearchParams(searchParams);
+      next.delete('action');
+      next.delete('customerId');
+      setSearchParams(next, { replace: true });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const fetchCustomers = useCallback(async () => {
     try {
@@ -459,6 +476,7 @@ function Servers() {
             <Button
               onClick={() => {
                 setEditing(null);
+                setNewServerCustomerId('');
                 setFormOpen(true);
               }}
             >
@@ -501,16 +519,19 @@ function Servers() {
         onClose={() => {
           setFormOpen(false);
           setEditing(null);
+          setNewServerCustomerId('');
         }}
         title={editing ? 'Edit Server' : 'Add Server'}
         size="lg"
       >
         <ServerForm
           server={editing}
+          customerId={!editing ? newServerCustomerId : undefined}
           onSubmit={handleSubmit}
           onCancel={() => {
             setFormOpen(false);
             setEditing(null);
+            setNewServerCustomerId('');
           }}
         />
       </Modal>
