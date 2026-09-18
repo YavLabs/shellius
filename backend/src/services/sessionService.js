@@ -7,7 +7,7 @@ import logger from '../utils/logger.js';
 // ---------------------------------------------------------------------------
 
 const SESSION_INCLUDE = {
-  user: { select: { id: true, name: true, email: true } },
+  user: { select: { id: true, name: true, email: true, avatarUrl: true } },
   // Null for Quick Connect sessions to hosts that aren't saved servers — the
   // caller should fall back to targetHost/targetPort/targetUser in that case.
   server: {

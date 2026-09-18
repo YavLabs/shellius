@@ -73,6 +73,10 @@ const preferencesSchema = Joi.object({
   expiringSoonAlerts: Joi.boolean(),
 }).min(1);
 
+const avatarSchema = Joi.object({
+  dataUrl: Joi.string().max(300000).required(), // ~150KB decoded + base64 overhead + headroom
+});
+
 router.use(authenticate, tenant);
 
 router.get(
@@ -130,6 +134,30 @@ router.put(
   audit('user.profile.updated', 'User'),
   asyncHandler(async (req, res) => {
     const user = await userService.updateProfile(req.user.userId, req.body.name);
+    res.json({ success: true, data: { user } });
+  })
+);
+
+// ---------------------------------------------------------------------------
+// PUT /me/avatar — upload a custom avatar (strict Joi + server-side decode
+// validation in userService/utils/avatar.js). DELETE removes it.
+// ---------------------------------------------------------------------------
+
+router.put(
+  '/me/avatar',
+  validate(avatarSchema),
+  audit('user.avatar.updated', 'User'),
+  asyncHandler(async (req, res) => {
+    const user = await userService.setAvatar(req.user.userId, req.body.dataUrl);
+    res.json({ success: true, data: { user } });
+  })
+);
+
+router.delete(
+  '/me/avatar',
+  audit('user.avatar.removed', 'User'),
+  asyncHandler(async (req, res) => {
+    const user = await userService.clearAvatar(req.user.userId);
     res.json({ success: true, data: { user } });
   })
 );

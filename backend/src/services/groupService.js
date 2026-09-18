@@ -2,11 +2,9 @@ import prisma from '../config/db.js';
 import ApiError from '../utils/ApiError.js';
 import { cleanupPolicySubjects } from './policyService.js';
 
-function stripUser(user) {
-  if (!user) return user;
-  const { passwordHash, ...rest } = user;
-  return rest;
-}
+// Lean user DTO used everywhere a user relation is embedded in a response —
+// see docs/auth-hardening.md Revision 2 "Avatars".
+const USER_DTO_SELECT = { id: true, name: true, email: true, avatarUrl: true };
 
 export async function listGroups(orgId) {
   const groups = await prisma.group.findMany({
@@ -22,19 +20,13 @@ export async function getGroup(orgId, groupId) {
     where: { id: groupId, orgId },
     include: {
       memberships: {
-        include: { user: true, addedBy: { select: { id: true, name: true } } },
+        include: { user: { select: USER_DTO_SELECT }, addedBy: { select: USER_DTO_SELECT } },
         orderBy: { createdAt: 'asc' },
       },
     },
   });
   if (!group) throw new ApiError(404, 'Group not found');
-  return {
-    ...group,
-    memberships: group.memberships.map((m) => ({
-      ...m,
-      user: stripUser(m.user),
-    })),
-  };
+  return group;
 }
 
 export async function createGroup(orgId, { name, description }) {

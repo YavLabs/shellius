@@ -84,15 +84,15 @@ export function toCredentialDTO(cred, { sshKey, serverCount } = {}) {
   };
 }
 
-/** Batch-fetch { id, name } for a set of user ids (createdById lookups). */
+/** Batch-fetch { id, name, email, avatarUrl } for a set of user ids (createdById/deployedById lookups). */
 async function loadUsersById(orgId, ids) {
   const uniq = [...new Set(ids.filter(Boolean))];
   if (uniq.length === 0) return new Map();
   const rows = await prisma.user.findMany({
     where: { orgId, id: { in: uniq } },
-    select: { id: true, name: true },
+    select: { id: true, name: true, email: true, avatarUrl: true },
   });
-  return new Map(rows.map((r) => [r.id, { id: r.id, name: r.name }]));
+  return new Map(rows.map((r) => [r.id, { id: r.id, name: r.name, email: r.email, avatarUrl: r.avatarUrl }]));
 }
 
 // ---------------------------------------------------------------------------

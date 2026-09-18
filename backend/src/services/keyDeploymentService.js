@@ -295,8 +295,11 @@ export async function listDeployments(orgId, { batchId, sshKeyId, serverId, page
 async function loadUsersById(orgId, ids) {
   const uniq = [...new Set(ids.filter(Boolean))];
   if (uniq.length === 0) return new Map();
-  const rows = await prisma.user.findMany({ where: { orgId, id: { in: uniq } }, select: { id: true, name: true } });
-  return new Map(rows.map((r) => [r.id, { id: r.id, name: r.name }]));
+  const rows = await prisma.user.findMany({
+    where: { orgId, id: { in: uniq } },
+    select: { id: true, name: true, email: true, avatarUrl: true },
+  });
+  return new Map(rows.map((r) => [r.id, { id: r.id, name: r.name, email: r.email, avatarUrl: r.avatarUrl }]));
 }
 
 export async function listBatches(orgId, { limit = 20 } = {}) {

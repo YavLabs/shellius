@@ -6,6 +6,7 @@ import logger from '../utils/logger.js';
 import * as terminalService from './terminalService.js';
 import { cleanupPolicySubjects } from './policyService.js';
 import * as authService from './authService.js';
+import { parseAvatarDataUrl } from '../utils/avatar.js';
 
 const ROLE_RANK = { super_admin: 4, admin: 3, manager: 2, member: 1 };
 
@@ -341,6 +342,52 @@ export async function updateProfile(userId, name) {
     where: { id: userId },
     data: { name },
   });
+  return strip(updated);
+}
+
+// ---------------------------------------------------------------------------
+// Avatar upload/removal (self-service)
+// ---------------------------------------------------------------------------
+
+/**
+ * Set the calling user's avatar from a strictly-validated base64 data URL.
+ * Never stores anything that fails MIME/magic-byte/size checks — see
+ * utils/avatar.js. Stored verbatim as the `data:` URL (User.avatarUrl is a
+ * plain string column); SSO-derived avatar URLs are plain https URLs, so a
+ * `data:` prefix unambiguously marks "user uploaded a custom avatar" for
+ * login flows that would otherwise overwrite it from the IdP picture.
+ *
+ * @param {string} userId
+ * @param {string} dataUrl
+ * @returns {Promise<object>} stripped user
+ */
+export async function setAvatar(userId, dataUrl) {
+  const existing = await prisma.user.findUnique({ where: { id: userId } });
+  if (!existing) throw new ApiError(404, 'User not found');
+
+  const { dataUrl: normalized } = parseAvatarDataUrl(dataUrl);
+
+  const updated = await prisma.user.update({
+    where: { id: userId },
+    data: { avatarUrl: normalized },
+  });
+  logger.info('userService.setAvatar: avatar updated', { userId, bytes: normalized.length });
+  return strip(updated);
+}
+
+/**
+ * Clear the calling user's avatar (reverts to the UI's default initials
+ * avatar; does not restore an SSO-provided picture).
+ *
+ * @param {string} userId
+ * @returns {Promise<object>} stripped user
+ */
+export async function clearAvatar(userId) {
+  const existing = await prisma.user.findUnique({ where: { id: userId } });
+  if (!existing) throw new ApiError(404, 'User not found');
+
+  const updated = await prisma.user.update({ where: { id: userId }, data: { avatarUrl: null } });
+  logger.info('userService.clearAvatar: avatar removed', { userId });
   return strip(updated);
 }
 
