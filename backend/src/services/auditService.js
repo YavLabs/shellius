@@ -57,6 +57,10 @@ export const ACTIONS = {
     deny: 'access_request.deny',
     expire: 'access_request.expire',
     revoke: 'access_request.revoke',
+    // Immediate prod APPROVED because the requester's role is at/above the
+    // org's Organization.settings.access.prodApprovalBypassMinRole — see
+    // policyService.evaluate() / accessRequestService.submit().
+    prod_bypass: 'access_request.prod_bypass',
   },
   cert: {
     issue: 'cert.issue',
@@ -291,7 +295,7 @@ async function enrichAuditItems(items, orgId) {
       prisma.user
         .findMany({
           where: { id: { in: [...byType.get('User')] }, orgId },
-          select: { id: true, name: true, email: true },
+          select: { id: true, name: true, email: true, avatarUrl: true },
         })
         .then((rows) => {
           lookups.User = new Map(rows.map((r) => [r.id, r]));
@@ -398,15 +402,19 @@ async function enrichAuditItems(items, orgId) {
   return items.map((it) => {
     const out = { ...it };
 
-    // Actor display name
+    // Actor display name + lean user DTO ({ id, name, email, avatarUrl }) so
+    // the UI can render a consistent user cell (see docs/auth-hardening.md
+    // Revision 2 "Avatars").
     if (it.actorId && lookups.User) {
       const u = lookups.User.get(it.actorId);
       if (u) {
         out.actorName = u.name || (u.email || '').split('@')[0] || 'Unknown';
         out.actorEmail = u.email;
+        out.actor = { id: u.id, name: u.name, email: u.email, avatarUrl: u.avatarUrl };
       }
     }
     if (!out.actorName) out.actorName = it.actorId ? 'Unknown user' : 'System';
+    if (!out.actor) out.actor = null;
 
     // Resource label + link — links MUST point at routes that actually
     // exist in the frontend. Detail pages exist only for Server, Group,

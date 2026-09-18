@@ -169,8 +169,8 @@ async function resolveApprovers({ orgId, requesterId, policy, manager }) {
 // Internal include shapes (reused across queries)
 // ---------------------------------------------------------------------------
 const REQUEST_INCLUDE = {
-  requester: { select: { id: true, name: true, email: true } },
-  reviewer: { select: { id: true, name: true, email: true } },
+  requester: { select: { id: true, name: true, email: true, avatarUrl: true } },
+  reviewer: { select: { id: true, name: true, email: true, avatarUrl: true } },
   server: {
     select: {
       id: true,
@@ -437,21 +437,81 @@ export async function submit({
     metadata: { accessRequestId: accessRequest.id, serverId, expiresAt },
   });
 
-  await writeAudit(orgId, requesterId, 'access_request.auto_approved', accessRequest.id, {
-    serverId,
-    environment: server.environment,
-    protocol,
-    effectiveDuration,
-    policyId: policyResult.policyId,
-  });
+  // Production approval bypass (see docs/auth-hardening.md Revision 2
+  // "Production approval"): the requester's role is at/above the org's
+  // prodApprovalBypassMinRole, so the request skipped manager review. This is
+  // distinct from an ordinary non-prod policy auto-approve — audited under a
+  // dedicated action and the server's resolved approvers are notified
+  // after the fact so the bypass is visible even though it wasn't reviewed.
+  if (policyResult.prodBypass) {
+    await writeAudit(orgId, requesterId, 'access_request.prod_bypass', accessRequest.id, {
+      serverId,
+      environment: server.environment,
+      protocol,
+      effectiveDuration,
+      policyId: policyResult.policyId,
+      requesterRole: callerRole,
+      reason,
+    });
 
-  logger.info('accessRequestService.submit: request auto-approved', {
-    orgId,
-    requestId: accessRequest.id,
-    requesterId,
-    serverId,
-    effectiveDuration,
-  });
+    logger.info('accessRequestService.submit: prod approval bypassed by role', {
+      orgId,
+      requestId: accessRequest.id,
+      requesterId,
+      requesterRole: callerRole,
+      serverId,
+      effectiveDuration,
+    });
+
+    // Best-effort — notify the server's resolved approver set (from the
+    // matched policy's routing, falling back to the requester's manager) so
+    // the bypass doesn't happen silently. Never blocks the response.
+    try {
+      const approverPolicy = await policyService.findApproverPolicy({
+        orgId,
+        userId: requesterId,
+        serverId,
+        requestedPrincipal,
+      });
+      const approvers = await resolveApprovers({
+        orgId,
+        requesterId,
+        policy: approverPolicy,
+        manager: requester.manager,
+      });
+      for (const approver of approvers) {
+        await notificationService.create({
+          orgId,
+          userId: approver.id,
+          type: 'ACCESS_REQUEST_APPROVED',
+          title: `Production access bypass — ${requester.name}`,
+          body: `${requester.name} (${callerRole}) was auto-approved for ${protocol} access to ${server.hostname} (prod) without review, per your organization's approval bypass setting. Reason: ${reason}`,
+          metadata: { accessRequestId: accessRequest.id, requesterId, serverId, bypass: true },
+        });
+      }
+    } catch (err) {
+      logger.warn('accessRequestService.submit: prod bypass approver notification failed', {
+        requestId: accessRequest.id,
+        error: err.message,
+      });
+    }
+  } else {
+    await writeAudit(orgId, requesterId, 'access_request.auto_approved', accessRequest.id, {
+      serverId,
+      environment: server.environment,
+      protocol,
+      effectiveDuration,
+      policyId: policyResult.policyId,
+    });
+
+    logger.info('accessRequestService.submit: request auto-approved', {
+      orgId,
+      requestId: accessRequest.id,
+      requesterId,
+      serverId,
+      effectiveDuration,
+    });
+  }
 
   return accessRequest;
 }
@@ -482,7 +542,6 @@ export async function review({ requestId, reviewerId, decision, approvedDuration
     where: { id: requestId },
     include: {
       ...REQUEST_INCLUDE,
-      requester: { select: { id: true, name: true, email: true } },
       approvers: { select: { userId: true } },
     },
   });

@@ -1,6 +1,30 @@
 import prisma from '../config/db.js';
 import ApiError from '../utils/ApiError.js';
 import logger from '../utils/logger.js';
+import { getProdApprovalBypassRole } from './orgService.js';
+
+// ---------------------------------------------------------------------------
+// Production approval — role rank + bypass helper
+// ---------------------------------------------------------------------------
+//
+// See docs/auth-hardening.md Revision 2 "Production approval". The org's
+// `Organization.settings.access.prodApprovalBypassMinRole` ('admin' [default]
+// | 'super_admin' | 'none') controls which roles skip the manager-approval
+// step on prod servers. Below the bypass role, prod ALWAYS requires approval
+// — a policy's `autoApprove` flag is ignored for those requesters.
+const ROLE_RANK = { super_admin: 4, admin: 3, manager: 2, member: 1 };
+
+/**
+ * @param {string|null} userRole
+ * @param {'admin'|'super_admin'|'none'} bypassRole
+ * @returns {boolean} true when this role bypasses prod approval
+ */
+function roleBypassesProd(userRole, bypassRole) {
+  if (bypassRole === 'none') return false;
+  const requiredRank = ROLE_RANK[bypassRole] ?? ROLE_RANK.admin;
+  const callerRank = ROLE_RANK[userRole] ?? 0;
+  return callerRank >= requiredRank;
+}
 
 // ---------------------------------------------------------------------------
 // Internal helpers
@@ -164,24 +188,41 @@ export async function evaluate({ orgId, userId, serverId, requestedPrincipal, po
   const server = await prisma.server.findFirst({ where: { id: serverId, orgId } });
   if (!server) throw new ApiError(404, 'Server not found');
 
-  // Step 1b: super_admin bypass — full direct access to every server, including prod
+  const isProd = server.environment === 'prod';
+
+  // Step 1b: super_admin bypass. Off prod this is unconditional (full bypass,
+  // including DENY policies and principal checks — unchanged behaviour). On
+  // prod it only applies when the org's bypass role isn't 'none' — when it is,
+  // super_admin falls through to normal (Mode C) evaluation below, same as
+  // every other role, and always requires approval there.
   const callerUser = await prisma.user.findUnique({ where: { id: userId }, select: { role: true } });
   if (callerUser && callerUser.role === 'super_admin') {
-    return {
-      allowed: true,
-      requiresApproval: false,
-      autoApprove: true,
-      principals: requestedPrincipal ? [requestedPrincipal] : [],
-      maxTtl: 24 * 60 * 60,
-      reason: 'super_admin bypass',
-    };
+    if (!isProd) {
+      return {
+        allowed: true,
+        requiresApproval: false,
+        autoApprove: true,
+        principals: requestedPrincipal ? [requestedPrincipal] : [],
+        maxTtl: 24 * 60 * 60,
+        reason: 'super_admin bypass',
+      };
+    }
+    const bypassRole = await getProdApprovalBypassRole(orgId);
+    if (bypassRole !== 'none') {
+      return {
+        allowed: true,
+        requiresApproval: false,
+        autoApprove: true,
+        principals: requestedPrincipal ? [requestedPrincipal] : [],
+        maxTtl: 24 * 60 * 60,
+        reason: 'super_admin bypass (prod)',
+        prodBypass: true,
+      };
+    }
+    // bypassRole === 'none': everyone including super_admin needs approval —
+    // fall through to Mode C so the request still goes through normal policy
+    // matching (deny/allow/principals), with requiresApproval forced true below.
   }
-
-  // Step 2: Production approval is policy-driven. By default prod requires
-  // approval, but a matching ALLOW policy with autoApprove=true (e.g. scoped to
-  // admins/managers) grants access without approval. super_admin already
-  // bypassed above. This is applied at the final ALLOW selection below.
-  const isProd = server.environment === 'prod';
 
   // ---------------------------------------------------------------------------
   // Mode A: Draft policy evaluation (inline, no DB lookup for the policy itself)
@@ -304,10 +345,19 @@ export async function evaluate({ orgId, userId, serverId, requestedPrincipal, po
 
   const bestPolicy = allowPolicies[0];
 
-  // Production requires approval UNLESS the matched policy auto-approves the
-  // subject (e.g. an admins/managers policy). Non-prod follows the policy's
-  // own requireApproval flag.
-  const requiresApproval = isProd ? !bestPolicy.autoApprove : bestPolicy.requireApproval;
+  // Production approval: gated by the requester's role vs. the org's bypass
+  // role (Organization.settings.access.prodApprovalBypassMinRole), NOT by the
+  // matched policy's autoApprove flag — autoApprove can no longer grant an
+  // unreviewed prod session to a requester below the bypass role. Non-prod
+  // still follows the policy's own requireApproval flag, unchanged.
+  let requiresApproval;
+  let bypassRole;
+  if (isProd) {
+    bypassRole = await getProdApprovalBypassRole(orgId);
+    requiresApproval = !roleBypassesProd(userRole, bypassRole);
+  } else {
+    requiresApproval = bestPolicy.requireApproval;
+  }
 
   logger.info('policyService.evaluate: access allowed by policy', {
     orgId,
@@ -317,6 +367,7 @@ export async function evaluate({ orgId, userId, serverId, requestedPrincipal, po
     policyName: bestPolicy.name,
     isProd,
     requiresApproval,
+    ...(isProd ? { prodApprovalBypassMinRole: bypassRole, userRole } : {}),
   });
 
   return {
@@ -326,6 +377,9 @@ export async function evaluate({ orgId, userId, serverId, requestedPrincipal, po
     principals: bestPolicy.allowedPrincipals,
     maxTtl: bestPolicy.maxSessionDuration,
     policyId: bestPolicy.id,
+    // Signals accessRequestService.submit() to audit/notify this immediate
+    // approval as a role-bypass rather than a plain policy auto-approve.
+    prodBypass: isProd && !requiresApproval,
   };
 }
 
