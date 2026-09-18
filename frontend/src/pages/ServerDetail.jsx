@@ -9,6 +9,11 @@ import {
   Eraser,
   Terminal,
   MoreHorizontal,
+  KeyRound,
+  ShieldCheck,
+  RotateCw,
+  PlugZap,
+  Send,
 } from 'lucide-react';
 import Modal from '@/components/shared/Modal';
 import ConfirmDialog from '@/components/shared/ConfirmDialog';
@@ -20,6 +25,8 @@ import ProvisionModal from '@/components/servers/ProvisionModal';
 import UninstallHostModal from '@/components/servers/UninstallHostModal';
 import QuickConnectButton from '@/components/servers/QuickConnectButton';
 import PrivateIPWarning from '@/components/servers/PrivateIPWarning';
+import DeployWizardModal from '@/components/keystore/DeployWizardModal';
+import TestConnectionModal from '@/components/keystore/TestConnectionModal';
 import { Button } from '@/components/ui/button';
 import {
   DropdownMenu,
@@ -36,6 +43,7 @@ import {
   updateServer,
   deleteServer,
   triggerHealthCheck,
+  resetHostKey,
 } from '@/services/serverService';
 import { formatDateTime, relativeTime } from '@/utils/time';
 
@@ -76,6 +84,10 @@ function ServerDetail() {
   const [bootstrapOpen, setBootstrapOpen] = useState(false);
   const [uninstallOpen, setUninstallOpen] = useState(false);
   const [provisionOpen, setProvisionOpen] = useState(false);
+  const [deployWizardOpen, setDeployWizardOpen] = useState(false);
+  const [testIdentityOpen, setTestIdentityOpen] = useState(false);
+  const [resetHostKeyConfirm, setResetHostKeyConfirm] = useState(false);
+  const [resettingHostKey, setResettingHostKey] = useState(false);
 
   const fetch = useCallback(async () => {
     setLoading(true);
@@ -119,11 +131,27 @@ function ServerDetail() {
 
   const canManage = roleAtLeast(currentUser, 'manager'); // onboard/edit servers
   const canDelete = roleAtLeast(currentUser, 'admin');
+  const canDeployKeys = roleAtLeast(currentUser, 'admin');
+  const isCredentialMode = server?.authMode === 'credential';
   const canProvision =
     server &&
+    !isCredentialMode &&
     (server.protocol === 'ssh' || server.protocol === 'both') &&
     server.osType !== 'windows' &&
     canManage;
+
+  const handleResetHostKey = async () => {
+    setResettingHostKey(true);
+    try {
+      const updated = await resetHostKey(id);
+      setServer(updated || (await getServer(id)));
+    } catch (err) {
+      setError(err.response?.data?.error?.message || 'Failed to reset host key');
+    } finally {
+      setResettingHostKey(false);
+      setResetHostKeyConfirm(false);
+    }
+  };
 
   if (loading) {
     return (
@@ -191,7 +219,7 @@ function ServerDetail() {
                   <MoreHorizontal className="h-4 w-4" />
                 </Button>
               </DropdownMenuTrigger>
-              <DropdownMenuContent align="end" className="w-52">
+              <DropdownMenuContent align="end" className="w-56">
                 {canManage && (
                   <>
                     <DropdownMenuLabel className="text-xs font-medium text-muted-foreground">
@@ -201,22 +229,44 @@ function ServerDetail() {
                       <Activity className={`mr-2 h-4 w-4 ${checking ? 'animate-pulse' : ''}`} />
                       {checking ? 'Checking...' : 'Run health check'}
                     </DropdownMenuItem>
-                    <DropdownMenuItem onSelect={() => setBootstrapOpen(true)}>
-                      <Download className="mr-2 h-4 w-4" /> Bootstrap host
-                    </DropdownMenuItem>
-                    {canProvision && (
-                      <DropdownMenuItem onSelect={() => setProvisionOpen(true)}>
-                        <Terminal className="mr-2 h-4 w-4" /> Auto-provision
+                    {!isCredentialMode && (
+                      <>
+                        <DropdownMenuItem onSelect={() => setBootstrapOpen(true)}>
+                          <Download className="mr-2 h-4 w-4" /> Bootstrap host
+                        </DropdownMenuItem>
+                        {canProvision && (
+                          <DropdownMenuItem onSelect={() => setProvisionOpen(true)}>
+                            <Terminal className="mr-2 h-4 w-4" /> Auto-provision
+                          </DropdownMenuItem>
+                        )}
+                        <DropdownMenuItem onSelect={() => setUninstallOpen(true)}>
+                          <Eraser className="mr-2 h-4 w-4" /> Uninstall agent
+                        </DropdownMenuItem>
+                      </>
+                    )}
+                    {isCredentialMode && (
+                      <DropdownMenuItem onSelect={() => setTestIdentityOpen(true)}>
+                        <PlugZap className="mr-2 h-4 w-4" /> Test identity
                       </DropdownMenuItem>
                     )}
-                    <DropdownMenuItem onSelect={() => setUninstallOpen(true)}>
-                      <Eraser className="mr-2 h-4 w-4" /> Uninstall agent
+                  </>
+                )}
+                {canDeployKeys && (server?.protocol === 'ssh' || server?.protocol === 'both') && (
+                  <>
+                    <DropdownMenuLabel className="text-xs font-medium text-muted-foreground">
+                      Keystore
+                    </DropdownMenuLabel>
+                    <DropdownMenuItem onSelect={() => setDeployWizardOpen(true)}>
+                      <Send className="mr-2 h-4 w-4" /> Deploy SSH key…
+                    </DropdownMenuItem>
+                    <DropdownMenuItem onSelect={() => setResetHostKeyConfirm(true)}>
+                      <RotateCw className="mr-2 h-4 w-4" /> Reset host key
                     </DropdownMenuItem>
                   </>
                 )}
                 {canDelete && (
                   <>
-                    {canManage && <DropdownMenuSeparator />}
+                    {(canManage || canDeployKeys) && <DropdownMenuSeparator />}
                     <DropdownMenuItem
                       onSelect={() => setConfirmDelete(true)}
                       className="text-destructive focus:bg-destructive/10 focus:text-destructive"
@@ -239,7 +289,43 @@ function ServerDetail() {
           <Field label="Port" value={server.port} mono />
           <Field label="Protocol" value={server.protocol?.toUpperCase()} />
           {(server.protocol === 'ssh' || server.protocol === 'both') && (
-            <Field label="SSH User" value={server.sshUser} />
+            <>
+              <Field label="SSH User" value={server.sshUser} />
+              <Field
+                label="Authentication"
+                value={
+                  isCredentialMode ? (
+                    <span className="flex items-center gap-1.5">
+                      <KeyRound className="h-3.5 w-3.5 text-amber-600 dark:text-amber-400" />
+                      Identity: {server.credential?.name || 'unknown'}
+                      {server.credential?.username ? ` (${server.credential.username})` : ''}
+                    </span>
+                  ) : (
+                    <span className="flex items-center gap-1.5">
+                      <ShieldCheck className="h-3.5 w-3.5 text-emerald-600 dark:text-emerald-400" />
+                      CA certificate
+                    </span>
+                  )
+                }
+              />
+              <Field
+                label="Host key"
+                value={
+                  server.hostKeyFingerprint ? (
+                    <span className="flex flex-col items-end gap-0.5">
+                      <span className="font-mono text-xs">{server.hostKeyFingerprint}</span>
+                      {server.hostKeyPinnedAt && (
+                        <span className="text-[11px] text-muted-foreground">
+                          pinned {formatDateTime(server.hostKeyPinnedAt)}
+                        </span>
+                      )}
+                    </span>
+                  ) : (
+                    'Not yet pinned'
+                  )
+                }
+              />
+            </>
           )}
           {(server.protocol === 'rdp' || server.protocol === 'both') && (
             <Field label="RDP User" value={server.rdpUsername || '-'} />
@@ -266,7 +352,15 @@ function ServerDetail() {
         </Card>
 
         <Card title="Onboarding">
-          {server.protocol === 'rdp' ? (
+          {isCredentialMode ? (
+            <>
+              <Field label="Status" value="Ready (stored identity)" />
+              <p className="mt-1 text-xs text-muted-foreground">
+                No agent or bootstrap is required — Shellius connects using the stored identity
+                directly. Use &quot;Test identity&quot; from the More menu to verify access.
+              </p>
+            </>
+          ) : server.protocol === 'rdp' ? (
             <>
               <Field label="Status" value="Ready (RDP)" />
               <p className="mt-1 text-xs text-muted-foreground">
@@ -363,6 +457,33 @@ function ServerDetail() {
         open={uninstallOpen}
         server={server}
         onClose={() => setUninstallOpen(false)}
+      />
+
+      {deployWizardOpen && (
+        <DeployWizardModal
+          open={deployWizardOpen}
+          onClose={() => setDeployWizardOpen(false)}
+          preselectedServerIds={[server.id]}
+          onDone={fetch}
+        />
+      )}
+
+      {testIdentityOpen && server.credential && (
+        <TestConnectionModal
+          open={testIdentityOpen}
+          credential={server.credential}
+          onClose={() => setTestIdentityOpen(false)}
+        />
+      )}
+
+      <ConfirmDialog
+        open={resetHostKeyConfirm}
+        title="Reset pinned host key"
+        message="The next connection will trust and pin whatever host key the server presents. Only do this after confirming the change (e.g. after re-imaging the host)."
+        confirmLabel={resettingHostKey ? 'Resetting...' : 'Reset host key'}
+        variant="destructive"
+        onConfirm={handleResetHostKey}
+        onCancel={() => setResetHostKeyConfirm(false)}
       />
 
       <ConfirmDialog

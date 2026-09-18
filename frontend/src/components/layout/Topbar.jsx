@@ -3,6 +3,7 @@ import { ChevronDown } from 'lucide-react';
 import { useAuth } from '@/context/AuthContext';
 import NotificationBell from '@/components/layout/NotificationBell';
 import UserMenu from '@/components/layout/UserMenu';
+import QuickConnectButton from '@/components/quickConnect/QuickConnectButton';
 
 const routeNames = {
   '/': 'Dashboard',
@@ -18,6 +19,7 @@ const routeNames = {
   '/cloud-connectors': 'Cloud Connectors',
   '/settings': 'Settings',
   '/install-cli': 'Install CLI',
+  '/keystore': 'Keystore',
 };
 
 function Topbar() {
@@ -37,6 +39,9 @@ function Topbar() {
 
       {/* Actions */}
       <div className="flex items-center gap-2">
+        {/* Quick Connect */}
+        <QuickConnectButton />
+
         {/* Notifications */}
         <NotificationBell />
 

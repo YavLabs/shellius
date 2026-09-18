@@ -1,9 +1,11 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { Terminal as XTerm } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import { WebLinksAddon } from '@xterm/addon-web-links';
-import { Circle, Loader, RefreshCw, X } from 'lucide-react';
+import { Circle, Loader, RefreshCw, X, Zap, Save } from 'lucide-react';
 import { useAuth } from '@/context/AuthContext';
+import SaveServerModal from '@/components/quickConnect/SaveServerModal';
 import '@xterm/xterm/css/xterm.css';
 
 const STATUS = {
@@ -37,7 +39,7 @@ function StatusIndicator({ status }) {
   );
 }
 
-function WebTerminal({ requestId, onClose }) {
+function WebTerminal({ requestId, ticket, label, principal, onClose }) {
   // NOTE: we deliberately do NOT consume `accessToken` from context here.
   // connect() calls refresh(), which updates accessToken in AuthContext; if
   // accessToken were a dependency of connect()/the effect, that update would
@@ -47,14 +49,21 @@ function WebTerminal({ requestId, onClose }) {
   // fresh from storage (and via refresh()) at connect time, so it isn't needed
   // as reactive state.
   const { refresh } = useAuth();
+  const navigate = useNavigate();
   const containerRef = useRef(null);
   const termRef = useRef(null);
   const fitAddonRef = useRef(null);
   const wsRef = useRef(null);
   const resizeObserverRef = useRef(null);
 
+  const isQuickConnect = !!ticket;
+
   const [status, setStatus] = useState(STATUS.CONNECTING);
   const [error, setError] = useState('');
+  const [hostKey, setHostKey] = useState(null); // { fingerprint, algorithm, status }
+  const [connectedInfo, setConnectedInfo] = useState(null); // { host, port, username, authMethod }
+  const [saveOpen, setSaveOpen] = useState(false);
+  const [everConnected, setEverConnected] = useState(false);
 
   const sendResize = useCallback((cols, rows) => {
     if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
@@ -63,7 +72,7 @@ function WebTerminal({ requestId, onClose }) {
   }, []);
 
   const connect = useCallback(async () => {
-    if (!requestId) return;
+    if (!requestId && !ticket) return;
 
     setStatus(STATUS.CONNECTING);
     setError('');
@@ -80,7 +89,7 @@ function WebTerminal({ requestId, onClose }) {
       // If refresh fails, fall back to whatever's in storage and let the
       // backend reject — the user will get the auth error and can re-login.
     }
-    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+    const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
     const host = window.location.host;
 
     // Init terminal
@@ -128,7 +137,14 @@ function WebTerminal({ requestId, onClose }) {
       setTimeout(() => {
         fitAddon.fit();
         const { cols, rows } = term;
-        const url = `${protocol}//${host}/api/terminal/ssh?token=${encodeURIComponent(token)}&requestId=${encodeURIComponent(requestId)}&cols=${cols}&rows=${rows}`;
+        const params = new URLSearchParams({ token, cols: String(cols), rows: String(rows) });
+        if (ticket) {
+          params.set('ticket', ticket);
+        } else {
+          params.set('requestId', requestId);
+          if (principal) params.set('principal', principal);
+        }
+        const url = `${wsProtocol}//${host}/api/terminal/ssh?${params.toString()}`;
         openWs(url, term);
       }, 50);
     }
@@ -150,7 +166,8 @@ function WebTerminal({ requestId, onClose }) {
     return () => {
       window.removeEventListener('resize', handleResize);
     };
-  }, [requestId, refresh, sendResize]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [requestId, ticket, principal, refresh, sendResize]);
 
   function openWs(url, term) {
     const ws = new WebSocket(url);
@@ -164,6 +181,7 @@ function WebTerminal({ requestId, onClose }) {
     ws.onopen = () => {
       if (!isCurrent()) return;
       setStatus(STATUS.CONNECTED);
+      setEverConnected(true);
       term.focus();
     };
 
@@ -178,12 +196,28 @@ function WebTerminal({ requestId, onClose }) {
         evt.data.text().then((t) => term.write(t));
         return;
       }
-      // Backend may send structured JSON control frames (e.g. errors).
+      // Backend may send structured JSON control frames (e.g. errors, host
+      // key info, connection metadata) — these are never written to the
+      // terminal itself.
       if (text && text.length > 0 && text[0] === '{') {
         try {
           const msg = JSON.parse(text);
           if (msg && msg.type === 'error' && typeof msg.message === 'string') {
             setError(msg.message);
+            return;
+          }
+          if (msg && msg.type === 'hostkey') {
+            setHostKey({ fingerprint: msg.fingerprint, algorithm: msg.algorithm, status: msg.status });
+            return;
+          }
+          if (msg && msg.type === 'connected') {
+            setConnectedInfo({
+              sessionId: msg.sessionId,
+              authMethod: msg.authMethod,
+              host: msg.host,
+              port: msg.port,
+              username: msg.username,
+            });
             return;
           }
         } catch {
@@ -255,6 +289,14 @@ function WebTerminal({ requestId, onClose }) {
   }, [connect]);
 
   const handleReconnect = () => {
+    // Quick Connect tickets are single-use — a new ticket (with fresh
+    // credentials) is required, and we never retain secrets client-side, so
+    // there's nothing to reconnect with here. Send the user back to start a
+    // new Quick Connect instead.
+    if (isQuickConnect) {
+      navigate('/servers');
+      return;
+    }
     // Clean up existing terminal and ws before reconnecting
     if (wsRef.current) {
       wsRef.current.close(1000, 'Reconnecting');
@@ -270,13 +312,49 @@ function WebTerminal({ requestId, onClose }) {
     connect();
   };
 
+  const saveConnection = connectedInfo
+    ? {
+        host: connectedInfo.host,
+        port: connectedInfo.port,
+        username: connectedInfo.username,
+        hostKeyFingerprint: hostKey?.fingerprint,
+        hostKeyAlgorithm: hostKey?.algorithm,
+      }
+    : null;
+
   return (
     <div className="flex flex-col h-full bg-[#0a0a0a] rounded-lg overflow-hidden border border-border">
       {/* Status bar */}
-      <div className="flex items-center justify-between px-4 py-2 border-b border-border/50 bg-[#111111] shrink-0">
-        <StatusIndicator status={status} />
+      <div className="flex flex-wrap items-center justify-between gap-2 px-4 py-2 border-b border-border/50 bg-[#111111] shrink-0">
+        <div className="flex items-center gap-3">
+          <StatusIndicator status={status} />
+          {isQuickConnect && (
+            <span className="flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide bg-amber-500/10 text-amber-400 border border-amber-500/20">
+              <Zap className="h-2.5 w-2.5" /> Quick Connect
+            </span>
+          )}
+          {hostKey?.fingerprint && (
+            <span className="font-mono text-[11px] text-muted-foreground" title={`Host key (${hostKey.algorithm || 'unknown'}) — ${hostKey.status}`}>
+              {hostKey.fingerprint}
+            </span>
+          )}
+        </div>
         <div className="flex items-center gap-2">
-          {status === STATUS.DISCONNECTED && (
+          {isQuickConnect && status === STATUS.CONNECTED && (
+            <button
+              onClick={() => setSaveOpen(true)}
+              className="flex items-center gap-1.5 rounded-md px-2.5 py-1 text-xs font-medium text-foreground bg-accent/60 hover:bg-accent transition-colors"
+            >
+              <Save className="h-3 w-3" />
+              Save as server
+            </button>
+          )}
+          {status === STATUS.DISCONNECTED && isQuickConnect && everConnected && (
+            <span className="text-xs text-muted-foreground">
+              Session ended — start a new Quick Connect
+            </span>
+          )}
+          {status === STATUS.DISCONNECTED && !isQuickConnect && (
             <button
               onClick={handleReconnect}
               className="flex items-center gap-1.5 rounded-md px-2.5 py-1 text-xs font-medium text-foreground bg-accent/60 hover:bg-accent transition-colors"
@@ -316,6 +394,14 @@ function WebTerminal({ requestId, onClose }) {
         className="flex-1 min-h-0 p-2"
         style={{ background: '#0a0a0a' }}
       />
+
+      {isQuickConnect && (
+        <SaveServerModal
+          open={saveOpen}
+          onClose={() => setSaveOpen(false)}
+          connection={saveConnection}
+        />
+      )}
     </div>
   );
 }

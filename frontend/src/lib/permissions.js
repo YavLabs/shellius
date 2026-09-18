@@ -38,6 +38,10 @@ const CAPS = {
   manageServers: 'manager', // create / edit / bootstrap / provision
   approveRequests: 'manager',
   viewSessions: 'manager',
+  viewKeystore: 'manager', // view keys/identities (no secrets), test identity
+  // admin
+  manageKeystore: 'admin', // create/edit/delete keys & identities, export private key
+  deployKeys: 'admin', // deploy / remove / rotate keys, reset pinned host key
   // member (any authenticated user)
   viewInventory: 'member',
 };

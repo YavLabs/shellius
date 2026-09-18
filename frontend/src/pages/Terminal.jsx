@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
-import { ArrowLeft, Monitor, Server, User } from 'lucide-react';
+import { ArrowLeft, Monitor, Server, User, Zap } from 'lucide-react';
 import WebTerminal from '@/components/terminal/WebTerminal';
 import RdpTerminal from '@/components/terminal/RdpTerminal';
 import EnvironmentBadge from '@/components/shared/EnvironmentBadge';
@@ -10,9 +10,12 @@ function Terminal() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const requestId = searchParams.get('requestId');
+  const ticket = searchParams.get('ticket');
+  const label = searchParams.get('label');
+  const principal = searchParams.get('principal');
 
   const [request, setRequest] = useState(null);
-  const [loadingRequest, setLoadingRequest] = useState(true);
+  const [loadingRequest, setLoadingRequest] = useState(!!requestId);
 
   useEffect(() => {
     if (!requestId) {
@@ -31,14 +34,14 @@ function Terminal() {
   }, [requestId]);
 
   const handleClose = () => {
-    navigate('/access-requests');
+    navigate(ticket ? '/servers' : '/access-requests');
   };
 
-  if (!requestId) {
+  if (!requestId && !ticket) {
     return (
       <div className="flex h-full items-center justify-center">
         <div className="text-center space-y-2">
-          <p className="text-sm text-muted-foreground">No request ID provided.</p>
+          <p className="text-sm text-muted-foreground">No request ID or ticket provided.</p>
           <button
             onClick={() => navigate('/access-requests')}
             className="text-xs text-primary hover:underline"
@@ -50,13 +53,15 @@ function Terminal() {
     );
   }
 
-  const protocol = request?.protocol || 'SSH';
-  const isRdp = protocol === 'RDP';
+  // Quick Connect tickets are SSH-only (ssh2 path) — never RDP.
+  const protocol = ticket ? 'SSH' : request?.protocol || 'SSH';
+  const isRdp = !ticket && protocol === 'RDP';
 
-  const serverName =
-    request?.server?.hostname || request?.server?.name || request?.serverId || 'Unknown server';
+  const serverName = ticket
+    ? label || 'Quick Connect'
+    : request?.server?.hostname || request?.server?.name || request?.serverId || 'Unknown server';
   const userName =
-    request?.requester?.name || request?.requester?.email || request?.requesterId || '';
+    !ticket && (request?.requester?.name || request?.requester?.email || request?.requesterId || '');
   const environment = request?.server?.environment;
 
   const ProtocolIcon = isRdp ? Monitor : Server;
@@ -84,6 +89,11 @@ function Terminal() {
               {isRdp && (
                 <span className="rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide bg-blue-500/10 text-blue-600 dark:text-blue-400 border border-blue-500/20">
                   RDP
+                </span>
+              )}
+              {ticket && (
+                <span className="flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide bg-amber-500/10 text-amber-600 dark:text-amber-400 border border-amber-500/20">
+                  <Zap className="h-2.5 w-2.5" /> Quick Connect
                 </span>
               )}
               {userName && (
@@ -116,7 +126,7 @@ function Terminal() {
         ) : isRdp ? (
           <RdpTerminal requestId={requestId} />
         ) : (
-          <WebTerminal requestId={requestId} />
+          <WebTerminal requestId={requestId} ticket={ticket} label={label} principal={principal} />
         )}
       </div>
     </div>

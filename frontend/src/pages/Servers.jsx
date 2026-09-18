@@ -13,6 +13,8 @@ import {
   Eye,
   Eraser,
   RefreshCw,
+  KeyRound,
+  Send,
 } from 'lucide-react';
 import DataTable from '@/components/shared/DataTable';
 import Modal from '@/components/shared/Modal';
@@ -24,6 +26,8 @@ import ServerForm from '@/components/servers/ServerForm';
 import BootstrapModal from '@/components/servers/BootstrapModal';
 import UninstallHostModal from '@/components/servers/UninstallHostModal';
 import QuickConnectButton from '@/components/servers/QuickConnectButton';
+import QuickConnectHeaderButton from '@/components/quickConnect/QuickConnectButton';
+import DeployWizardModal from '@/components/keystore/DeployWizardModal';
 import PageHeader from '@/components/common/PageHeader';
 import { Button } from '@/components/ui/button';
 import SearchableSelect from '@/components/ui/SearchableSelect';
@@ -48,6 +52,7 @@ function Servers() {
   // Managers onboard/manage servers; only admins delete (matches the API).
   const canManage = roleAtLeast(user, 'manager');
   const canDelete = roleAtLeast(user, 'admin');
+  const canDeployKeys = roleAtLeast(user, 'admin');
 
   const [servers, setServers] = useState([]);
   const [total, setTotal] = useState(0);
@@ -73,6 +78,7 @@ function Servers() {
   const [deleteTarget, setDeleteTarget] = useState(null);
   const [bootstrapServer, setBootstrapServer] = useState(null);
   const [uninstallServer, setUninstallServer] = useState(null);
+  const [deployWizardOpen, setDeployWizardOpen] = useState(false);
 
   const fetchCustomers = useCallback(async () => {
     try {
@@ -267,6 +273,11 @@ function Servers() {
           >
             Apply
           </Button>
+          {canDeployKeys && (
+            <Button variant="outline" size="sm" onClick={() => setDeployWizardOpen(true)}>
+              <Send className="mr-1 h-4 w-4" /> Deploy SSH key
+            </Button>
+          )}
           <Button
             variant="outline"
             size="sm"
@@ -298,7 +309,15 @@ function Servers() {
           >
             <ProtoIcon className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
             <span>
-              <span className="block font-medium text-foreground">{r.displayName || r.hostname}</span>
+              <span className="flex items-center gap-1.5">
+                <span className="font-medium text-foreground">{r.displayName || r.hostname}</span>
+                {r.authMode === 'credential' && (
+                  <KeyRound
+                    className="h-3 w-3 shrink-0 text-amber-600 dark:text-amber-400"
+                    title={`Stored identity${r.credential?.name ? `: ${r.credential.name}` : ''} (no bootstrap)`}
+                  />
+                )}
+              </span>
               {r.displayName && (
                 <span className="block font-mono text-[11px] text-muted-foreground">{r.hostname}</span>
               )}
@@ -432,6 +451,7 @@ function Servers() {
         title="Servers"
         subtitle="Manage target servers across customers." helpKey="servers">
         <div className="flex items-center gap-2">
+          <QuickConnectHeaderButton />
           <Button variant="outline" onClick={() => fetch()} disabled={loading}>
             <RefreshCw className={`mr-2 h-4 w-4 ${loading ? 'animate-spin' : ''}`} /> Refresh
           </Button>
@@ -506,6 +526,17 @@ function Servers() {
         server={uninstallServer}
         onClose={() => setUninstallServer(null)}
       />
+
+      {deployWizardOpen && (
+        <DeployWizardModal
+          open={deployWizardOpen}
+          onClose={() => setDeployWizardOpen(false)}
+          preselectedServerIds={selected}
+          onDone={() => {
+            setSelected([]);
+          }}
+        />
+      )}
 
       <ConfirmDialog
         open={bulkConfirm}

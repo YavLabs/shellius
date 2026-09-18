@@ -1,9 +1,13 @@
 import { useState, useEffect } from 'react';
-import { X, ChevronDown, ChevronRight, Info } from 'lucide-react';
+import { X, ChevronDown, ChevronRight, Info, ShieldCheck, KeyRound } from 'lucide-react';
 import { listCustomers } from '@/services/customerService';
+import { listCredentials } from '@/services/keystoreService';
 import PrivateIPWarning from './PrivateIPWarning';
 import SearchableSelect from '@/components/ui/SearchableSelect';
 import PasswordInput from '@/components/ui/PasswordInput';
+import IdentityFormModal from '@/components/keystore/IdentityFormModal';
+import { useAuth } from '@/context/AuthContext';
+import { roleAtLeast } from '@/lib/permissions';
 
 const ENVIRONMENTS = ['demo', 'dev', 'staging', 'prod'];
 const OS_TYPES = ['', 'linux', 'windows', 'macos', 'other'];
@@ -81,6 +85,14 @@ function ServerForm({ server, customerId: initialCustomerId, onSubmit, onCancel 
   const [rdpUsername, setRdpUsername] = useState(server?.rdpUsername || '');
   const [rdpPassword, setRdpPassword] = useState('');
 
+  // ── SSH Authentication (certificate vs stored identity) ──────────────────
+  const { user: currentUser } = useAuth();
+  const canCreateIdentity = roleAtLeast(currentUser, 'admin');
+  const [authMode, setAuthMode] = useState(server?.authMode || 'certificate');
+  const [credentialId, setCredentialId] = useState(server?.credentialId || '');
+  const [identities, setIdentities] = useState([]);
+  const [newIdentityOpen, setNewIdentityOpen] = useState(false);
+
   // ── Classification ───────────────────────────────────────────────────────
   const [customerId, setCustomerId] = useState(server?.customerId || initialCustomerId || '');
   const [environment, setEnvironment] = useState(server?.environment || 'dev');
@@ -107,7 +119,16 @@ function ServerForm({ server, customerId: initialCustomerId, onSubmit, onCancel 
         setCustomers(data.items || []);
       } catch { /* ignore */ }
     })();
+    listCredentials()
+      .then(setIdentities)
+      .catch(() => setIdentities([]));
   }, []);
+
+  const refreshIdentities = () => {
+    listCredentials()
+      .then(setIdentities)
+      .catch(() => {});
+  };
 
   // ── Handlers ─────────────────────────────────────────────────────────────
 
@@ -158,6 +179,9 @@ function ServerForm({ server, customerId: initialCustomerId, onSubmit, onCancel 
       setError('Valid IPv4 address is required'); return;
     }
     if (!customerId)                              { setError('Customer is required'); return; }
+    if (includesSsh(protocol) && authMode === 'credential' && !credentialId) {
+      setError('Select an identity, or switch to certificate authentication'); return;
+    }
 
     const payload = {
       hostname:        hostname.trim(),
@@ -180,6 +204,8 @@ function ServerForm({ server, customerId: initialCustomerId, onSubmit, onCancel 
     // SSH user is only meaningful for SSH-capable servers
     if (includesSsh(protocol)) {
       payload.sshUser = sshUser.trim() || 'root';
+      payload.authMode = authMode;
+      payload.credentialId = authMode === 'credential' ? credentialId : undefined;
     }
 
     // RDP credentials only for RDP-capable servers
@@ -364,6 +390,85 @@ function ServerForm({ server, customerId: initialCustomerId, onSubmit, onCancel 
         </div>
       </div>
 
+      {/* ── 3b. Authentication — SSH-capable servers only ───────────────── */}
+      {includesSsh(protocol) && (
+        <div className="space-y-3">
+          <h4 className={sectionCls}>Authentication</h4>
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+            <label
+              className={`flex cursor-pointer items-start gap-3 rounded-md border p-3 text-sm transition-colors ${
+                authMode === 'certificate' ? 'border-primary bg-primary/5' : 'border-border hover:bg-accent/40'
+              }`}
+            >
+              <input
+                type="radio"
+                className="mt-0.5"
+                checked={authMode === 'certificate'}
+                onChange={() => setAuthMode('certificate')}
+              />
+              <span>
+                <span className="flex items-center gap-1.5 font-medium text-foreground">
+                  <ShieldCheck className="h-3.5 w-3.5" /> Shellius CA certificate
+                </span>
+                <span className="block text-xs text-muted-foreground">
+                  Zero static keys. Requires the host bootstrap script.
+                </span>
+              </span>
+            </label>
+            <label
+              className={`flex cursor-pointer items-start gap-3 rounded-md border p-3 text-sm transition-colors ${
+                authMode === 'credential' ? 'border-primary bg-primary/5' : 'border-border hover:bg-accent/40'
+              }`}
+            >
+              <input
+                type="radio"
+                className="mt-0.5"
+                checked={authMode === 'credential'}
+                onChange={() => setAuthMode('credential')}
+              />
+              <span>
+                <span className="flex items-center gap-1.5 font-medium text-foreground">
+                  <KeyRound className="h-3.5 w-3.5" /> Stored identity
+                </span>
+                <span className="block text-xs text-muted-foreground">
+                  No bootstrap required. Uses a Keystore identity (password or key).
+                </span>
+              </span>
+            </label>
+          </div>
+
+          {authMode === 'credential' && (
+            <div>
+              <label className={labelCls}>
+                Identity <span className="text-destructive">*</span>
+              </label>
+              <SearchableSelect
+                value={credentialId}
+                onChange={setCredentialId}
+                options={identities.map((c) => ({ value: c.id, label: c.name, sublabel: c.username }))}
+                placeholder="Select an identity..."
+                emptyMessage="No identities in the keystore yet"
+                clearable={false}
+              />
+              <div className="mt-1.5 flex items-center gap-3 text-xs">
+                <a href="/keystore" target="_blank" rel="noreferrer" className="text-primary hover:underline">
+                  Manage identities
+                </a>
+                {canCreateIdentity && (
+                  <button
+                    type="button"
+                    onClick={() => setNewIdentityOpen(true)}
+                    className="text-primary hover:underline"
+                  >
+                    New identity
+                  </button>
+                )}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
       {/* ── 4. RDP Credentials — only when RDP is involved ────────────── */}
       {includesRdp(protocol) && (
         <div className="space-y-3">
@@ -521,6 +626,16 @@ function ServerForm({ server, customerId: initialCustomerId, onSubmit, onCancel 
           {submitting ? 'Saving...' : isEdit ? 'Save changes' : 'Create server'}
         </button>
       </div>
+
+      <IdentityFormModal
+        open={newIdentityOpen}
+        onClose={() => setNewIdentityOpen(false)}
+        identity={null}
+        onSaved={(created) => {
+          refreshIdentities();
+          if (created?.id) setCredentialId(created.id);
+        }}
+      />
     </form>
   );
 }

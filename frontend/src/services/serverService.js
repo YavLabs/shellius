@@ -26,6 +26,8 @@ export const updateConnectionIp = (id, ipAddress) =>
   api.patch(`/servers/${id}/connection-ip`, { ipAddress }).then((r) => r.data?.data?.server ?? r.data?.data);
 export const triggerHealthCheck = (id) =>
   api.post(`/servers/${id}/health-check`).then(unwrapServer);
+export const resetHostKey = (id) =>
+  api.post(`/servers/${id}/host-key/reset`).then((r) => r.data?.data?.server ?? r.data?.data);
 
 export async function provisionServer(serverId, { privateKey, passphrase, password, sshUser, sudoPassword, onLog }) {
   return new Promise((resolve, reject) => {

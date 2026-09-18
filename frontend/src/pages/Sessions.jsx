@@ -6,6 +6,7 @@ import {
   Square,
   Download,
   ListOrdered,
+  Zap,
 } from 'lucide-react';
 import DataTable from '@/components/shared/DataTable';
 import ServerName, { serverSearchString } from '@/components/shared/ServerName';
@@ -35,6 +36,48 @@ const SESSION_STATUS_META = {
 function SessionStatusBadge({ status }) {
   const meta = SESSION_STATUS_META[status] || { label: status, variant: 'default' };
   return <Badge variant={meta.variant}>{meta.label}</Badge>;
+}
+
+const AUTH_METHOD_LABEL = {
+  certificate: 'Certificate',
+  credential: 'Identity',
+  quick_connect: 'Quick Connect',
+};
+
+function AuthMethodBadge({ authMethod }) {
+  if (!authMethod) return <span className="text-muted-foreground">-</span>;
+  return (
+    <span className="inline-flex items-center rounded-full bg-muted px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
+      {AUTH_METHOD_LABEL[authMethod] || authMethod}
+    </span>
+  );
+}
+
+/**
+ * SessionTarget — renders the server name, or for Quick Connect sessions
+ * (server: null) the ad-hoc target host/user, with a "Quick Connect" badge.
+ */
+function SessionTarget({ session }) {
+  if (!session.server && session.authMethod === 'quick_connect') {
+    const host = session.targetHost || session.host;
+    const port = session.targetPort || session.port;
+    const targetUser = session.targetUser || session.principal;
+    return (
+      <div className="flex flex-col leading-tight">
+        <span className="flex items-center gap-1.5 text-sm font-medium text-foreground">
+          <span className="font-mono">
+            {targetUser ? `${targetUser}@` : ''}
+            {host || 'unknown host'}
+            {port && port !== 22 ? `:${port}` : ''}
+          </span>
+        </span>
+        <span className="flex items-center gap-1 text-[11px] text-amber-600 dark:text-amber-400">
+          <Zap className="h-2.5 w-2.5" /> Quick Connect
+        </span>
+      </div>
+    );
+  }
+  return <ServerName server={session.server} fallback={session.serverId} />;
 }
 
 function durationLabel(startedAt, endedAt) {
@@ -151,11 +194,14 @@ function SessionDetailDrawer({ sessionId, open, onClose }) {
                     <EnvironmentBadge environment={session.server.environment} />
                   )}
                 </span>
+              ) : session.authMethod === 'quick_connect' ? (
+                <SessionTarget session={session} />
               ) : (
                 <span className="italic text-muted-foreground">unknown server</span>
               )
             }
           />
+          <DetailRow label="Auth method" value={<AuthMethodBadge authMethod={session.authMethod} />} />
           <DetailRow
             label="User"
             value={
@@ -335,10 +381,11 @@ function Sessions() {
       key: 'server',
       label: 'Server',
       sortable: true,
-      searchAccessor: (r) => serverSearchString(r.server),
+      searchAccessor: (r) =>
+        r.server ? serverSearchString(r.server) : `${r.targetUser || ''} ${r.targetHost || r.host || ''}`,
       render: (r) => (
         <div className="flex items-center gap-2">
-          <ServerName server={r.server} fallback={r.serverId} />
+          <SessionTarget session={r} />
           {r.server?.environment && <EnvironmentBadge environment={r.server.environment} />}
           {(r.recordingKey || r.recordingPath) && (
             <button
@@ -390,6 +437,12 @@ function Sessions() {
       sortable: true,
       searchAccessor: (r) => r.status || '',
       render: (r) => <SessionStatusBadge status={r.status} />,
+    },
+    {
+      key: 'authMethod',
+      label: 'Auth',
+      hideBelow: 'md',
+      render: (r) => <AuthMethodBadge authMethod={r.authMethod} />,
     },
     {
       key: 'clientIp',

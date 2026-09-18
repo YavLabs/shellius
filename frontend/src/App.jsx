@@ -35,6 +35,8 @@ import NotFound from './pages/NotFound';
 import InstallCli from './pages/InstallCli';
 import ApproveRequest from './pages/ApproveRequest';
 import BulkImport from './pages/BulkImport';
+import Keystore from './pages/Keystore';
+import MfaSetup from './pages/MfaSetup';
 
 function App() {
   return (
@@ -53,6 +55,8 @@ function App() {
               <Route path="/legal/:doc" element={<Legal />} />
               <Route path="/auth/callback" element={<AuthCallback />} />
               <Route element={<ProtectedRoute />}>
+                {/* Forced MFA enrollment — full screen, no app chrome */}
+                <Route path="/mfa-setup" element={<MfaSetup />} />
                 {/* Full-screen terminal — no app chrome */}
                 <Route
                   path="/terminal"
@@ -77,6 +81,7 @@ function App() {
                   {/* Manager+ */}
                   <Route element={<RoleRoute minRole="manager" />}>
                     <Route path="/sessions" element={<Sessions />} />
+                    <Route path="/keystore" element={<Keystore />} />
                   </Route>
                   {/* Admin+ */}
                   <Route element={<RoleRoute minRole="admin" />}>
