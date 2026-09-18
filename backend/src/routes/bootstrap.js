@@ -1,3 +1,5 @@
+import redis from '../config/redis.js';
+import crypto from 'crypto';
 /**
  * bootstrap.js
  *
@@ -38,10 +40,26 @@ const BOOTSTRAP_TTL_SECONDS = 30 * 60; // 30 min
 
 function signBootstrapToken({ serverId, orgId }) {
   return jwt.sign(
-    { kind: 'bootstrap', serverId, orgId },
+    { kind: 'bootstrap', serverId, orgId, jti: crypto.randomUUID() },
     config.jwt.secret,
     { expiresIn: BOOTSTRAP_TTL_SECONDS }
   );
+}
+
+// Install / uninstall links are SINGLE-USE. The token rides in the URL query
+// (it's a `curl … | bash` one-liner), so it can end up in proxy access logs;
+// burning it on first download means a logged link is useless — and a replay
+// can't mint a fresh per-host agent token (which would also rotate the real
+// host's token out). A retry needs a newly generated link.
+async function consumeOneTimeToken(payload) {
+  if (!payload.jti) return; // links issued before single-use existed (≤30 min)
+  const ttl = Math.max(1, (payload.exp || 0) - Math.floor(Date.now() / 1000));
+  const fresh = await redis.set(`bootstrap:used:${payload.jti}`, '1', 'EX', ttl, 'NX');
+  if (fresh !== 'OK') {
+    throw new ApiError(410, 'This install link has already been used. Generate a new one from Shellius.', {
+      code: 'LINK_ALREADY_USED',
+    });
+  }
 }
 
 function verifyBootstrapToken(token) {
@@ -167,6 +185,7 @@ router.get(
     } catch {
       throw new ApiError(401, 'Invalid or expired bootstrap token');
     }
+    await consumeOneTimeToken(payload);
 
     const server = await prisma.server.findFirst({
       where: { id: payload.serverId, orgId: payload.orgId },
@@ -211,6 +230,7 @@ router.get(
     } catch {
       throw new ApiError(401, 'Invalid or expired bootstrap token');
     }
+    await consumeOneTimeToken(payload);
 
     const server = await prisma.server.findFirst({
       where: { id: payload.serverId, orgId: payload.orgId },
@@ -247,7 +267,7 @@ const UNINSTALL_TTL_SECONDS = 30 * 60;
 
 function signUninstallToken({ serverId, orgId }) {
   return jwt.sign(
-    { kind: 'uninstall', serverId, orgId },
+    { kind: 'uninstall', serverId, orgId, jti: crypto.randomUUID() },
     config.jwt.secret,
     { expiresIn: UNINSTALL_TTL_SECONDS }
   );
@@ -311,6 +331,7 @@ router.get(
     } catch {
       throw new ApiError(401, 'Invalid or expired uninstall token');
     }
+    await consumeOneTimeToken(payload);
 
     const server = await prisma.server.findFirst({
       where: { id: payload.serverId, orgId: payload.orgId },

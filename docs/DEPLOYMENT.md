@@ -292,6 +292,74 @@ If you don't run Traefik, either put the bundled `nginx` service (already in
   `docker/nginx-deploy.conf` is a working example of this pattern (publishes
   port `8100` on the host for an external proxy to target).
 
+### 4.2.1 Access logs on a proxy you run yourself
+
+Two kinds of URL carry a credential in the query string:
+
+| URL | Parameter | Lifetime |
+|-----|-----------|----------|
+| `/api/terminal/ws` (terminal WebSocket) | `t` | single use, 30 seconds |
+| `/api/bootstrap/install.sh`, `install.ps1`, `uninstall.sh` | `token` | single use, expires after the link TTL |
+
+Both are **single-use**. Once the browser has connected, or the host has
+downloaded its install script, replaying the logged URL gets `4401` (terminal)
+or `410 LINK_ALREADY_USED` (bootstrap). A leaked log line therefore can't open a
+session or re-run an install. Still, credentials don't belong in logs, and an
+unused install link can still be spent by whoever reads it first.
+
+The bundled nginx configs (`docker/nginx*.conf`) already log `$uri` without
+the query string (`log_format shellius_redacted`). **A proxy in front of them
+has its own access log, and you need to configure that one too:**
+
+- **Traefik (including Coolify's proxy)**: access logs are **off by default**.
+  If you turn them on (`--accesslog=true`), also drop the request path,
+  because Traefik's `RequestPath` field includes the query string and has no
+  query-only filter:
+
+  ```yaml
+  # Traefik static config (CLI flags shown; same keys in traefik.yml)
+  - --accesslog=true
+  - --accesslog.format=json
+  - --accesslog.fields.names.RequestPath=drop
+  - --accesslog.fields.headers.defaultmode=drop   # default, keep it
+  ```
+
+  The nginx container behind Traefik still logs the path without the query,
+  so you don't lose per-route visibility. In Coolify these flags go under
+  **Servers → your server → Proxy → Configuration** (the proxy's own compose
+  `command:` list), not on the Shellius resource.
+- **Caddy (2.8+)**: filter the query parameters out of the logged URI:
+
+  ```caddy
+  shellius.example.com {
+    reverse_proxy nginx:80
+    log {
+      format filter {
+        request>uri query {
+          delete t
+          delete token
+        }
+      }
+    }
+  }
+  ```
+- **nginx / Nginx Proxy Manager**: use a `log_format` that logs `$uri`
+  rather than `$request` or `$request_uri`, like the bundled configs:
+
+  ```nginx
+  log_format shellius_redacted '$remote_addr - $remote_user [$time_local] '
+                               '"$request_method $uri $server_protocol" $status $body_bytes_sent '
+                               '"$http_referer" "$http_user_agent" $request_time';
+  access_log /var/log/nginx/access.log shellius_redacted;
+  ```
+
+  In Nginx Proxy Manager, put the `access_log` line in the proxy host's
+  **Advanced** tab. The `log_format` has to be defined at `http` level
+  (`/data/nginx/custom/http_top.conf`).
+- **Cloud load balancers / CDNs** (AWS ALB, Cloudflare, etc.) log full
+  request URLs when access logging is enabled. Limit who can read those
+  logs, or exclude `/api/terminal/ws` and `/api/bootstrap/`.
+
 ### 4.3 Health checks
 
 Every service in `docker-compose.prod.yml` / `docker-compose.coolify.yml`
@@ -523,6 +591,11 @@ double check:
 - You haven't added a custom Traefik middleware that strips the `Upgrade`
   header (e.g. some aggressive compression or buffering middlewares do this).
 
+**Access logs:** Coolify's Traefik has access logging off by default. If you
+turn it on, add `--accesslog.fields.names.RequestPath=drop` too, because
+Traefik logs the query string, which includes single-use terminal tickets
+and install tokens. See §4.2.1.
+
 ### 6.5 Persistent storage
 
 The named volumes in `docker-compose.coolify.yml` (`postgres_data`,
@@ -606,6 +679,9 @@ UI's terminal and run the same `pg_dump` command from §5.
 - [ ] Reverse proxy access logs retained per your log-retention policy —
       Shellius's own `AuditLog` is immutable and covers in-app actions, but
       proxy-level logs cover raw request volume/IPs
+- [ ] Any proxy/load balancer in front of the bundled nginx does **not** log
+      query strings (terminal `?t=` tickets, bootstrap `?token=` links). See
+      §4.2.1 for Traefik/Coolify, Caddy and nginx settings
 - [ ] All hosts re-bootstrapped with `--upgrade` to pick up a per-host agent
       token (see §5 "Upgrade notes: per-host agent tokens") — check
       ServerDetail for any host still flagged with the deprecated

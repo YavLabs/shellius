@@ -68,6 +68,19 @@ Breaking changes).
   limited; Quick Connect tickets, WebSocket tickets, key inspect/import and
   identity tests are rate limited per user; avatar images only load from
   `https:` or raster `data:` URLs.
+- **Fixed:** host install and uninstall links (`/api/bootstrap/install.sh`,
+  `install.ps1`, `uninstall.sh`) are now **single-use**. A second download of
+  the same link returns `410 LINK_ALREADY_USED`, so a link that ends up in
+  shell history, a chat message or a proxy log can't be replayed to mint
+  another agent token. Generate a new link from the server's Bootstrap panel
+  to re-run an install.
+- **Fixed:** `react-router-dom` upgraded to 7.x (moderate advisories in 6.x);
+  `deepmerge-ts` in Prisma's CLI config loader pinned to 8.x via an npm
+  override (high-severity advisory; Prisma 7 still ships the vulnerable 7.x,
+  so an override is the fix). `npm audit` is clean for backend and frontend.
+- **Docs:** `docs/DEPLOYMENT.md` §4.2.1 covers keeping query strings out of
+  access logs on a proxy you run yourself (Traefik/Coolify, Caddy, nginx /
+  Nginx Proxy Manager, cloud load balancers).
 
 ### Added
 
@@ -203,6 +216,7 @@ Breaking changes).
 
 ### Fixed
 
+- Audit log: expandable rows no longer trigger React's missing-`key` warning.
 - Fresh installs: gap-fill migrations for the CA/certificate tables so a
   brand-new database created via `prisma migrate deploy` ends up byte-for-byte
   identical to one that evolved through every historical migration. Verified

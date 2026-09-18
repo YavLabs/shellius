@@ -1,3 +1,4 @@
+import crypto from 'crypto';
 import express from 'express';
 import Joi from 'joi';
 import jwt from 'jsonwebtoken';
@@ -264,7 +265,7 @@ router.post(
       // Generate a short-lived bootstrap token using the same signing approach
       // as bootstrap.js — no separate service layer exists for this yet.
       const bootstrapToken = jwt.sign(
-        { kind: 'bootstrap', serverId: req.params.id, orgId: req.orgId },
+        { kind: 'bootstrap', serverId: req.params.id, orgId: req.orgId, jti: crypto.randomUUID() },
         config.jwt.secret,
         { expiresIn: 30 * 60 }
       );
