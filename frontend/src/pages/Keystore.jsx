@@ -12,7 +12,7 @@ import { can, roleAtLeast } from '@/lib/permissions';
 const TABS = [
   { key: 'identities', label: 'Identities' },
   { key: 'keys', label: 'SSH Keys' },
-  { key: 'deployments', label: 'Deployments' },
+  { key: 'deployments', label: 'Export to Servers' },
 ];
 
 function Keystore() {
@@ -86,7 +86,7 @@ function Keystore() {
     </div>
   ) : activeTab === 'deployments' ? (
     <Button onClick={() => deploymentsRef.current?.openDeploy?.()}>
-      <Send className="mr-2 h-4 w-4" /> Deploy key
+      <Send className="mr-2 h-4 w-4" /> Export to servers
     </Button>
   ) : null;
 
@@ -96,6 +96,7 @@ function Keystore() {
         icon={KeyRound}
         title="Keystore"
         subtitle="Stored identities and SSH keys for hosts that can't use CA certificates."
+        helpKey="keystore"
       >
         {headerActions}
       </PageHeader>

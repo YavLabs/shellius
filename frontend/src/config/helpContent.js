@@ -246,6 +246,49 @@ export const HELP_CONTENT = {
     ],
   },
 
+  keystore: {
+    title: 'Keystore',
+    summary:
+      "A deliberate, admin-sanctioned exception to Shellius's zero-static-keys model for hosts that can't or shouldn't be bootstrapped with the org CA — appliances, customer-owned boxes, legacy systems. Store reusable identities and SSH keys, export/rotate keys across hosts, and connect ad-hoc without saving a server.",
+    sections: [
+      {
+        heading: 'Identities vs CA certificates',
+        body:
+          'Normal Shellius access uses a short-lived certificate signed by the org CA — nothing is stored. An "Identity" here is a stored username + password and/or private key that Shellius uses instead, for servers set to authMode "credential". Saved servers still go through the request/approval flow either way, and "prod" always requires approval regardless of authMode.',
+      },
+      {
+        heading: 'Password, key, or both',
+        body:
+          'Identities support authType password, key, or key_password (both — the key is tried first, then the password, which also satisfies hosts that require both via SSH partial success).',
+      },
+      {
+        heading: 'Importing keys',
+        body:
+          'Supported private key formats (auto-detected, not by extension): OpenSSH (including bcrypt-encrypted), PEM PKCS#1 RSA and SEC1 EC (including legacy encrypted RSA), PKCS#8 (plain or encrypted), and PuTTY .ppk v2/v3 (encrypted v3 uses Argon2). Key types: Ed25519, RSA, ECDSA (nistp256/384/521) — DSA is rejected. Encrypted keys stay passphrase-protected at rest, in addition to AES-256-GCM encryption.',
+      },
+      {
+        heading: 'Certificates on a key',
+        body:
+          'A stored key can optionally carry an OpenSSH user certificate signed by another CA. When present, connections authenticate with the certificate instead of the raw key.',
+      },
+      {
+        heading: 'Export to servers',
+        body:
+          'The wizard pushes (Export), removes, or rotates a key across one or more servers. Rotate deploys the new key, verifies login, removes the old key, and — if requested — repoints every identity using the old key to the new one. Authenticate using each server\'s own access (its CA cert or stored identity) or a specific identity, and optionally use sudo to write another user\'s authorized_keys.',
+      },
+      {
+        heading: 'Host key pinning',
+        body:
+          "Every connection pins the target's SSH host key on first use (TOFU). A mismatch on a later connection refuses the session until an admin resets the pin from the server's detail page — this guards against man-in-the-middle attacks on hosts Shellius doesn't control.",
+      },
+      {
+        heading: 'Security notes',
+        body:
+          'All secret material (private keys, passphrases, identity passwords) is AES-256-GCM encrypted at rest and only decrypted in memory at connect/export time. List and detail views never return secrets — only derived metadata (hasPassword, hasPassphrase, public key, fingerprint). Exporting a private key is an admin-only, fully audited action.',
+      },
+    ],
+  },
+
   settings: {
     title: 'Settings',
     summary:

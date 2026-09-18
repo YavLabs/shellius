@@ -7,11 +7,12 @@ import SearchableSelect from '@/components/ui/SearchableSelect';
 import EnvironmentBadge from '@/components/shared/EnvironmentBadge';
 import { Badge } from '@/components/ui/badge';
 import { statusTone } from '@/lib/badgeTones';
+import { ENVIRONMENT_LABELS } from '@/lib/labels';
 import { listKeys, listCredentials, createDeployments, listDeployments } from '@/services/keystoreService';
 import { listServers } from '@/services/serverService';
 
 const ACTIONS = [
-  { value: 'deploy', label: 'Deploy' },
+  { value: 'deploy', label: 'Export' },
   { value: 'remove', label: 'Remove' },
   { value: 'rotate', label: 'Rotate' },
 ];
@@ -183,8 +184,8 @@ function DeployWizardModal({
 
   const title =
     step === 4
-      ? 'Deployment progress'
-      : `${action === 'deploy' ? 'Deploy' : action === 'remove' ? 'Remove' : 'Rotate'} SSH key`;
+      ? 'Export progress'
+      : `${action === 'deploy' ? 'Export' : action === 'remove' ? 'Remove' : 'Rotate'} SSH key`;
 
   return (
     <Modal open={open} onClose={onClose} title={title} size="lg">
@@ -274,7 +275,7 @@ function DeployWizardModal({
                 className="w-[160px]"
                 value={envFilter}
                 onChange={setEnvFilter}
-                options={[{ value: '', label: 'All environments' }, ...ENVIRONMENTS.map((e) => ({ value: e, label: e }))]}
+                options={[{ value: '', label: 'All environments' }, ...ENVIRONMENTS.map((e) => ({ value: e, label: ENVIRONMENT_LABELS[e] || e }))]}
                 searchable={false}
                 clearable={false}
               />
@@ -364,7 +365,7 @@ function DeployWizardModal({
             </label>
 
             <div className="rounded-md border border-border bg-muted/30 px-3 py-2 text-xs text-muted-foreground">
-              {action === 'deploy' && `Deploy the key to ${selectedServerIds.length} server(s).`}
+              {action === 'deploy' && `Export the key to ${selectedServerIds.length} server(s).`}
               {action === 'remove' && `Remove the key from ${selectedServerIds.length} server(s).`}
               {action === 'rotate' &&
                 `Rotate: deploy new key → verify login → remove old key on ${selectedServerIds.length} server(s).`}
@@ -434,7 +435,7 @@ function DeployWizardModal({
                     <Loader2 className="mr-2 h-4 w-4 animate-spin" /> Starting...
                   </>
                 ) : (
-                  'Deploy'
+                  action === 'deploy' ? 'Export' : action === 'remove' ? 'Remove' : 'Rotate'
                 )}
               </Button>
             )}

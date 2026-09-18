@@ -532,9 +532,25 @@ function DataTable({
                     <tr
                       key={rowKey}
                       onClick={onRowClick ? () => onRowClick(row) : undefined}
+                      // Keyboard access for clickable rows: Enter activates, matching the
+                      // mouse click. Only fires when the row itself is focused (not a
+                      // descendant button/link/input, e.g. the "…" action menu), so nested
+                      // interactive elements keep their own native Enter/Space behavior.
+                      onKeyDown={
+                        onRowClick
+                          ? (e) => {
+                              if (e.key === 'Enter' && e.target === e.currentTarget) {
+                                e.preventDefault();
+                                onRowClick(row);
+                              }
+                            }
+                          : undefined
+                      }
+                      tabIndex={onRowClick ? 0 : undefined}
                       className={cn(
                         'border-b border-border transition-colors last:border-0',
-                        onRowClick && 'cursor-pointer',
+                        onRowClick &&
+                          'cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring',
                         isSelected ? 'bg-primary/5' : 'hover:bg-accent/30'
                       )}
                     >

@@ -84,13 +84,10 @@ const IdentitiesTab = forwardRef(function IdentitiesTab({ canManage }, ref) {
       sortable: true,
       searchAccessor: (r) => `${r.name} ${r.username}`,
       render: (r) => (
-        <button
-          onClick={() => setDetailId(r.id)}
-          className="text-left hover:text-primary"
-        >
+        <div>
           <span className="block font-medium text-foreground">{r.name}</span>
           <span className="block font-mono text-[11px] text-muted-foreground">{r.username}</span>
-        </button>
+        </div>
       ),
     },
     {
@@ -173,6 +170,7 @@ const IdentitiesTab = forwardRef(function IdentitiesTab({ canManage }, ref) {
         columns={columns}
         data={credentials}
         loading={loading}
+        onRowClick={(r) => setDetailId(r.id)}
         searchPlaceholder="Search identities..."
         emptyState={
           <EmptyState

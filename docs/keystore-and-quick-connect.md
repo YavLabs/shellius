@@ -70,7 +70,16 @@ Mutations are audited.
 ```
 
 - `GET /keystore/keys?search=` → `{ keys: SshKeyDTO[] }`
-- `GET /keystore/keys/:id` → `{ key: SshKeyDTO, credentials: [{id,name,username}], deployments: KeyDeploymentDTO[] (latest 50) }`
+- `GET /keystore/keys/:id` → `{ key: SshKeyDTO, credentials: [{id,name,username,authType}], deployments: KeyDeploymentDTO[] (latest 50),
+  servers: [{ id, hostname, displayName, environment, via: 'identity'|'deployment', credential: {id,name} | null }],
+  stats: { identityCount, serverCount, deploymentCount } }`. `servers` is the
+  union, de-duplicated, of servers reachable through an identity that uses
+  this key (`via: 'identity'`) and servers where the key's latest *successful*
+  deploy/rotate was not later followed by a successful `remove`
+  (`via: 'deployment'`); a server reachable both ways is only listed once
+  (`via: 'identity'` wins). `stats.serverCount` is `servers.length`;
+  `identityCount`/`deploymentCount` mirror `SshKeyDTO.credentialCount` /
+  `deploymentCount` (total ever, not just the latest 50 returned above).
 - `POST /keystore/keys/generate` `{ name, description?, keyType: 'ed25519'|'rsa'|'ecdsa' = 'ed25519', bits?: 2048|3072|4096 (rsa) | 256|384|521 (ecdsa), comment?, passphrase? }` → 201 `{ key }`
 - `POST /keystore/keys/import` `{ name, description?, privateKey, passphrase? }` → 201 `{ key }` (public key + fingerprint derived server-side; 400 on bad key / wrong passphrase)
 - `PATCH /keystore/keys/:id` `{ name?, description?, comment? }` → `{ key }`

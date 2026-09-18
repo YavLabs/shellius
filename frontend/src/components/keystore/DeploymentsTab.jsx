@@ -8,7 +8,7 @@ import DeployWizardModal from './DeployWizardModal';
 import { listDeploymentBatches, listDeployments, retryDeployment } from '@/services/keystoreService';
 import { formatDateTime, relativeTime } from '@/utils/time';
 
-const ACTION_LABEL = { deploy: 'Deploy', remove: 'Remove', rotate: 'Rotate' };
+const ACTION_LABEL = { deploy: 'Export', remove: 'Remove', rotate: 'Rotate' };
 
 function ProgressBar({ counts }) {
   const total = counts?.total || 0;
@@ -227,9 +227,9 @@ const DeploymentsTab = forwardRef(function DeploymentsTab({ canManage }, ref) {
       ) : batches.length === 0 ? (
         <EmptyState
           icon={History}
-          title="No deployments yet"
-          description="Deploy or rotate an SSH key across your servers to see progress here."
-          action={canManage ? { label: 'Deploy / rotate key', onClick: () => setWizardOpen(true) } : undefined}
+          title="No exports yet"
+          description="Export or rotate an SSH key across your servers to see progress here."
+          action={canManage ? { label: 'Export / rotate key', onClick: () => setWizardOpen(true) } : undefined}
         />
       ) : (
         <div className="space-y-2">

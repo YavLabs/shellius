@@ -132,11 +132,11 @@ export async function getKey(orgId, id) {
   });
   if (!key) throw new ApiError(404, 'Key not found');
 
-  const [userMap, credentials, deployments] = await Promise.all([
+  const [userMap, credentials, deployments, credentialServers, successfulDeployments] = await Promise.all([
     loadUsersById(orgId, [key.createdById]),
     prisma.credential.findMany({
       where: { orgId, sshKeyId: id },
-      select: { id: true, name: true, username: true },
+      select: { id: true, name: true, username: true, authType: true },
     }),
     prisma.keyDeployment.findMany({
       where: { orgId, sshKeyId: id },
@@ -147,9 +147,67 @@ export async function getKey(orgId, id) {
         sshKey: { select: { id: true, name: true, fingerprint: true } },
       },
     }),
+    // Servers reachable through an identity that uses this key (authMode: credential).
+    prisma.credential.findMany({
+      where: { orgId, sshKeyId: id },
+      select: {
+        id: true,
+        name: true,
+        servers: { select: { id: true, hostname: true, displayName: true, environment: true } },
+      },
+    }),
+    // Every *successful* deploy/remove/rotate for this key, oldest first — used to
+    // derive "currently deployed on" (latest success per server whose action isn't 'remove').
+    prisma.keyDeployment.findMany({
+      where: { orgId, sshKeyId: id, status: 'success' },
+      orderBy: { createdAt: 'asc' },
+      select: {
+        serverId: true,
+        action: true,
+        server: { select: { id: true, hostname: true, displayName: true, environment: true } },
+      },
+    }),
   ]);
 
   const deployedByMap = await loadUsersById(orgId, deployments.map((d) => d.deployedById));
+
+  // Dedupe servers reached "via identity" (a server could theoretically be linked
+  // through more than one identity using this key — keep the first).
+  const serverMap = new Map();
+  for (const cred of credentialServers) {
+    for (const s of cred.servers) {
+      if (!serverMap.has(s.id)) {
+        serverMap.set(s.id, {
+          id: s.id,
+          hostname: s.hostname,
+          displayName: s.displayName,
+          environment: s.environment,
+          via: 'identity',
+          credential: { id: cred.id, name: cred.name },
+        });
+      }
+    }
+  }
+
+  // Latest successful deployment per server (ascending order means the last
+  // write for a given serverId wins).
+  const latestByServer = new Map();
+  for (const d of successfulDeployments) latestByServer.set(d.serverId, d);
+  for (const d of latestByServer.values()) {
+    if (d.action === 'remove') continue; // key was removed and never redeployed
+    if (!serverMap.has(d.serverId) && d.server) {
+      serverMap.set(d.serverId, {
+        id: d.server.id,
+        hostname: d.server.hostname,
+        displayName: d.server.displayName,
+        environment: d.server.environment,
+        via: 'deployment',
+        credential: null,
+      });
+    }
+  }
+
+  const servers = [...serverMap.values()];
 
   return {
     key: { ...toSshKeyDTO(key, {
@@ -159,6 +217,12 @@ export async function getKey(orgId, id) {
     }), certificateText: key.certificate ?? null },
     credentials,
     deployments: deployments.map((d) => toKeyDeploymentDTO(d, deployedByMap)),
+    servers,
+    stats: {
+      identityCount: key._count.credentials,
+      serverCount: servers.length,
+      deploymentCount: key._count.deployments,
+    },
   };
 }
 

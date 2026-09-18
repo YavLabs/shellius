@@ -20,7 +20,11 @@ import {
   toKeyDeploymentDTO,
   resolveCredentialAuth,
   validateAuthMaterial,
+  getKey,
 } from '../keystoreService.js';
+import prisma from '../../config/db.js';
+import { encrypt } from '../../utils/crypto.js';
+import { dbReachable, createTestOrg, cleanupOrg } from './testDbHelper.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -204,6 +208,152 @@ describe('resolveCredentialAuth', () => {
       },
     };
     expect(resolveCredentialAuth(cred).certificate).toBeUndefined();
+  });
+});
+
+describe('getKey — servers[] and stats (live-DB integration)', () => {
+  let org;
+  let customer;
+  let sshKey;
+  let credential;
+  let serverViaIdentity;
+  let serverViaDeployment;
+  let serverRemoved;
+
+  beforeAll(async () => {
+    if (!(await dbReachable())) return;
+    org = await createTestOrg();
+    customer = await prisma.customer.create({
+      data: { orgId: org.id, name: 'Keystore Test Co', slug: `keystore-test-${Date.now()}` },
+    });
+    sshKey = await prisma.sshKey.create({
+      data: {
+        orgId: org.id,
+        name: `test key ${Date.now()}`,
+        keyType: 'ed25519',
+        publicKey: 'ssh-ed25519 AAAAfake test@host',
+        privateKeyEncrypted: encrypt('-----BEGIN OPENSSH PRIVATE KEY-----\nfake\n-----END OPENSSH PRIVATE KEY-----\n'),
+        fingerprint: 'SHA256:fakefingerprint',
+        source: 'generated',
+      },
+    });
+    credential = await prisma.credential.create({
+      data: {
+        orgId: org.id,
+        name: `test identity ${Date.now()}`,
+        username: 'deploy',
+        authType: 'key',
+        sshKeyId: sshKey.id,
+      },
+    });
+
+    const baseServer = {
+      orgId: org.id,
+      customerId: customer.id,
+      environment: 'dev',
+      protocol: 'ssh',
+    };
+    serverViaIdentity = await prisma.server.create({
+      data: { ...baseServer, hostname: 'via-identity.acme.internal', ipAddress: '10.20.40.1', credentialId: credential.id, authMode: 'credential' },
+    });
+    serverViaDeployment = await prisma.server.create({
+      data: { ...baseServer, hostname: 'via-deployment.acme.internal', ipAddress: '10.20.40.2' },
+    });
+    serverRemoved = await prisma.server.create({
+      data: { ...baseServer, hostname: 'removed-key.acme.internal', ipAddress: '10.20.40.3' },
+    });
+
+    // serverViaDeployment: successful deploy, still present -> counted.
+    await prisma.keyDeployment.create({
+      data: {
+        orgId: org.id,
+        batchId: 'batch-1',
+        sshKeyId: sshKey.id,
+        serverId: serverViaDeployment.id,
+        action: 'deploy',
+        targetUser: 'root',
+        authMode: 'server',
+        status: 'success',
+      },
+    });
+
+    // serverRemoved: deployed then removed -> not counted.
+    await prisma.keyDeployment.create({
+      data: {
+        orgId: org.id,
+        batchId: 'batch-2',
+        sshKeyId: sshKey.id,
+        serverId: serverRemoved.id,
+        action: 'deploy',
+        targetUser: 'root',
+        authMode: 'server',
+        status: 'success',
+        createdAt: new Date(Date.now() - 60000),
+      },
+    });
+    await prisma.keyDeployment.create({
+      data: {
+        orgId: org.id,
+        batchId: 'batch-3',
+        sshKeyId: sshKey.id,
+        serverId: serverRemoved.id,
+        action: 'remove',
+        targetUser: 'root',
+        authMode: 'server',
+        status: 'success',
+      },
+    });
+  });
+
+  afterAll(async () => {
+    if (!(await dbReachable()) || !org) return;
+    await prisma.keyDeployment.deleteMany({ where: { orgId: org.id } });
+    await prisma.credential.deleteMany({ where: { orgId: org.id } });
+    await prisma.server.deleteMany({ where: { orgId: org.id } });
+    await prisma.sshKey.deleteMany({ where: { orgId: org.id } });
+    await prisma.customer.deleteMany({ where: { orgId: org.id } });
+    await cleanupOrg(org.id);
+  });
+
+  test('servers[] includes identity-reachable and currently-deployed servers, excludes removed ones', async () => {
+    if (!(await dbReachable())) {
+      console.warn('DB unreachable — skipping getKey integration test');
+      return;
+    }
+    const { servers, stats } = await getKey(org.id, sshKey.id);
+    const ids = servers.map((s) => s.id);
+    expect(ids).toContain(serverViaIdentity.id);
+    expect(ids).toContain(serverViaDeployment.id);
+    expect(ids).not.toContain(serverRemoved.id);
+
+    const identityEntry = servers.find((s) => s.id === serverViaIdentity.id);
+    expect(identityEntry.via).toBe('identity');
+    expect(identityEntry.credential).toEqual({ id: credential.id, name: credential.name });
+
+    const deploymentEntry = servers.find((s) => s.id === serverViaDeployment.id);
+    expect(deploymentEntry.via).toBe('deployment');
+
+    expect(stats).toEqual({ identityCount: 1, serverCount: 2, deploymentCount: 3 });
+  });
+
+  test('a server reachable both via identity and a successful deploy is not double-counted', async () => {
+    if (!(await dbReachable())) return;
+    await prisma.keyDeployment.create({
+      data: {
+        orgId: org.id,
+        batchId: 'batch-4',
+        sshKeyId: sshKey.id,
+        serverId: serverViaIdentity.id,
+        action: 'deploy',
+        targetUser: 'deploy',
+        authMode: 'credential',
+        status: 'success',
+      },
+    });
+    const { servers, stats } = await getKey(org.id, sshKey.id);
+    const matches = servers.filter((s) => s.id === serverViaIdentity.id);
+    expect(matches).toHaveLength(1);
+    expect(stats.serverCount).toBe(2);
   });
 });
 

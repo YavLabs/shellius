@@ -5,12 +5,14 @@ import ConfirmDialog from '@/components/shared/ConfirmDialog';
 import EmptyState from '@/components/ui/EmptyState';
 import { Badge } from '@/components/ui/badge';
 import { keySourceTone } from '@/lib/badgeTones';
+import { KEY_TYPE_LABELS, labelize } from '@/lib/labels';
 import KeyCertBadge from './KeyCertBadge';
 import GenerateKeyModal from './GenerateKeyModal';
 import ImportKeyModal from './ImportKeyModal';
 import EditKeyModal from './EditKeyModal';
 import ExportKeyModal from './ExportKeyModal';
 import DeployWizardModal from './DeployWizardModal';
+import KeyDetailModal from './KeyDetailModal';
 import { listKeys, deleteKey } from '@/services/keystoreService';
 import { formatDateTime } from '@/utils/time';
 
@@ -30,6 +32,7 @@ const SshKeysTab = forwardRef(function SshKeysTab({ canManage }, ref) {
 
   const [generateOpen, setGenerateOpen] = useState(false);
   const [importOpen, setImportOpen] = useState(false);
+  const [detailId, setDetailId] = useState(null);
   const [editing, setEditing] = useState(null);
   const [exporting, setExporting] = useState(null);
   const [exportConfirm, setExportConfirm] = useState(null);
@@ -65,7 +68,7 @@ const SshKeysTab = forwardRef(function SshKeysTab({ canManage }, ref) {
     highlight: async (id) => {
       const list = keys.length ? keys : await fetch();
       const match = list.find((k) => k.id === id);
-      if (match) setEditing(match);
+      if (match) setDetailId(match.id);
     },
   }));
 
@@ -133,7 +136,7 @@ const SshKeysTab = forwardRef(function SshKeysTab({ canManage }, ref) {
       label: 'Type',
       render: (r) => (
         <span className="text-xs text-muted-foreground">
-          {r.keyType?.toUpperCase()}
+          {labelize(KEY_TYPE_LABELS, r.keyType)}
           {r.bits ? ` ${r.bits}` : ''}
         </span>
       ),
@@ -180,11 +183,12 @@ const SshKeysTab = forwardRef(function SshKeysTab({ canManage }, ref) {
       label: '',
       className: 'w-10',
       actions: [
+        { label: 'View details', icon: Key, onClick: (r) => setDetailId(r.id) },
         { label: 'Copy public key', icon: Copy, onClick: copyPublicKey },
         { label: 'Download public key (.pub)', icon: Download, onClick: downloadPublicKey },
         ...(canManage
           ? [
-              { label: 'Deploy to servers…', icon: Send, onClick: (r) => setDeployTarget({ key: r, action: 'deploy' }) },
+              { label: 'Export to servers…', icon: Send, onClick: (r) => setDeployTarget({ key: r, action: 'deploy' }) },
               { label: 'Rotate…', icon: RefreshCw, onClick: (r) => setDeployTarget({ key: r, action: 'rotate' }) },
               { label: 'Export private key', icon: FileKey, onClick: (r) => setExportConfirm(r) },
               { label: 'Edit', icon: Pencil, onClick: (r) => setEditing(r) },
@@ -216,6 +220,7 @@ const SshKeysTab = forwardRef(function SshKeysTab({ canManage }, ref) {
         columns={columns}
         data={keys}
         loading={loading}
+        onRowClick={(r) => setDetailId(r.id)}
         searchPlaceholder="Search keys..."
         emptyState={
           <EmptyState
@@ -231,6 +236,14 @@ const SshKeysTab = forwardRef(function SshKeysTab({ canManage }, ref) {
       <ImportKeyModal open={importOpen} onClose={() => setImportOpen(false)} onSaved={fetch} />
       <EditKeyModal open={!!editing} sshKey={editing} onClose={() => setEditing(null)} onSaved={fetch} />
       <ExportKeyModal open={!!exporting} sshKey={exporting} onClose={() => setExporting(null)} />
+
+      <KeyDetailModal
+        open={!!detailId}
+        keyId={detailId}
+        canManage={canManage}
+        onClose={() => setDetailId(null)}
+        onChanged={fetch}
+      />
 
       {deployTarget && (
         <DeployWizardModal

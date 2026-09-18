@@ -113,7 +113,7 @@ export const QUICK_ACTIONS = [
   },
   {
     id: 'deploy-ssh-key',
-    label: 'Deploy SSH key',
+    label: 'Export key to servers',
     group: 'Operate',
     icon: Send,
     minRole: 'admin',
