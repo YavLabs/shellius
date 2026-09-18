@@ -10,8 +10,8 @@ import SaveServerFields from './SaveServerFields';
 import { createQuickConnectTicket, saveQuickConnectServer, getHistory } from '@/services/quickConnectService';
 import { listCredentials } from '@/services/keystoreService';
 import { useAuth } from '@/context/AuthContext';
+import { useTerminalWorkspace } from '@/context/TerminalWorkspaceContext';
 import { roleAtLeast } from '@/lib/permissions';
-import { openBlankTerminalTab, openTicketTerminal, closeBlankTerminalTab } from '@/lib/quickConnectLaunch';
 
 const AUTH_TABS = [
   { value: 'password', label: 'Password' },
@@ -45,6 +45,7 @@ function parseHostPaste(raw) {
 function QuickConnectModal({ open, onClose, prefill }) {
   const navigate = useNavigate();
   const { user: currentUser } = useAuth();
+  const { openTab } = useTerminalWorkspace();
   const canCreateIdentity = roleAtLeast(currentUser, 'admin');
 
   const [host, setHost] = useState('');
@@ -143,9 +144,6 @@ function QuickConnectModal({ open, onClose, prefill }) {
   const doConnect = async () => {
     setError(null);
     setConnecting(true);
-    // Open a blank tab synchronously (before the await) so popup blockers
-    // don't kick in once we're back from the network call.
-    const win = openBlankTerminalTab();
     try {
       const resp = await createQuickConnectTicket({
         host: host.trim(),
@@ -155,10 +153,9 @@ function QuickConnectModal({ open, onClose, prefill }) {
         expectedHostKey: expectedHostKey.trim() || undefined,
       });
       const label = `${username.trim() || 'user'}@${host.trim()}`;
-      openTicketTerminal(win, { ticket: resp.ticket, label });
+      openTab({ ticket: resp.ticket }, { label, host: host.trim(), username: username.trim(), focus: true });
       onClose();
     } catch (err) {
-      closeBlankTerminalTab(win);
       const code = err.response?.data?.error?.code;
       if (code === 'PROD_HOST_REQUIRES_APPROVAL') {
         setError({

@@ -24,8 +24,8 @@ import {
 } from '@/components/ui/dropdown-menu';
 import { Tooltip, TooltipContent, TooltipTrigger, TooltipProvider } from '@/components/ui/tooltip';
 import { useQuickConnect } from '@/context/QuickConnectContext';
+import { useTerminalWorkspace } from '@/context/TerminalWorkspaceContext';
 import { getHistory, reconnectHistory, deleteHistory, clearHistory } from '@/services/quickConnectService';
-import { openBlankTerminalTab, openTicketTerminal, closeBlankTerminalTab } from '@/lib/quickConnectLaunch';
 import { relativeTime } from '@/utils/time';
 
 const AUTH_BADGE = {
@@ -71,6 +71,7 @@ function StatusDot({ item }) {
  */
 function RecentQuickConnectsWidget() {
   const { allowed, openQuickConnect } = useQuickConnect();
+  const { openTab } = useTerminalWorkspace();
 
   const [items, setItems] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -111,15 +112,11 @@ function RecentQuickConnectsWidget() {
       return;
     }
     setConnectingId(item.id);
-    // Open a blank tab synchronously (before the await) so popup blockers
-    // don't kick in once we're back from the network call.
-    const win = openBlankTerminalTab();
     try {
       const resp = await reconnectHistory(item.id);
       const label = `${item.username || 'user'}@${item.host}`;
-      openTicketTerminal(win, { ticket: resp.ticket, label });
+      openTab({ ticket: resp.ticket }, { label, host: item.host, username: item.username, focus: true });
     } catch (err) {
-      closeBlankTerminalTab(win);
       const code = err.response?.data?.error?.code;
       if (code === 'SECRET_REQUIRED') {
         openQuickConnect({ host: item.host, port: item.port, username: item.username, authTab: 'credential' });

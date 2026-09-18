@@ -26,6 +26,7 @@ import Sessions from './pages/Sessions';
 import AuditLog from './pages/AuditLog';
 import Notifications from './pages/Notifications';
 import Terminal from './pages/Terminal';
+import Terminals from './pages/Terminals';
 import Device from './pages/Device';
 import Profile from './pages/Profile';
 import Register from './pages/Register';
@@ -74,6 +75,7 @@ function App() {
                   <Route path="/customers/:id" element={<CustomerDetail />} />
                   <Route path="/servers" element={<Servers />} />
                   <Route path="/servers/:id" element={<ServerDetail />} />
+                  <Route path="/terminals" element={<Terminals />} />
                   <Route path="/access-requests" element={<AccessRequests />} />
                   <Route path="/notifications" element={<Notifications />} />
                   <Route path="/profile" element={<Profile />} />

@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Lock, Unlock, Terminal, AlertTriangle } from 'lucide-react';
+import { Lock, Unlock, Terminal, ExternalLink, AlertTriangle } from 'lucide-react';
 import Modal from '@/components/shared/Modal';
 import EnvironmentBadge from '@/components/shared/EnvironmentBadge';
 import { Button } from '@/components/ui/button';
@@ -8,6 +8,7 @@ import PrivateIPWarning from './PrivateIPWarning';
 import { LINUX_USER_RE } from '@/utils/principal';
 import SearchableSelect from '@/components/ui/SearchableSelect';
 import { updateConnectionIp } from '@/services/serverService';
+import { useTerminalWorkspace } from '@/context/TerminalWorkspaceContext';
 
 /**
  * ConnectModal
@@ -25,6 +26,7 @@ import { updateConnectionIp } from '@/services/serverService';
  *   currentUser    auth user (for admin role check)
  */
 function ConnectModal({ open, onClose, server, intent, currentUser }) {
+  const { openTab } = useTerminalWorkspace();
   const adminOverride = !!intent?.adminCanOverride;
   const allowed = intent?.allowedPrincipals || [];
   const proto = intent?.protocol || 'SSH';
@@ -58,10 +60,7 @@ function ConnectModal({ open, onClose, server, intent, currentUser }) {
   const canSubmit =
     isRdp || (isValidFormat && (editable || isInAllowList || allowed.length === 0));
 
-  const onConnect = async () => {
-    if (!canSubmit || !intent?.activeRequestId) return;
-    // For non-static-IP servers, persist a changed IP first so the connection
-    // (which reads the server's stored IP) targets the right host.
+  const ensureIpSaved = async () => {
     if (server?.dynamicIp && ip.trim() && ip.trim() !== server.ipAddress) {
       setConnecting(true);
       setIpErr('');
@@ -70,14 +69,28 @@ function ConnectModal({ open, onClose, server, intent, currentUser }) {
       } catch (e) {
         setIpErr(e.response?.data?.error?.message || 'Failed to update IP');
         setConnecting(false);
-        return;
+        return false;
       }
       setConnecting(false);
     }
+    return true;
+  };
+
+  const onConnect = async () => {
+    if (!canSubmit || !intent?.activeRequestId) return;
+    if (!(await ensureIpSaved())) return;
+    openTab(
+      { requestId: intent.activeRequestId, principal: trimmed && trimmed !== intent.preferredPrincipal ? trimmed : undefined },
+      { label: server?.hostname, env: server?.environment, host: server?.ipAddress || server?.hostname, focus: true }
+    );
+    onClose();
+  };
+
+  const onConnectNewWindow = async () => {
+    if (!canSubmit || !intent?.activeRequestId) return;
+    if (!(await ensureIpSaved())) return;
     const params = new URLSearchParams({ requestId: intent.activeRequestId });
-    if (trimmed && trimmed !== intent.preferredPrincipal) {
-      params.set('principal', trimmed);
-    }
+    if (trimmed && trimmed !== intent.preferredPrincipal) params.set('principal', trimmed);
     window.open(`/terminal?${params.toString()}`, '_blank');
     onClose();
   };
@@ -206,9 +219,18 @@ function ConnectModal({ open, onClose, server, intent, currentUser }) {
         )}
 
         {/* Footer */}
-        <div className="flex justify-end gap-2 pt-1">
+        <div className="flex items-center justify-end gap-2 pt-1">
           <Button variant="outline" onClick={onClose}>
             Cancel
+          </Button>
+          <Button
+            variant="outline"
+            title="Open in a new browser window instead of a workspace tab"
+            onClick={onConnectNewWindow}
+            disabled={!canSubmit || connecting || (server?.dynamicIp && !ip.trim())}
+          >
+            <ExternalLink className="mr-1.5 h-3.5 w-3.5" />
+            New window
           </Button>
           <Button
             onClick={onConnect}

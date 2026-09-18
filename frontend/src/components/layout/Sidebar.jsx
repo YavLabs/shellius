@@ -11,6 +11,7 @@ import {
   FileKey,
   KeySquare,
   Terminal,
+  SquareTerminal,
   ScrollText,
   Bell,
   Cloud,
@@ -22,6 +23,7 @@ import {
 } from 'lucide-react';
 import { useAuth } from '@/context/AuthContext';
 import { useNotifications } from '@/context/NotificationContext';
+import { useTerminalWorkspace } from '@/context/TerminalWorkspaceContext';
 import { cn } from '@/lib/utils';
 import BrandLogo, { BrandMark } from '@/components/common/BrandLogo';
 import UserMenu from '@/components/layout/UserMenu';
@@ -53,7 +55,10 @@ function isAtLeast(user, role) {
 const NAV_SECTIONS = [
   {
     label: 'Overview',
-    items: [{ id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard, to: '/' }],
+    items: [
+      { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard, to: '/' },
+      { id: 'terminals', label: 'Terminals', icon: SquareTerminal, to: '/terminals' },
+    ],
   },
   {
     label: 'Inventory',
@@ -190,6 +195,7 @@ function NavItem({ to, icon: Icon, label, badge, collapsed, exact = false, onNav
 function SidebarBody({ collapsed, onToggle, onNavigate }) {
   const { user } = useAuth();
   const { unreadCount } = useNotifications();
+  const { liveCount } = useTerminalWorkspace();
 
   const canSee = (item) => !item.minRole || isAtLeast(user, item.minRole);
 
@@ -200,6 +206,13 @@ function SidebarBody({ collapsed, onToggle, onNavigate }) {
       badge = (
         <span className="ml-2 flex h-5 min-w-5 items-center justify-center rounded-full bg-amber-500/20 px-1 text-[10px] font-semibold text-amber-600 dark:text-amber-400">
           {unreadCount > 9 ? '9+' : unreadCount}
+        </span>
+      );
+    }
+    if (item.id === 'terminals' && liveCount > 0 && !collapsed) {
+      badge = (
+        <span className="ml-2 flex h-5 min-w-5 items-center justify-center rounded-full bg-emerald-500/20 px-1 text-[10px] font-semibold text-emerald-600 dark:text-emerald-400">
+          {liveCount > 9 ? '9+' : liveCount}
         </span>
       );
     }

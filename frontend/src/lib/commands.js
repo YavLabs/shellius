@@ -9,6 +9,7 @@ import {
   FileKey,
   KeySquare,
   Terminal,
+  SquareTerminal,
   ScrollText,
   Bell,
   Upload,
@@ -153,6 +154,7 @@ export const QUICK_ACTIONS = [
  */
 export const NAV_ITEMS = [
   { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard, to: '/', minRole: 'member' },
+  { id: 'terminals', label: 'Terminals', icon: SquareTerminal, to: '/terminals', minRole: 'member' },
   { id: 'customers', label: 'Customers', icon: Building2, to: '/customers', minRole: 'member' },
   { id: 'servers', label: 'Servers', icon: Server, to: '/servers', minRole: 'member' },
   { id: 'access-requests', label: 'Access Requests', icon: KeyRound, to: '/access-requests', minRole: 'member' },
@@ -198,6 +200,7 @@ export function matchesQuery(label, query) {
  */
 export const NAV_SEQUENCES = [
   { keys: ['g', 'd'], label: 'Go to Dashboard', to: '/dashboard' },
+  { keys: ['g', 't'], label: 'Go to Terminals', to: '/terminals' },
   { keys: ['g', 's'], label: 'Go to Servers', to: '/servers' },
   { keys: ['g', 'c'], label: 'Go to Customers', to: '/customers' },
   { keys: ['g', 'a'], label: 'Go to Access Requests', to: '/access-requests' },

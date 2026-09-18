@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
+import { useTerminalWorkspace } from '@/context/TerminalWorkspaceContext';
 import { useSearchParams } from 'react-router-dom';
 import {
   Plus,
@@ -230,6 +231,7 @@ const STATUSES = ['PENDING', 'APPROVED', 'DENIED', 'EXPIRED', 'REVOKED'];
 
 function AccessRequests() {
   const { user } = useAuth();
+  const { openTab } = useTerminalWorkspace();
   const isAdmin = isAtLeast(user, 'admin');
   const tabs = isAdmin ? [...TABS, { key: 'all', label: 'All' }] : TABS;
 
@@ -313,7 +315,22 @@ function AccessRequests() {
   // Quick Connect — open the web terminal for an approved request. The Terminal
   // page detects the protocol (SSH/RDP) from the request and connects.
   const quickConnect = (r) => {
-    window.open(`/terminal?requestId=${r.id}`, '_blank', 'noopener');
+    // RDP stays a standalone window (guacamole canvas); SSH opens a tab in
+    // the Terminals workspace.
+    if (r.protocol === 'RDP') {
+      window.open(`/terminal?requestId=${r.id}`, '_blank', 'noopener');
+      return;
+    }
+    const server = r.server || {};
+    openTab(
+      { requestId: r.id, principal: r.requestedPrincipal || undefined },
+      {
+        label: server.displayName || server.hostname || 'Terminal',
+        env: server.environment,
+        host: server.ipAddress || server.hostname,
+        username: r.requestedPrincipal,
+      }
+    );
   };
 
   const handleRefresh = () => {
