@@ -1,3 +1,8 @@
+// Preset metadata for SSO identity providers — drives both the "Add provider"
+// picker grid and the per-provider configuration form in Settings > SSO, plus
+// icon selection on the Login page. `id` here is the DTO's `presetId`
+// (google|entra|okta|auth0|generic|github) — keep these in sync with the
+// backend contract in docs/auth-hardening.md.
 export const SSO_PROVIDERS = [
   {
     id: 'google',
@@ -17,8 +22,8 @@ export const SSO_PROVIDERS = [
         body: 'Click "Create credentials" -> "OAuth client ID" -> Application type: "Web application".',
       },
       {
-        title: 'Add the Authorized redirect URI',
-        body: 'Paste the redirect URI shown above into "Authorized redirect URIs".',
+        title: 'Add the callback URL',
+        body: 'Paste the callback URL shown below into "Authorized redirect URIs".',
       },
       {
         title: 'Copy the Client ID and Client Secret',
@@ -49,8 +54,8 @@ export const SSO_PROVIDERS = [
         body: 'Click "New registration". Name: "Shellius". Supported account types: "Accounts in this organizational directory only".',
       },
       {
-        title: 'Add a Web platform with the redirect URI',
-        body: 'Under "Authentication" -> "Add a platform" -> "Web" -> paste the redirect URI shown above.',
+        title: 'Add a Web platform with the callback URL',
+        body: 'Under "Authentication" -> "Add a platform" -> "Web" -> paste the callback URL shown below.',
       },
       {
         title: 'Add a client secret',
@@ -82,7 +87,7 @@ export const SSO_PROVIDERS = [
       },
       {
         title: 'Set Sign-in redirect URI',
-        body: 'Paste the redirect URI shown above.',
+        body: 'Paste the callback URL shown below.',
       },
       {
         title: 'Assign users / groups',
@@ -109,7 +114,7 @@ export const SSO_PROVIDERS = [
       },
       {
         title: 'Configure Allowed Callback URLs',
-        body: 'Paste the redirect URI shown above into "Allowed Callback URLs".',
+        body: 'Paste the callback URL shown below into "Allowed Callback URLs".',
       },
       {
         title: 'Save changes',
@@ -122,7 +127,33 @@ export const SSO_PROVIDERS = [
     ],
   },
   {
-    id: 'generic-oidc',
+    id: 'github',
+    label: 'GitHub',
+    protocol: 'github',
+    fields: ['clientId', 'clientSecret'],
+    defaultScopes: 'read:user user:email',
+    description: 'Sign in with GitHub or GitHub Enterprise accounts via OAuth.',
+    setupSteps: [
+      {
+        title: 'Register an OAuth App',
+        body: 'On github.com (or your GHE instance): Settings -> Developer settings -> OAuth Apps -> New OAuth App.',
+      },
+      {
+        title: 'Set the callback URL',
+        body: 'Paste the callback URL shown below into "Authorization callback URL".',
+      },
+      {
+        title: 'Copy the Client ID and generate a Client Secret',
+        body: 'Paste both into the form below.',
+      },
+      {
+        title: 'Optional: restrict to GitHub organizations',
+        body: 'Add allowed organizations below. Shellius checks org membership with the read:org scope, so members must have public or Shellius-visible org membership.',
+      },
+    ],
+  },
+  {
+    id: 'generic',
     label: 'Generic OIDC',
     protocol: 'oidc',
     fields: ['issuerUrl', 'clientId', 'clientSecret', 'scopes'],
@@ -138,8 +169,8 @@ export const SSO_PROVIDERS = [
         body: 'In your IdP, create a confidential web client and copy the Client ID and Client Secret.',
       },
       {
-        title: 'Configure the redirect URI',
-        body: 'Paste the redirect URI shown above into your IdP\'s allowed redirect URIs.',
+        title: 'Configure the callback URL',
+        body: "Paste the callback URL shown below into your IdP's allowed redirect URIs.",
       },
       {
         title: 'Adjust scopes if needed',
@@ -152,7 +183,7 @@ export const SSO_PROVIDERS = [
     label: 'SAML 2.0',
     protocol: 'saml',
     fields: ['metadataUrl'],
-    description: 'SAML support is coming in Phase 16. Use OIDC for now if your IdP supports both.',
+    description: 'SAML support is coming soon. Use OIDC for now if your IdP supports both.',
     disabled: true,
     setupSteps: [],
   },

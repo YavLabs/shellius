@@ -11,8 +11,10 @@ import {
   HardDrive,
   ShieldCheck,
   Zap,
+  Lock,
 } from 'lucide-react';
 import ConfirmDialog from '@/components/shared/ConfirmDialog';
+import { Badge } from '@/components/ui/badge';
 import QuickConnectSettings from '@/components/settings/QuickConnectSettings';
 import PageHeader from '@/components/common/PageHeader';
 import { Button } from '@/components/ui/button';
@@ -22,6 +24,7 @@ import PasswordInput from '@/components/ui/PasswordInput';
 import { SectionCard, CopyButton } from '@/components/settings/shared';
 import SsoTab from '@/components/settings/SsoTab';
 import MfaTab from '@/components/settings/MfaTab';
+import AccessSettings from '@/components/settings/AccessSettings';
 import { getPublicKey, getStatus, rotate } from '@/services/caService';
 import { getOrg, updateOrg } from '@/services/orgService';
 import { getMyPreferences, updateMyPreferences } from '@/services/userPreferencesService';
@@ -405,16 +408,16 @@ function SmtpCard() {
     const src = config?.source?.[field];
     if (src === 'env') {
       return (
-        <span className="ml-2 inline-flex items-center rounded-full bg-blue-500/15 px-2 py-0.5 text-[10px] font-medium text-blue-700 dark:text-blue-400">
+        <Badge tone="info" className="ml-2">
           Environment default
-        </span>
+        </Badge>
       );
     }
     if (src === 'db') {
       return (
-        <span className="ml-2 inline-flex items-center rounded-full bg-emerald-500/15 px-2 py-0.5 text-[10px] font-medium text-emerald-700 dark:text-emerald-400">
+        <Badge tone="success" className="ml-2">
           Overridden
-        </span>
+        </Badge>
       );
     }
     return null;
@@ -987,6 +990,7 @@ const TABS = [
   { key: 'org', label: 'Organization', icon: Building2, minRole: 'admin' },
   { key: 'ca', label: 'CA Management', icon: Shield, minRole: 'super_admin' },
   { key: 'sso', label: 'SSO', icon: Wifi, minRole: 'super_admin' },
+  { key: 'access', label: 'Access', icon: Lock, minRole: 'admin' },
   { key: 'storage', label: 'Storage', icon: HardDrive, minRole: 'super_admin' },
   { key: 'mfa', label: 'MFA', icon: ShieldCheck, minRole: 'super_admin' },
   { key: 'quickconnect', label: 'Quick Connect', icon: Zap, minRole: 'admin' },
@@ -1036,6 +1040,7 @@ function Settings() {
       {activeTab === 'org' && isAtLeast(user, 'admin') && <OrgTab />}
       {activeTab === 'ca' && isAtLeast(user, 'super_admin') && <CaTab />}
       {activeTab === 'sso' && isAtLeast(user, 'super_admin') && <SsoTab />}
+      {activeTab === 'access' && isAtLeast(user, 'admin') && <AccessSettings />}
       {activeTab === 'storage' && isAtLeast(user, 'super_admin') && <StorageTab />}
       {activeTab === 'mfa' && isAtLeast(user, 'super_admin') && <MfaTab />}
       {activeTab === 'quickconnect' && isAtLeast(user, 'admin') && <QuickConnectSettings />}

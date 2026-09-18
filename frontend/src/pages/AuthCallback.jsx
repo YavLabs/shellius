@@ -16,6 +16,10 @@ const ERROR_MESSAGES = {
     title: "Your email domain isn't allowed",
     body: 'This organization only allows sign-in from specific email domains. Contact your administrator if you believe this is a mistake.',
   },
+  org_not_allowed: {
+    title: "Your GitHub account isn't a member of an allowed organization",
+    body: 'This provider only allows sign-in from members of specific GitHub organizations. Contact your administrator if you believe this is a mistake.',
+  },
   email_not_verified: {
     title: 'Email not verified by your identity provider',
     body: "We only link single sign-on to an existing account when the provider confirms the email address, and this one didn't. Sign in with your password instead, or ask an administrator for help.",
