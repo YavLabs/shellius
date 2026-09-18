@@ -9,86 +9,33 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 Tracked here as work lands on `main`; moved into a dated section on release
 (`node scripts/version.mjs bump <major|minor|patch>`).
 
-### Added
+## [1.1.0] - 2026-09-18
 
-- **All-in-one Docker image** `yavadmin/shellius` (`docker/Dockerfile.allinone`): web UI, API
-  and nginx in one container, listening on :8080 and running non-root.
-  - ~93 MB compressed (~405 MB on disk), smaller than the backend image alone (~156 MB).
-    A Trivy scan reports no HIGH/CRITICAL findings.
-  - Production dependencies only, a Postgres-only Prisma engine, and no npm/yarn at runtime.
-  - `tini` plus a small supervisor runs migrations and the seed, then keeps the API and nginx
-    together: if either dies, the container exits so it restarts as a unit.
-  - Published by CI alongside the two existing images, with `docker-compose.allinone.yml` and
-    docs in `docs/DEPLOYMENT.md` §4.0.
-- Root `.dockerignore`, so every image build skips `node_modules`, `.env` files, git history
-  and docs.
-- Terminal workspace **session recovery**:
-  - Tabs re-attach automatically after network drops, with backoff and offline awareness.
-  - When a session is really gone (Shellius restarted, access expired or revoked, admin
-    terminated, detach timeout, remote `exit`), the tab shows a recovery card. It explains
-    what happened and offers what will work with your *current* access: Reconnect, View
-    request, Request access again, or Quick Connect again (prefilled; one-off passwords are
-    never stored).
-  - Recovery happens in the same tab, so its place and split are kept.
-  - A banner offers **Reconnect all** when several tabs are affected.
-  - New `GET /api/terminal/sessions/:id/recovery` and `POST /api/terminal/sessions/:id/reconnect`.
-- Terminal workspace **Workspaces**: tabs merged into a split become one tab in the tab bar
-  ("Workspace", renameable), with a member count and combined status. You can reorder it,
-  cycle to it with the keyboard, ungroup it, close it (sessions keep running) or end all its
-  sessions.
-- Redesigned **Sessions panel**: "Running in background" (with Attach all) and "Open in tabs"
-  sections. Rows show auth method, age and time left before a detached session closes or access
-  ends; click a row to open or attach it; Duplicate/End on hover; filter; proper empty state.
-- On startup, SSH sessions left `ACTIVE` by a crashed or killed backend are closed with reason
-  `server_restart`.
-- Running sessions that aren't open in a tab can be re-attached from the **"+" New connection
-  dialog** as well as the empty workspace, with **Attach all**. The Sessions button shows how many
-  are waiting.
+This is a large release:
+- a full secrets/credentials manager (Keystore) and Quick Connect;
+- a new in-app terminal workspace (tabs, splits and Workspaces, detach/reattach, and session
+  recovery after restarts or expiry);
+- multi-provider SSO;
+- a broad security hardening pass (per-host agent tokens, single-use tickets and install
+  links, encryption at rest);
+- a new **all-in-one Docker image** (`yavadmin/shellius`).
 
-### Changed
+Everyone will need to sign in again after upgrading, and hosts need re-bootstrapping with
+`--upgrade` (see Breaking changes and Migration notes).
 
-- Terminal workspace: **splits now belong to their tabs** instead of being one layout for the
-  whole page. Opening or selecting a tab outside a split shows it full size, with no empty half
-  pane. Choosing Single on one tab no longer collapses another split, and several splits can
-  exist side by side. Clicking any tab of a split brings the split back. New "Remove from
-  split" tab action and split icons on grouped tabs. See `docs/terminal-workspace.md`.
+### Security
 
-### Fixed
-
-- **Security:** `multer` (file uploads for bulk import) upgraded from 1.4.5 to 2.4.0; 1.x has
+- **Fixed:** `multer` (file uploads for bulk import) upgraded from 1.4.5 to 2.4.0; 1.x has
   several HIGH advisories that `npm audit` did not report. All three Dockerfiles now run
   `apk upgrade`, so images pick up Alpine security fixes (e.g. OpenSSL 3.5.8) released after
   the base image. Dev-tooling advisories were fixed with `npm audit fix`; production dependency
   audits are clean for the backend and frontend.
-- **Security:** only the person who requested access can open a terminal with an approved access
+- **Fixed:** only the person who requested access can open a terminal with an approved access
   request. Before, an admin (who can view every request) or the request's reviewer could use
   someone else's approval to open a shell on a Keystore (credential-mode) server as themselves.
   Certificate servers were already protected.
-- **Security:** `GET /api/access-requests/:id` (and its RDP-token/connect variants) are now
+- **Fixed:** `GET /api/access-requests/:id` (and its RDP-token/connect variants) are now
   org-scoped. Before, an admin could read another organization's request by id.
-- Terminal workspace: switching tabs or layouts no longer reconnects every terminal it moves.
-  That produced "Too many requests" errors after a few quick switches or a reload with several
-  tabs, and stray prompt lines from resizes while a tab was hidden. Terminals also stop sending
-  no-op or zero-size resizes to the remote shell.
-- Terminal workspace: saved tabs are now per user, so another person signing in on the same
-  browser no longer inherits them.
-- Access request status tabs retry by themselves when Shellius is briefly unreachable, and
-  "Request again" reuses the tab.
-- Access requests: the sidebar badge showed the unread-notification count. It now shows
-  requests waiting for your review, the same number as the "Pending reviews" tab, and updates
-  after you approve or deny.
-- Access requests: the status filter (`?status=`) was accepted by the API but ignored, so
-  "All statuses / Approved / Expired…" didn't filter.
-
-## [1.1.0] - 2026-09-18
-
-This is a large release: a full secrets/credentials manager (Keystore), a new
-in-app terminal workspace, multi-provider SSO, and a broad authentication
-hardening pass. Everyone will need to sign in again after upgrading (see
-Breaking changes).
-
-### Security
-
 - **Fixed:** per-host agent tokens replace the single, org-wide
   `AGENT_SHARED_SECRET` used by `check-principals` and `/api/hosts/heartbeat`
   on every target host. Previously, a certificate minted for an *approved*
@@ -155,6 +102,39 @@ Breaking changes).
 
 ### Added
 
+- **All-in-one Docker image** `yavadmin/shellius` (`docker/Dockerfile.allinone`): web UI, API
+  and nginx in one container, listening on :8080 and running non-root.
+  - ~93 MB compressed (~405 MB on disk), smaller than the backend image alone (~156 MB).
+    A Trivy scan reports no HIGH/CRITICAL findings.
+  - Production dependencies only, a Postgres-only Prisma engine, and no npm/yarn at runtime.
+  - `tini` plus a small supervisor runs migrations and the seed, then keeps the API and nginx
+    together: if either dies, the container exits so it restarts as a unit.
+  - Published by CI alongside the two existing images, with `docker-compose.allinone.yml` and
+    docs in `docs/DEPLOYMENT.md` §4.0.
+- Root `.dockerignore`, so every image build skips `node_modules`, `.env` files, git history
+  and docs.
+- Terminal workspace **session recovery**:
+  - Tabs re-attach automatically after network drops, with backoff and offline awareness.
+  - When a session is really gone (Shellius restarted, access expired or revoked, admin
+    terminated, detach timeout, remote `exit`), the tab shows a recovery card. It explains
+    what happened and offers what will work with your *current* access: Reconnect, View
+    request, Request access again, or Quick Connect again (prefilled; one-off passwords are
+    never stored).
+  - Recovery happens in the same tab, so its place and split are kept.
+  - A banner offers **Reconnect all** when several tabs are affected.
+  - New `GET /api/terminal/sessions/:id/recovery` and `POST /api/terminal/sessions/:id/reconnect`.
+- Terminal workspace **Workspaces**: tabs merged into a split become one tab in the tab bar
+  ("Workspace", renameable), with a member count and combined status. You can reorder it,
+  cycle to it with the keyboard, ungroup it, close it (sessions keep running) or end all its
+  sessions.
+- Redesigned **Sessions panel**: "Running in background" (with Attach all) and "Open in tabs"
+  sections. Rows show auth method, age and time left before a detached session closes or access
+  ends; click a row to open or attach it; Duplicate/End on hover; filter; proper empty state.
+- On startup, SSH sessions left `ACTIVE` by a crashed or killed backend are closed with reason
+  `server_restart`.
+- Running sessions that aren't open in a tab can be re-attached from the **"+" New connection
+  dialog** as well as the empty workspace, with **Attach all**. The Sessions button shows how many
+  are waiting.
 - **Keystore, Key Deployment & Quick Connect** — a deliberate, admin-sanctioned
   exception to the "zero static keys" principle for hosts that can't be
   CA-bootstrapped (appliances, customer-owned boxes, legacy systems):
@@ -276,6 +256,11 @@ Breaking changes).
 
 ### Changed
 
+- Terminal workspace: **splits now belong to their tabs** instead of being one layout for the
+  whole page. Opening or selecting a tab outside a split shows it full size, with no empty half
+  pane. Choosing Single on one tab no longer collapses another split, and several splits can
+  exist side by side. Clicking any tab of a split brings the split back. New "Remove from
+  split" tab action and split icons on grouped tabs. See `docs/terminal-workspace.md`.
 - UI consistency pass: uniform badges and "user cell" rendering (avatar +
   name + email) across every table, centred/borderless topbar controls,
   consistent dialog widths and dropdown clipping fixes, a lighter dark theme
@@ -287,6 +272,19 @@ Breaking changes).
 
 ### Fixed
 
+- Terminal workspace: switching tabs or layouts no longer reconnects every terminal it moves.
+  That produced "Too many requests" errors after a few quick switches or a reload with several
+  tabs, and stray prompt lines from resizes while a tab was hidden. Terminals also stop sending
+  no-op or zero-size resizes to the remote shell.
+- Terminal workspace: saved tabs are now per user, so another person signing in on the same
+  browser no longer inherits them.
+- Access request status tabs retry by themselves when Shellius is briefly unreachable, and
+  "Request again" reuses the tab.
+- Access requests: the sidebar badge showed the unread-notification count. It now shows
+  requests waiting for your review, the same number as the "Pending reviews" tab, and updates
+  after you approve or deny.
+- Access requests: the status filter (`?status=`) was accepted by the API but ignored, so
+  "All statuses / Approved / Expired…" didn't filter.
 - Audit log: expandable rows no longer trigger React's missing-`key` warning.
 - Fresh installs: gap-fill migrations for the CA/certificate tables so a
   brand-new database created via `prisma migrate deploy` ends up byte-for-byte
