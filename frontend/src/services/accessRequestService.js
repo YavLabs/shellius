@@ -54,3 +54,17 @@ export const getAccessIntent = (serverId) =>
   api
     .get('/access-requests/intent', { params: { serverId } })
     .then((r) => r.data?.data ?? r.data);
+
+/**
+ * Bulk sibling of getAccessIntent — one request for up to 50 servers.
+ * Returns { [serverId]: { hasActiveAccess, activeRequestId, hasPendingRequest,
+ * pendingRequestId, expiresAt } }. Used by NewConnectionDialog to avoid an
+ * N+1 fan-out when listing servers.
+ */
+export const getAccessIntents = (serverIds) => {
+  const ids = [...new Set(serverIds)].filter(Boolean).slice(0, 50);
+  if (ids.length === 0) return Promise.resolve({});
+  return api
+    .get('/access-requests/intents', { params: { serverIds: ids.join(',') } })
+    .then((r) => r.data?.data?.intents ?? {});
+};

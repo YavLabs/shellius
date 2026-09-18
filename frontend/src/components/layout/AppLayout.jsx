@@ -33,7 +33,12 @@ function AppLayout() {
     return () => window.removeEventListener('shellius:open-shortcuts', open);
   }, []);
 
-  const isTerminalsRoute = location.pathname === '/terminals';
+  // Both the workspace (/terminals) and the standalone full-screen terminal
+  // window (/terminal) own their full height directly (header row + a
+  // flex-1 min-h-0 xterm pane) — no page scroll, so they need the
+  // non-scrolling, min-h-0-constrained `main` too (see the min-h-0 comment
+  // below for why this matters).
+  const isTerminalsRoute = location.pathname === '/terminals' || location.pathname === '/terminal';
 
   return (
     // TerminalWorkspaceProvider must be the outermost of these two:
@@ -53,7 +58,12 @@ function AppLayout() {
               {/* /terminals owns the full available height (no page scroll,
                   no footer) so the tab bar + panes fill the viewport. */}
               {isTerminalsRoute ? (
-                <main className="flex-1 overflow-hidden bg-muted/30">
+                // min-h-0 is load-bearing: without it this flex-1 column
+                // child's default min-height:auto lets its content (the
+                // xterm pane, sized by FitAddon) push it taller than the
+                // viewport, clipping the last line/cursor with no way to
+                // scroll to it. See docs/terminal-workspace.md.
+                <main className="min-h-0 flex-1 overflow-hidden bg-muted/30">
                   <Outlet />
                 </main>
               ) : (

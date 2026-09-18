@@ -1,68 +1,13 @@
 import { useCallback, useEffect, useState } from 'react';
 import { listTerminalSessions } from '@/services/terminalService';
-import {
-  SquareTerminal,
-  Rows,
-  Columns,
-  LayoutGrid,
-  Square as SquareIcon,
-  PanelRight,
-  Zap,
-  Plus,
-} from 'lucide-react';
+import { SquareTerminal, Zap, Plus } from 'lucide-react';
 import { useTerminalWorkspace } from '@/context/TerminalWorkspaceContext';
 import { useQuickConnect } from '@/context/QuickConnectContext';
 import TerminalTabBar from '@/components/workspace/TerminalTabBar';
 import TerminalPaneArea from '@/components/workspace/TerminalPaneArea';
 import SessionsPanel from '@/components/workspace/SessionsPanel';
 import NewConnectionDialog from '@/components/workspace/NewConnectionDialog';
-import { cn } from '@/lib/utils';
 import { getHistory, reconnectHistory } from '@/services/quickConnectService';
-
-const LAYOUT_OPTIONS = [
-  { mode: 'single', icon: SquareIcon, label: 'Single' },
-  { mode: 'split-right', icon: Columns, label: 'Split right' },
-  { mode: 'split-down', icon: Rows, label: 'Split down' },
-  { mode: 'grid', icon: LayoutGrid, label: '2x2 grid' },
-];
-
-function LayoutToolbar({ workspace, sessionsOpen, onToggleSessions }) {
-  return (
-    <div className="flex h-9 shrink-0 items-center gap-1 border-b border-border bg-muted/20 px-2">
-      <span className="mr-1 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">Layout</span>
-      {LAYOUT_OPTIONS.map((opt) => {
-        const Icon = opt.icon;
-        const active = workspace.layout.mode === opt.mode;
-        return (
-          <button
-            key={opt.mode}
-            type="button"
-            title={opt.label}
-            onClick={() => workspace.setLayout(opt.mode)}
-            className={cn(
-              'flex h-6 w-6 items-center justify-center rounded text-muted-foreground hover:bg-accent hover:text-foreground',
-              active && 'bg-accent text-foreground'
-            )}
-          >
-            <Icon className="h-3.5 w-3.5" />
-          </button>
-        );
-      })}
-      <div className="flex-1" />
-      <button
-        type="button"
-        onClick={onToggleSessions}
-        title="Toggle sessions panel"
-        className={cn(
-          'flex h-6 items-center gap-1 rounded px-1.5 text-[11px] font-medium text-muted-foreground hover:bg-accent hover:text-foreground',
-          sessionsOpen && 'bg-accent text-foreground'
-        )}
-      >
-        <PanelRight className="h-3.5 w-3.5" /> Sessions
-      </button>
-    </div>
-  );
-}
 
 function EmptyState({ onNewConnection }) {
   const { allowed, openQuickConnect } = useQuickConnect();
@@ -252,11 +197,21 @@ function Terminals() {
           e.preventDefault();
           selectTab(tabs[idx].id);
         }
+        return;
+      }
+      // Keyboard alternative to drag-reordering: Alt+Shift+Left/Right moves
+      // the active tab one slot in the tab bar.
+      if (e.altKey && e.shiftKey && (e.key === 'ArrowLeft' || e.key === 'ArrowRight')) {
+        e.preventDefault();
+        const idx = tabs.findIndex((t) => t.id === activeTabId);
+        if (idx === -1) return;
+        const to = e.key === 'ArrowLeft' ? idx - 1 : idx + 1;
+        if (to >= 0 && to < tabs.length) workspace.moveTab(idx, to);
       }
     };
     window.addEventListener('keydown', handler);
     return () => window.removeEventListener('keydown', handler);
-  }, [tabs, activeTabId, closeTab, selectTab]);
+  }, [tabs, activeTabId, closeTab, selectTab, workspace]);
 
   return (
     <div className="flex h-full min-h-0 flex-col">
@@ -266,11 +221,9 @@ function Terminals() {
         onSelect={selectTab}
         workspace={workspace}
         onNewConnection={() => setNewConnOpen(true)}
+        sessionsOpen={sessionsOpen}
+        onToggleSessions={() => setSessionsOpen((v) => !v)}
       />
-
-      {tabs.length > 0 && (
-        <LayoutToolbar workspace={workspace} sessionsOpen={sessionsOpen} onToggleSessions={() => setSessionsOpen((v) => !v)} />
-      )}
 
       <div className="flex min-h-0 flex-1">
         <div className="min-w-0 flex-1">

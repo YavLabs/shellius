@@ -1409,6 +1409,7 @@ export default {
   notifyExpiringAccess,
   createBreakGlass,
   getAccessIntent,
+  getAccessIntentsBulk,
 };
 
 // ---------------------------------------------------------------------------
@@ -1515,6 +1516,90 @@ export async function getAccessIntent({ orgId, userId, userRole, serverId }) {
     jitEnabled: !!jitPolicy,
     breakGlass: !!activeAr?.breakGlass,
   };
+}
+
+// ---------------------------------------------------------------------------
+// getAccessIntentsBulk — batched version of getAccessIntent for N servers
+// ---------------------------------------------------------------------------
+
+/**
+ * Lightweight, batched sibling of `getAccessIntent`: given a list of server
+ * ids, reports just enough for a list UI (e.g. the "New connection" dialog)
+ * to pick Connect / Pending / Request access per row without an N+1 request
+ * fan-out. Two `findMany` calls total, regardless of `serverIds.length`.
+ *
+ * Does NOT resolve JIT/preferred-principal state (see `getAccessIntent` for
+ * that) — callers that need the full single-server intent (e.g. to actually
+ * open a connection) should still call `getAccessIntent` for that one server.
+ *
+ * Admin/super_admin bypass: mirrors `getAccessIntent`, which does not grant
+ * admins implicit access — `hasActiveAccess` only reflects a real APPROVED,
+ * unexpired AccessRequest row the caller owns. Admins get the same
+ * `hasActiveAccess`/`hasPendingRequest` as anyone else; their only special
+ * power (bypassing manager approval) happens inside `submit()` and shows up
+ * here as a normal APPROVED row once they submit.
+ *
+ * @param {object} params
+ * @param {string} params.orgId
+ * @param {string} params.userId
+ * @param {string[]} params.serverIds - already deduped/capped by the caller (route enforces max 50)
+ * @returns {Promise<Record<string, {hasActiveAccess:boolean, activeRequestId:string|null, hasPendingRequest:boolean, pendingRequestId:string|null, expiresAt:string|null}>>}
+ */
+export async function getAccessIntentsBulk({ orgId, userId, serverIds }) {
+  const ids = [...new Set(serverIds)].filter(Boolean);
+  const intents = {};
+  for (const id of ids) {
+    intents[id] = {
+      hasActiveAccess: false,
+      activeRequestId: null,
+      hasPendingRequest: false,
+      pendingRequestId: null,
+      expiresAt: null,
+    };
+  }
+  if (ids.length === 0) return intents;
+
+  const [activeArs, pendingArs] = await Promise.all([
+    prisma.accessRequest.findMany({
+      where: {
+        orgId,
+        requesterId: userId,
+        serverId: { in: ids },
+        status: 'APPROVED',
+        expiresAt: { gt: new Date() },
+      },
+      orderBy: { approvedAt: 'desc' },
+      select: { id: true, serverId: true, expiresAt: true },
+    }),
+    prisma.accessRequest.findMany({
+      where: {
+        orgId,
+        requesterId: userId,
+        serverId: { in: ids },
+        status: 'PENDING',
+      },
+      orderBy: { createdAt: 'desc' },
+      select: { id: true, serverId: true },
+    }),
+  ]);
+
+  // Most-recent-first ordering above means the first hit per serverId wins,
+  // matching getAccessIntent's orderBy: { approvedAt: 'desc' }.
+  for (const ar of activeArs) {
+    const entry = intents[ar.serverId];
+    if (!entry || entry.hasActiveAccess) continue;
+    entry.hasActiveAccess = true;
+    entry.activeRequestId = ar.id;
+    entry.expiresAt = ar.expiresAt;
+  }
+  for (const ar of pendingArs) {
+    const entry = intents[ar.serverId];
+    if (!entry || entry.hasActiveAccess || entry.hasPendingRequest) continue;
+    entry.hasPendingRequest = true;
+    entry.pendingRequestId = ar.id;
+  }
+
+  return intents;
 }
 
 // ---------------------------------------------------------------------------

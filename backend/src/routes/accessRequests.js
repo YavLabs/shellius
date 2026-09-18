@@ -203,6 +203,31 @@ router.get(
 );
 
 // ---------------------------------------------------------------------------
+// GET /api/access-requests/intents?serverIds=a,b,c — bulk sibling of /intent
+// MUST be registered BEFORE /:id. Max 50 ids to bound query cost.
+// ---------------------------------------------------------------------------
+
+router.get(
+  '/intents',
+  asyncHandler(async (req, res) => {
+    const raw = typeof req.query.serverIds === 'string' ? req.query.serverIds : '';
+    const serverIds = raw
+      .split(',')
+      .map((s) => s.trim())
+      .filter(Boolean);
+    if (serverIds.length === 0) throw new ApiError(400, 'serverIds query parameter is required (comma-separated)');
+    if (serverIds.length > 50) throw new ApiError(400, 'serverIds accepts at most 50 ids per request');
+
+    const intents = await accessRequestService.getAccessIntentsBulk({
+      orgId: req.orgId,
+      userId: req.user.userId,
+      serverIds,
+    });
+    res.json({ success: true, data: { intents } });
+  })
+);
+
+// ---------------------------------------------------------------------------
 // POST /api/access-requests/break-glass — admin-only emergency access
 // Registered before /:id/* routes to avoid the "break-glass" path being
 // interpreted as an id lookup.

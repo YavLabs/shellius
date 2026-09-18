@@ -43,18 +43,35 @@ function normalizeLayout(layout, fallbackTabId) {
 function buildInitialState() {
   const persisted = loadPersisted();
   const tabs = (persisted?.tabs || [])
-    .filter((t) => t && t.sessionId)
-    .map((t) => ({
-      id: t.id || uuid(),
-      sessionId: t.sessionId,
-      connect: { attach: t.sessionId },
-      label: t.label || 'Terminal',
-      env: t.env,
-      host: t.host,
-      username: t.username,
-      state: 'connecting',
-      error: null,
-    }));
+    .filter((t) => t && (t.sessionId || (t.kind === 'request' && t.accessRequestId)))
+    .map((t) =>
+      t.kind === 'request'
+        ? {
+            id: t.id || uuid(),
+            kind: 'request',
+            accessRequestId: t.accessRequestId,
+            connect: null,
+            sessionId: null,
+            label: t.label || 'Access request',
+            env: t.env,
+            host: t.host,
+            username: t.username,
+            state: 'pending',
+            error: null,
+          }
+        : {
+            id: t.id || uuid(),
+            kind: 'terminal',
+            sessionId: t.sessionId,
+            connect: { attach: t.sessionId },
+            label: t.label || 'Terminal',
+            env: t.env,
+            host: t.host,
+            username: t.username,
+            state: 'connecting',
+            error: null,
+          }
+    );
   const layout = normalizeLayout(persisted?.layout, tabs[0]?.id);
   const activeTabId = tabs.some((t) => t.id === persisted?.activeTabId) ? persisted.activeTabId : tabs[0]?.id || null;
   return { tabs, layout, activeTabId };
@@ -73,6 +90,11 @@ export function TerminalWorkspaceProvider({ children }) {
   const [activeTabId, setActiveTabId] = useState(initialRef.current.activeTabId);
   const [focusedPane, setFocusedPane] = useState(0);
   const [liveCount, setLiveCount] = useState(0);
+  // Ephemeral (not persisted) — the tab id currently being dragged, so the
+  // pane-area drop overlay can show its label without relying on
+  // dataTransfer.getData() during dragover (most browsers only expose that
+  // on `drop`, not `dragover`).
+  const [draggedTabId, setDraggedTabId] = useState(null);
 
   // tabsRef mirrors `tabs` synchronously (not via a useEffect, which only
   // runs after commit) — callers like duplicateTab/closeTab read tabsRef
@@ -100,7 +122,7 @@ export function TerminalWorkspaceProvider({ children }) {
         const liveIds = new Set(sessions.map((s) => s.id));
         setTabsMirrored((prev) =>
           prev.map((t) =>
-            t.sessionId && !liveIds.has(t.sessionId)
+            t.kind !== 'request' && t.sessionId && !liveIds.has(t.sessionId)
               ? { ...t, state: 'ended', error: 'Session ended' }
               : t
           )
@@ -110,11 +132,22 @@ export function TerminalWorkspaceProvider({ children }) {
   }, []);
 
   // Persist (best-effort — never tickets/secrets, only ids + display meta).
+  // Request tabs persist their accessRequestId (not a secret — same as a
+  // sessionId, just a row id) so a reload keeps the status card in place.
   useEffect(() => {
     try {
       const persistTabs = tabs
-        .filter((t) => !!t.sessionId)
-        .map((t) => ({ id: t.id, sessionId: t.sessionId, label: t.label, env: t.env, host: t.host, username: t.username }));
+        .filter((t) => !!t.sessionId || (t.kind === 'request' && !!t.accessRequestId))
+        .map((t) => ({
+          id: t.id,
+          kind: t.kind === 'request' ? 'request' : 'terminal',
+          sessionId: t.sessionId,
+          accessRequestId: t.accessRequestId,
+          label: t.label,
+          env: t.env,
+          host: t.host,
+          username: t.username,
+        }));
       localStorage.setItem(STORAGE_KEY, JSON.stringify({ tabs: persistTabs, layout, activeTabId }));
     } catch {
       /* ignore quota/serialization errors — workspace state is best-effort */
@@ -168,6 +201,7 @@ export function TerminalWorkspaceProvider({ children }) {
         ...prev,
         {
           id,
+          kind: 'terminal',
           sessionId,
           connect,
           label: label || 'Terminal',
@@ -187,6 +221,110 @@ export function TerminalWorkspaceProvider({ children }) {
     },
     [assignToPane, navigate]
   );
+
+  // Opens a status-card tab bound to an access request (pending/denied/
+  // expired/approved-not-yet-connected). Used by NewConnectionDialog after
+  // RequestForm submits, and to focus an existing "Pending" row's tab.
+  const openRequestTab = useCallback(
+    (accessRequest, meta = {}) => {
+      const existing = tabsRef.current.find((t) => t.kind === 'request' && t.accessRequestId === accessRequest.id);
+      if (existing) {
+        setActiveTabId(existing.id);
+        assignToPane(existing.id, meta.pane);
+        navigate('/terminals');
+        return existing.id;
+      }
+      const id = uuid();
+      const label = meta.label || accessRequest.server?.displayName || accessRequest.server?.hostname || 'Access request';
+      setTabsMirrored((prev) => [
+        ...prev,
+        {
+          id,
+          kind: 'request',
+          accessRequestId: accessRequest.id,
+          connect: null,
+          sessionId: null,
+          label,
+          env: meta.env || accessRequest.server?.environment,
+          host: meta.host,
+          username: meta.username,
+          state: 'pending',
+          error: null,
+        },
+      ]);
+      assignToPane(id, meta.pane);
+      if (meta.focus !== false) {
+        setActiveTabId(id);
+        navigate('/terminals');
+      }
+      return id;
+    },
+    [assignToPane, navigate]
+  );
+
+  // Converts a request tab into a terminal tab in place (same id/pane slot)
+  // once the request is APPROVED and the user hits Connect. `connect` is the
+  // usual TerminalView spec, e.g. { requestId }.
+  const convertRequestTabToTerminal = useCallback((id, connect, meta = {}) => {
+    setTabsMirrored((prev) =>
+      prev.map((t) =>
+        t.id === id
+          ? {
+              ...t,
+              kind: 'terminal',
+              connect,
+              sessionId: null,
+              state: 'connecting',
+              error: null,
+              label: meta.label || t.label,
+              env: meta.env || t.env,
+            }
+          : t
+      )
+    );
+  }, []);
+
+  // Shared entry point for "an access request was just created/resolved" —
+  // used by NewConnectionDialog and RequestStatusCard's "Request again".
+  // Auto-approved (non-prod / admin bypass) requests skip the status card
+  // and open a terminal tab immediately; everything else gets a status tab.
+  const openTabForAccessRequest = useCallback(
+    (accessRequest, meta = {}) => {
+      if (accessRequest.status === 'APPROVED') {
+        return openTab(
+          { requestId: accessRequest.id },
+          {
+            label: meta.label || accessRequest.server?.displayName || accessRequest.server?.hostname,
+            env: meta.env || accessRequest.server?.environment,
+            focus: meta.focus,
+          }
+        );
+      }
+      return openRequestTab(accessRequest, meta);
+    },
+    [openTab, openRequestTab]
+  );
+
+  // Reorders tabs (drag in the tab bar, or Alt+Shift+Left/Right). Layout
+  // (pane assignments) references tab ids, not positions, so no pane update
+  // is needed — order only affects the tab bar and Alt+Tab/Alt+N cycling.
+  const moveTab = useCallback((fromIndex, toIndex) => {
+    setTabsMirrored((prev) => {
+      if (
+        fromIndex === toIndex ||
+        fromIndex < 0 ||
+        toIndex < 0 ||
+        fromIndex >= prev.length ||
+        toIndex >= prev.length
+      ) {
+        return prev;
+      }
+      const next = prev.slice();
+      const [moved] = next.splice(fromIndex, 1);
+      next.splice(toIndex, 0, moved);
+      return next;
+    });
+  }, []);
 
   const closeTab = useCallback((id, opts = {}) => {
     const tab = tabsRef.current.find((t) => t.id === id);
@@ -253,6 +391,87 @@ export function TerminalWorkspaceProvider({ children }) {
     });
   }, []);
 
+  /**
+   * dropTabOnPane — Termius-style drag-a-tab-onto-the-pane-area split.
+   * `zone` is one of 'left' | 'right' | 'top' | 'bottom' | 'center', computed
+   * by the drop target from pointer position within the hovered pane's box.
+   *
+   * Rules (documented here since they're not obvious from the code):
+   *  - single pane: left/right → split-right (dragged tab goes to the side
+   *    dropped on, existing tab takes the other side); top/bottom →
+   *    split-down, same idea; centre → replace (stay single-pane).
+   *  - 2-pane layout (split-right/split-down), same-axis zone (e.g.
+   *    left/right while already split-right) or centre → replace the
+   *    hovered pane's tab (there's no 3rd column/row to add on that axis).
+   *  - 2-pane layout, cross-axis zone (e.g. top/bottom while split-right) →
+   *    promotes to a 2x2 grid. The hovered pane's column/row is split into
+   *    two (existing tab + dragged tab, ordered by which half was dropped
+   *    on); the *other* existing pane keeps its tab in the first row/column
+   *    of its own column/row and the newly-exposed 4th slot is left empty
+   *    (a tab can only occupy one slot, so a 3-tab drop can't fill all 4).
+   *  - grid (4 panes, already maxed out): any zone (including edges) simply
+   *    replaces the hovered pane's tab — there's no 5th slot to expand into.
+   */
+  const dropTabOnPane = useCallback((tabId, paneIndex, zone) => {
+    setLayoutState((prev) => {
+      const mode = prev.mode;
+      const panes = [...prev.panes];
+
+      if (mode === 'grid' || zone === 'center') {
+        panes[paneIndex] = tabId;
+        return { ...prev, panes };
+      }
+
+      if (mode === 'single') {
+        const current = panes[0];
+        if (zone === 'right') return { mode: 'split-right', panes: [current, tabId] };
+        if (zone === 'left') return { mode: 'split-right', panes: [tabId, current] };
+        if (zone === 'bottom') return { mode: 'split-down', panes: [current, tabId] };
+        if (zone === 'top') return { mode: 'split-down', panes: [tabId, current] };
+        return prev;
+      }
+
+      const sameAxis =
+        (mode === 'split-right' && (zone === 'left' || zone === 'right')) ||
+        (mode === 'split-down' && (zone === 'top' || zone === 'bottom'));
+      if (sameAxis) {
+        panes[paneIndex] = tabId;
+        return { ...prev, panes };
+      }
+
+      // Cross-axis on a 2-pane layout → promote to a 2x2 grid (see comment above).
+      const otherIndex = paneIndex === 0 ? 1 : 0;
+      const hovered = panes[paneIndex];
+      const other = panes[otherIndex];
+      const grid = [null, null, null, null];
+      if (mode === 'split-right') {
+        const col = paneIndex;
+        const otherCol = otherIndex;
+        if (zone === 'bottom') {
+          grid[col] = hovered;
+          grid[2 + col] = tabId;
+        } else {
+          grid[col] = tabId;
+          grid[2 + col] = hovered;
+        }
+        grid[otherCol] = other;
+      } else {
+        const row = paneIndex;
+        const otherRow = otherIndex;
+        if (zone === 'right') {
+          grid[row * 2] = hovered;
+          grid[row * 2 + 1] = tabId;
+        } else {
+          grid[row * 2] = tabId;
+          grid[row * 2 + 1] = hovered;
+        }
+        grid[otherRow * 2] = other;
+      }
+      return { mode: 'grid', panes: grid };
+    });
+    setFocusedPane(paneIndex);
+  }, []);
+
   const attachSession = useCallback(
     (sessionId, meta = {}) => {
       const existing = tabsRef.current.find((t) => t.sessionId === sessionId);
@@ -312,9 +531,14 @@ export function TerminalWorkspaceProvider({ children }) {
       activeTab,
       focusedPane,
       liveCount,
+      draggedTabId,
+      setDraggedTabId,
       setActiveTabId,
       setFocusedPane,
       openTab,
+      openRequestTab,
+      openTabForAccessRequest,
+      convertRequestTabToTerminal,
       closeTab,
       closeOthers,
       duplicateTab,
@@ -322,6 +546,8 @@ export function TerminalWorkspaceProvider({ children }) {
       splitWith,
       setLayout,
       assignPane,
+      moveTab,
+      dropTabOnPane,
       attachSession,
       setTabSessionInfo,
       setTabState,
@@ -333,7 +559,11 @@ export function TerminalWorkspaceProvider({ children }) {
       activeTab,
       focusedPane,
       liveCount,
+      draggedTabId,
       openTab,
+      openRequestTab,
+      openTabForAccessRequest,
+      convertRequestTabToTerminal,
       closeTab,
       closeOthers,
       duplicateTab,
@@ -341,6 +571,8 @@ export function TerminalWorkspaceProvider({ children }) {
       splitWith,
       setLayout,
       assignPane,
+      moveTab,
+      dropTabOnPane,
       attachSession,
       setTabSessionInfo,
       setTabState,

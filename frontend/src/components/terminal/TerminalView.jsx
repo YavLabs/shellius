@@ -219,7 +219,23 @@ const TerminalView = forwardRef(function TerminalView(
     };
     resizeObserverRef.current = new ResizeObserver(handleResize);
     if (containerRef.current) resizeObserverRef.current.observe(containerRef.current);
-    cleanupResize = () => resizeObserverRef.current?.disconnect();
+
+    // Web fonts (JetBrains Mono etc.) can finish loading after xterm's first
+    // fit, subtly changing glyph metrics and, with it, how many rows fit —
+    // re-fit once they're ready so the last line/cursor doesn't end up
+    // clipped below the visible pane.
+    let fontsCancelled = false;
+    document.fonts?.ready
+      ?.then(() => {
+        if (fontsCancelled || signal.cancelled) return;
+        handleResize();
+      })
+      .catch(() => {});
+
+    cleanupResize = () => {
+      fontsCancelled = true;
+      resizeObserverRef.current?.disconnect();
+    };
 
     function openWs(url, term, signal) {
       const ws = new WebSocket(url);
@@ -388,7 +404,18 @@ const TerminalView = forwardRef(function TerminalView(
         </div>
       )}
 
-      <div ref={containerRef} className="min-h-0 flex-1 p-2" />
+      {/* The padding lives on this OUTER box, not on containerRef itself:
+          @xterm/addon-fit computes available height from
+          `term.element.parentElement`'s computed (border-box) height minus
+          only `term.element`'s OWN padding — it does not know about padding
+          on an ancestor. Padding directly on containerRef (xterm's mount
+          point) was silently double-counted as available space, so xterm
+          rendered ~1 row taller than the visible box and clipped the last
+          line/cursor below the fold. Keeping containerRef padding-free
+          makes its clientHeight exactly the terminal's real budget. */}
+      <div className="min-h-0 flex-1 overflow-hidden p-2">
+        <div ref={containerRef} className="h-full min-h-0 w-full" />
+      </div>
     </div>
   );
 });

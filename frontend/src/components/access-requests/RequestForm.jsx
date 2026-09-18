@@ -137,14 +137,17 @@ function RequestForm({ open, onClose, onSuccess, initialServerId = '' }) {
 
     setSubmitting(true);
     try {
-      await createAccessRequest({
+      const created = await createAccessRequest({
         serverId,
         reason: reason.trim(),
         requestedDuration,
         requestedPrincipal: trimmedPrincipal,
         protocol,
       });
-      onSuccess?.();
+      // Pass the created row (includes id/status/server) so callers — e.g.
+      // the Terminals workspace — can open a request-status tab without a
+      // second round trip.
+      onSuccess?.(created);
       onClose();
     } catch (err) {
       setError(err.response?.data?.error?.message || err.message || 'Failed to submit request.');

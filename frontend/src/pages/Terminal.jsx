@@ -134,7 +134,7 @@ function Terminal() {
     : null;
 
   return (
-    <div className="flex flex-col h-full p-4 gap-3">
+    <div className="flex h-full min-h-0 flex-col gap-3 p-4">
       <div className="flex flex-wrap items-center justify-between gap-2 shrink-0">
         <div className="flex flex-wrap items-center gap-3">
           <button onClick={handleBack} className="flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground transition-colors">
