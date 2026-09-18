@@ -928,3 +928,29 @@ model KeyDeployment {
   @@index([serverId])
   @@map("key_deployments")
 }
+
+/// Per-user Quick Connect history (dashboard "Recent Quick Connects").
+/// Never stores secrets: only the target and how it was authenticated. Rows
+/// older than 7 days are pruned; one row per (user, host, port, username).
+model QuickConnectHistory {
+  id              String    @id @default(cuid())
+  orgId           String    @map("org_id")
+  userId          String    @map("user_id")
+  host            String
+  port            Int       @default(22)
+  username        String
+  authType        String    @map("auth_type") // password | key | credential
+  credentialId    String?   @map("credential_id") // identity used, for one-click reconnect
+  serverId        String?   @map("server_id") // set when the target matches / was saved as a server
+  lastSessionId   String?   @map("last_session_id")
+  lastStatus      String    @default("connected") @map("last_status") // connected | failed
+  lastError       String?   @map("last_error")
+  connectCount    Int       @default(1) @map("connect_count")
+  lastConnectedAt DateTime  @default(now()) @map("last_connected_at")
+  createdAt       DateTime  @default(now()) @map("created_at")
+
+  @@unique([userId, host, port, username])
+  @@index([orgId, userId, lastConnectedAt])
+  @@index([lastConnectedAt])
+  @@map("quick_connect_history")
+}

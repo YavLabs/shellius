@@ -286,3 +286,21 @@ The param is removed from the URL once handled.
 `cd backend && npm run db:seed:demo` seeds an idempotent demo dataset (tagged
 so it can be removed with `npm run db:seed:demo -- --reset`). Never runs
 automatically.
+
+### Quick Connect history (dashboard "Recent Quick Connects")
+
+Per-user, **no secrets**, retained **7 days** (pruned daily by the
+`quick-connect-history-prune` job and filtered on read). One row per
+`(user, host, port, username)`, upserted when a Quick Connect session is
+redeemed (terminal WebSocket): `connectCount++`, `lastConnectedAt`,
+`lastStatus` (`connected` once SSH is up, `failed` + `lastError` otherwise),
+`lastSessionId`, `authType` (`password` | `key` | `credential`),
+`credentialId` (identity used) and `serverId` (target matches a saved server).
+
+- `GET /api/quick-connect/history?limit=10` → `{ items: [{ id, host, port, username, authType,
+  credential: { id, name } | null, server: { id, displayName, hostname, environment } | null,
+  lastStatus, lastError, connectCount, lastConnectedAt, lastSessionId }] }` (caller's own, newest first)
+- `POST /api/quick-connect/history/:id/reconnect` → 201 `{ ticket, expiresIn }` — only when
+  `authType === 'credential'` and the identity still exists (same checks as ticket creation);
+  otherwise 409 `SECRET_REQUIRED` (the UI opens the Quick Connect modal pre-filled).
+- `DELETE /api/quick-connect/history/:id` and `DELETE /api/quick-connect/history` (clear all).
