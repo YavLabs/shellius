@@ -6,6 +6,7 @@ import {
   KeyRound,
   FileKey,
   ArrowRight,
+  ChevronRight,
   LayoutDashboard,
 } from 'lucide-react';
 import PageHeader from '@/components/common/PageHeader';
@@ -24,6 +25,8 @@ import { relativeTime } from '@/utils/time';
 import Skeleton from '@/components/ui/Skeleton';
 import { Badge } from '@/components/ui/badge';
 import { auditCategoryTone, environmentTone } from '@/lib/badgeTones';
+import { describeAuditEvent, auditSentence, auditCategoryLabel } from '@/lib/auditFormat';
+import Avatar from '@/components/ui/Avatar';
 
 const ROLE_RANK = { super_admin: 4, admin: 3, manager: 2, member: 1 };
 function isAtLeast(user, role) {
@@ -31,85 +34,33 @@ function isAtLeast(user, role) {
 }
 
 // Badge for audit action verbs — reuses the shared audit category tone map.
-function ActionBadge({ action }) {
-  const prefix = (action || '').split('.')[0];
-  return (
-    <Badge tone={auditCategoryTone(prefix)} className="shrink-0">
-      {action}
-    </Badge>
-  );
-}
-
-// Humanize an audit action like "access_request.submit" → "submitted an access request"
-const ACTION_VERBS = {
-  'access_request.submit': 'submitted access request',
-  'access_request.approve': 'approved access request',
-  'access_request.deny': 'denied access request',
-  'access_request.revoke': 'revoked access request',
-  'access_request.expire': 'expired access request',
-  'access_request.break_glass': 'invoked break-glass access',
-  'access_request.ssh_credentials': 'downloaded SSH credentials',
-  'access_request.rdp_credentials': 'downloaded RDP credentials',
-  'access_request.ssh_credentials_generated': 'opened web terminal',
-  'certificate.issue': 'issued certificate',
-  'certificate.revoke': 'revoked certificate',
-  'certificate.key_downloaded': 'downloaded private key',
-  'server.create': 'added server',
-  'server.update': 'updated server',
-  'server.delete': 'removed server',
-  'server.bootstrap': 'bootstrapped server',
-  'user.create': 'created user',
-  'user.update': 'updated user',
-  'user.delete': 'deleted user',
-  'user.invite': 'invited user',
-  'auth.login': 'signed in',
-  'auth.logout': 'signed out',
-  'auth.password_change': 'changed password',
-  'policy.create': 'created policy',
-  'policy.update': 'updated policy',
-  'policy.delete': 'deleted policy',
-  'session.terminate': 'terminated session',
-  'group.create': 'created group',
-  'group.update': 'updated group',
-  'group.delete': 'deleted group',
-};
-
-function humanizeAction(action) {
-  if (ACTION_VERBS[action]) return ACTION_VERBS[action];
-  // Fallback: convert "resource.verb" → "verbed resource"
-  const [, verb] = (action || '').split('.');
-  return verb ? verb.replace(/_/g, ' ') : action || '';
-}
-
 function AuditRow({ item }) {
   const navigate = useNavigate();
-  const verb = humanizeAction(item.action);
-  const handleClick = () => {
-    if (item.resourceLink) navigate(item.resourceLink);
-    else navigate('/audit-log');
-  };
+  const { verb, object, target, category } = describeAuditEvent(item);
+  const actor = item.actor || { name: item.actorName, email: item.actorEmail };
+  const actorName = actor?.name || 'System';
+  const handleClick = () => navigate(item.resourceLink || '/audit-log');
   return (
     <li>
       <button
         type="button"
         onClick={handleClick}
-        className="flex w-full items-start gap-3 border-b border-border py-2.5 text-left last:border-0 hover:bg-accent/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring rounded-sm px-1 -mx-1"
+        title={auditSentence(item)}
+        className="group flex w-full items-center gap-3 rounded-md px-2 py-2 text-left transition-colors hover:bg-accent/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
       >
-        <span className="mt-0.5 w-20 shrink-0 text-xs text-muted-foreground whitespace-nowrap">
-          {relativeTime(item.createdAt)}
+        <Avatar name={actorName} email={actor?.email} avatarUrl={actor?.avatarUrl} size="sm" />
+        <span className="min-w-0 flex-1">
+          <span className="block truncate text-sm text-muted-foreground">
+            <span className="font-medium text-foreground">{actorName}</span> {verb}
+            {object && <> {object}</>}
+            {target && <> <span className="font-medium text-foreground">{target}</span></>}
+          </span>
+          <span className="mt-0.5 flex items-center gap-2 text-xs text-muted-foreground">
+            <Badge tone={auditCategoryTone(category)}>{auditCategoryLabel(category)}</Badge>
+            <span className="whitespace-nowrap">{relativeTime(item.createdAt)}</span>
+          </span>
         </span>
-        <ActionBadge action={item.action} />
-        <span className="min-w-0 flex-1 text-xs text-muted-foreground">
-          <span className="font-medium text-foreground">{item.actorName || 'System'}</span>
-          {' '}
-          {verb}
-          {item.resourceLabel && item.resourceLabel !== item.resourceType && (
-            <>
-              {': '}
-              <span className="text-foreground">{item.resourceLabel}</span>
-            </>
-          )}
-        </span>
+        <ChevronRight className="h-4 w-4 shrink-0 text-muted-foreground/50 transition-colors group-hover:text-muted-foreground" />
       </button>
     </li>
   );
@@ -226,7 +177,7 @@ function Dashboard() {
           to="/sessions?tab=active"
           footer={
             !statsLoading ? (
-              <span className="text-[11px] text-muted-foreground">
+              <span>
                 {activeSessions === 0 ? 'No one online right now' : 'View live sessions →'}
               </span>
             ) : null
@@ -243,7 +194,7 @@ function Dashboard() {
           to="/access-requests?tab=to-review&status=PENDING"
           footer={
             !statsLoading ? (
-              <span className="text-[11px] text-muted-foreground">
+              <span>
                 {pendingRequests === 0 ? 'Queue clear' : 'Review now →'}
               </span>
             ) : null
@@ -260,7 +211,7 @@ function Dashboard() {
           to="/certificates?status=ACTIVE"
           footer={
             !statsLoading ? (
-              <span className="text-[11px] text-muted-foreground">Signed by the org CA</span>
+              <span>Signed by the org CA</span>
             ) : null
           }
         />
@@ -283,43 +234,46 @@ function Dashboard() {
         <MyAccessWidget />
 
         {isAdmin && (
-          <div className="rounded-lg border border-border bg-card p-5">
-            <div className="mb-4 flex items-center justify-between">
+          <div className="flex flex-col rounded-lg border border-border bg-card p-5">
+            <div className="mb-3 flex items-center justify-between">
               <div>
-                <h2 className="text-sm font-semibold text-foreground">Recent Activity</h2>
-                <p className="mt-0.5 text-xs text-muted-foreground">Last 10 audit events</p>
+                <h2 className="text-sm font-semibold text-foreground">Recent activity</h2>
+                <p className="mt-0.5 text-xs text-muted-foreground">Latest audit events across the organization</p>
               </div>
-              <button
-                type="button"
-                onClick={() => navigate('/audit-log')}
-                className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors"
-              >
-                View all
-                <ArrowRight className="h-3 w-3" />
-              </button>
             </div>
 
-            {auditLoading ? (
-              <div className="space-y-2">
-                {Array.from({ length: 6 }).map((_, i) => (
-                  <div key={i} className="flex items-center gap-3">
-                    <Skeleton className="h-5 w-28" />
-                    <Skeleton className="h-4 w-16" />
-                    <Skeleton className="h-4 flex-1" />
-                  </div>
-                ))}
-              </div>
-            ) : auditItems.length === 0 ? (
-              <p className="py-8 text-center text-sm text-muted-foreground">
-                No recent activity found.
-              </p>
-            ) : (
-              <ul className="space-y-0">
-                {auditItems.map((item) => (
-                  <AuditRow key={item.id} item={item} />
-                ))}
-              </ul>
-            )}
+            <div className="-mx-2 flex-1">
+              {auditLoading ? (
+                <div className="space-y-3 px-2">
+                  {Array.from({ length: 6 }).map((_, i) => (
+                    <div key={i} className="flex items-center gap-3">
+                      <Skeleton className="h-7 w-7 rounded-full" />
+                      <div className="flex-1 space-y-1.5">
+                        <Skeleton className="h-3.5 w-3/4" />
+                        <Skeleton className="h-3 w-1/3" />
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              ) : auditItems.length === 0 ? (
+                <p className="py-8 text-center text-sm text-muted-foreground">No recent activity yet.</p>
+              ) : (
+                <ul className="divide-y divide-border/60">
+                  {auditItems.map((item) => (
+                    <AuditRow key={item.id} item={item} />
+                  ))}
+                </ul>
+              )}
+            </div>
+
+            <button
+              type="button"
+              onClick={() => navigate('/audit-log')}
+              className="mt-4 flex h-9 w-full items-center justify-center gap-1 rounded-md border border-border text-sm font-medium text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+            >
+              View all activity
+              <ArrowRight className="h-3.5 w-3.5" />
+            </button>
           </div>
         )}
       </div>

@@ -36,7 +36,7 @@ function MetricCard({
 
   const Wrapper = interactive ? 'button' : 'div';
   const baseCls =
-    'group relative flex w-full flex-col rounded-lg border border-border bg-card p-4 text-left transition-all';
+    'group relative flex h-full w-full flex-col rounded-lg border border-border bg-card p-4 text-left transition-all';
   const interactiveCls = interactive
     ? ` hover:shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${accentCls.ring}`
     : '';
@@ -65,17 +65,20 @@ function MetricCard({
         )}
       </div>
 
-      {/* Compact second line: subtitle + optional footer */}
-      {(subtitle || footer) && !loading && (
-        <div className="mt-2 flex flex-wrap items-center justify-between gap-x-2 gap-y-1">
-          {subtitle && <p className="truncate text-xs text-muted-foreground">{subtitle}</p>}
-          {footer && <div className="flex shrink-0 flex-wrap items-center gap-1.5">{footer}</div>}
-        </div>
-      )}
-      {loading && (
-        <div className="mt-2">
+      {/* Identical rhythm on every card: subtitle line, then a footer line
+          (badges or a link) with a fixed height so cards align in the grid. */}
+      {loading ? (
+        <div className="mt-2 space-y-2">
           <Skeleton className="h-3.5 w-24" />
+          <Skeleton className="h-5 w-32" />
         </div>
+      ) : (
+        <>
+          <p className="mt-2 truncate text-xs text-muted-foreground">{subtitle || '\u00a0'}</p>
+          <div className="mt-2 flex min-h-5 flex-wrap items-center gap-1.5 text-xs text-muted-foreground">
+            {footer}
+          </div>
+        </>
       )}
     </Wrapper>
   );
