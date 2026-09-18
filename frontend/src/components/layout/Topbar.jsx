@@ -29,14 +29,25 @@ const routeNames = {
   '/settings': 'Settings',
   '/install-cli': 'Install CLI',
   '/keystore': 'Keystore',
+  '/dashboard': 'Dashboard',
+  '/profile': 'Profile',
+  '/notifications': 'Notifications',
+  '/bulk-import': 'Bulk Import',
 };
+
+// Exact match first, then the top-level section (e.g. /servers/:id → Servers).
+function pageNameFor(pathname) {
+  if (routeNames[pathname]) return routeNames[pathname];
+  const section = `/${pathname.split('/')[1] || ''}`;
+  return routeNames[section] || 'Shellius';
+}
 
 function Topbar() {
   const location = useLocation();
   const { user } = useAuth();
   const { openPalette } = useCommandPalette();
 
-  const pageName = routeNames[location.pathname] || 'Page';
+  const pageName = pageNameFor(location.pathname);
 
   return (
     <header className="flex h-14 shrink-0 items-center justify-between gap-3 border-b border-border bg-card px-4 sm:px-6">
@@ -66,10 +77,12 @@ function Topbar() {
           type="button"
           onClick={openPalette}
           aria-label="Search"
-          className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md border border-input bg-background text-muted-foreground transition-colors hover:bg-accent hover:text-foreground md:hidden"
+          className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground md:hidden"
         >
           <Search className="h-4 w-4" />
         </button>
+
+        <div aria-hidden="true" className="mx-1 hidden h-6 w-px shrink-0 bg-border sm:block" />
 
         {/* Quick actions (secondary) */}
         <QuickActionsMenu />
@@ -77,11 +90,15 @@ function Topbar() {
         {/* Quick Connect (primary) */}
         <QuickConnectButton />
 
+        <div aria-hidden="true" className="mx-1 hidden h-6 w-px shrink-0 bg-border sm:block" />
+
         {/* Theme */}
         <ThemeMenu />
 
         {/* Notifications */}
         <NotificationBell />
+
+        <div aria-hidden="true" className="mx-1 hidden h-6 w-px shrink-0 bg-border sm:block" />
 
         {/* User dropdown — avatar only trigger. Profile / Settings / Bulk
             import / Install CLI / Keyboard shortcuts / Sign out live inside. */}
