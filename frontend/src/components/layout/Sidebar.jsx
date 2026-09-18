@@ -14,7 +14,6 @@ import {
   ScrollText,
   Bell,
   Cloud,
-  Upload,
   ChevronUp,
   PanelLeft,
   PanelLeftClose,
@@ -97,7 +96,6 @@ const NAV_SECTIONS = [
     items: [
       { id: 'users', label: 'Users', icon: Users, to: '/users', minRole: 'admin' },
       { id: 'groups', label: 'Groups', icon: UsersRound, to: '/groups', minRole: 'admin' },
-      { id: 'bulk-import', label: 'Bulk Import', icon: Upload, to: '/bulk-import', minRole: 'admin' },
     ],
   },
 ];
@@ -292,8 +290,9 @@ function SidebarBody({ collapsed, onToggle, onNavigate }) {
       </nav>
 
       {/* Bottom: user — clickable, opens the same UserMenu dropdown the
-          topbar avatar uses. Profile / Settings / Theme / Install CLI /
-          Sign out all live in the shared menu now. */}
+          topbar avatar uses. Profile / Settings / Bulk import / Install CLI /
+          Keyboard shortcuts / Sign out all live in the shared menu now.
+          Theme selection lives in the topbar's standalone ThemeMenu. */}
       <div className="shrink-0 border-t border-border px-2 py-3">
         {user && (
           <UserMenu

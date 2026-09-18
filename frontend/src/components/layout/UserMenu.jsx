@@ -3,15 +3,12 @@ import { useNavigate } from 'react-router-dom';
 import {
   User as UserIcon,
   Settings as SettingsIcon,
-  Sun,
-  Moon,
-  Monitor,
+  Upload,
   Terminal,
+  Keyboard,
   LogOut,
-  Check,
 } from 'lucide-react';
 import { useAuth } from '@/context/AuthContext';
-import { useTheme } from '@/context/ThemeContext';
 import Avatar from '@/components/ui/Avatar';
 
 /**
@@ -32,18 +29,20 @@ import Avatar from '@/components/ui/Avatar';
  *
  * Items always shown:
  *   - User identity header (name + email)
- *   - Profile     → /profile
- *   - Settings    → /settings  (only for admin / super_admin)
- *   - Theme       → light / dark / system radio group
- *   - Install CLI → /install-cli
- *   - Sign out
+ *   - Profile       → /profile
+ *   - Settings      → /settings     (only for admin / super_admin)
+ *   - Bulk import   → /bulk-import  (only for admin / super_admin)
+ *   - Install CLI   → /install-cli
+ *   - Keyboard shortcuts → opens the ShortcutsDialog
+ *   - Sign out (destructive)
+ *
+ * Theme selection lives in the standalone ThemeMenu (topbar), not here.
  */
 function UserMenu({ trigger, align = 'right', verticalAlign = 'below' }) {
   const [open, setOpen] = useState(false);
   const containerRef = useRef(null);
   const navigate = useNavigate();
   const { user, logout } = useAuth();
-  const { theme, setTheme } = useTheme();
 
   // Close on outside click. We use a ref + mousedown listener instead of a
   // full-screen overlay because the sidebar version of this menu must NOT
@@ -111,33 +110,13 @@ function UserMenu({ trigger, align = 'right', verticalAlign = 'below' }) {
               onClick={() => go('/settings')}
             />
           )}
-
-          {/* Theme group */}
-          <div className="my-1 border-t border-border" />
-          <p className="px-3 pt-1 pb-0.5 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
-            Theme
-          </p>
-          <ThemeOption
-            current={theme}
-            value="light"
-            label="Light"
-            icon={Sun}
-            onSelect={setTheme}
-          />
-          <ThemeOption
-            current={theme}
-            value="dark"
-            label="Dark"
-            icon={Moon}
-            onSelect={setTheme}
-          />
-          <ThemeOption
-            current={theme}
-            value="system"
-            label="System"
-            icon={Monitor}
-            onSelect={setTheme}
-          />
+          {isAdmin && (
+            <MenuItem
+              icon={Upload}
+              label="Bulk import"
+              onClick={() => go('/bulk-import')}
+            />
+          )}
 
           {/* Install CLI */}
           <div className="my-1 border-t border-border" />
@@ -146,12 +125,21 @@ function UserMenu({ trigger, align = 'right', verticalAlign = 'below' }) {
             label="Install CLI"
             onClick={() => go('/install-cli')}
           />
+          <MenuItem
+            icon={Keyboard}
+            label="Keyboard shortcuts"
+            onClick={() => {
+              close();
+              window.dispatchEvent(new CustomEvent('shellius:open-shortcuts'));
+            }}
+          />
 
           {/* Sign out */}
           <div className="my-1 border-t border-border" />
           <MenuItem
             icon={LogOut}
             label="Sign out"
+            destructive
             onClick={() => {
               close();
               logout();
@@ -163,33 +151,20 @@ function UserMenu({ trigger, align = 'right', verticalAlign = 'below' }) {
   );
 }
 
-function MenuItem({ icon: Icon, label, onClick }) {
+function MenuItem({ icon: Icon, label, onClick, destructive = false }) {
   return (
     <button
       type="button"
       onClick={onClick}
       role="menuitem"
-      className="flex w-full items-center gap-2 px-3 py-2 text-sm text-muted-foreground hover:bg-accent hover:text-foreground transition-colors"
+      className={
+        destructive
+          ? 'flex w-full items-center gap-2 px-3 py-2 text-sm text-destructive transition-colors hover:bg-destructive/10 focus:bg-destructive/10'
+          : 'flex w-full items-center gap-2 px-3 py-2 text-sm text-muted-foreground hover:bg-accent hover:text-foreground transition-colors'
+      }
     >
-      <Icon className="h-4 w-4" />
+      <Icon className={destructive ? 'h-4 w-4 text-destructive' : 'h-4 w-4'} />
       {label}
-    </button>
-  );
-}
-
-function ThemeOption({ current, value, label, icon: Icon, onSelect }) {
-  const active = current === value;
-  return (
-    <button
-      type="button"
-      onClick={() => onSelect(value)}
-      role="menuitemradio"
-      aria-checked={active}
-      className="flex w-full items-center gap-2 px-3 py-1.5 text-sm text-muted-foreground hover:bg-accent hover:text-foreground transition-colors"
-    >
-      <Icon className="h-4 w-4" />
-      <span className="flex-1 text-left">{label}</span>
-      {active && <Check className="h-3.5 w-3.5 text-primary" />}
     </button>
   );
 }

@@ -17,7 +17,7 @@ import { useQuickConnect } from '@/context/QuickConnectContext';
  * useKeyboardShortcuts, but opens a modal instead of navigating, so it's
  * handled locally rather than in that hook).
  */
-function QuickConnectButton({ variant = 'outline', size = 'sm', className }) {
+function QuickConnectButton({ variant = 'default', size = 'sm', className }) {
   const { allowed, openQuickConnect } = useQuickConnect();
   const gPressedAt = useRef(null);
 
@@ -52,12 +52,18 @@ function QuickConnectButton({ variant = 'outline', size = 'sm', className }) {
     <TooltipProvider delayDuration={300}>
       <Tooltip>
         <TooltipTrigger asChild>
-          <Button variant={variant} size={size} className={className} onClick={openQuickConnect}>
-            <Zap className="mr-1.5 h-4 w-4" />
-            Quick Connect
+          <Button
+            variant={variant}
+            size={size}
+            className={className}
+            onClick={openQuickConnect}
+            aria-label="Quick Connect"
+          >
+            <Zap className="h-4 w-4 sm:mr-1.5" />
+            <span className="hidden sm:inline">Quick Connect</span>
           </Button>
         </TooltipTrigger>
-        <TooltipContent side="bottom">Ad-hoc SSH connection · shortcut: g q</TooltipContent>
+        <TooltipContent side="bottom">Quick Connect · Ad-hoc SSH connection · shortcut: g q</TooltipContent>
       </Tooltip>
     </TooltipProvider>
   );

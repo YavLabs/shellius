@@ -10,6 +10,7 @@ import {
   DropdownMenuShortcut,
 } from '@/components/ui/dropdown-menu';
 import { Button } from '@/components/ui/button';
+import { Tooltip, TooltipContent, TooltipTrigger, TooltipProvider } from '@/components/ui/tooltip';
 import { useAuth } from '@/context/AuthContext';
 import { useQuickConnect } from '@/context/QuickConnectContext';
 import { useCommandPalette } from '@/context/CommandPaletteContext';
@@ -54,12 +55,23 @@ function QuickActionsMenu() {
 
   return (
     <DropdownMenu>
-      <DropdownMenuTrigger asChild>
-        <Button variant="outline" size="sm" className="gap-1.5">
-          <Plus className="h-4 w-4" />
-          <span className="hidden md:inline">Quick actions</span>
-        </Button>
-      </DropdownMenuTrigger>
+      <TooltipProvider delayDuration={300}>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <DropdownMenuTrigger asChild>
+              <Button
+                variant="ghost"
+                size="icon"
+                className="h-9 w-9 text-muted-foreground hover:text-foreground"
+                aria-label="Quick actions"
+              >
+                <Plus className="h-4 w-4" />
+              </Button>
+            </DropdownMenuTrigger>
+          </TooltipTrigger>
+          <TooltipContent side="bottom">Quick actions</TooltipContent>
+        </Tooltip>
+      </TooltipProvider>
       <DropdownMenuContent align="end" className="w-64">
         {createItems.length > 0 && (
           <>
