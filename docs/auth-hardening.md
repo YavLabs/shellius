@@ -114,3 +114,80 @@ everything under `/api/mfa/*`, and `GET /api/settings/mfa/public` (if present).
 - Move the refresh token from `localStorage` to an HttpOnly cookie + CSRF
   (requires TUI/CLI token handling changes).
 - WebAuthn / passkeys; remember-this-device; SAML.
+
+---
+
+## Revision 2 — multiple SSO providers, GitHub, avatars, prod approval
+
+### Multiple SSO providers (incl. GitHub)
+
+An org can enable several providers at once; each active provider renders its
+own button on the login page. `SsoConfig` is no longer one-per-org, and linked
+accounts live in `UserIdentity` (one row per provider per user; unique on
+`(ssoConfigId, subject)`).
+
+`SsoProviderDTO`:
+```json
+{ "id", "name", "provider": "oidc|github", "presetId": "google|entra|okta|auth0|generic|github",
+  "clientId", "hasClientSecret", "issuerUrl", "callbackUrl" /* to register at the IdP */,
+  "scopes", "defaultRole", "defaultGroupId", "autoProvision", "allowedDomains",
+  "allowedOrgs" /* github only */, "requireVerifiedEmail", "isActive", "displayOrder",
+  "userCount", "source": "db|env" }
+```
+
+- `GET /api/auth/sso/providers` (super_admin) → `{ providers }`
+- `POST /api/auth/sso/providers` (super_admin) `{ name, presetId, clientId, clientSecret, issuerUrl?, scopes?, defaultRole, defaultGroupId?, autoProvision, allowedDomains, allowedOrgs, requireVerifiedEmail, isActive }` → 201 `{ provider }`
+- `PATCH /api/auth/sso/providers/:id` — same fields, all optional; blank `clientSecret` keeps the stored one.
+- `DELETE /api/auth/sso/providers/:id` — cascades that provider's `UserIdentity` rows (users keep their accounts). Refused (409 `LAST_SIGN_IN_METHOD`) if any user would be left with no password and no other identity, unless `?force=true`.
+- `POST /api/auth/sso/providers/:id/test` and `POST /api/auth/sso/providers/test` (unsaved draft) → `{ ok, message, details }`
+- `PUT /api/auth/sso/providers/order` `{ ids: [] }`
+- Legacy `GET/PUT /api/auth/sso/config` keep working against the first provider.
+- Public: `GET /api/auth/sso/public-status?orgSlug=` and `POST /api/auth/login-options` add `providers: [{ id, name, presetId, provider }]` (active only, ordered). Legacy `ssoEnabled` / `ssoPresetId` remain (first provider).
+- Start: `GET /api/auth/sso/:orgSlug?provider=<id>` (default: first active).
+  Callback: `GET /api/auth/sso/callback/:providerId` (new; `callbackUrl` in the
+  DTO). Legacy callback paths keep working for existing registrations.
+- **GitHub** (OAuth 2.0, not OIDC): authorize `…/login/oauth/authorize`, token
+  `…/login/oauth/access_token`, with state + PKCE (S256); identity from
+  `GET /user`, email from `GET /user/emails` (**primary + verified only**);
+  subject = GitHub numeric user id; `allowedOrgs` enforced via
+  `GET /user/memberships/orgs/{org}` (state `active`, needs `read:org`).
+  GitHub Enterprise Server: `issuerUrl` = `https://ghe.example.com` (API at
+  `/api/v3`); default `https://github.com`. Error code `org_not_allowed`.
+- Reconcile order: `UserIdentity(ssoConfigId, subject)` → verified-email link
+  (same rules as before) → JIT provision. Creates/updates the `UserIdentity`
+  row and `lastLoginAt`.
+- Env Google preset (`SSO_GOOGLE_*`) appears as a virtual provider
+  `{ id: 'env-google', source: 'env' }` when no DB provider has `presetId: google`.
+- `GET /api/auth/me` adds `identities: [{ id, providerId, providerName, presetId, email, lastLoginAt }]`;
+  `DELETE /api/auth/identities/:id` unlinks (409 `LAST_SIGN_IN_METHOD` if it
+  would leave the user without any way to sign in).
+
+### Avatars
+
+- `PUT /api/users/me/avatar` `{ dataUrl }` — `data:image/(png|jpeg|webp);base64,…`,
+  ≤ 150 KB decoded (the UI resizes to 128×128 WebP first). `DELETE /api/users/me/avatar`.
+- SSO logins set `avatarUrl` from the IdP picture (`picture` / GitHub
+  `avatar_url`) **unless** the user uploaded a custom avatar (a `data:` URL).
+- Every API that embeds a user (users, audit log actor, access request
+  requester/reviewer/approvers, sessions, group members, certificates,
+  keystore createdBy/deployedBy, notifications actor) returns
+  `{ id, name, email, avatarUrl }` so the UI can render one consistent user cell.
+
+### Production approval
+
+`server.environment === 'prod'` requires approval **unless the requester's role
+is at or above the org's bypass role** — `Organization.settings.access.prodApprovalBypassMinRole`:
+`'admin'` (default: admins and super_admins get immediate access), `'super_admin'`,
+or `'none'` (everyone needs approval). Policy `autoApprove` is **ignored on prod
+for requesters below the bypass role** (it can no longer grant managers/members
+unreviewed prod access). A bypass still creates an `APPROVED` AccessRequest
+(reason required), is audited as `access_request.prod_bypass`, and notifies the
+server's approvers after the fact. Break-glass is unchanged.
+
+- `GET /api/org/access-settings` (admin) → `{ prodApprovalBypassMinRole }`
+- `PUT /api/org/access-settings` (super_admin) `{ prodApprovalBypassMinRole }`
+
+### Search totals
+
+`GET /api/search` `counts` are **total** matches per type (not the truncated
+page), so the UI can show "12 more…".
