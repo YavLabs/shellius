@@ -2,6 +2,7 @@ import prisma from '../config/db.js';
 import ssoConfig from '../config/index.js';
 import ApiError from '../utils/ApiError.js';
 import { encrypt, decrypt } from '../utils/crypto.js';
+import { envAllowedDomains } from './ssoConfigService.js';
 
 function redactSecret(config) {
   if (!config) return config;
@@ -98,6 +99,17 @@ function buildEnvCallbackUrl(orgSlug, req) {
   return `${publicBase.replace(/\/$/, '')}/api/auth/sso/callback`;
 }
 
+function safeDefaultRole(role) {
+  if (!role || role === 'super_admin') return 'member';
+  return role;
+}
+
+/**
+ * Resolve the org's full effective SSO policy — connection params (client
+ * id/secret/issuer/redirect/scopes) AND provisioning/reconciliation policy
+ * (allowedDomains, requireVerifiedEmail, autoProvision, defaultRole,
+ * defaultGroupId) — merging a DB row over env-var presets.
+ */
 export async function getDecryptedConfig(orgId, { orgSlug = null, req = null } = {}) {
   const cfg = await prisma.ssoConfig.findUnique({ where: { orgId } });
   if (cfg) {
@@ -111,6 +123,9 @@ export async function getDecryptedConfig(orgId, { orgSlug = null, req = null } =
       ...cfg,
       clientId: cfg.clientId || envPreset?.clientId || null,
       clientSecret,
+      defaultRole: safeDefaultRole(cfg.defaultRole),
+      allowedDomains: cfg.allowedDomains || [],
+      requireVerifiedEmail: cfg.requireVerifiedEmail !== false,
     };
   }
 
@@ -121,6 +136,11 @@ export async function getDecryptedConfig(orgId, { orgSlug = null, req = null } =
       return {
         ...envCfg,
         redirectUri: buildEnvCallbackUrl(orgSlug, req),
+        allowedDomains: envAllowedDomains(),
+        requireVerifiedEmail: true,
+        autoProvision: process.env.SSO_AUTO_PROVISION !== 'false',
+        defaultRole: safeDefaultRole(process.env.SSO_DEFAULT_ROLE),
+        defaultGroupId: null,
       };
     }
     // suppress unused
@@ -146,75 +166,120 @@ export async function getPublicSsoStatus(orgId) {
   return { enabled: false, presetId: null };
 }
 
-export async function handleOidcUserInfo(userinfo, orgId) {
-  const email = userinfo.email;
-  if (!email) {
-    throw new ApiError(400, 'OIDC userinfo missing email claim');
+// ---------------------------------------------------------------------------
+// Reconciliation — turns a verified ID token + userinfo response into a
+// Shellius User, per docs/auth-hardening.md:
+//   1. match on (orgId, ssoProvider, ssoSub)
+//   2. else match on email — only when email_verified is asserted (when the
+//      config requires it) AND the candidate has no different ssoSub
+//   3. else JIT-provision if autoProvision
+// allowedDomains (empty = any) gates both sign-in and provisioning.
+// defaultRole can never be super_admin.
+// ---------------------------------------------------------------------------
+
+/** Error with a stable `errorCode` the callback route maps to `#error=<code>`. */
+export function ssoError(code, message, statusCode = 403) {
+  const err = new ApiError(statusCode, message);
+  err.errorCode = code;
+  return err;
+}
+
+export async function reconcileOidcUser({ orgId, cfg, idClaims, userinfo }) {
+  const email = String(userinfo.email || idClaims.email || '').toLowerCase().trim();
+  const emailVerified = userinfo.email_verified ?? idClaims.email_verified ?? false;
+  const sub = idClaims.sub || userinfo.sub;
+
+  if (!sub) {
+    throw ssoError('sso_failed', 'OIDC response is missing a sub claim');
   }
 
-  let user = await prisma.user.findFirst({ where: { orgId, email } });
+  const allowedDomains = cfg.allowedDomains || [];
+  if (allowedDomains.length > 0) {
+    const domain = email.split('@')[1]?.toLowerCase();
+    if (!domain || !allowedDomains.includes(domain)) {
+      throw ssoError('domain_not_allowed', 'Your email domain is not permitted to sign in to this organization');
+    }
+  }
 
-  const name = userinfo.name || userinfo.preferred_username || email;
-  const avatarUrl = userinfo.picture || null;
-  const ssoSub = userinfo.sub;
+  // 1. Match on (orgId, provider, sub) — the strongest, most stable identity.
+  let user = await prisma.user.findFirst({ where: { orgId, ssoProvider: 'oidc', ssoSub: sub } });
 
-  // Provisioning policy: DB row wins, else env defaults.
-  const ssoRow = await prisma.ssoConfig.findUnique({ where: { orgId } });
-  const autoProvision = ssoRow
-    ? ssoRow.autoProvision
-    : process.env.SSO_AUTO_PROVISION !== 'false';
-  const defaultRole = ssoRow?.defaultRole || process.env.SSO_DEFAULT_ROLE || 'member';
-  const defaultGroupId = ssoRow?.defaultGroupId || null;
+  // 2. Fall back to matching an existing local/invited account by email.
+  if (!user && email) {
+    const requireVerified = cfg.requireVerifiedEmail !== false;
+    const candidate = await prisma.user.findFirst({ where: { orgId, email } });
+    if (candidate) {
+      if (candidate.ssoSub && candidate.ssoSub !== sub) {
+        throw ssoError('identity_conflict', 'This email is already linked to a different identity provider account');
+      }
+      if (requireVerified && !emailVerified) {
+        throw ssoError('email_not_verified', 'Your identity provider did not assert a verified email for this account');
+      }
+      user = candidate;
+    }
+  }
 
   if (!user) {
-    if (!autoProvision) {
-      // Invite-only mode — an unknown email cannot self-provision via SSO.
-      const err = new ApiError(
-        403,
+    if (!cfg.autoProvision) {
+      throw ssoError(
+        'provisioning_disabled',
         'Your account has not been set up in Shellius yet. Please contact your administrator to request access.'
       );
-      err.errorCode = 'SSO_NOT_PROVISIONED';
-      throw err;
     }
-    user = await prisma.user.create({
+    if (!email) {
+      throw ssoError('sso_failed', 'OIDC response is missing an email claim');
+    }
+    const defaultRole = safeDefaultRole(cfg.defaultRole);
+    const created = await prisma.user.create({
       data: {
         orgId,
         email,
-        name,
+        name: userinfo.name || userinfo.preferred_username || email,
         role: defaultRole,
         status: 'active',
         ssoProvider: 'oidc',
-        ssoSub,
-        avatarUrl,
+        ssoSub: sub,
+        avatarUrl: userinfo.picture || null,
       },
     });
-    // Auto-assign the configured default group, if any.
-    if (defaultGroupId) {
+    if (cfg.defaultGroupId) {
       await prisma.groupMembership
-        .create({ data: { groupId: defaultGroupId, userId: user.id } })
+        .create({ data: { groupId: cfg.defaultGroupId, userId: created.id } })
         .catch(() => {}); // ignore if group was deleted / already a member
     }
+    user = created;
   } else {
-    if (user.status === 'deleted' || user.status === 'suspended' || user.status === 'deactivated') {
-      throw new ApiError(403, 'Account is not active');
+    if (['deleted', 'suspended', 'deactivated'].includes(user.status)) {
+      throw ssoError('account_disabled', 'Account is not active');
     }
     user = await prisma.user.update({
       where: { id: user.id },
       data: {
         // Keep the user's existing display name if they've already set one.
-        name: user.name || name,
-        avatarUrl: avatarUrl || user.avatarUrl,
+        name: user.name || userinfo.name || user.name,
+        avatarUrl: userinfo.picture || user.avatarUrl,
         ssoProvider: user.ssoProvider || 'oidc',
-        ssoSub: user.ssoSub || ssoSub,
-        // First SSO sign-in for an invited / pending user activates the account
-        // (linking by email — no separate password step required).
+        ssoSub: user.ssoSub || sub,
+        // First SSO sign-in for an invited / pending user activates the
+        // account (linking by email — no separate password step required).
+        // Safe here: the disabled-status branch above already rejected
+        // suspended/deactivated/deleted accounts.
         status: 'active',
         lastLoginAt: new Date(),
       },
     });
   }
 
-  return user;
+  // Always return the user WITH organization included — issueSession()/mfaGate()
+  // expect it.
+  return prisma.user.findUnique({ where: { id: user.id }, include: { organization: true } });
 }
 
-export default { getSsoConfig, upsertSsoConfig, getDecryptedConfig, handleOidcUserInfo };
+export default {
+  getSsoConfig,
+  upsertSsoConfig,
+  getDecryptedConfig,
+  getPublicSsoStatus,
+  reconcileOidcUser,
+  ssoError,
+};

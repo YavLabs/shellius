@@ -19,7 +19,7 @@ const smtpSchema = Joi.object({
   port: Joi.number().integer().min(1).max(65535),
   username: Joi.string().max(255).allow('', null),
   password: Joi.string().max(1000).allow('', null),
-  fromAddress: Joi.string().email().allow('', null),
+  fromAddress: Joi.string().email({ tlds: { allow: false } }).allow('', null),
   useTls: Joi.boolean(),
   isActive: Joi.boolean(),
 });

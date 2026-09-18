@@ -1,13 +1,15 @@
 import express from 'express';
 import crypto from 'crypto';
 import Joi from 'joi';
+import { jwtVerify, createRemoteJWKSet } from 'jose';
 import asyncHandler from '../utils/asyncHandler.js';
 import ApiError from '../utils/ApiError.js';
 import prisma from '../config/db.js';
 import config from '../config/index.js';
 import * as ssoService from '../services/ssoService.js';
 import * as ssoConfigService from '../services/ssoConfigService.js';
-import { generateAccessToken, generateRefreshToken, hashToken } from '../utils/jwt.js';
+import * as authService from '../services/authService.js';
+import { log as auditLog, ACTIONS } from '../services/auditService.js';
 import logger from '../utils/logger.js';
 import redis from '../config/redis.js';
 import authenticate from '../middleware/auth.js';
@@ -18,11 +20,13 @@ import audit from '../middleware/audit.js';
 const router = express.Router();
 
 const FRONTEND_URL = config.frontendUrl;
-const REFRESH_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 const STATE_TTL_SEC = 10 * 60;
+const SSO_CODE_TTL_SEC = 60;
+const SSO_STATE_COOKIE = 'shellius_sso_state';
 
 // SSO state in Redis so it survives backend restarts and works across replicas
 // (the in-memory Map lost state on every redeploy → "Invalid or expired state").
+// Also carries the PKCE code_verifier + OIDC nonce for this attempt.
 const stateKey = (s) => `sso:state:${s}`;
 async function saveSsoState(state, data) {
   await redis.set(stateKey(state), JSON.stringify(data), 'EX', STATE_TTL_SEC);
@@ -37,6 +41,57 @@ async function takeSsoState(state) {
   } catch {
     return null;
   }
+}
+
+// One-time exchange code (Redis, 60s, single-use) — hands the frontend a
+// short opaque value instead of putting tokens directly in the redirect URL.
+const exchangeKey = (c) => `sso:exchange:${c}`;
+async function saveExchangeCode(code, userId) {
+  await redis.set(exchangeKey(code), JSON.stringify({ userId }), 'EX', SSO_CODE_TTL_SEC);
+}
+async function takeExchangeCode(code) {
+  const key = exchangeKey(code);
+  const raw = await redis.get(key);
+  if (!raw) return null;
+  await redis.del(key);
+  try {
+    return JSON.parse(raw);
+  } catch {
+    return null;
+  }
+}
+
+function readCookie(req, name) {
+  const header = req.headers.cookie;
+  if (!header) return null;
+  for (const part of header.split(';')) {
+    const idx = part.indexOf('=');
+    if (idx === -1) continue;
+    const k = part.slice(0, idx).trim();
+    if (k === name) {
+      try {
+        return decodeURIComponent(part.slice(idx + 1).trim());
+      } catch {
+        return part.slice(idx + 1).trim();
+      }
+    }
+  }
+  return null;
+}
+
+function base64url(buf) {
+  return buf.toString('base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+}
+
+function generatePkce() {
+  const codeVerifier = base64url(crypto.randomBytes(32));
+  const codeChallenge = base64url(crypto.createHash('sha256').update(codeVerifier).digest());
+  return { codeVerifier, codeChallenge };
+}
+
+function redirectError(res, code) {
+  res.clearCookie(SSO_STATE_COOKIE, { path: '/api/auth/sso' });
+  return res.redirect(`${FRONTEND_URL}/auth/callback#${new URLSearchParams({ error: code }).toString()}`);
 }
 
 // Discovery cache stays in-memory (cheap, non-critical, re-fetched on miss).
@@ -62,6 +117,7 @@ const validate = (schema) => (req, res, next) => {
 // into login.microsoftonline.com/<tenantId>/v2.0 etc. (Phase 16F follow-up.)
 const ENTRA_TENANT_RE = /^[a-fA-F0-9]{8}-[a-fA-F0-9]{4}-[a-fA-F0-9]{4}-[a-fA-F0-9]{4}-[a-fA-F0-9]{12}$|^[a-zA-Z0-9.-]+$/;
 const DNS_HOSTNAME_RE = /^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$/i;
+const DOMAIN_RE = /^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$/i;
 
 const ssoConfigSchema = Joi.object({
   provider: Joi.string().valid('oidc', 'saml').required(),
@@ -72,10 +128,16 @@ const ssoConfigSchema = Joi.object({
   redirectUri: Joi.string().uri(),
   scopes: Joi.string().max(500),
   isActive: Joi.boolean(),
-  // New-user provisioning policy.
-  defaultRole: Joi.string().valid('super_admin', 'admin', 'manager', 'member'),
+  // New-user provisioning policy. super_admin is deliberately excluded — a
+  // JIT-provisioned SSO account can never land as the root role.
+  defaultRole: Joi.string().valid('admin', 'manager', 'member'),
   defaultGroupId: Joi.string().allow(null, ''),
   autoProvision: Joi.boolean(),
+  // Email domains allowed to sign in / be provisioned via SSO. Empty = any.
+  allowedDomains: Joi.array().items(Joi.string().pattern(DOMAIN_RE)).max(50),
+  // Only link an SSO identity to an existing account by email when the IdP
+  // asserts email_verified.
+  requireVerifiedEmail: Joi.boolean(),
   // Optional per-preset identifiers — accepted only when matching the
   // preset's expected pattern. Server-side defense in depth: even if the
   // frontend skips its own regex check, these can never reach the URL
@@ -91,6 +153,10 @@ const ssoConfigSchema = Joi.object({
 const ssoTestSchema = Joi.object({
   provider: Joi.string().valid('oidc', 'saml'),
   issuerUrl: Joi.string().uri(),
+});
+
+const exchangeSchema = Joi.object({
+  code: Joi.string().required(),
 });
 
 // ---------------------------------------------------------------------------
@@ -165,6 +231,38 @@ router.get(
   })
 );
 
+// ---------------------------------------------------------------------------
+// POST /api/auth/sso/exchange — public; trades a one-time callback code for
+// a login-shaped response (so MFA applies uniformly to SSO sign-ins).
+// MUST be registered before /:orgSlug (different HTTP method, but kept here
+// for readability).
+// ---------------------------------------------------------------------------
+
+router.post(
+  '/exchange',
+  validate(exchangeSchema),
+  asyncHandler(async (req, res) => {
+    const payload = await takeExchangeCode(req.body.code);
+    if (!payload) throw new ApiError(400, 'Invalid or expired code');
+
+    const user = await prisma.user.findUnique({
+      where: { id: payload.userId },
+      include: { organization: true },
+    });
+    if (!user || user.status !== 'active') {
+      throw new ApiError(401, 'Account is not available');
+    }
+
+    const gate = await authService.mfaGate(user);
+    if (gate) {
+      return res.json({ success: true, data: gate });
+    }
+
+    const session = await authService.issueSession(user, req.ip, req.get('user-agent') || '', 'web');
+    res.json({ success: true, data: session });
+  })
+);
+
 async function discover(issuerUrl) {
   const cached = discoveryCache.get(issuerUrl);
   if (cached && cached.expires > Date.now()) return cached.doc;
@@ -190,61 +288,136 @@ async function discover(issuerUrl) {
   return doc;
 }
 
-// Shared OIDC callback: exchange code, fetch userinfo, link/provision the user,
-// and redirect back to the frontend. The org is resolved by the caller.
-async function runOidcCallback(req, res, org, code) {
+// ---------------------------------------------------------------------------
+// Shared OIDC callback handler — validates state/PKCE/nonce, exchanges the
+// code, verifies the ID token (JWKS signature + iss/aud/exp/nonce) via jose,
+// reconciles the user, and hands the SPA a one-time exchange code.
+// ---------------------------------------------------------------------------
+
+async function runOidcCallback(req, res, { code, state, cookieState, orgHint = null }) {
+  if (!code || !state) return redirectError(res, 'sso_failed');
+  if (!cookieState || cookieState !== state) return redirectError(res, 'state_mismatch');
+
+  const stateData = await takeSsoState(state);
+  if (!stateData) return redirectError(res, 'state_mismatch');
+  if (orgHint && orgHint !== stateData.orgId) return redirectError(res, 'state_mismatch');
+
+  const org = await prisma.organization.findUnique({ where: { id: stateData.orgId } });
+  if (!org) return redirectError(res, 'sso_failed');
+
   const cfg = await ssoService.getDecryptedConfig(org.id, { orgSlug: org.slug, req });
-  if (!cfg) throw new ApiError(400, 'SSO not configured');
+  if (!cfg) return redirectError(res, 'sso_not_configured');
 
-  const discovery = await discover(cfg.issuerUrl);
-  const tokenRes = await fetch(discovery.token_endpoint, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-    body: new URLSearchParams({
-      grant_type: 'authorization_code',
-      code,
-      redirect_uri: cfg.redirectUri,
-      client_id: cfg.clientId,
-      client_secret: cfg.clientSecret,
-    }),
-  });
-  if (!tokenRes.ok) {
-    const text = await tokenRes.text();
-    logger.error('OIDC token exchange failed', { text });
-    throw new ApiError(401, 'Token exchange failed');
+  let discovery;
+  try {
+    discovery = await discover(cfg.issuerUrl);
+  } catch (err) {
+    logger.error('SSO discovery failed during callback', { orgId: org.id, error: err.message });
+    return redirectError(res, 'sso_failed');
   }
-  const tokens = await tokenRes.json();
 
-  const userinfoRes = await fetch(discovery.userinfo_endpoint, {
-    headers: { Authorization: `Bearer ${tokens.access_token}` },
-  });
-  if (!userinfoRes.ok) throw new ApiError(401, 'Userinfo fetch failed');
-  const userinfo = await userinfoRes.json();
+  try {
+    await ssoConfigService.guardSsrf(discovery.token_endpoint);
+    await ssoConfigService.guardSsrf(discovery.userinfo_endpoint);
+    if (discovery.jwks_uri) await ssoConfigService.guardSsrf(discovery.jwks_uri);
+  } catch (err) {
+    logger.error('SSO discovered endpoint failed SSRF guard', { orgId: org.id, error: err.message });
+    return redirectError(res, 'sso_failed');
+  }
+
+  let tokens;
+  try {
+    const tokenRes = await fetch(discovery.token_endpoint, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({
+        grant_type: 'authorization_code',
+        code,
+        redirect_uri: cfg.redirectUri,
+        client_id: cfg.clientId,
+        client_secret: cfg.clientSecret,
+        code_verifier: stateData.codeVerifier,
+      }),
+    });
+    if (!tokenRes.ok) {
+      const text = await tokenRes.text();
+      logger.error('OIDC token exchange failed', { text });
+      return redirectError(res, 'sso_failed');
+    }
+    tokens = await tokenRes.json();
+  } catch (err) {
+    logger.error('OIDC token exchange request failed', { error: err.message });
+    return redirectError(res, 'sso_failed');
+  }
+
+  if (!tokens.id_token) {
+    logger.error('OIDC token response missing id_token', { orgId: org.id });
+    return redirectError(res, 'sso_failed');
+  }
+
+  let idClaims;
+  try {
+    const jwks = createRemoteJWKSet(new URL(discovery.jwks_uri));
+    const { payload } = await jwtVerify(tokens.id_token, jwks, {
+      issuer: discovery.issuer,
+      audience: cfg.clientId,
+    });
+    idClaims = payload;
+  } catch (err) {
+    logger.warn('SSO ID token verification failed', { orgId: org.id, error: err.message });
+    return redirectError(res, 'sso_failed');
+  }
+
+  if (!stateData.nonce || idClaims.nonce !== stateData.nonce) {
+    logger.warn('SSO ID token nonce mismatch', { orgId: org.id });
+    return redirectError(res, 'sso_failed');
+  }
+
+  let userinfo;
+  try {
+    const userinfoRes = await fetch(discovery.userinfo_endpoint, {
+      headers: { Authorization: `Bearer ${tokens.access_token}` },
+    });
+    if (!userinfoRes.ok) return redirectError(res, 'sso_failed');
+    userinfo = await userinfoRes.json();
+  } catch (err) {
+    logger.warn('SSO userinfo fetch failed', { orgId: org.id, error: err.message });
+    return redirectError(res, 'sso_failed');
+  }
 
   let user;
   try {
-    user = await ssoService.handleOidcUserInfo(userinfo, org.id);
+    user = await ssoService.reconcileOidcUser({ orgId: org.id, cfg, idClaims, userinfo });
   } catch (err) {
-    const msg = err?.statusCode === 403 || err?.errorCode === 'SSO_NOT_PROVISIONED'
-      ? err.message
-      : 'Sign-in failed. Please contact your administrator.';
-    logger.warn('SSO sign-in rejected', { orgId: org.id, error: err.message });
-    return res.redirect(`${FRONTEND_URL}/auth/callback#${new URLSearchParams({ error: msg }).toString()}`);
-  }
-
-  const accessToken = generateAccessToken({ userId: user.id, orgId: user.orgId, role: user.role, email: user.email });
-  const refreshToken = generateRefreshToken({ userId: user.id, tokenId: crypto.randomUUID() });
-  await prisma.refreshToken.create({
-    data: {
-      userId: user.id,
-      tokenHash: hashToken(refreshToken),
-      clientType: 'web',
+    const errorCode = err.errorCode || 'sso_failed';
+    await auditLog({
+      orgId: org.id,
+      actorId: null,
+      action: ACTIONS.auth.sso_failed,
+      resourceType: 'User',
+      metadata: { reason: errorCode },
       ipAddress: req.ip,
       userAgent: req.get('user-agent') || '',
-      expiresAt: new Date(Date.now() + REFRESH_TTL_MS),
-    },
+    });
+    logger.warn('SSO sign-in rejected', { orgId: org.id, error: err.message, code: errorCode });
+    return redirectError(res, errorCode);
+  }
+
+  const oneTimeCode = crypto.randomBytes(32).toString('hex');
+  await saveExchangeCode(oneTimeCode, user.id);
+
+  await auditLog({
+    orgId: org.id,
+    actorId: user.id,
+    action: ACTIONS.auth.sso_login,
+    resourceType: 'User',
+    resourceId: user.id,
+    ipAddress: req.ip,
+    userAgent: req.get('user-agent') || '',
   });
-  res.redirect(`${FRONTEND_URL}/auth/callback#${new URLSearchParams({ access_token: accessToken, refresh_token: refreshToken }).toString()}`);
+
+  res.clearCookie(SSO_STATE_COOKIE, { path: '/api/auth/sso' });
+  res.redirect(`${FRONTEND_URL}/auth/callback#${new URLSearchParams({ code: oneTimeCode }).toString()}`);
 }
 
 // No-orgSlug callback — the single redirect URI registered with the IdP. The
@@ -253,12 +426,8 @@ router.get(
   '/callback',
   asyncHandler(async (req, res) => {
     const { code, state } = req.query;
-    if (!code || !state) throw new ApiError(400, 'Missing code or state');
-    const stateData = await takeSsoState(state);
-    if (!stateData) throw new ApiError(400, 'Invalid or expired state');
-    const org = await prisma.organization.findUnique({ where: { id: stateData.orgId } });
-    if (!org) throw new ApiError(400, 'Organization not found');
-    return runOidcCallback(req, res, org, code);
+    const cookieState = readCookie(req, SSO_STATE_COOKIE);
+    return runOidcCallback(req, res, { code, state, cookieState });
   })
 );
 
@@ -271,15 +440,23 @@ router.get(
 
     const cfg = await ssoService.getDecryptedConfig(org.id, { orgSlug: org.slug, req });
     if (!cfg || !cfg.isActive) {
-      return res.status(400).json({
-        success: false,
-        error: 'SSO is not configured for this organization',
-      });
+      return redirectError(res, 'sso_not_configured');
     }
 
     const discovery = await discover(cfg.issuerUrl);
     const state = crypto.randomBytes(16).toString('hex');
-    await saveSsoState(state, { orgId: org.id, createdAt: Date.now() });
+    const nonce = crypto.randomBytes(16).toString('hex');
+    const { codeVerifier, codeChallenge } = generatePkce();
+
+    await saveSsoState(state, { orgId: org.id, nonce, codeVerifier, createdAt: Date.now() });
+
+    res.cookie(SSO_STATE_COOKIE, state, {
+      httpOnly: true,
+      secure: config.nodeEnv === 'production',
+      sameSite: 'lax',
+      maxAge: STATE_TTL_SEC * 1000,
+      path: '/api/auth/sso',
+    });
 
     const params = new URLSearchParams({
       response_type: 'code',
@@ -287,6 +464,9 @@ router.get(
       redirect_uri: cfg.redirectUri,
       scope: cfg.scopes,
       state,
+      nonce,
+      code_challenge: codeChallenge,
+      code_challenge_method: 'S256',
     });
 
     res.redirect(`${discovery.authorization_endpoint}?${params.toString()}`);
@@ -299,12 +479,10 @@ router.get(
   asyncHandler(async (req, res) => {
     const { orgSlug } = req.params;
     const { code, state } = req.query;
-    if (!code || !state) throw new ApiError(400, 'Missing code or state');
-    const stateData = await takeSsoState(state);
-    if (!stateData) throw new ApiError(400, 'Invalid or expired state');
+    const cookieState = readCookie(req, SSO_STATE_COOKIE);
     const org = await prisma.organization.findUnique({ where: { slug: orgSlug } });
-    if (!org || org.id !== stateData.orgId) throw new ApiError(400, 'Org mismatch');
-    return runOidcCallback(req, res, org, code);
+    if (!org) return redirectError(res, 'sso_failed');
+    return runOidcCallback(req, res, { code, state, cookieState, orgHint: org.id });
   })
 );
 

@@ -5,13 +5,17 @@ import config from '../config/index.js';
 import logger from '../utils/logger.js';
 import * as terminalService from './terminalService.js';
 import { cleanupPolicySubjects } from './policyService.js';
+import * as authService from './authService.js';
 
 const ROLE_RANK = { super_admin: 4, admin: 3, manager: 2, member: 1 };
 
 function strip(user) {
   if (!user) return user;
-  const { passwordHash, ...rest } = user;
-  return rest;
+  const { passwordHash, mfaTotpSecretEnc, mfaTotpPendingEnc, mfaBackupCodes, ssoSub, ...rest } = user;
+  return {
+    ...rest,
+    mfaEnabled: !!(user.mfaTotpEnabled || user.mfaEmailEnabled || (user.mfaBackupCodes || []).length > 0),
+  };
 }
 
 export async function listUsers(orgId, { page = 1, pageSize = 25, role, status, managerId, search } = {}) {
@@ -165,7 +169,43 @@ export async function updateUser(orgId, userId, data, actorUserId, actorRole) {
   }
 
   const updated = await prisma.user.update({ where: { id: userId }, data: updateData });
+
+  // Role or status changes must take effect immediately — kill every
+  // outstanding session/access-token for the affected user rather than
+  // waiting for their tokens to naturally expire.
+  if (updateData.role !== undefined || updateData.status !== undefined) {
+    await authService.revokeAllSessions(userId);
+  }
+
   return strip(updated);
+}
+
+// ---------------------------------------------------------------------------
+// Admin: unlock a locked-out account
+// ---------------------------------------------------------------------------
+
+export async function unlockUser(orgId, userId) {
+  const user = await prisma.user.findFirst({ where: { id: userId, orgId } });
+  if (!user) throw new ApiError(404, 'User not found');
+  const updated = await prisma.user.update({
+    where: { id: userId },
+    data: { failedLoginCount: 0, lockedUntil: null },
+  });
+  return strip(updated);
+}
+
+// ---------------------------------------------------------------------------
+// Admin: revoke every session for a user ("sign out everywhere")
+// ---------------------------------------------------------------------------
+
+export async function adminRevokeSessions(orgId, userId, actorRole) {
+  const user = await prisma.user.findFirst({ where: { id: userId, orgId } });
+  if (!user) throw new ApiError(404, 'User not found');
+  if (ROLE_RANK[user.role] > ROLE_RANK[actorRole]) {
+    throw new ApiError(403, 'Cannot revoke sessions for a user with a higher role than your own');
+  }
+  await authService.revokeAllSessions(userId);
+  return { success: true };
 }
 
 /** Dependents handled/removed when this user is hard-deleted (for the dialog). */
@@ -309,15 +349,20 @@ export async function updateProfile(userId, name) {
 // ---------------------------------------------------------------------------
 
 /**
- * Change a local user's password after verifying the current one.
+ * Change a local user's password after verifying the current one. Revokes
+ * every other session (bumping sessionsValidFrom invalidates ALL outstanding
+ * access tokens, including the caller's), then mints a fresh token pair so
+ * the caller isn't logged out by their own request.
  * Throws 400 if this is an SSO account or the current password is wrong.
  *
  * @param {string} userId
  * @param {string} currentPassword
  * @param {string} newPassword
- * @returns {Promise<void>}
+ * @param {string} [ipAddress]
+ * @param {string} [userAgent]
+ * @returns {Promise<{ accessToken: string, refreshToken: string }>}
  */
-export async function changePassword(userId, currentPassword, newPassword) {
+export async function changePassword(userId, currentPassword, newPassword, ipAddress, userAgent) {
   const user = await prisma.user.findUnique({ where: { id: userId } });
   if (!user) throw new ApiError(404, 'User not found');
 
@@ -329,13 +374,17 @@ export async function changePassword(userId, currentPassword, newPassword) {
   if (!ok) throw new ApiError(400, 'Current password is incorrect');
 
   const newHash = await bcrypt.hash(newPassword, config.bcryptRounds);
-  await prisma.user.update({
+  const updated = await prisma.user.update({
     where: { id: userId },
     data: {
       passwordHash: newHash,
       passwordChangedAt: new Date(),
     },
   });
+
+  await authService.revokeAllSessions(userId);
+  const session = await authService.issueSession(updated, ipAddress, userAgent, 'web');
+  return { accessToken: session.accessToken, refreshToken: session.refreshToken };
 }
 
 // ---------------------------------------------------------------------------

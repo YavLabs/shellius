@@ -83,9 +83,21 @@ export async function getEffective(orgId) {
       auth0Domain: envDefaults.auth0Domain || null,
       // NEVER include clientSecret in the response
       hasClientSecret: !!envDefaults.clientSecret,
+      allowedDomains: envAllowedDomains(),
     },
     source,
   };
+}
+
+/** SSO_ALLOWED_DOMAINS=acme.com,beta.io — env fallback for allowedDomains
+ * when no DB row exists (e.g. the env-only Google preset). */
+export function envAllowedDomains() {
+  const raw = process.env.SSO_ALLOWED_DOMAINS;
+  if (!raw) return [];
+  return raw
+    .split(',')
+    .map((d) => d.trim().toLowerCase())
+    .filter(Boolean);
 }
 
 const dnsLookup = promisify(dns.lookup);
@@ -218,7 +230,7 @@ const DEFAULT_REDIRECT_URI = `${DEFAULT_APP_URL.replace(/\/$/, '')}/api/auth/sso
 export async function upsert(orgId, data) {
   const {
     provider, presetId, clientId, clientSecret, issuerUrl, redirectUri, scopes, isActive,
-    defaultRole, defaultGroupId, autoProvision,
+    defaultRole, defaultGroupId, autoProvision, allowedDomains, requireVerifiedEmail,
   } = data;
 
   const existing = await prisma.ssoConfig.findUnique({ where: { orgId } });
@@ -229,6 +241,12 @@ export async function upsert(orgId, data) {
   // The preset's env secret (if any) lets a row be saved without re-entering it.
   const envHasSecret = presetId ? !!(ENV_DEFAULTS[presetId] || {}).clientSecret : false;
 
+  // Defense in depth — a JIT-provisioned SSO user must never land as
+  // super_admin, even if a stale/hand-edited request slips past the route's
+  // Joi schema.
+  const safeDefaultRole =
+    defaultRole !== undefined ? (defaultRole === 'super_admin' ? 'member' : defaultRole) : undefined;
+
   const baseData = {
     provider,
     clientId,
@@ -237,9 +255,13 @@ export async function upsert(orgId, data) {
     ...(presetId !== undefined && { presetId }),
     ...(scopes !== undefined && { scopes }),
     ...(isActive !== undefined && { isActive }),
-    ...(defaultRole !== undefined && { defaultRole }),
+    ...(safeDefaultRole !== undefined && { defaultRole: safeDefaultRole }),
     ...(defaultGroupId !== undefined && { defaultGroupId: defaultGroupId || null }),
     ...(autoProvision !== undefined && { autoProvision }),
+    ...(allowedDomains !== undefined && {
+      allowedDomains: (allowedDomains || []).map((d) => String(d).trim().toLowerCase()).filter(Boolean),
+    }),
+    ...(requireVerifiedEmail !== undefined && { requireVerifiedEmail }),
   };
 
   if (clientSecret) {

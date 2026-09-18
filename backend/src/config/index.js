@@ -63,6 +63,46 @@ const config = {
   },
 
   bcryptRounds: 12,
+
+  // Per-account lockout (auth hardening).
+  auth: {
+    lockoutThreshold: parseInt(process.env.AUTH_LOCKOUT_THRESHOLD, 10) || 5,
+    lockoutMinutes: parseInt(process.env.AUTH_LOCKOUT_MINUTES, 10) || 15,
+    // Absolute lifetime of a refresh-token family, regardless of activity.
+    sessionAbsoluteTtlMs:
+      (parseInt(process.env.SESSION_ABSOLUTE_TTL, 10) || 30) * 24 * 60 * 60 * 1000,
+    // Grace window during which a rotated-but-reused refresh token is
+    // treated as a benign client race rather than theft.
+    refreshReuseGraceMs: 10 * 1000,
+  },
 };
+
+// ---------------------------------------------------------------------------
+// Startup safety checks
+// ---------------------------------------------------------------------------
+
+const DEV_DEFAULT_JWT_SECRET = 'dev-jwt-secret-change-me';
+const DEV_DEFAULT_REFRESH_SECRET = 'dev-refresh-secret-change-me';
+
+if (config.nodeEnv === 'production') {
+  if (
+    config.jwt.secret === DEV_DEFAULT_JWT_SECRET ||
+    config.jwt.refreshSecret === DEV_DEFAULT_REFRESH_SECRET
+  ) {
+    throw new Error(
+      'Refusing to start in production with default JWT_SECRET/JWT_REFRESH_SECRET. ' +
+        'Set both to strong, unique random values.'
+    );
+  }
+  if (!config.encryption.key) {
+    // eslint-disable-next-line no-console
+    console.warn(
+      '[config] WARNING: SERVER_ENCRYPTION_KEY is not set in production. ' +
+        'A fallback key derived from a constant will be used, which is NOT secure ' +
+        'for encrypted-at-rest secrets (CA keys, SSO client secrets, MFA secrets). ' +
+        'Set SERVER_ENCRYPTION_KEY — changing it later will orphan already-encrypted data.'
+    );
+  }
+}
 
 export default config;
