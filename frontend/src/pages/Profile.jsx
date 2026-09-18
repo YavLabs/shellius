@@ -1,25 +1,15 @@
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { User, Download, Trash2, Lock, Eye, EyeOff, Loader2 } from 'lucide-react';
+import { User, Download, Trash2, Loader2 } from 'lucide-react';
 import { useAuth } from '@/context/AuthContext';
 import PageHeader from '@/components/common/PageHeader';
 import ConfirmDialog from '@/components/shared/ConfirmDialog';
 import Skeleton from '@/components/ui/Skeleton';
+import PasswordCard from '@/components/profile/PasswordCard';
 import MfaCard from '@/components/profile/MfaCard';
-import {
-  getMe,
-  updateMe,
-  changeMyPassword,
-  exportMyData,
-  deleteMyAccount,
-} from '@/services/userService';
-
-function validatePassword(password) {
-  if (password.length < 12) return 'Password must be at least 12 characters.';
-  if (!/[a-zA-Z]/.test(password)) return 'Password must contain at least one letter.';
-  if (!/[0-9]/.test(password)) return 'Password must contain at least one number.';
-  return null;
-}
+import SessionsCard from '@/components/profile/SessionsCard';
+import SignInMethodsCard from '@/components/profile/SignInMethodsCard';
+import { getMe, updateMe, exportMyData, deleteMyAccount } from '@/services/userService';
 
 function SectionCard({ title, description, children, className = '' }) {
   return (
@@ -39,7 +29,7 @@ function InfoRow({ label, value }) {
   return (
     <div className="flex flex-col gap-0.5 py-2.5 sm:flex-row sm:items-center sm:gap-4 border-b border-border last:border-0">
       <span className="w-32 shrink-0 text-sm text-muted-foreground">{label}</span>
-      <span className="text-sm font-medium text-foreground">{value || '\u2014'}</span>
+      <span className="text-sm font-medium text-foreground">{value || '—'}</span>
     </div>
   );
 }
@@ -57,17 +47,6 @@ function Profile() {
   const [nameSaving, setNameSaving] = useState(false);
   const [nameSuccess, setNameSuccess] = useState('');
   const [nameError, setNameError] = useState('');
-
-  // Password change
-  const [currentPassword, setCurrentPassword] = useState('');
-  const [newPassword, setNewPassword] = useState('');
-  const [confirmPassword, setConfirmPassword] = useState('');
-  const [showCurrent, setShowCurrent] = useState(false);
-  const [showNew, setShowNew] = useState(false);
-  const [showConfirm, setShowConfirm] = useState(false);
-  const [passwordSaving, setPasswordSaving] = useState(false);
-  const [passwordSuccess, setPasswordSuccess] = useState('');
-  const [passwordError, setPasswordError] = useState('');
 
   // Export
   const [exporting, setExporting] = useState(false);
@@ -110,37 +89,6 @@ function Profile() {
     }
   };
 
-  const handlePasswordChange = async (e) => {
-    e.preventDefault();
-    setPasswordError('');
-    setPasswordSuccess('');
-
-    const validationError = validatePassword(newPassword);
-    if (validationError) {
-      setPasswordError(validationError);
-      return;
-    }
-    if (newPassword !== confirmPassword) {
-      setPasswordError('Passwords do not match.');
-      return;
-    }
-
-    setPasswordSaving(true);
-    try {
-      await changeMyPassword({ currentPassword, newPassword });
-      setPasswordSuccess('Password updated. You\u2019ll receive a confirmation email.');
-      setCurrentPassword('');
-      setNewPassword('');
-      setConfirmPassword('');
-    } catch (err) {
-      setPasswordError(
-        err.response?.data?.error?.message || err.message || 'Failed to update password.'
-      );
-    } finally {
-      setPasswordSaving(false);
-    }
-  };
-
   const handleExport = async () => {
     setExportError('');
     setExporting(true);
@@ -178,7 +126,11 @@ function Profile() {
     .map((w) => w[0].toUpperCase())
     .join('');
 
-  const isPasswordUser = !profile?.ssoProvider && profile?.passwordHash !== null;
+  // /auth/me (authUser) is the source of truth for hasPassword/ssoProvider
+  // post-hardening; fall back to the older /users/me heuristic if a field is
+  // missing so this keeps working against a not-yet-updated backend.
+  const hasPassword = authUser?.hasPassword ?? (profile?.passwordHash !== null && !profile?.ssoProvider);
+  const ssoProvider = authUser?.ssoProvider ?? profile?.ssoProvider;
 
   if (loadingProfile) {
     return (
@@ -241,6 +193,7 @@ function Profile() {
               <input
                 id="profile-name"
                 type="text"
+                autoComplete="name"
                 value={name}
                 onChange={(e) => setName(e.target.value)}
                 placeholder="Your name"
@@ -256,7 +209,7 @@ function Profile() {
               </button>
             </div>
             {nameError && (
-              <p className="mt-1.5 text-xs text-destructive">{nameError}</p>
+              <p className="mt-1.5 text-xs text-destructive" role="alert">{nameError}</p>
             )}
             {nameSuccess && (
               <p className="mt-1.5 text-xs text-green-600 dark:text-green-400">{nameSuccess}</p>
@@ -295,132 +248,11 @@ function Profile() {
           </div>
         </SectionCard>
 
-        {/* Change password section */}
-        <SectionCard
-          title="Password"
-          description={
-            isPasswordUser
-              ? 'Update your account password.'
-              : undefined
-          }
-        >
-          {!isPasswordUser ? (
-            <p className="text-sm text-muted-foreground">
-              Password is managed by your SSO provider{profile?.ssoProvider ? ` (${profile.ssoProvider})` : ''}.
-            </p>
-          ) : (
-            <form onSubmit={handlePasswordChange} className="space-y-4">
-              {passwordError && (
-                <div className="rounded-md border border-destructive/50 bg-destructive/10 px-3 py-2 text-sm text-destructive">
-                  {passwordError}
-                </div>
-              )}
-              {passwordSuccess && (
-                <div className="rounded-md border border-green-500/30 bg-green-500/10 px-3 py-2 text-sm text-green-700 dark:text-green-400">
-                  {passwordSuccess}
-                </div>
-              )}
-
-              <div>
-                <label htmlFor="current-password" className="mb-1.5 block text-sm font-medium text-foreground">
-                  Current password <span className="text-destructive">*</span>
-                </label>
-                <div className="relative">
-                  <Lock className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-                  <input
-                    id="current-password"
-                    type={showCurrent ? 'text' : 'password'}
-                    value={currentPassword}
-                    onChange={(e) => setCurrentPassword(e.target.value)}
-                    placeholder="Enter current password"
-                    required
-                    autoComplete="current-password"
-                    className="h-9 w-full rounded-md border border-input bg-background pl-9 pr-9 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring"
-                  />
-                  <button
-                    type="button"
-                    onClick={() => setShowCurrent((p) => !p)}
-                    className="absolute right-2 top-1/2 -translate-y-1/2 rounded p-1 text-muted-foreground hover:text-foreground"
-                    tabIndex={-1}
-                  >
-                    {showCurrent ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
-                  </button>
-                </div>
-              </div>
-
-              <div>
-                <label htmlFor="new-password" className="mb-1.5 block text-sm font-medium text-foreground">
-                  New password <span className="text-destructive">*</span>
-                </label>
-                <div className="relative">
-                  <Lock className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-                  <input
-                    id="new-password"
-                    type={showNew ? 'text' : 'password'}
-                    value={newPassword}
-                    onChange={(e) => setNewPassword(e.target.value)}
-                    placeholder="At least 12 characters"
-                    required
-                    autoComplete="new-password"
-                    className="h-9 w-full rounded-md border border-input bg-background pl-9 pr-9 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring"
-                  />
-                  <button
-                    type="button"
-                    onClick={() => setShowNew((p) => !p)}
-                    className="absolute right-2 top-1/2 -translate-y-1/2 rounded p-1 text-muted-foreground hover:text-foreground"
-                    tabIndex={-1}
-                  >
-                    {showNew ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
-                  </button>
-                </div>
-                <p className="mt-1 text-xs text-muted-foreground">
-                  Min 12 characters, must include a letter and a number.
-                </p>
-              </div>
-
-              <div>
-                <label htmlFor="confirm-password" className="mb-1.5 block text-sm font-medium text-foreground">
-                  Confirm new password <span className="text-destructive">*</span>
-                </label>
-                <div className="relative">
-                  <Lock className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-                  <input
-                    id="confirm-password"
-                    type={showConfirm ? 'text' : 'password'}
-                    value={confirmPassword}
-                    onChange={(e) => setConfirmPassword(e.target.value)}
-                    placeholder="Repeat new password"
-                    required
-                    autoComplete="new-password"
-                    className="h-9 w-full rounded-md border border-input bg-background pl-9 pr-9 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring"
-                  />
-                  <button
-                    type="button"
-                    onClick={() => setShowConfirm((p) => !p)}
-                    className="absolute right-2 top-1/2 -translate-y-1/2 rounded p-1 text-muted-foreground hover:text-foreground"
-                    tabIndex={-1}
-                  >
-                    {showConfirm ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
-                  </button>
-                </div>
-              </div>
-
-              <div>
-                <button
-                  type="submit"
-                  disabled={passwordSaving}
-                  className="flex h-9 items-center gap-1.5 rounded-md bg-primary px-4 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-50"
-                >
-                  {passwordSaving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : null}
-                  Update password
-                </button>
-              </div>
-            </form>
-          )}
-        </SectionCard>
-
-        {/* Two-factor authentication */}
-        <MfaCard />
+        {/* Security */}
+        <PasswordCard isPasswordUser={hasPassword} ssoProvider={ssoProvider} />
+        <MfaCard hasPassword={hasPassword} />
+        <SignInMethodsCard hasPassword={hasPassword} ssoProvider={ssoProvider} />
+        <SessionsCard />
 
         {/* Data export section */}
         <SectionCard

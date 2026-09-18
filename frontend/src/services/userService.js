@@ -23,6 +23,12 @@ export const resendInvite = (id) =>
 export const triggerPasswordReset = (id) =>
   api.post(`/users/${id}/password-reset`).then((r) => r.data?.data ?? r.data);
 
+// Auth hardening — admin actions
+export const unlockUser = (id) =>
+  api.post(`/users/${id}/unlock`).then((r) => r.data?.data ?? r.data);
+export const revokeUserSessions = (id) =>
+  api.post(`/users/${id}/revoke-sessions`).then((r) => r.data?.data ?? r.data);
+
 // Profile / GDPR (Phase 17F)
 export const getMe = () => api.get('/users/me').then((r) => r.data?.data?.user ?? r.data?.data);
 export const updateMe = (data) =>

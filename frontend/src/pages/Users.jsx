@@ -10,6 +10,10 @@ import {
   RotateCcw,
   Copy,
   Check,
+  Lock,
+  Unlock,
+  ShieldCheck,
+  LogOut,
 } from 'lucide-react';
 import DataTable from '@/components/shared/DataTable';
 import Badge from '@/components/shared/Badge';
@@ -31,6 +35,8 @@ import {
   getUser,
   resendInvite,
   triggerPasswordReset,
+  unlockUser,
+  revokeUserSessions,
 } from '@/services/userService';
 
 const ROLES = ['super_admin', 'admin', 'manager', 'member'];
@@ -54,6 +60,10 @@ const statusVariant = (status) => {
     default: return 'default';
   }
 };
+
+function isLocked(u) {
+  return !!u.lockedUntil && new Date(u.lockedUntil).getTime() > Date.now();
+}
 
 function formatDate(d) {
   if (!d) return '-';
@@ -183,6 +193,34 @@ function Users() {
 
   const handleDelete = (u) => setDeleteTarget(u);
 
+  const handleUnlock = (u) => {
+    setConfirm({
+      title: 'Unlock account',
+      message: `Clear the failed-login lockout for ${u.name}? They'll be able to sign in immediately.`,
+      variant: 'default',
+      confirmLabel: 'Unlock',
+      onConfirm: async () => {
+        await unlockUser(u.id);
+        setConfirm(null);
+        fetchUsers();
+      },
+    });
+  };
+
+  const handleRevokeSessions = (u) => {
+    setConfirm({
+      title: 'Sign out all sessions',
+      message: `Sign ${u.name} out of every device and application? Their next request will require signing in again.`,
+      variant: 'destructive',
+      confirmLabel: 'Sign out everywhere',
+      onConfirm: async () => {
+        await revokeUserSessions(u.id);
+        setConfirm(null);
+        fetchUsers();
+      },
+    });
+  };
+
   const handleResendInvite = async (u) => {
     try {
       const result = await resendInvite(u.id);
@@ -265,7 +303,29 @@ function Users() {
       label: 'Status',
       sortable: true,
       searchAccessor: (r) => r.status || '',
-      render: (r) => <Badge variant={statusVariant(r.status)}>{formatLabel(r.status)}</Badge>,
+      render: (r) => (
+        <div className="flex flex-wrap items-center gap-1.5">
+          <Badge variant={statusVariant(r.status)}>{formatLabel(r.status)}</Badge>
+          {isLocked(r) && (
+            <Badge variant="danger" className="gap-1">
+              <Lock className="h-3 w-3" /> Locked
+            </Badge>
+          )}
+        </div>
+      ),
+    },
+    {
+      key: 'mfa',
+      label: 'MFA',
+      hideBelow: 'md',
+      render: (r) =>
+        r.mfaEnabled ? (
+          <span className="inline-flex items-center gap-1 text-xs font-medium text-emerald-600 dark:text-emerald-400">
+            <ShieldCheck className="h-3.5 w-3.5" /> Enabled
+          </span>
+        ) : (
+          <span className="text-xs text-muted-foreground">&mdash;</span>
+        ),
     },
     {
       key: 'manager',
@@ -288,6 +348,8 @@ function Users() {
         { label: 'Upload SSH Key', icon: KeyRound, onClick: (r) => openSsh(r) },
         { label: 'Resend Invite', icon: Mail, onClick: (r) => handleResendInvite(r) },
         { label: 'Send Password Reset', icon: RotateCcw, onClick: (r) => handleTriggerPasswordReset(r) },
+        { label: 'Unlock Account', icon: Unlock, hidden: (r) => !isLocked(r), onClick: (r) => handleUnlock(r) },
+        { label: 'Sign Out All Sessions', icon: LogOut, onClick: (r) => handleRevokeSessions(r) },
         { label: 'Deactivate', icon: UserX, onClick: (r) => handleDeactivate(r) },
         { separator: true },
         { label: 'Delete', icon: Trash2, variant: 'destructive', onClick: (r) => handleDelete(r) },
