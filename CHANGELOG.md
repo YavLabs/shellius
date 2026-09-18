@@ -21,6 +21,13 @@ Tracked here as work lands on `main`; moved into a dated section on release
   - Recovery happens in the same tab, so its place and split are kept.
   - A banner offers **Reconnect all** when several tabs are affected.
   - New `GET /api/terminal/sessions/:id/recovery` and `POST /api/terminal/sessions/:id/reconnect`.
+- Terminal workspace **Workspaces**: tabs merged into a split become one tab in the tab bar
+  ("Workspace", renameable), with a member count and combined status. You can reorder it,
+  cycle to it with the keyboard, ungroup it, close it (sessions keep running) or end all its
+  sessions.
+- Redesigned **Sessions panel**: "Running in background" (with Attach all) and "Open in tabs"
+  sections. Rows show auth method, age and time left before a detached session closes or access
+  ends; click a row to open or attach it; Duplicate/End on hover; filter; proper empty state.
 - On startup, SSH sessions left `ACTIVE` by a crashed or killed backend are closed with reason
   `server_restart`.
 - Running sessions that aren't open in a tab can be re-attached from the **"+" New connection

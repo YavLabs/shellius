@@ -17,6 +17,7 @@ import {
   PanelRight,
   ChevronDown,
   Maximize2,
+  Ungroup,
 } from 'lucide-react';
 import {
   DropdownMenu,
@@ -29,6 +30,7 @@ import { Tooltip, TooltipTrigger, TooltipContent, TooltipProvider } from '@/comp
 import EnvironmentBadge from '@/components/shared/EnvironmentBadge';
 import ConfirmDialog from '@/components/shared/ConfirmDialog';
 import { cn } from '@/lib/utils';
+import { barItems, itemTabId } from '@/lib/workspaceLayout';
 
 const STATUS_DOT = {
   connecting: 'bg-amber-500 animate-pulse',
@@ -225,6 +227,159 @@ function TabItem({ tab, index, active, split, onSelect, onClose, menu, dragProps
   );
 }
 
+// Worst member state wins, so a workspace dot turns amber/red when any pane needs attention.
+const STATE_RANK = ['error', 'lost', 'ended', 'denied', 'revoked', 'reconnecting', 'connecting', 'pending', 'expired', 'detached', 'live'];
+function workspaceState(tabs) {
+  let best = 'live';
+  for (const t of tabs) {
+    const r = STATE_RANK.indexOf(t.state);
+    if (r !== -1 && r < STATE_RANK.indexOf(best)) best = t.state;
+  }
+  return best;
+}
+
+/**
+ * One tab-bar item for a whole split (2+ tabs merged): named "Workspace"
+ * by default (renameable), shows how many terminals it holds, and a
+ * combined status dot. Clicking shows the split; × closes (detaches) every
+ * terminal in it; the menu can rename, ungroup into tabs, or end every session.
+ */
+function WorkspaceItem({ item, index, active, onSelect, workspace, onEndAll, dragProps }) {
+  const { group, tabs } = item;
+  const [renaming, setRenaming] = useState(false);
+  const [menuOpen, setMenuOpen] = useState(false);
+  const [draft, setDraft] = useState(group.name || 'Workspace');
+  const inputRef = useRef(null);
+  const Icon = SPLIT_ICON[group.mode] || LayoutGrid;
+  const state = workspaceState(tabs);
+
+  useEffect(() => {
+    if (renaming) inputRef.current?.select();
+  }, [renaming]);
+
+  const startRename = () => {
+    setDraft(group.name || 'Workspace');
+    setRenaming(true);
+  };
+  const commitRename = () => {
+    setRenaming(false);
+    const trimmed = draft.trim().slice(0, 60);
+    if (trimmed && trimmed !== group.name) workspace.renameWorkspace(group.id, trimmed);
+  };
+  const closeAll = () => tabs.forEach((t) => workspace.closeTab(t.id));
+
+  return (
+    <div
+      role="tab"
+      aria-selected={active}
+      tabIndex={0}
+      data-workspace-id={group.id}
+      data-tab-state={state}
+      draggable={!renaming}
+      onDragStart={(e) => dragProps.onDragStart(e, item, index)}
+      onDragEnd={dragProps.onDragEnd}
+      onDragOver={(e) => dragProps.onDragOver(e, index)}
+      onDrop={(e) => dragProps.onDrop(e, index)}
+      onClick={onSelect}
+      onDoubleClick={startRename}
+      onMouseDown={(e) => {
+        if (e.button === 1) {
+          e.preventDefault();
+          closeAll();
+        }
+      }}
+      onContextMenu={(e) => {
+        e.preventDefault();
+        setMenuOpen(true);
+      }}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter' || e.key === ' ') onSelect();
+        if (e.key === 'F2') startRename();
+      }}
+      title={`${group.name || 'Workspace'}: ${tabs.map((t) => t.label).join(', ')}`}
+      className={cn(
+        'group relative flex h-full shrink-0 cursor-pointer select-none items-center gap-1.5 border-r border-border px-3 text-sm transition-colors',
+        active ? 'bg-background text-foreground' : 'bg-muted/40 text-muted-foreground hover:bg-muted/70',
+        dragProps.isDragging(group.id) && 'opacity-40'
+      )}
+    >
+      {dragProps.insertBefore === index && (
+        <span className="absolute -left-px top-0.5 bottom-0.5 w-0.5 rounded bg-primary" aria-hidden="true" />
+      )}
+      <Icon className={cn('h-3.5 w-3.5 shrink-0', active ? 'text-primary' : 'text-muted-foreground')} aria-hidden="true" />
+      {renaming ? (
+        <input
+          ref={inputRef}
+          value={draft}
+          onChange={(e) => setDraft(e.target.value)}
+          onClick={(e) => e.stopPropagation()}
+          onBlur={commitRename}
+          onKeyDown={(e) => {
+            e.stopPropagation();
+            if (e.key === 'Enter') commitRename();
+            if (e.key === 'Escape') setRenaming(false);
+          }}
+          maxLength={60}
+          aria-label="Workspace name"
+          className="h-6 w-32 rounded border border-border bg-background px-1 text-xs text-foreground focus:outline-none"
+        />
+      ) : (
+        <span className="max-w-[10rem] truncate font-medium">{group.name || 'Workspace'}</span>
+      )}
+      <span className="rounded bg-muted px-1 text-[10px] font-semibold tabular-nums text-muted-foreground" aria-label={`${tabs.length} terminals`}>
+        {tabs.length}
+      </span>
+      <span className={cn('h-1.5 w-1.5 shrink-0 rounded-full', STATUS_DOT[state] || STATUS_DOT.detached)} aria-hidden="true" />
+
+      <DropdownMenu open={menuOpen} onOpenChange={setMenuOpen}>
+        <DropdownMenuTrigger asChild>
+          <button
+            type="button"
+            onClick={(e) => e.stopPropagation()}
+            className={cn('rounded p-0.5 hover:bg-accent group-hover:opacity-100', menuOpen ? 'opacity-100' : 'opacity-0')}
+            aria-label={`Options for ${group.name || 'Workspace'}`}
+          >
+            <MoreHorizontal className="h-3.5 w-3.5" />
+          </button>
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="start">
+          <DropdownMenuItem onSelect={startRename}>
+            <Pencil className="mr-2 h-3.5 w-3.5" /> Rename
+          </DropdownMenuItem>
+          <DropdownMenuItem onSelect={() => workspace.ungroupWorkspace(group.id)}>
+            <Ungroup className="mr-2 h-3.5 w-3.5" /> Ungroup into tabs
+          </DropdownMenuItem>
+          <DropdownMenuSeparator />
+          {tabs.map((t) => (
+            <DropdownMenuItem key={t.id} onSelect={() => workspace.selectTab(t.id)}>
+              <span className={cn('mr-2 h-1.5 w-1.5 rounded-full', STATUS_DOT[t.state] || STATUS_DOT.detached)} />
+              <span className="truncate">{t.label}</span>
+            </DropdownMenuItem>
+          ))}
+          <DropdownMenuSeparator />
+          <DropdownMenuItem onSelect={closeAll}>Close workspace</DropdownMenuItem>
+          <DropdownMenuItem onSelect={() => onEndAll(tabs)} className="text-destructive focus:text-destructive">
+            <Square className="mr-2 h-3.5 w-3.5" /> End all sessions
+          </DropdownMenuItem>
+        </DropdownMenuContent>
+      </DropdownMenu>
+
+      <button
+        type="button"
+        onClick={(e) => {
+          e.stopPropagation();
+          closeAll();
+        }}
+        className="rounded p-0.5 opacity-0 hover:bg-accent group-hover:opacity-100"
+        aria-label={`Close ${group.name || 'Workspace'}`}
+        title="Close workspace (sessions keep running)"
+      >
+        <X className="h-3.5 w-3.5" />
+      </button>
+    </div>
+  );
+}
+
 /**
  * TerminalTabBar — Termius-like horizontally scrollable tab strip. Closing
  * (×) only detaches; "End session" (in the per-tab menu) terminates the SSH
@@ -258,10 +413,16 @@ function TerminalTabBar({ tabs, activeTabId, onSelect, workspace, onNewConnectio
     onEndSession: (id) => setEndTarget(id),
   };
 
+  // endTarget: a tab id, or { tabs } for a workspace's "End all sessions".
   const confirmEnd = () => {
-    if (endTarget) workspace.closeTab(endTarget, { end: true });
+    if (typeof endTarget === 'string') workspace.closeTab(endTarget, { end: true });
+    else if (endTarget?.tabs) endTarget.tabs.forEach((t) => workspace.closeTab(t.id, { end: true }));
     setEndTarget(null);
   };
+
+  // A split of 2+ tabs is one workspace item; everything else is a plain tab.
+  const items = barItems(tabs, workspace.groups || []);
+  const memberIds = (item) => (item.type === 'tab' ? [item.tab.id] : item.tabs.map((t) => t.id));
 
   const stopAutoScroll = () => {
     if (scrollRafRef.current) {
@@ -289,14 +450,18 @@ function TerminalTabBar({ tabs, activeTabId, onSelect, workspace, onNewConnectio
     }
   };
 
+  // Drag works on bar items: a plain tab can also be dropped on the pane area
+  // (split); a workspace only reorders, moving its terminals as one block.
   const dragProps = {
-    isDragging: (id) => dragTabId === id,
+    isDragging: (key) => dragTabId === key,
     insertBefore,
-    onDragStart: (e, id, index) => {
+    onDragStart: (e, itemOrId, index) => {
       e.dataTransfer.effectAllowed = 'move';
-      e.dataTransfer.setData(DRAG_MIME, id);
-      setDragTabId(id);
-      workspace.setDraggedTabId(id);
+      const isWorkspace = typeof itemOrId === 'object';
+      const key = isWorkspace ? itemOrId.group.id : itemOrId;
+      e.dataTransfer.setData(DRAG_MIME, isWorkspace ? `ws:${key}` : key);
+      setDragTabId(key);
+      workspace.setDraggedTabId(isWorkspace ? null : key);
       setInsertBefore(index);
     },
     onDragEnd: () => {
@@ -317,17 +482,22 @@ function TerminalTabBar({ tabs, activeTabId, onSelect, workspace, onNewConnectio
     onDrop: (e, index) => {
       e.preventDefault();
       stopAutoScroll();
-      const id = e.dataTransfer.getData(DRAG_MIME) || dragTabId;
-      const fromIndex = tabs.findIndex((t) => t.id === id);
-      if (fromIndex === -1) return;
-      const rect = e.currentTarget.getBoundingClientRect();
-      const before = e.clientX - rect.left < rect.width / 2;
-      let toIndex = before ? index : index + 1;
-      if (toIndex > fromIndex) toIndex -= 1; // account for the removed slot
-      workspace.moveTab(fromIndex, toIndex);
+      const raw = e.dataTransfer.getData(DRAG_MIME) || dragTabId;
+      const key = raw?.startsWith('ws:') ? raw.slice(3) : raw;
+      const dragged = items.find((it) => it.key === key);
       setDragTabId(null);
       setInsertBefore(null);
       workspace.setDraggedTabId(null);
+      if (!dragged) return;
+      const rect = e.currentTarget.getBoundingClientRect();
+      const before = e.clientX - rect.left < rect.width / 2;
+      const toItem = before ? index : index + 1;
+      // Convert "before bar item N" into a position among the other tabs.
+      const block = memberIds(dragged);
+      const rest = tabs.filter((t) => !block.includes(t.id));
+      const anchor = items.slice(toItem).find((it) => it !== dragged);
+      const at = anchor ? rest.findIndex((t) => t.id === memberIds(anchor)[0]) : rest.length;
+      workspace.moveWorkspace(block, at === -1 ? rest.length : at);
     },
   };
 
@@ -339,19 +509,32 @@ function TerminalTabBar({ tabs, activeTabId, onSelect, workspace, onNewConnectio
         ref={scrollRef}
         className="no-scrollbar flex h-9 shrink-0 items-stretch overflow-x-auto overflow-y-hidden border-b border-border bg-muted/20"
       >
-        {tabs.map((tab, index) => (
+        {items.map((item, index) =>
+          item.type === 'workspace' ? (
+            <WorkspaceItem
+              key={item.key}
+              item={item}
+              index={index}
+              active={item.tabs.some((t) => t.id === activeTabId)}
+              onSelect={() => workspace.selectTab(itemTabId(item))}
+              workspace={workspace}
+              onEndAll={(members) => setEndTarget({ tabs: members })}
+              dragProps={dragProps}
+            />
+          ) : (
           <TabItem
-            key={tab.id}
-            tab={tab}
+            key={item.key}
+            tab={item.tab}
             index={index}
-            active={tab.id === activeTabId}
-            split={workspace.splitInfo.get(tab.id)}
-            onSelect={() => onSelect(tab.id)}
-            onClose={() => workspace.closeTab(tab.id)}
+            active={item.tab.id === activeTabId}
+            split={workspace.splitInfo.get(item.tab.id)}
+            onSelect={() => onSelect(item.tab.id)}
+            onClose={() => workspace.closeTab(item.tab.id)}
             menu={menu}
             dragProps={dragProps}
           />
-        ))}
+          )
+        )}
         <button
           type="button"
           onClick={onNewConnection}
@@ -432,9 +615,13 @@ function TerminalTabBar({ tabs, activeTabId, onSelect, workspace, onNewConnectio
 
         <ConfirmDialog
           open={!!endTarget}
-          title="End session"
-          message="This immediately closes the SSH connection for everyone attached to it. This can't be undone."
-          confirmLabel="End session"
+          title={endTarget?.tabs ? `End ${endTarget.tabs.length} sessions` : 'End session'}
+          message={
+            endTarget?.tabs
+              ? `This immediately closes all ${endTarget.tabs.length} SSH connections in this workspace, for everyone attached to them. This can't be undone.`
+              : "This immediately closes the SSH connection for everyone attached to it. This can't be undone."
+          }
+          confirmLabel={endTarget?.tabs ? 'End all sessions' : 'End session'}
           variant="destructive"
           onConfirm={confirmEnd}
           onCancel={() => setEndTarget(null)}

@@ -7,6 +7,7 @@ import TerminalPaneArea from '@/components/workspace/TerminalPaneArea';
 import SessionsPanel from '@/components/workspace/SessionsPanel';
 import NewConnectionDialog from '@/components/workspace/NewConnectionDialog';
 import RunningSessionsList from '@/components/workspace/RunningSessionsList';
+import { barItems, itemTabId } from '@/lib/workspaceLayout';
 import DisconnectedBanner from '@/components/workspace/DisconnectedBanner';
 import { getHistory, reconnectHistory } from '@/services/quickConnectService';
 
@@ -132,19 +133,23 @@ function Terminals() {
         if (activeTabId) closeTab(activeTabId);
         return;
       }
+      // Cycling / Alt+N follow the tab bar: a workspace counts as one item.
+      const items = barItems(tabs, workspace.groups || []);
+      const activeIdx = items.findIndex((it) =>
+        it.type === 'tab' ? it.tab.id === activeTabId : it.tabs.some((t) => t.id === activeTabId)
+      );
       if (mod && e.key === 'Tab') {
         e.preventDefault();
-        if (tabs.length < 2) return;
-        const idx = tabs.findIndex((t) => t.id === activeTabId);
-        const next = e.shiftKey ? (idx - 1 + tabs.length) % tabs.length : (idx + 1) % tabs.length;
-        selectTab(tabs[next].id);
+        if (items.length < 2) return;
+        const next = e.shiftKey ? (activeIdx - 1 + items.length) % items.length : (activeIdx + 1) % items.length;
+        selectTab(itemTabId(items[next]));
         return;
       }
       if (e.altKey && /^[1-9]$/.test(e.key)) {
-        const idx = Number(e.key) - 1;
-        if (tabs[idx]) {
+        const item = items[Number(e.key) - 1];
+        if (item) {
           e.preventDefault();
-          selectTab(tabs[idx].id);
+          selectTab(itemTabId(item));
         }
         return;
       }
@@ -152,10 +157,18 @@ function Terminals() {
       // the active tab one slot in the tab bar.
       if (e.altKey && e.shiftKey && (e.key === 'ArrowLeft' || e.key === 'ArrowRight')) {
         e.preventDefault();
-        const idx = tabs.findIndex((t) => t.id === activeTabId);
-        if (idx === -1) return;
-        const to = e.key === 'ArrowLeft' ? idx - 1 : idx + 1;
-        if (to >= 0 && to < tabs.length) workspace.moveTab(idx, to);
+        if (activeIdx === -1) return;
+        const to = e.key === 'ArrowLeft' ? activeIdx - 1 : activeIdx + 1;
+        if (to < 0 || to >= items.length) return;
+        const ids = (it) => (it.type === 'tab' ? [it.tab.id] : it.tabs.map((t) => t.id));
+        const block = ids(items[activeIdx]);
+        const rest = tabs.filter((t) => !block.includes(t.id));
+        // Moving left: go before the neighbour; right: after it.
+        const neighbour = ids(items[to]);
+        const at = e.key === 'ArrowLeft'
+          ? rest.findIndex((t) => t.id === neighbour[0])
+          : rest.findIndex((t) => t.id === neighbour[neighbour.length - 1]) + 1;
+        workspace.moveWorkspace(block, at);
       }
     };
     window.addEventListener('keydown', handler);
@@ -184,7 +197,7 @@ function Terminals() {
             <TerminalPaneArea workspace={workspace} />
           )}
         </div>
-        {sessionsOpen && <SessionsPanel workspace={workspace} onClose={() => setSessionsOpen(false)} />}
+        {sessionsOpen && <SessionsPanel workspace={workspace} onClose={() => setSessionsOpen(false)} onNewConnection={() => setNewConnOpen(true)} />}
       </div>
 
       <NewConnectionDialog open={newConnOpen} onClose={() => setNewConnOpen(false)} />

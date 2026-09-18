@@ -449,6 +449,18 @@ export function TerminalWorkspaceProvider({ children }) {
     setWs((prev) => L.placeInPane(prev, tabId || null, paneIndex));
   }, []);
 
+  // Workspaces = split groups shown as one tab in the tab bar.
+  const renameWorkspace = useCallback((groupId, name) => {
+    setWs((prev) => L.renameGroup(prev, groupId, name));
+  }, []);
+  const ungroupWorkspace = useCallback((groupId) => {
+    setWs((prev) => L.ungroup(prev, groupId));
+  }, []);
+  // Reorder a whole workspace in the tab bar: its members move as one block.
+  const moveWorkspace = useCallback((memberIds, toTabIndex) => {
+    setTabsMirrored((prev) => L.moveBlock(prev, memberIds, toTabIndex));
+  }, []);
+
   const removeFromSplit = useCallback((tabId) => {
     setWs((prev) => L.removeFromSplit(prev, tabId));
   }, []);
@@ -559,6 +571,10 @@ export function TerminalWorkspaceProvider({ children }) {
       renameTab,
       splitWith,
       removeFromSplit,
+      groups: ws.groups,
+      renameWorkspace,
+      ungroupWorkspace,
+      moveWorkspace,
       setLayout,
       assignPane,
       moveTab,
@@ -592,6 +608,10 @@ export function TerminalWorkspaceProvider({ children }) {
       renameTab,
       splitWith,
       removeFromSplit,
+      ws.groups,
+      renameWorkspace,
+      ungroupWorkspace,
+      moveWorkspace,
       setLayout,
       assignPane,
       moveTab,

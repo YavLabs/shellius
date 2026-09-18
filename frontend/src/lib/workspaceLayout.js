@@ -37,6 +37,13 @@ export function groupId() {
 
 export const emptyWorkspace = () => ({ groups: [], activeTabId: null });
 
+/** "Workspace", then "Workspace 2", "Workspace 3"… skipping names in use. */
+export function nextWorkspaceName(groups) {
+  const used = new Set(groups.map((g) => g.name));
+  if (!used.has('Workspace')) return 'Workspace';
+  for (let n = 2; ; n += 1) if (!used.has(`Workspace ${n}`)) return `Workspace ${n}`;
+}
+
 export function findGroup(groups, tabId) {
   if (!tabId) return null;
   return groups.find((g) => g.panes.includes(tabId)) || null;
@@ -211,7 +218,7 @@ export function setLayoutMode(ws, mode) {
   if (!view.group) {
     if (!ws.activeTabId) return ws;
     const panes = Array.from({ length: count }, (_, i) => (i === 0 ? ws.activeTabId : null));
-    const group = { id: groupId(), mode, panes, focusedPane: 1 };
+    const group = { id: groupId(), name: nextWorkspaceName(ws.groups), mode, panes, focusedPane: 1 };
     return { groups: [...ws.groups, group], activeTabId: ws.activeTabId };
   }
 
@@ -264,7 +271,7 @@ export function dropTab(ws, tabId, paneIndex, zone) {
     const first = zone === 'left' || zone === 'top';
     const panes = first ? [tabId, current] : [current, tabId];
     const groups = detachTab(detachTab(ws.groups, tabId), current);
-    const group = { id: groupId(), mode, panes, focusedPane: panes.indexOf(tabId) };
+    const group = { id: groupId(), name: nextWorkspaceName(groups), mode, panes, focusedPane: panes.indexOf(tabId) };
     return { groups: [...groups, group], activeTabId: tabId };
   }
 
@@ -316,7 +323,7 @@ export function splitWith(ws, tabId, direction) {
   if (!view.group && (ws.activeTabId === tabId || !ws.activeTabId)) {
     const mode = direction === 'right' ? 'split-right' : 'split-down';
     const groups = detachTab(ws.groups, tabId);
-    const group = { id: groupId(), mode, panes: [tabId, null], focusedPane: 1 };
+    const group = { id: groupId(), name: nextWorkspaceName(groups), mode, panes: [tabId, null], focusedPane: 1 };
     return { groups: [...groups, group], activeTabId: tabId };
   }
   if (view.group && view.group.panes.includes(tabId)) {
@@ -346,7 +353,8 @@ export function sanitize(ws, tabIds) {
       return p && alive.has(p) && !seen.has(p) ? p : null;
     });
     const focusedPane = Number.isInteger(g.focusedPane) && g.focusedPane >= 0 && g.focusedPane < count ? g.focusedPane : 0;
-    const compacted = compactGroup({ id: g.id || groupId(), mode: g.mode, panes, focusedPane });
+    const name = typeof g.name === 'string' && g.name.trim() ? g.name.trim().slice(0, 60) : nextWorkspaceName(groups);
+    const compacted = compactGroup({ id: g.id || groupId(), name, mode: g.mode, panes, focusedPane });
     if (!compacted) continue; // its tabs stay free for a later group
     compacted.panes.forEach((p) => p && seen.add(p));
     groups.push(compacted);
@@ -358,7 +366,72 @@ export function sanitize(ws, tabIds) {
 /** Persisted v1 state had one global `layout`. Turn a real split into a group. */
 export function migrateLegacyLayout(layout, activeTabId) {
   if (!layout || !SPLIT_MODES.has(layout.mode) || !Array.isArray(layout.panes)) return { groups: [], activeTabId };
-  const group = { id: groupId(), mode: layout.mode, panes: layout.panes, focusedPane: 0 };
+  const group = { id: groupId(), name: 'Workspace', mode: layout.mode, panes: layout.panes, focusedPane: 0 };
   const inGroup = activeTabId && layout.panes.includes(activeTabId);
   return { groups: [group], activeTabId: inGroup ? activeTabId : activeTabId || layout.panes.find(Boolean) || null };
+}
+
+/** Rename a workspace (split group). Empty names are ignored. */
+export function renameGroup(ws, id, name) {
+  const clean = String(name || '').trim().slice(0, 60);
+  if (!clean) return ws;
+  return { ...ws, groups: ws.groups.map((g) => (g.id === id ? { ...g, name: clean } : g)) };
+}
+
+/** Ungroup a workspace: its tabs become standalone tabs again. The focused one stays on screen. */
+export function ungroup(ws, id) {
+  const g = ws.groups.find((x) => x.id === id);
+  if (!g) return ws;
+  const onScreen = g.panes.includes(ws.activeTabId);
+  const keep = onScreen ? g.panes[g.focusedPane] || ws.activeTabId : ws.activeTabId;
+  return { groups: ws.groups.filter((x) => x.id !== id), activeTabId: keep };
+}
+
+/**
+ * What the tab bar shows, in order. A split with two or more tabs collapses
+ * into ONE workspace item, at the position of its first member in the tab
+ * order. Everything else is a plain tab item.
+ *   { type: 'tab', tab } | { type: 'workspace', group, tabs: [member tabs in pane order] }
+ */
+export function barItems(tabs, groups) {
+  const byId = new Map(tabs.map((t) => [t.id, t]));
+  const groupOf = new Map();
+  for (const g of groups) {
+    const members = g.panes.filter((id) => id && byId.has(id));
+    if (members.length >= 2) for (const id of members) groupOf.set(id, g);
+  }
+  const items = [];
+  const emitted = new Set();
+  for (const tab of tabs) {
+    const g = groupOf.get(tab.id);
+    if (!g) {
+      items.push({ type: 'tab', tab, key: tab.id });
+      continue;
+    }
+    if (emitted.has(g.id)) continue;
+    emitted.add(g.id);
+    items.push({
+      type: 'workspace',
+      group: g,
+      tabs: g.panes.filter((id) => id && byId.has(id)).map((id) => byId.get(id)),
+      key: g.id,
+    });
+  }
+  return items;
+}
+
+/** The tab to show when a bar item is picked (a workspace shows its focused pane). */
+export function itemTabId(item) {
+  if (item.type === 'tab') return item.tab.id;
+  const focused = item.group.panes[item.group.focusedPane];
+  return focused || item.tabs[0]?.id || null;
+}
+
+/** Move a block of tab ids (a workspace's members) so it starts at bar position `toIndex` of `tabs`. */
+export function moveBlock(tabs, ids, toTabIndex) {
+  const set = new Set(ids);
+  const block = tabs.filter((t) => set.has(t.id));
+  const rest = tabs.filter((t) => !set.has(t.id));
+  const at = Math.max(0, Math.min(rest.length, toTabIndex));
+  return [...rest.slice(0, at), ...block, ...rest.slice(at)];
 }

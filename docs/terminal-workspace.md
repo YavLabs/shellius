@@ -118,6 +118,20 @@ person signing in on the same browser never inherits tabs.
   new window, Close, Close others, End session. Tabs that are part of a split show a small
   split icon, highlighted when that split is on screen. `+` opens a "New connection" picker (servers you can
   connect to, recent Quick Connects, "Quick Connect…").
+- **Workspaces:** tabs merged into a split (2+ terminals) collapse into **one tab-bar item**.
+  - It's named "Workspace" (then "Workspace 2", …). Rename it by double-click, F2 or the menu;
+    the name persists.
+  - It shows the member count and a combined status dot (the worst member state).
+  - Clicking it shows the split. Ctrl+Tab and Alt+1…9 treat it as one item. Dragging it (or
+    Alt+Shift+←/→) moves all its terminals together.
+  - Menu: Rename, Ungroup into tabs, the member list (jump to a pane), Close workspace (detach
+    all; sessions keep running), End all sessions (confirmed).
+  - Each pane shows a faint label chip; its menu has "Move to its own tab", and its × closes that
+    terminal (detach).
+- **Sessions panel:** "Running in background" (detached, or open in another window) with Attach
+  all, and "Open in tabs" (labelled with the tab or Workspace it's in). Rows show target, auth
+  method, start time and deadline (detach timeout / access expiry). Clicking a row
+  opens/attaches it; hover actions are Duplicate and End. A filter appears with 6+ sessions.
 - Panes: single, split right (2 columns), split down (2 rows), 2×2 grid. **Splits belong to their
   tabs**, not to the whole page (`frontend/src/lib/workspaceLayout.js`, unit-tested in
   `workspaceLayout.test.js`):

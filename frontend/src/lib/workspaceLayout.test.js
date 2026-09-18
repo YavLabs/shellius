@@ -12,6 +12,11 @@ import {
   focusPane,
   sanitize,
   migrateLegacyLayout,
+  barItems,
+  itemTabId,
+  renameGroup,
+  ungroup,
+  moveBlock,
 } from './workspaceLayout';
 
 const open = (...ids) => ids.reduce((ws, id) => addTab(ws, id), emptyWorkspace());
@@ -234,5 +239,54 @@ describe('persistence', () => {
     const ws = sanitize(migrateLegacyLayout({ mode: 'split-right', panes: ['A', 'B'] }, 'B'), ['A', 'B', 'C']);
     expect(view(ws)).toEqual({ mode: 'split-right', panes: ['A', 'B'] });
     expect(sanitize(migrateLegacyLayout({ mode: 'single', panes: ['A'] }, 'A'), ['A']).groups).toHaveLength(0);
+  });
+});
+
+describe('workspace tabs (merged splits in the tab bar)', () => {
+  const T = (...ids) => ids.map((id) => ({ id }));
+
+  it('a split of two or more tabs shows as one named workspace item at its first member', () => {
+    let ws = open('A', 'B', 'C', 'D');
+    ws = selectTab(ws, 'B');
+    ws = dropTab(ws, 'D', 0, 'right'); // B | D
+    const items = barItems(T('A', 'B', 'C', 'D'), ws.groups);
+    expect(items.map((i) => (i.type === 'tab' ? i.tab.id : `${i.group.name}[${i.tabs.map((t) => t.id)}]`))).toEqual([
+      'A',
+      'Workspace[B,D]',
+      'C',
+    ]);
+    expect(itemTabId(items[1])).toBe('D'); // focused pane
+  });
+
+  it('numbers additional workspaces and keeps names through reloads', () => {
+    let ws = open('A', 'B', 'C', 'D');
+    ws = selectTab(ws, 'A');
+    ws = dropTab(ws, 'B', 0, 'right');
+    ws = selectTab(ws, 'C');
+    ws = dropTab(ws, 'D', 0, 'right');
+    expect(ws.groups.map((g) => g.name)).toEqual(['Workspace', 'Workspace 2']);
+    ws = renameGroup(ws, ws.groups[0].id, '  Prod debugging  ');
+    const reloaded = sanitize(JSON.parse(JSON.stringify(ws)), ['A', 'B', 'C', 'D']);
+    expect(reloaded.groups.map((g) => g.name)).toEqual(['Prod debugging', 'Workspace 2']);
+  });
+
+  it('a split waiting for its second tab is still a plain tab', () => {
+    let ws = open('A');
+    ws = setLayoutMode(ws, 'split-right');
+    expect(barItems(T('A'), ws.groups).map((i) => i.type)).toEqual(['tab']);
+  });
+
+  it('ungroup returns the tabs to the bar and keeps the focused one on screen', () => {
+    let ws = open('A', 'B');
+    ws = dropTab(ws, 'A', 0, 'left'); // A | B, A focused
+    ws = ungroup(ws, ws.groups[0].id);
+    expect(ws.groups).toHaveLength(0);
+    expect(view(ws)).toEqual({ mode: 'single', panes: ['A'] });
+    expect(barItems(T('A', 'B'), ws.groups).map((i) => i.type)).toEqual(['tab', 'tab']);
+  });
+
+  it('moveBlock moves a workspace’s members together', () => {
+    expect(moveBlock(T('A', 'B', 'C', 'D'), ['B', 'D'], 0).map((t) => t.id)).toEqual(['B', 'D', 'A', 'C']);
+    expect(moveBlock(T('A', 'B', 'C', 'D'), ['A', 'B'], 2).map((t) => t.id)).toEqual(['C', 'D', 'A', 'B']);
   });
 });

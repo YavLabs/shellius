@@ -79,9 +79,11 @@ function DropOverlay({ zone, label }) {
 
 // A small chip shown only on hover (in split layouts) instead of a
 // persistent per-pane header bar — see item 3 of the workspace redesign.
-function PaneHoverChip({ tab, paneIndex, tabs, onAssign, onClosePane }) {
+function PaneHoverChip({ tab, paneIndex, tabs, onAssign, onClosePane, onPopOut }) {
+  // Faint at rest so panes in a workspace can be told apart (their tabs are
+  // merged into one "Workspace" tab); fully visible on hover/focus.
   return (
-    <div className="pointer-events-none absolute right-1.5 top-1.5 z-10 opacity-0 transition-opacity group-hover/pane:opacity-100 group-focus-within/pane:opacity-100">
+    <div className="pointer-events-none absolute right-1.5 top-1.5 z-10 opacity-40 transition-opacity group-hover/pane:opacity-100 group-focus-within/pane:opacity-100">
       <div className="pointer-events-auto flex items-center gap-1 rounded-md border border-border bg-popover/95 px-1.5 py-1 text-[11px] shadow-sm backdrop-blur">
         <span className="max-w-[9rem] truncate font-medium text-foreground">{tab ? tab.label : 'Empty pane'}</span>
         {tab?.env && <EnvironmentBadge environment={tab.env} />}
@@ -92,6 +94,9 @@ function PaneHoverChip({ tab, paneIndex, tabs, onAssign, onClosePane }) {
             </button>
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end">
+            {tab && (
+              <DropdownMenuItem onSelect={() => onPopOut(tab.id)}>Move to its own tab</DropdownMenuItem>
+            )}
             {tabs.map((t) => (
               <DropdownMenuItem key={t.id} onSelect={() => onAssign(paneIndex, t.id)}>
                 Show {t.label}
@@ -103,8 +108,8 @@ function PaneHoverChip({ tab, paneIndex, tabs, onAssign, onClosePane }) {
           type="button"
           onClick={() => onClosePane(paneIndex)}
           className="rounded p-0.5 text-muted-foreground hover:bg-accent hover:text-foreground"
-          aria-label="Close pane"
-          title="Close pane (doesn't end the session)"
+          aria-label={tab ? `Close ${tab.label}` : 'Close pane'}
+          title={tab ? 'Close (the session keeps running)' : 'Remove this empty pane'}
         >
           <X className="h-3 w-3" />
         </button>
@@ -246,7 +251,8 @@ function TerminalPaneArea({ workspace }) {
   };
 
   const handleContainerDragOver = (e) => {
-    if (!draggedTabId && !e.dataTransfer.types.includes(DRAG_MIME)) return;
+    // Only single tabs can be dropped into panes (draggedTabId is null while a workspace is dragged).
+    if (!draggedTabId) return;
     const hit = paneAt(e.clientX, e.clientY);
     if (!hit) {
       setDragOverPane(null);
@@ -267,7 +273,8 @@ function TerminalPaneArea({ workspace }) {
     const id = e.dataTransfer.getData(DRAG_MIME) || draggedTabId;
     const hit = paneAt(e.clientX, e.clientY);
     setDragOverPane(null);
-    if (!id || !hit) return;
+    // A whole workspace dragged in the tab bar only reorders; it can't be dropped into a pane.
+    if (!id || !hit || id.startsWith('ws:')) return;
     e.preventDefault();
     const zone = zoneFromPoint(hit.rect, e.clientX, e.clientY);
     dropTabOnPane(id, hit.index, zone);
@@ -305,7 +312,8 @@ function TerminalPaneArea({ workspace }) {
                 paneIndex={paneIndex}
                 tabs={tabs}
                 onAssign={assignPane}
-                onClosePane={(idx) => assignPane(idx, null)}
+                onClosePane={(idx) => (tab ? workspace.closeTab(tab.id) : assignPane(idx, null))}
+                onPopOut={(id) => workspace.removeFromSplit(id)}
               />
             )}
             <div ref={setSlotRef(paneIndex)} className="min-h-0 flex-1">
