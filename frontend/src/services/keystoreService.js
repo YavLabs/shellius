@@ -16,6 +16,12 @@ export const generateKey = (data) =>
 export const importKey = (data) =>
   api.post('/keystore/keys/import', data).then((r) => r.data.data?.key);
 
+// { privateKey, passphrase? } -> { format, encrypted, keyType, bits, fingerprint, publicKey, comment }
+// Nothing is stored server-side. Throws on KEY_PASSPHRASE_REQUIRED / KEY_PASSPHRASE_INVALID /
+// KEY_UNSUPPORTED_FORMAT / KEY_UNSUPPORTED_TYPE.
+export const inspectKey = (data) =>
+  api.post('/keystore/keys/inspect', data).then((r) => r.data.data);
+
 export const updateKey = (id, data) =>
   api.patch(`/keystore/keys/${id}`, data).then((r) => r.data.data?.key);
 

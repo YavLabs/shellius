@@ -1,9 +1,10 @@
-import { useCallback, useEffect, useState } from 'react';
-import { Plus, Upload, Pencil, Trash2, Copy, Download, Send, RefreshCw, Key, FileKey } from 'lucide-react';
+import { useCallback, useEffect, useImperativeHandle, useState, forwardRef } from 'react';
+import { Pencil, Trash2, Copy, Download, Send, RefreshCw, Key, FileKey } from 'lucide-react';
 import DataTable from '@/components/shared/DataTable';
 import ConfirmDialog from '@/components/shared/ConfirmDialog';
 import EmptyState from '@/components/ui/EmptyState';
 import { Badge } from '@/components/ui/badge';
+import KeyCertBadge from './KeyCertBadge';
 import GenerateKeyModal from './GenerateKeyModal';
 import ImportKeyModal from './ImportKeyModal';
 import EditKeyModal from './EditKeyModal';
@@ -13,8 +14,16 @@ import { listKeys, deleteKey } from '@/services/keystoreService';
 import { formatDateTime } from '@/utils/time';
 
 const SOURCE_LABEL = { generated: 'Generated', imported: 'Imported' };
+const FORMAT_LABEL = {
+  openssh: 'OpenSSH',
+  pkcs1: 'PKCS#1',
+  pkcs8: 'PKCS#8',
+  sec1: 'SEC1',
+  putty_v2: 'PuTTY v2',
+  putty_v3: 'PuTTY v3',
+};
 
-function SshKeysTab({ canManage }) {
+const SshKeysTab = forwardRef(function SshKeysTab({ canManage }, ref) {
   const [keys, setKeys] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -37,8 +46,10 @@ function SshKeysTab({ canManage }) {
     try {
       const data = await listKeys();
       setKeys(data);
+      return data;
     } catch (err) {
       setError(err.response?.data?.error?.message || err.message || 'Failed to load keys');
+      return [];
     } finally {
       setLoading(false);
     }
@@ -47,6 +58,16 @@ function SshKeysTab({ canManage }) {
   useEffect(() => {
     fetch();
   }, [fetch]);
+
+  useImperativeHandle(ref, () => ({
+    openImport: () => setImportOpen(true),
+    openGenerate: () => setGenerateOpen(true),
+    highlight: async (id) => {
+      const list = keys.length ? keys : await fetch();
+      const match = list.find((k) => k.id === id);
+      if (match) setEditing(match);
+    },
+  }));
 
   const copyPublicKey = async (key) => {
     try {
@@ -97,7 +118,10 @@ function SshKeysTab({ canManage }) {
       searchAccessor: (r) => `${r.name} ${r.fingerprint}`,
       render: (r) => (
         <div>
-          <span className="block font-medium text-foreground">{r.name}</span>
+          <span className="flex items-center gap-1.5 font-medium text-foreground">
+            {r.name}
+            <KeyCertBadge certificate={r.certificate} />
+          </span>
           {r.description && (
             <span className="block truncate text-[11px] text-muted-foreground max-w-xs">{r.description}</span>
           )}
@@ -122,7 +146,17 @@ function SshKeysTab({ canManage }) {
     {
       key: 'source',
       label: 'Source',
-      render: (r) => <Badge variant="secondary">{SOURCE_LABEL[r.source] || r.source}</Badge>,
+      hideBelow: 'md',
+      render: (r) => (
+        <div className="flex flex-col gap-1">
+          <Badge variant="secondary">{SOURCE_LABEL[r.source] || r.source}</Badge>
+          {r.originalFormat && (
+            <span className="text-[10px] text-muted-foreground">
+              {FORMAT_LABEL[r.originalFormat] || r.originalFormat}
+            </span>
+          )}
+        </div>
+      ),
     },
     {
       key: 'credentialCount',
@@ -134,6 +168,7 @@ function SshKeysTab({ canManage }) {
       key: 'createdAt',
       label: 'Created',
       sortable: true,
+      hideBelow: 'lg',
       render: (r) => (
         <span className="text-xs text-muted-foreground" title={formatDateTime(r.createdAt)}>
           {formatDateTime(r.createdAt)}
@@ -174,23 +209,6 @@ function SshKeysTab({ canManage }) {
       {error && (
         <div className="rounded-md border border-destructive/50 bg-destructive/10 px-3 py-2 text-sm text-destructive">
           {error}
-        </div>
-      )}
-
-      {canManage && (
-        <div className="flex justify-end gap-2">
-          <button
-            onClick={() => setImportOpen(true)}
-            className="flex h-9 items-center gap-2 rounded-md border border-input bg-background px-4 text-sm font-medium text-foreground hover:bg-accent"
-          >
-            <Upload className="h-4 w-4" /> Import
-          </button>
-          <button
-            onClick={() => setGenerateOpen(true)}
-            className="flex h-9 items-center gap-2 rounded-md bg-primary px-4 text-sm font-medium text-primary-foreground hover:bg-primary/90"
-          >
-            <Plus className="h-4 w-4" /> Generate key
-          </button>
         </div>
       )}
 
@@ -255,6 +273,6 @@ function SshKeysTab({ canManage }) {
       )}
     </div>
   );
-}
+});
 
 export default SshKeysTab;

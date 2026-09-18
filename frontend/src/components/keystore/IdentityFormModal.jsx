@@ -1,17 +1,11 @@
 import { useEffect, useState } from 'react';
-import { Upload } from 'lucide-react';
+import { Lock, KeyRound } from 'lucide-react';
 import Modal from '@/components/shared/Modal';
 import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
 import PasswordInput from '@/components/ui/PasswordInput';
 import SearchableSelect from '@/components/ui/SearchableSelect';
+import PrivateKeyInput from './PrivateKeyInput';
 import { createCredential, updateCredential, listKeys } from '@/services/keystoreService';
-
-const AUTH_TYPES = [
-  { value: 'password', label: 'Password' },
-  { value: 'key', label: 'Private key' },
-  { value: 'key_password', label: 'Key + password' },
-];
 
 const KEY_TYPES = [
   { value: 'ed25519', label: 'ED25519 (recommended)' },
@@ -22,6 +16,34 @@ const KEY_TYPES = [
 const inputCls =
   'h-9 w-full rounded-md border border-input bg-background px-3 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring';
 const labelCls = 'mb-1.5 block text-sm font-medium text-foreground';
+
+function ToggleCard({ active, icon: Icon, title, description, onClick }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      aria-pressed={active}
+      className={`flex flex-1 items-start gap-3 rounded-md border p-3 text-left transition-colors ${
+        active ? 'border-primary bg-primary/5' : 'border-border hover:bg-accent/50'
+      }`}
+    >
+      <span
+        className={`mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded border ${
+          active ? 'border-primary bg-primary text-primary-foreground' : 'border-input'
+        }`}
+        aria-hidden="true"
+      >
+        {active && <span className="h-2 w-2 rounded-sm bg-current" />}
+      </span>
+      <span>
+        <span className="flex items-center gap-1.5 text-sm font-medium text-foreground">
+          <Icon className="h-4 w-4" /> {title}
+        </span>
+        <span className="mt-0.5 block text-xs text-muted-foreground">{description}</span>
+      </span>
+    </button>
+  );
+}
 
 /**
  * IdentityFormModal — create/edit a Keystore Identity (Credential).
@@ -35,11 +57,13 @@ function IdentityFormModal({ open, onClose, identity, onSaved }) {
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
   const [username, setUsername] = useState('');
-  const [authType, setAuthType] = useState('password');
+
+  const [usePassword, setUsePassword] = useState(true);
+  const [useKey, setUseKey] = useState(false);
   const [password, setPassword] = useState('');
   const [clearPassword, setClearPassword] = useState(false);
 
-  // key selection: 'existing' | 'new' | 'generate' | '' (none, password-only)
+  // key selection: 'existing' | 'new' | 'generate'
   const [keyMode, setKeyMode] = useState('existing');
   const [sshKeyId, setSshKeyId] = useState('');
   const [keys, setKeys] = useState([]);
@@ -56,10 +80,12 @@ function IdentityFormModal({ open, onClose, identity, onSaved }) {
     setName(identity?.name || '');
     setDescription(identity?.description || '');
     setUsername(identity?.username || '');
-    setAuthType(identity?.authType || 'password');
+    const authType = identity?.authType || 'password';
+    setUsePassword(authType === 'password' || authType === 'key_password');
+    setUseKey(authType === 'key' || authType === 'key_password');
     setPassword('');
     setClearPassword(false);
-    setKeyMode(identity?.sshKey ? 'existing' : 'existing');
+    setKeyMode('existing');
     setSshKeyId(identity?.sshKey?.id || '');
     setPrivateKey('');
     setKeyPassphrase('');
@@ -71,16 +97,7 @@ function IdentityFormModal({ open, onClose, identity, onSaved }) {
       .catch(() => setKeys([]));
   }, [open, identity]);
 
-  const needsKey = authType === 'key' || authType === 'key_password';
-  const needsPassword = authType === 'password' || authType === 'key_password';
-
-  const handleFileUpload = (e) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    const reader = new FileReader();
-    reader.onload = () => setPrivateKey(String(reader.result || ''));
-    reader.readAsText(file);
-  };
+  const authType = usePassword && useKey ? 'key_password' : useKey ? 'key' : 'password';
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -88,9 +105,10 @@ function IdentityFormModal({ open, onClose, identity, onSaved }) {
 
     if (!name.trim()) return setError('Name is required');
     if (!username.trim()) return setError('Username is required');
-    if (needsKey) {
+    if (!usePassword && !useKey) return setError('Choose password, private key, or both');
+    if (useKey) {
       if (keyMode === 'existing' && !sshKeyId) return setError('Select a key');
-      if (keyMode === 'new' && !privateKey.trim()) return setError('Paste or upload a private key');
+      if (keyMode === 'new' && !privateKey.trim()) return setError('Paste, drop, or upload a private key');
     }
 
     const payload = {
@@ -100,13 +118,15 @@ function IdentityFormModal({ open, onClose, identity, onSaved }) {
       authType,
     };
 
-    if (needsPassword) {
+    if (usePassword) {
       if (password) payload.password = password;
       else if (isEdit && clearPassword) payload.clearPassword = true;
       // else: omitted -> keep existing on edit
+    } else if (isEdit) {
+      payload.clearPassword = true;
     }
 
-    if (needsKey) {
+    if (useKey) {
       if (keyMode === 'existing') {
         payload.sshKeyId = sshKeyId;
       } else if (keyMode === 'new') {
@@ -118,6 +138,8 @@ function IdentityFormModal({ open, onClose, identity, onSaved }) {
           bits: genBits ? Number(genBits) : undefined,
         };
       }
+    } else {
+      payload.sshKeyId = null;
     }
 
     setSubmitting(true);
@@ -180,22 +202,31 @@ function IdentityFormModal({ open, onClose, identity, onSaved }) {
         </div>
 
         <div>
-          <label className={labelCls}>Authentication type</label>
-          <div className="flex gap-4">
-            {AUTH_TYPES.map((t) => (
-              <label key={t.value} className="flex cursor-pointer items-center gap-2 text-sm text-foreground">
-                <input
-                  type="radio"
-                  checked={authType === t.value}
-                  onChange={() => setAuthType(t.value)}
-                />
-                {t.label}
-              </label>
-            ))}
+          <label className={labelCls}>Authentication</label>
+          <div className="flex flex-col gap-2 sm:flex-row">
+            <ToggleCard
+              active={usePassword}
+              icon={Lock}
+              title="Password"
+              description="Authenticate with a username and password."
+              onClick={() => setUsePassword((v) => !v)}
+            />
+            <ToggleCard
+              active={useKey}
+              icon={KeyRound}
+              title="Private key"
+              description="Authenticate with an SSH key from the keystore."
+              onClick={() => setUseKey((v) => !v)}
+            />
           </div>
+          {usePassword && useKey && (
+            <p className="mt-1.5 text-[11px] text-muted-foreground">
+              Key is tried first, then password — also works for servers that require both.
+            </p>
+          )}
         </div>
 
-        {needsPassword && (
+        {usePassword && (
           <div>
             <label className={labelCls}>
               Password{' '}
@@ -225,7 +256,7 @@ function IdentityFormModal({ open, onClose, identity, onSaved }) {
           </div>
         )}
 
-        {needsKey && (
+        {useKey && (
           <div className="space-y-3 rounded-md border border-border p-3">
             <div className="flex gap-4 text-sm">
               <label className="flex cursor-pointer items-center gap-2">
@@ -234,7 +265,7 @@ function IdentityFormModal({ open, onClose, identity, onSaved }) {
               </label>
               <label className="flex cursor-pointer items-center gap-2">
                 <input type="radio" checked={keyMode === 'new'} onChange={() => setKeyMode('new')} />
-                Paste / upload key
+                Import new key
               </label>
               <label className="flex cursor-pointer items-center gap-2">
                 <input type="radio" checked={keyMode === 'generate'} onChange={() => setKeyMode('generate')} />
@@ -258,31 +289,14 @@ function IdentityFormModal({ open, onClose, identity, onSaved }) {
             )}
 
             {keyMode === 'new' && (
-              <div className="space-y-2">
-                <div className="flex items-center justify-between">
-                  <label className="text-xs font-medium text-muted-foreground">Private key</label>
-                  <label className="flex cursor-pointer items-center gap-1 text-xs text-primary hover:underline">
-                    <Upload className="h-3 w-3" />
-                    Upload file
-                    <input type="file" className="hidden" onChange={handleFileUpload} />
-                  </label>
-                </div>
-                <textarea
-                  rows={5}
-                  className="w-full rounded-md border border-input bg-background px-3 py-2 font-mono text-xs text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
-                  value={privateKey}
-                  onChange={(e) => setPrivateKey(e.target.value)}
-                  placeholder="-----BEGIN OPENSSH PRIVATE KEY-----"
-                  spellCheck={false}
-                />
-                <PasswordInput
-                  className={inputCls}
-                  value={keyPassphrase}
-                  onChange={(e) => setKeyPassphrase(e.target.value)}
-                  placeholder="Passphrase (if encrypted)"
-                  autoComplete="new-password"
-                />
-              </div>
+              <PrivateKeyInput
+                privateKey={privateKey}
+                onPrivateKeyChange={setPrivateKey}
+                passphrase={keyPassphrase}
+                onPassphraseChange={setKeyPassphrase}
+                rows={4}
+                showHint={false}
+              />
             )}
 
             {keyMode === 'generate' && (
@@ -310,9 +324,11 @@ function IdentityFormModal({ open, onClose, identity, onSaved }) {
                 </div>
               </div>
             )}
-            <p className="text-[11px] text-muted-foreground">
-              A new key is stored as &quot;{name.trim() || '<name>'} key&quot; and linked to this identity.
-            </p>
+            {keyMode !== 'existing' && (
+              <p className="text-[11px] text-muted-foreground">
+                {keyMode === 'new' ? 'The imported' : 'The generated'} key is stored as &quot;{name.trim() || '<name>'} key&quot; and linked to this identity.
+              </p>
+            )}
           </div>
         )}
 

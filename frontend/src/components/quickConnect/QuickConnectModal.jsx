@@ -1,11 +1,11 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { ChevronDown, ChevronRight, Upload, Clock, Loader2, AlertTriangle } from 'lucide-react';
+import { ChevronDown, ChevronRight, Clock, Loader2, AlertTriangle } from 'lucide-react';
 import Modal from '@/components/shared/Modal';
 import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
 import PasswordInput from '@/components/ui/PasswordInput';
 import SearchableSelect from '@/components/ui/SearchableSelect';
+import PrivateKeyInput from '@/components/keystore/PrivateKeyInput';
 import SaveServerFields from './SaveServerFields';
 import { createQuickConnectTicket, saveQuickConnectServer } from '@/services/quickConnectService';
 import { listCredentials } from '@/services/keystoreService';
@@ -55,6 +55,7 @@ function QuickConnectModal({ open, onClose }) {
   const [password, setPassword] = useState('');
   const [privateKey, setPrivateKey] = useState('');
   const [keyPassphrase, setKeyPassphrase] = useState('');
+  const [keyAlsoPassword, setKeyAlsoPassword] = useState('');
   const [credentialId, setCredentialId] = useState('');
   const [identities, setIdentities] = useState([]);
 
@@ -78,6 +79,7 @@ function QuickConnectModal({ open, onClose }) {
     setPassword('');
     setPrivateKey('');
     setKeyPassphrase('');
+    setKeyAlsoPassword('');
     setCredentialId('');
     setAdvancedOpen(false);
     setExpectedHostKey('');
@@ -114,7 +116,14 @@ function QuickConnectModal({ open, onClose }) {
 
   const buildAuth = () => {
     if (authTab === 'password') return { type: 'password', password };
-    if (authTab === 'key') return { type: 'key', privateKey: privateKey.trim(), passphrase: keyPassphrase || undefined };
+    if (authTab === 'key') {
+      return {
+        type: 'key',
+        privateKey: privateKey.trim(),
+        passphrase: keyPassphrase || undefined,
+        password: keyAlsoPassword || undefined,
+      };
+    }
     return { type: 'credential', credentialId };
   };
 
@@ -124,14 +133,6 @@ function QuickConnectModal({ open, onClose }) {
     if (authTab === 'key') return !!username.trim() && !!privateKey.trim();
     return !!credentialId; // username may be inferred from identity
   }, [host, authTab, username, password, privateKey, credentialId]);
-
-  const handleFileUpload = (e) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    const reader = new FileReader();
-    reader.onload = () => setPrivateKey(String(reader.result || ''));
-    reader.readAsText(file);
-  };
 
   const doConnect = async () => {
     setError(null);
@@ -168,6 +169,12 @@ function QuickConnectModal({ open, onClose }) {
             'This host matches a production server and requires the access-request flow.',
           serverId:
             err.response?.data?.error?.serverId || err.response?.data?.error?.details?.serverId,
+        });
+      } else if (code === 'TARGET_NOT_ALLOWED') {
+        setError({
+          message:
+            err.response?.data?.error?.message ||
+            "This address can't be targeted — loopback, link-local and cloud metadata addresses are blocked.",
         });
       } else {
         setError({ message: err.response?.data?.error?.message || err.message || 'Failed to connect' });
@@ -332,30 +339,30 @@ function QuickConnectModal({ open, onClose }) {
               />
             )}
             {authTab === 'key' && (
-              <div className="space-y-2">
-                <div className="flex items-center justify-between">
-                  <label className="text-xs font-medium text-muted-foreground">Private key</label>
-                  <label className="flex cursor-pointer items-center gap-1 text-xs text-primary hover:underline">
-                    <Upload className="h-3 w-3" />
-                    Upload file
-                    <input type="file" className="hidden" onChange={handleFileUpload} />
-                  </label>
-                </div>
-                <textarea
+              <div className="space-y-3">
+                <PrivateKeyInput
+                  privateKey={privateKey}
+                  onPrivateKeyChange={setPrivateKey}
+                  passphrase={keyPassphrase}
+                  onPassphraseChange={setKeyPassphrase}
                   rows={4}
-                  className="w-full rounded-md border border-input bg-background px-3 py-2 font-mono text-xs text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
-                  value={privateKey}
-                  onChange={(e) => setPrivateKey(e.target.value)}
-                  placeholder="-----BEGIN OPENSSH PRIVATE KEY-----"
-                  spellCheck={false}
+                  showHint={false}
                 />
-                <PasswordInput
-                  className={inputCls}
-                  value={keyPassphrase}
-                  onChange={(e) => setKeyPassphrase(e.target.value)}
-                  placeholder="Passphrase (if encrypted)"
-                  autoComplete="off"
-                />
+                <div>
+                  <label className={labelCls}>
+                    Also send a password{' '}
+                    <span className="font-normal text-muted-foreground">
+                      (optional — for servers requiring both a key and a password)
+                    </span>
+                  </label>
+                  <PasswordInput
+                    className={inputCls}
+                    value={keyAlsoPassword}
+                    onChange={(e) => setKeyAlsoPassword(e.target.value)}
+                    placeholder="Password"
+                    autoComplete="off"
+                  />
+                </div>
               </div>
             )}
             {authTab === 'credential' && (

@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useState } from 'react';
-import { Plus, Pencil, Trash2, PlugZap, Eye, KeyRound } from 'lucide-react';
+import { useCallback, useEffect, useImperativeHandle, useState, forwardRef } from 'react';
+import { Pencil, Trash2, PlugZap, Eye, KeyRound } from 'lucide-react';
 import DataTable from '@/components/shared/DataTable';
 import ConfirmDialog from '@/components/shared/ConfirmDialog';
 import EmptyState from '@/components/ui/EmptyState';
@@ -10,7 +10,7 @@ import TestConnectionModal from './TestConnectionModal';
 import { listCredentials, deleteCredential } from '@/services/keystoreService';
 import { relativeTime, formatDateTime } from '@/utils/time';
 
-function IdentitiesTab({ canManage }) {
+const IdentitiesTab = forwardRef(function IdentitiesTab({ canManage }, ref) {
   const [credentials, setCredentials] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -31,8 +31,10 @@ function IdentitiesTab({ canManage }) {
     try {
       const data = await listCredentials();
       setCredentials(data);
+      return data;
     } catch (err) {
       setError(err.response?.data?.error?.message || err.message || 'Failed to load identities');
+      return [];
     } finally {
       setLoading(false);
     }
@@ -41,6 +43,14 @@ function IdentitiesTab({ canManage }) {
   useEffect(() => {
     fetch();
   }, [fetch]);
+
+  useImperativeHandle(ref, () => ({
+    openNew: () => {
+      setEditing(null);
+      setFormOpen(true);
+    },
+    highlight: (id) => setDetailId(id),
+  }));
 
   const handleDelete = async (force = false) => {
     if (!deleteTarget) return;
@@ -159,20 +169,6 @@ function IdentitiesTab({ canManage }) {
         </div>
       )}
 
-      <div className="flex justify-end">
-        {canManage && (
-          <button
-            onClick={() => {
-              setEditing(null);
-              setFormOpen(true);
-            }}
-            className="flex h-9 items-center gap-2 rounded-md bg-primary px-4 text-sm font-medium text-primary-foreground hover:bg-primary/90"
-          >
-            <Plus className="h-4 w-4" /> New identity
-          </button>
-        )}
-      </div>
-
       <DataTable
         columns={columns}
         data={credentials}
@@ -241,6 +237,6 @@ function IdentitiesTab({ canManage }) {
       )}
     </div>
   );
-}
+});
 
 export default IdentitiesTab;

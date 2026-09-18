@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useState } from 'react';
-import { ChevronDown, ChevronRight, RefreshCw, Send, History } from 'lucide-react';
+import { useCallback, useEffect, useImperativeHandle, useRef, useState, forwardRef } from 'react';
+import { ChevronDown, ChevronRight, RefreshCw, History } from 'lucide-react';
 import EmptyState from '@/components/ui/EmptyState';
 import { Badge } from '@/components/ui/badge';
 import DeployWizardModal from './DeployWizardModal';
@@ -76,8 +76,8 @@ function DeploymentRow({ deployment, canRetry, onRetry }) {
   );
 }
 
-function BatchRow({ batch, canRetry, onChanged }) {
-  const [open, setOpen] = useState(false);
+function BatchRow({ batch, canRetry, onChanged, defaultOpen, highlighted, rowRef }) {
+  const [open, setOpen] = useState(!!defaultOpen);
   const [deployments, setDeployments] = useState([]);
   const [loading, setLoading] = useState(false);
 
@@ -116,7 +116,12 @@ function BatchRow({ batch, canRetry, onChanged }) {
   };
 
   return (
-    <div className="rounded-lg border border-border bg-card">
+    <div
+      ref={rowRef}
+      className={`rounded-lg border bg-card transition-colors ${
+        highlighted ? 'border-primary ring-2 ring-primary/40' : 'border-border'
+      }`}
+    >
       <button
         type="button"
         onClick={() => setOpen((o) => !o)}
@@ -163,18 +168,22 @@ function BatchRow({ batch, canRetry, onChanged }) {
   );
 }
 
-function DeploymentsTab({ canManage }) {
+const DeploymentsTab = forwardRef(function DeploymentsTab({ canManage }, ref) {
   const [batches, setBatches] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [wizardOpen, setWizardOpen] = useState(false);
+  const [highlightId, setHighlightId] = useState(null);
+  const rowRefs = useRef({});
 
   const fetch = useCallback(async () => {
     try {
       const data = await listDeploymentBatches({ limit: 20 });
       setBatches(data);
+      return data;
     } catch (err) {
       setError(err.response?.data?.error?.message || err.message || 'Failed to load deployments');
+      return [];
     } finally {
       setLoading(false);
     }
@@ -192,22 +201,24 @@ function DeploymentsTab({ canManage }) {
     return () => clearInterval(id);
   }, [batches, fetch]);
 
+  useImperativeHandle(ref, () => ({
+    openDeploy: () => setWizardOpen(true),
+    // Best-effort: highlight+expand the batch matching a batchId. Individual
+    // deployment ids aren't addressable from the collapsed batch list.
+    highlight: async (id) => {
+      const list = batches.length ? batches : await fetch();
+      if (!list.some((b) => b.batchId === id)) return;
+      setHighlightId(id);
+      setTimeout(() => rowRefs.current[id]?.scrollIntoView({ behavior: 'smooth', block: 'center' }), 100);
+      setTimeout(() => setHighlightId((cur) => (cur === id ? null : cur)), 2500);
+    },
+  }));
+
   return (
     <div className="space-y-4">
       {error && (
         <div className="rounded-md border border-destructive/50 bg-destructive/10 px-3 py-2 text-sm text-destructive">
           {error}
-        </div>
-      )}
-
-      {canManage && (
-        <div className="flex justify-end">
-          <button
-            onClick={() => setWizardOpen(true)}
-            className="flex h-9 items-center gap-2 rounded-md bg-primary px-4 text-sm font-medium text-primary-foreground hover:bg-primary/90"
-          >
-            <Send className="h-4 w-4" /> Deploy / rotate key
-          </button>
         </div>
       )}
 
@@ -227,7 +238,17 @@ function DeploymentsTab({ canManage }) {
       ) : (
         <div className="space-y-2">
           {batches.map((b) => (
-            <BatchRow key={b.batchId} batch={b} canRetry={canManage} onChanged={fetch} />
+            <BatchRow
+              key={b.batchId}
+              batch={b}
+              canRetry={canManage}
+              onChanged={fetch}
+              defaultOpen={highlightId === b.batchId}
+              highlighted={highlightId === b.batchId}
+              rowRef={(el) => {
+                rowRefs.current[b.batchId] = el;
+              }}
+            />
           ))}
         </div>
       )}
@@ -237,6 +258,6 @@ function DeploymentsTab({ canManage }) {
       )}
     </div>
   );
-}
+});
 
 export default DeploymentsTab;
