@@ -1,0 +1,36 @@
+# Keep the build context small (and secrets out of it) for every image
+# built from the repo root: Dockerfile.backend, Dockerfile.frontend and
+# Dockerfile.allinone.
+
+# Dependencies and build output are rebuilt inside the image.
+**/node_modules
+**/dist
+**/build
+**/coverage
+**/.vite
+
+# Local env files and secrets never belong in an image.
+**/.env
+**/.env.*
+!**/.env.example
+**/*.pem
+**/*.key
+
+# VCS, editors, OS noise
+.git
+.github
+**/.DS_Store
+**/.vscode
+**/.idea
+**/*.swp
+**/*.log
+
+# Not needed by any image
+docs
+tui
+UI_TUI
+**/*.md
+!backend/prisma/**/*.md
+docker-compose*.yml
+backend/scripts/e2e-*
+backend/.two-user-e2e.mjs

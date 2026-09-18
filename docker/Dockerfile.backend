@@ -26,7 +26,9 @@ LABEL org.opencontainers.image.title="shellius-backend" \
       org.opencontainers.image.source="https://github.com/YavLabs/shellius"
 
 # openssh-keygen → CA key generation + cert signing (caService.js shells out)
-RUN apk add --no-cache openssh-keygen openssh-client && \
+# apk upgrade: OS security fixes (e.g. OpenSSL) newer than the base image.
+RUN apk upgrade --no-cache && \
+    apk add --no-cache openssh-keygen openssh-client && \
     addgroup -g 1001 -S appgroup && \
     adduser -S appuser -u 1001 -G appgroup
 

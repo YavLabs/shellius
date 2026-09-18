@@ -25,6 +25,8 @@ env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
   BACKEND_IMAGE: yavadmin/shellius-backend
   FRONTEND_IMAGE: yavadmin/shellius-frontend
+  # Web UI + API + nginx in one container (docker/Dockerfile.allinone)
+  ALLINONE_IMAGE: yavadmin/shellius
 
 jobs:
   version-check:
@@ -61,10 +63,12 @@ jobs:
             echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
             echo "backend_tags=${{ env.BACKEND_IMAGE }}:${VERSION},${{ env.BACKEND_IMAGE }}:${MAJOR_MINOR},${{ env.BACKEND_IMAGE }}:latest,${{ env.BACKEND_IMAGE }}:sha-${SHORT_SHA}" >> "$GITHUB_OUTPUT"
             echo "frontend_tags=${{ env.FRONTEND_IMAGE }}:${VERSION},${{ env.FRONTEND_IMAGE }}:${MAJOR_MINOR},${{ env.FRONTEND_IMAGE }}:latest,${{ env.FRONTEND_IMAGE }}:sha-${SHORT_SHA}" >> "$GITHUB_OUTPUT"
+            echo "allinone_tags=${{ env.ALLINONE_IMAGE }}:${VERSION},${{ env.ALLINONE_IMAGE }}:${MAJOR_MINOR},${{ env.ALLINONE_IMAGE }}:latest,${{ env.ALLINONE_IMAGE }}:sha-${SHORT_SHA}" >> "$GITHUB_OUTPUT"
           else
             echo "version=${APP_VERSION}" >> "$GITHUB_OUTPUT"
             echo "backend_tags=${{ env.BACKEND_IMAGE }}:latest,${{ env.BACKEND_IMAGE }}:sha-${SHORT_SHA}" >> "$GITHUB_OUTPUT"
             echo "frontend_tags=${{ env.FRONTEND_IMAGE }}:latest,${{ env.FRONTEND_IMAGE }}:sha-${SHORT_SHA}" >> "$GITHUB_OUTPUT"
+            echo "allinone_tags=${{ env.ALLINONE_IMAGE }}:latest,${{ env.ALLINONE_IMAGE }}:sha-${SHORT_SHA}" >> "$GITHUB_OUTPUT"
           fi
 
       # ── Docker Hub login ─────────────────────────────────────────────────
@@ -113,6 +117,24 @@ jobs:
             org.opencontainers.image.version=${{ steps.meta.outputs.version }}
           cache-from: type=registry,ref=${{ env.FRONTEND_IMAGE }}:buildcache
           cache-to:   type=registry,ref=${{ env.FRONTEND_IMAGE }}:buildcache,mode=max
+
+      # ── Build & push all-in-one (web UI + API + nginx) ───────────────────
+      - name: Build & push all-in-one image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: docker/Dockerfile.allinone
+          push: true
+          tags: ${{ steps.meta.outputs.allinone_tags }}
+          build-args: |
+            APP_VERSION=${{ steps.meta.outputs.app_version }}
+            GIT_SHA=${{ steps.meta.outputs.sha }}
+          labels: |
+            org.opencontainers.image.source=https://github.com/YavLabs/shellius
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.version=${{ steps.meta.outputs.version }}
+          cache-from: type=registry,ref=${{ env.ALLINONE_IMAGE }}:buildcache
+          cache-to:   type=registry,ref=${{ env.ALLINONE_IMAGE }}:buildcache,mode=max
 
   release:
     name: Create GitHub Release

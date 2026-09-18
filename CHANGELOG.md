@@ -11,6 +11,17 @@ Tracked here as work lands on `main`; moved into a dated section on release
 
 ### Added
 
+- **All-in-one Docker image** `yavadmin/shellius` (`docker/Dockerfile.allinone`): web UI, API
+  and nginx in one container, listening on :8080 and running non-root.
+  - ~93 MB compressed (~405 MB on disk), smaller than the backend image alone (~156 MB).
+    A Trivy scan reports no HIGH/CRITICAL findings.
+  - Production dependencies only, a Postgres-only Prisma engine, and no npm/yarn at runtime.
+  - `tini` plus a small supervisor runs migrations and the seed, then keeps the API and nginx
+    together: if either dies, the container exits so it restarts as a unit.
+  - Published by CI alongside the two existing images, with `docker-compose.allinone.yml` and
+    docs in `docs/DEPLOYMENT.md` §4.0.
+- Root `.dockerignore`, so every image build skips `node_modules`, `.env` files, git history
+  and docs.
 - Terminal workspace **session recovery**:
   - Tabs re-attach automatically after network drops, with backoff and offline awareness.
   - When a session is really gone (Shellius restarted, access expired or revoked, admin
@@ -44,6 +55,11 @@ Tracked here as work lands on `main`; moved into a dated section on release
 
 ### Fixed
 
+- **Security:** `multer` (file uploads for bulk import) upgraded from 1.4.5 to 2.4.0; 1.x has
+  several HIGH advisories that `npm audit` did not report. All three Dockerfiles now run
+  `apk upgrade`, so images pick up Alpine security fixes (e.g. OpenSSL 3.5.8) released after
+  the base image. Dev-tooling advisories were fixed with `npm audit fix`; production dependency
+  audits are clean for the backend and frontend.
 - **Security:** only the person who requested access can open a terminal with an approved access
   request. Before, an admin (who can view every request) or the request's reviewer could use
   someone else's approval to open a shell on a Keystore (credential-mode) server as themselves.

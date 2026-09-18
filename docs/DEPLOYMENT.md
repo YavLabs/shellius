@@ -111,7 +111,7 @@ platform's env var UI, never commit it). Full precedent copies live in
 | `NODE_ENV` | Yes | `development` | No | Set `production` for deployments — enables the default-secret refusal check and disables verbose stack traces |
 | `PORT` | No | `3001` | No | Backend HTTP/WebSocket port |
 | `TRAEFIK_HOST` | Recommended | — | No | Public hostname; derives CORS origin, frontend URL, and SSO callback base when set |
-| `PUBLIC_URL` | No | derived from `TRAEFIK_HOST` | No | Explicit public base URL override |
+| `PUBLIC_BASE_URL` | No | derived from `TRAEFIK_HOST` | No | Explicit public base URL override (links in emails, CORS, terminal WebSocket origin check) |
 | `APP_URL` | No | derived | No | Overrides the base used to build the SSO redirect URI specifically |
 | `PUBLIC_API_URL` | No | derived | No | Explicit absolute API URL (bootstrap script, invite links) when not using `TRAEFIK_HOST` |
 | `PUBLIC_GATEWAY_HOST` | No | `localhost` | No | Hostname RDP clients use to reach the WebSocket gateway |
@@ -237,7 +237,7 @@ restarting the container.
 
 ## 4. Fresh deployment
 
-Three compose files, pick the one that matches your setup:
+Pick the compose file that matches your setup:
 
 | File | When to use it |
 |---|---|
@@ -245,7 +245,70 @@ Three compose files, pick the one that matches your setup:
 | `docker-compose.prod.yml` | Production, **pre-built images from Docker Hub**, Traefik labels for an external Traefik on a shared network, no host ports published |
 | `docker-compose.deploy.yml` | Production, **builds from source**, single host behind your own external reverse proxy (e.g. Nginx Proxy Manager), tailored example for an external/managed Postgres |
 | `docker-compose.coolify.yml` | Coolify "Docker Compose" resource — see §6 |
+| `docker-compose.allinone.yml` | Production with the **single all-in-one image** (web UI + API + nginx in one container) — see §4.0 |
 | `docker-compose.dev.yml` | Infra-only (Postgres + Redis + guacd) for running `backend`/`frontend` with `npm run dev` outside Docker |
+
+### 4.0 All-in-one image (`yavadmin/shellius`)
+
+One container holds the web UI, the API and nginx. It's the simplest way to run Shellius
+anywhere you can run a single container: a VM, Coolify, Render, ECS, Kubernetes.
+
+| Image | Compressed | On disk | Contains |
+|---|---|---|---|
+| `yavadmin/shellius` (all-in-one) | ~93 MB | ~405 MB | UI + API + nginx |
+| `yavadmin/shellius-backend` | ~156 MB | ~720 MB | API |
+| `yavadmin/shellius-frontend` | ~29 MB | ~105 MB | UI (nginx) |
+
+The all-in-one image is smaller than the backend image alone. It installs production
+dependencies only (plus the Prisma CLI for migrations) and ships only the native Postgres query
+engine. It also drops npm/yarn from the runtime and strips source maps and type declarations.
+
+**What runs inside:**
+- `tini` (PID 1) → `shellius-start`, which runs `prisma migrate deploy` (required) and the
+  idempotent seed (soft-fail), then starts the API on `127.0.0.1:3001` and nginx on **`:8080`**.
+- nginx serves the SPA from disk and proxies `/api` (REST and the terminal WebSockets) to the
+  API. Hashed assets are cached for a year, `index.html` is never cached, responses are gzipped,
+  and access logs go to stdout without query strings.
+- If either process exits, the other is stopped and the container exits non-zero, so your
+  restart policy brings the whole unit back. `docker stop` forwards SIGTERM, and the API ends
+  live terminal sessions cleanly.
+- Everything runs as the unprivileged `app` user (uid 1001).
+- The built-in healthcheck calls `GET /api/health` through nginx, so it covers both processes.
+
+**Still separate:** PostgreSQL, Redis, and optionally MinIO/S3 (recordings) and guacd (RDP),
+exactly as with the two-image setup. The env vars are the same `.env.prod` (§3).
+
+```bash
+cp .env.prod.example .env.prod          # fill every <CHANGE_ME>
+docker compose -f docker-compose.allinone.yml --env-file .env.prod up -d
+# → http://<host>:8080
+```
+
+Or without compose, against managed Postgres/Redis:
+
+```bash
+docker run -d --name shellius -p 8080:8080 --env-file .env.prod \
+  -e GUACD_HOST=guacd.internal \
+  --restart unless-stopped yavadmin/shellius:latest
+```
+
+**Behind a TLS proxy** (Traefik, Caddy, Coolify, a cloud load balancer), point it at port 8080
+and set:
+- `TRAEFIK_HOST=shellius.example.com`. Despite the name, it works behind any proxy: the bare
+  hostname derives the public URL, CORS, SSO callbacks, host install links and the terminal
+  WebSocket origin check. Alternatively, set `PUBLIC_BASE_URL` and `PUBLIC_API_URL` explicitly.
+- `TRUST_PROXY=2`, because there are two hops (your proxy, then the bundled nginx) before the
+  API. This lets rate limiting and audit logs see real client IPs. Leave it unset if clients
+  hit the container directly.
+
+In **Coolify**, create an "Application" from the Docker image `yavadmin/shellius`, set the port
+to `8080`, and add the §3 env vars. Postgres and Redis can be Coolify databases.
+
+Build it yourself: `docker build -f docker/Dockerfile.allinone -t shellius:local .` (about
+1 minute; BuildKit caches npm downloads between builds).
+
+Single process only: live SSH sessions are held in the API's memory, so run **one** replica
+(same as the backend image).
 
 ### 4.1 Using `docker-compose.prod.yml` (recommended for most self-hosters)
 
