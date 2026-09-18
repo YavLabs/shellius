@@ -100,7 +100,8 @@ everything under `/api/mfa/*`, and `GET /api/settings/mfa/public` (if present).
   applies to SSO).
 - On failure: `/auth/callback#error=<code>` where code ∈ `domain_not_allowed`,
   `email_not_verified`, `account_disabled`, `provisioning_disabled`,
-  `identity_conflict`, `state_mismatch`, `sso_not_configured`, `sso_failed`.
+  `identity_conflict`, `state_mismatch`, `sso_not_configured`, `sso_failed`,
+  `org_not_allowed` (GitHub `allowedOrgs`, see Revision 2).
 - SSO config (`GET/PUT /api/auth/sso/config`) adds `allowedDomains: string[]`
   and `requireVerifiedEmail: boolean`. Env preset: `SSO_ALLOWED_DOMAINS`
   (comma-separated) — surfaced to the admin UI at
@@ -158,6 +159,13 @@ accounts live in `UserIdentity` (one row per provider per user; unique on
   row and `lastLoginAt`.
 - Env Google preset (`SSO_GOOGLE_*`) appears as a virtual provider
   `{ id: 'env-google', source: 'env' }` when no DB provider has `presetId: google`.
+  Implementation note: it is materialised into a real `SsoConfig` row lazily,
+  at the start of the **first login** that uses it (`resolveProviderForStart`),
+  not at the callback. That row's real id is what gets stored in the login's
+  Redis `state` and becomes its `callbackUrl` for that attempt, so the
+  callback never needs to special-case the literal `env-google` id. Once
+  materialised, `listProviders`/`public-status` stop returning the virtual
+  entry (a real, editable DB row exists instead).
 - `GET /api/auth/me` adds `identities: [{ id, providerId, providerName, presetId, email, lastLoginAt }]`;
   `DELETE /api/auth/identities/:id` unlinks (409 `LAST_SIGN_IN_METHOD` if it
   would leave the user without any way to sign in).

@@ -140,7 +140,7 @@ router.post(
   asyncHandler(async (req, res) => {
     const { email } = req.body;
     const org = await resolvePublicOrg(req);
-    const sso = org ? await ssoService.getPublicSsoStatus(org.id) : { enabled: false, presetId: null };
+    const sso = org ? await ssoService.getPublicSsoSummary(org.id) : { enabled: false, presetId: null, providers: [] };
     const state = await authService.getLoginState(email);
     res.json({
       success: true,
@@ -148,6 +148,7 @@ router.post(
         hasPassword: state.hasPassword,
         ssoEnabled: !!sso.enabled,
         ssoPresetId: sso.presetId || null,
+        providers: sso.providers || [],
         orgSlug: org?.slug || null,
       },
     });
@@ -221,7 +222,31 @@ router.get(
   authenticate,
   asyncHandler(async (req, res) => {
     const user = await authService.getProfile(req.user.userId);
-    res.json({ success: true, data: { user } });
+    const identities = await ssoService.listUserIdentities(req.user.userId);
+    res.json({ success: true, data: { user: { ...user, identities } } });
+  })
+);
+
+// ---------------------------------------------------------------------------
+// DELETE /identities/:id — unlink one of the caller's SSO identities
+// ---------------------------------------------------------------------------
+
+router.delete(
+  '/identities/:id',
+  authenticate,
+  asyncHandler(async (req, res) => {
+    await ssoService.deleteUserIdentity(req.user.userId, req.params.id);
+    await auditLog({
+      orgId: req.user.orgId,
+      actorId: req.user.userId,
+      action: 'auth.identity.unlinked',
+      resourceType: 'User',
+      resourceId: req.user.userId,
+      metadata: { identityId: req.params.id },
+      ipAddress: req.ip,
+      userAgent: req.headers['user-agent'],
+    });
+    res.status(204).send();
   })
 );
 

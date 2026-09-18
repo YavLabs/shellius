@@ -63,7 +63,10 @@ describe('SSO callback — PKCE, nonce, state cookie, SSRF guard, jose verificat
   test('generates a PKCE code_verifier/code_challenge (S256) and nonce on initiate', () => {
     const idx = ssoRouteSrc.indexOf("router.get(\n  '/:orgSlug',");
     expect(idx).toBeGreaterThan(-1);
-    const block = ssoRouteSrc.slice(idx, idx + 1400);
+    // Revision 2: this handler also branches to the GitHub authorize-URL
+    // path (no nonce — GitHub is OAuth2, not OIDC) before reaching the OIDC
+    // branch, so the window needs to be wide enough to cover both.
+    const block = ssoRouteSrc.slice(idx, idx + 2200);
     expect(block).toContain('generatePkce');
     expect(block).toContain('code_challenge_method');
     expect(block).toContain("'S256'");
@@ -76,10 +79,15 @@ describe('SSO callback — PKCE, nonce, state cookie, SSRF guard, jose verificat
   });
 
   test('callback validates the state cookie before proceeding', () => {
-    const idx = ssoRouteSrc.indexOf('async function runOidcCallback');
+    // Revision 2: state/cookie validation lives in the shared dispatcher
+    // (runSsoCallback) so it applies uniformly to both the OIDC and GitHub
+    // callback handlers, which it calls only after validation passes.
+    const idx = ssoRouteSrc.indexOf('async function runSsoCallback');
+    expect(idx).toBeGreaterThan(-1);
     const block = ssoRouteSrc.slice(idx, idx + 500);
     expect(block).toContain('cookieState');
     expect(block).toContain('state_mismatch');
+    expect(ssoRouteSrc.indexOf('return runOidcCallback(req, res,', idx)).toBeGreaterThan(idx);
   });
 
   test('verifies the ID token via jose (JWKS, issuer, audience) and checks nonce', () => {
@@ -106,8 +114,14 @@ describe('SSO callback — PKCE, nonce, state cookie, SSRF guard, jose verificat
     const idx = ssoRouteSrc.indexOf('async function runOidcCallback');
     const block = ssoRouteSrc.slice(idx, idx + 5000);
     expect(block).not.toMatch(/access_token:\s*accessToken/);
-    expect(block).toContain('oneTimeCode');
-    expect(block).toContain('saveExchangeCode');
+    // Revision 2: runOidcCallback (and runGithubCallback) both hand off to a
+    // shared finishSsoCallback() for reconciliation + the one-time exchange
+    // code, so the OIDC and GitHub paths can't diverge on this guarantee.
+    const tailIdx = ssoRouteSrc.indexOf('async function finishSsoCallback');
+    const tailBlock = ssoRouteSrc.slice(tailIdx, tailIdx + 1200);
+    expect(tailBlock).toContain('oneTimeCode');
+    expect(tailBlock).toContain('saveExchangeCode');
+    expect(block).toContain('finishSsoCallback');
   });
 
   test('POST /exchange is a login-shaped endpoint that runs mfaGate', () => {
