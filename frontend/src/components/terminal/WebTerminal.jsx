@@ -179,11 +179,45 @@ function WebTerminal({ requestId, ticket, label, principal, onClose }) {
     // must never write output or flip status/error for the live session.
     const isCurrent = () => wsRef.current === ws;
 
-    ws.onopen = () => {
-      if (!isCurrent()) return;
+    // Status only flips to CONNECTED once SSH is actually up (backend
+    // `connected` frame or first shell output) — an open WebSocket alone just
+    // means the backend accepted the upgrade. Watchdogs turn a silent hang
+    // (proxy not forwarding WebSocket upgrades, unreachable host) into a
+    // clear error instead of an endless "Connecting".
+    let sshUp = false;
+    const markUp = () => {
+      if (sshUp || !isCurrent()) return;
+      sshUp = true;
+      clearTimeout(openTimer);
+      clearTimeout(handshakeTimer);
       setStatus(STATUS.CONNECTED);
       setEverConnected(true);
       term.focus();
+    };
+    const fail = (message) => {
+      if (!isCurrent()) return;
+      setError((prev) => prev || message);
+      setStatus(STATUS.DISCONNECTED);
+      try { ws.close(4000, 'client timeout'); } catch { /* ignore */ }
+    };
+    let handshakeTimer;
+    const openTimer = setTimeout(() => {
+      if (ws.readyState !== WebSocket.OPEN) {
+        fail(
+          'Could not reach the terminal service. The WebSocket to /api/terminal/ssh did not open — ' +
+          'if Shellius is behind a proxy, it must forward WebSocket upgrades.'
+        );
+      }
+    }, 10_000);
+
+    ws.onopen = () => {
+      if (!isCurrent()) return;
+      clearTimeout(openTimer);
+      handshakeTimer = setTimeout(() => {
+        if (!sshUp) {
+          fail('Timed out establishing the SSH session. The host may be unreachable from the Shellius backend, or a firewall is dropping the connection.');
+        }
+      }, 45_000);
     };
 
     ws.onmessage = (evt) => {
@@ -194,7 +228,7 @@ function WebTerminal({ requestId, ticket, label, principal, onClose }) {
       } else if (evt.data instanceof ArrayBuffer) {
         text = new TextDecoder().decode(evt.data);
       } else if (evt.data instanceof Blob) {
-        evt.data.text().then((t) => term.write(t));
+        evt.data.text().then((t) => { markUp(); term.write(t); });
         return;
       }
       // Backend may send structured JSON control frames (e.g. errors, host
@@ -204,6 +238,8 @@ function WebTerminal({ requestId, ticket, label, principal, onClose }) {
         try {
           const msg = JSON.parse(text);
           if (msg && msg.type === 'error' && typeof msg.message === 'string') {
+            clearTimeout(openTimer);
+            clearTimeout(handshakeTimer);
             setError(msg.message);
             return;
           }
@@ -212,6 +248,7 @@ function WebTerminal({ requestId, ticket, label, principal, onClose }) {
             return;
           }
           if (msg && msg.type === 'connected') {
+            markUp();
             setConnectedInfo({
               sessionId: msg.sessionId,
               authMethod: msg.authMethod,
@@ -225,16 +262,21 @@ function WebTerminal({ requestId, ticket, label, principal, onClose }) {
           // not JSON — treat as raw shell output
         }
       }
+      markUp();
       term.write(text);
     };
 
     ws.onerror = () => {
       if (!isCurrent()) return;
+      clearTimeout(openTimer);
+      clearTimeout(handshakeTimer);
       setStatus(STATUS.DISCONNECTED);
       setError((prev) => prev || 'WebSocket connection error. Check your network or try reconnecting.');
     };
 
     ws.onclose = (evt) => {
+      clearTimeout(openTimer);
+      clearTimeout(handshakeTimer);
       if (!isCurrent()) return;
       setStatus(STATUS.DISCONNECTED);
       if (evt.code !== 1000 && evt.code !== 1001) {

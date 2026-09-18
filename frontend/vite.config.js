@@ -15,6 +15,9 @@ export default defineConfig({
       '/api': {
         target: 'http://localhost:3001',
         changeOrigin: true,
+        // Forward WebSocket upgrades too — the web terminal (/api/terminal/ssh)
+        // and RDP tunnel (/api/terminal/rdp) are WebSockets.
+        ws: true,
       },
     },
   },
