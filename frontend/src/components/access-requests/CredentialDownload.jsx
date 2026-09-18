@@ -173,7 +173,7 @@ function CredentialDownload({ request }) {
   return (
     <div className="mt-4 space-y-4 rounded-lg border border-border p-4">
       <div className="flex items-center justify-between">
-        <h4 className="text-sm font-semibold text-foreground">Access Credentials</h4>
+        <h4 className="text-sm font-semibold text-foreground">Access credentials</h4>
         {countdown && (
           <span className={`text-xs font-medium ${countdown === 'Expired' ? 'text-destructive' : 'text-amber-600 dark:text-amber-400'}`}>
             {countdown}
@@ -252,7 +252,7 @@ function CredentialDownload({ request }) {
       {/* Connect command shown after SSH download */}
       {sshCreds?.connectCommand && (
         <div className="space-y-1">
-          <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Connect Command</p>
+          <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Connect command</p>
           <div className="flex items-center gap-2 rounded-md border border-border bg-muted/30 px-3 py-2">
             <code className="flex-1 font-mono text-xs text-foreground break-all">
               {sshCreds.connectCommand}

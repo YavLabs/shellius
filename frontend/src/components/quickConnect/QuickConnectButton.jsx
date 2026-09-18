@@ -57,13 +57,13 @@ function QuickConnectButton({ variant = 'default', size = 'sm', className }) {
             size={size}
             className={className}
             onClick={openQuickConnect}
-            aria-label="Quick Connect"
+            aria-label="Quick connect"
           >
             <Zap className="h-4 w-4 sm:mr-1.5" />
-            <span className="hidden sm:inline">Quick Connect</span>
+            <span className="hidden sm:inline">Quick connect</span>
           </Button>
         </TooltipTrigger>
-        <TooltipContent side="bottom">Quick Connect · Ad-hoc SSH connection · shortcut: g q</TooltipContent>
+        <TooltipContent side="bottom">Quick connect · Ad-hoc SSH connection · shortcut: g q</TooltipContent>
       </Tooltip>
     </TooltipProvider>
   );

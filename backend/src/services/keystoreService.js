@@ -67,7 +67,7 @@ export function toSshKeyDTO(key, { createdBy, credentialCount, deploymentCount }
   };
 }
 
-export function toCredentialDTO(cred, { sshKey, serverCount } = {}) {
+export function toCredentialDTO(cred, { sshKey, serverCount, createdBy } = {}) {
   return {
     id: cred.id,
     name: cred.name,
@@ -81,6 +81,7 @@ export function toCredentialDTO(cred, { sshKey, serverCount } = {}) {
     updatedAt: cred.updatedAt,
     sshKey: sshKey ?? null,
     serverCount: serverCount ?? 0,
+    createdBy: createdBy ?? null,
   };
 }
 
@@ -526,8 +527,11 @@ export async function listCredentials(orgId, { search } = {}) {
       _count: { select: { servers: true } },
     },
   });
+  const userMap = await loadUsersById(orgId, creds.map((c) => c.createdById));
   return {
-    credentials: creds.map((c) => toCredentialDTO(c, { sshKey: c.sshKey, serverCount: c._count.servers })),
+    credentials: creds.map((c) =>
+      toCredentialDTO(c, { sshKey: c.sshKey, serverCount: c._count.servers, createdBy: userMap.get(c.createdById) || null })
+    ),
   };
 }
 
@@ -543,8 +547,13 @@ export async function getCredential(orgId, id) {
     },
   });
   if (!cred) throw new ApiError(404, 'Identity not found');
+  const userMap = await loadUsersById(orgId, [cred.createdById]);
   return {
-    credential: toCredentialDTO(cred, { sshKey: cred.sshKey, serverCount: cred._count.servers }),
+    credential: toCredentialDTO(cred, {
+      sshKey: cred.sshKey,
+      serverCount: cred._count.servers,
+      createdBy: userMap.get(cred.createdById) || null,
+    }),
     servers: cred.servers,
   };
 }

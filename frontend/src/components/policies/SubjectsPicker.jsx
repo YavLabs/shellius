@@ -30,7 +30,7 @@ const WINDOW_SIZE = 50;
 const ROLES = [
   {
     id: 'super_admin',
-    label: 'Super Admin',
+    label: 'Super admin',
     description: 'Full access, bypasses policy evaluation',
   },
   {

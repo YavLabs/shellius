@@ -192,7 +192,13 @@ const IdentitiesTab = forwardRef(function IdentitiesTab({ canManage }, ref) {
         onSaved={fetch}
       />
 
-      <IdentityDetailModal open={!!detailId} credentialId={detailId} onClose={() => setDetailId(null)} />
+      <IdentityDetailModal
+        open={!!detailId}
+        credentialId={detailId}
+        canManage={canManage}
+        onClose={() => setDetailId(null)}
+        onChanged={fetch}
+      />
 
       {testTarget && (
         <TestConnectionModal

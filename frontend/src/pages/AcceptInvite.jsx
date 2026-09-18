@@ -61,7 +61,7 @@ function AcceptInvite() {
       return;
     }
     if (!termsAccepted) {
-      setError('You must accept the Terms of Service and Privacy Policy to continue.');
+      setError('You must accept the terms of service and privacy policy to continue.');
       return;
     }
 
@@ -251,11 +251,11 @@ function AcceptInvite() {
                 <label htmlFor="invite-terms" className="text-sm text-muted-foreground leading-snug">
                   I agree to the{' '}
                   <a href="#" className="text-primary underline-offset-4 hover:underline">
-                    Terms of Service
+                    Terms of service
                   </a>{' '}
                   and{' '}
                   <a href="#" className="text-primary underline-offset-4 hover:underline">
-                    Privacy Policy
+                    Privacy policy
                   </a>
                 </label>
               </div>

@@ -329,7 +329,7 @@ function AuditLog() {
 
         {/* Resource type filter */}
         <div className="min-w-36">
-          <label className="mb-1 block text-xs text-muted-foreground">Resource Type</label>
+          <label className="mb-1 block text-xs text-muted-foreground">Resource type</label>
           <SearchableSelect
             className="w-full"
             value={resourceTypeFilter}

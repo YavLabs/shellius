@@ -344,7 +344,7 @@ function Users() {
     },
     {
       key: 'lastLogin',
-      label: 'Last Login',
+      label: 'Last login',
       hideBelow: 'lg',
       render: (r) => <span className="text-muted-foreground">{formatDate(r.lastLoginAt || r.lastLogin)}</span>,
     },
@@ -355,10 +355,10 @@ function Users() {
       actions: [
         { label: 'Edit', icon: Pencil, onClick: (r) => openEdit(r) },
         { label: 'Upload SSH Key', icon: KeyRound, onClick: (r) => openSsh(r) },
-        { label: 'Resend Invite', icon: Mail, onClick: (r) => handleResendInvite(r) },
-        { label: 'Send Password Reset', icon: RotateCcw, onClick: (r) => handleTriggerPasswordReset(r) },
-        { label: 'Unlock Account', icon: Unlock, hidden: (r) => !isLocked(r), onClick: (r) => handleUnlock(r) },
-        { label: 'Sign Out All Sessions', icon: LogOut, onClick: (r) => handleRevokeSessions(r) },
+        { label: 'Resend invite', icon: Mail, onClick: (r) => handleResendInvite(r) },
+        { label: 'Send password reset', icon: RotateCcw, onClick: (r) => handleTriggerPasswordReset(r) },
+        { label: 'Unlock account', icon: Unlock, hidden: (r) => !isLocked(r), onClick: (r) => handleUnlock(r) },
+        { label: 'Sign out all sessions', icon: LogOut, onClick: (r) => handleRevokeSessions(r) },
         { label: 'Deactivate', icon: UserX, onClick: (r) => handleDeactivate(r) },
         { separator: true },
         { label: 'Delete', icon: Trash2, variant: 'destructive', onClick: (r) => handleDelete(r) },

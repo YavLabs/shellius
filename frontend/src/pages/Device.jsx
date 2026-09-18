@@ -38,7 +38,7 @@ function Device() {
           <div className="mx-auto mb-4 flex justify-center">
             <BrandMark size="lg" />
           </div>
-          <h1 className="text-2xl font-bold tracking-tight text-foreground">Device Login</h1>
+          <h1 className="text-2xl font-bold tracking-tight text-foreground">Device login</h1>
           <p className="mt-1 text-sm text-muted-foreground">
             Confirm the code shown in your terminal
           </p>

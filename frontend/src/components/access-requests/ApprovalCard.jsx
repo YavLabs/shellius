@@ -40,13 +40,13 @@ function ApprovalCard({ request, onRefresh }) {
 
   return (
     <div className="mt-4 space-y-4 rounded-lg border border-border p-4">
-      <h4 className="text-sm font-semibold text-foreground">Review Request</h4>
+      <h4 className="text-sm font-semibold text-foreground">Review request</h4>
 
       {/* Approve */}
       <div className="rounded-md border border-border p-3 space-y-2">
         <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Approve</p>
         <div>
-          <label className={labelCls}>Approved Duration (minutes, leave blank to use requested)</label>
+          <label className={labelCls}>Approved duration (minutes, leave blank to use requested)</label>
           <input
             type="number"
             className={`${inputCls} w-40`}

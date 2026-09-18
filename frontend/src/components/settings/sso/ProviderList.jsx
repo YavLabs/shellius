@@ -144,7 +144,8 @@ function ProviderRow({ provider, index, count, onChanged, onEdit }) {
             </span>
             <span>Allowed: {allowedSummary(provider)}</span>
             {provider.callbackUrl && (
-              <span className="flex items-center gap-1 truncate">
+              <span className="flex min-w-0 items-center gap-1 truncate">
+                <span className="shrink-0">Redirect URI:</span>
                 <span className="truncate font-mono">{provider.callbackUrl}</span>
                 <CopyButton text={provider.callbackUrl} />
               </span>

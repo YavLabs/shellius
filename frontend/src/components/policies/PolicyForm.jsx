@@ -147,7 +147,7 @@ function Step1({ form, onChange, errors }) {
   return (
     <div className="space-y-4">
       <div>
-        <label className={labelCls}>Policy Name <span className="text-destructive">*</span></label>
+        <label className={labelCls}>Policy name <span className="text-destructive">*</span></label>
         <input
           className={inputCls}
           value={form.name}
@@ -319,7 +319,7 @@ function Step3({ form, onChange, errors }) {
   return (
     <div className="space-y-5">
       <div>
-        <label className={labelCls}>Customer Scope</label>
+        <label className={labelCls}>Customer scope</label>
         <SearchableSelect
           value={form.customerId || ''}
           onChange={(v) => {
@@ -333,7 +333,7 @@ function Step3({ form, onChange, errors }) {
       </div>
 
       <div>
-        <label className={labelCls}>Target Environments</label>
+        <label className={labelCls}>Target environments</label>
         <div className="flex flex-wrap gap-2 mt-1">
           {ENVIRONMENTS.map((env) => {
             const active = (form.targetEnvironments || []).includes(env);
@@ -358,7 +358,7 @@ function Step3({ form, onChange, errors }) {
       </div>
 
       <div>
-        <label className={labelCls}>Target Servers</label>
+        <label className={labelCls}>Target servers</label>
         <input
           className={inputCls}
           placeholder="Search servers..."
@@ -400,7 +400,7 @@ function Step3({ form, onChange, errors }) {
       </div>
 
       <div>
-        <label className={labelCls}>Allowed Principals <span className="text-destructive">*</span></label>
+        <label className={labelCls}>Allowed principals <span className="text-destructive">*</span></label>
         <div className="flex gap-2">
           <input
             className={inputCls}
@@ -433,7 +433,7 @@ function Step3({ form, onChange, errors }) {
       </div>
 
       <div>
-        <label className={labelCls}>Target Labels (key/value)</label>
+        <label className={labelCls}>Target labels (key/value)</label>
         <div className="flex gap-2">
           <input
             className={inputCls}
@@ -499,7 +499,7 @@ function Step4({ form, onChange, errors }) {
   return (
     <div className="space-y-5">
       <div>
-        <label className={labelCls}>Max Session Duration (minutes) <span className="text-destructive">*</span></label>
+        <label className={labelCls}>Max session duration (minutes) <span className="text-destructive">*</span></label>
         <input
           className={inputCls}
           type="number"

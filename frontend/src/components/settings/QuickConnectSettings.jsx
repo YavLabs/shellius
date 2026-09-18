@@ -73,7 +73,7 @@ function QuickConnectSettings() {
 
         <div className="flex items-center justify-between rounded-lg border border-border p-4">
           <div>
-            <p className="text-sm font-medium text-foreground">Enable Quick Connect</p>
+            <p className="text-sm font-medium text-foreground">Enable quick connect</p>
             <p className="text-xs text-muted-foreground">
               Allow eligible users to open ad-hoc SSH sessions to hosts that aren&apos;t saved as servers.
             </p>

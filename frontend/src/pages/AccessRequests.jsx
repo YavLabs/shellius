@@ -165,13 +165,13 @@ function RequestDetailModal({ requestId, open, onClose, onRefresh, currentUser }
               value={request.reviewer ? <UserCell user={request.reviewer} /> : request.reviewerId || '-'}
             />
             <DetailRow label="Reason" value={request.reason} />
-            <DetailRow label="Requested Duration" value={formatDuration(request.requestedDuration)} />
-            <DetailRow label="Approved Duration" value={formatDuration(request.approvedDuration)} />
+            <DetailRow label="Requested duration" value={formatDuration(request.requestedDuration)} />
+            <DetailRow label="Approved duration" value={formatDuration(request.approvedDuration)} />
             <DetailRow label="Principal" value={request.requestedPrincipal} />
-            <DetailRow label="Denied Reason" value={request.deniedReason} />
-            <DetailRow label="Expires At" value={formatDateTime(request.expiresAt)} />
+            <DetailRow label="Denied reason" value={request.deniedReason} />
+            <DetailRow label="Expires at" value={formatDateTime(request.expiresAt)} />
             <DetailRow label="Created" value={formatDateTime(request.createdAt)} />
-            <DetailRow label="Reviewed At" value={formatDateTime(request.reviewedAt)} />
+            <DetailRow label="Reviewed at" value={formatDateTime(request.reviewedAt)} />
           </dl>
 
           {isReviewer && request.status === 'PENDING' && (
@@ -190,12 +190,12 @@ function RequestDetailModal({ requestId, open, onClose, onRefresh, currentUser }
                   className="border-destructive/50 text-destructive hover:bg-destructive/10"
                 >
                   <Ban className="mr-2 h-4 w-4" />
-                  Revoke Access
+                  Revoke access
                 </Button>
               ) : (
                 <div className="rounded-md border border-destructive/30 p-3 space-y-2">
                   <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
-                    Revoke Access
+                    Revoke access
                   </p>
                   <textarea
                     className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring"
@@ -223,8 +223,8 @@ function RequestDetailModal({ requestId, open, onClose, onRefresh, currentUser }
 }
 
 const TABS = [
-  { key: 'mine', label: 'My Requests' },
-  { key: 'to-review', label: 'Pending Reviews' },
+  { key: 'mine', label: 'My requests' },
+  { key: 'to-review', label: 'Pending reviews' },
 ];
 
 const STATUSES = ['PENDING', 'APPROVED', 'DENIED', 'EXPIRED', 'REVOKED'];
@@ -431,7 +431,7 @@ function AccessRequests() {
           onClick: (r) => quickConnect(r),
         },
         {
-          label: 'View Details',
+          label: 'View details',
           icon: Eye,
           onClick: (r) => openDetail(r.id),
         },
@@ -459,7 +459,7 @@ function AccessRequests() {
           </Button>
           <Button onClick={() => setFormOpen(true)}>
             <Plus className="mr-2 h-4 w-4" />
-            New Request
+            New request
           </Button>
         </div>
       </PageHeader>

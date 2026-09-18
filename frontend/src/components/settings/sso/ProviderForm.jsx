@@ -4,8 +4,8 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import SearchableSelect from '@/components/ui/SearchableSelect';
 import PasswordInput from '@/components/ui/PasswordInput';
-import { CopyButton } from '@/components/settings/shared';
 import { DomainChipsInput, GithubOrgChipsInput } from './ChipsInput';
+import IdpConfigPanel from './IdpConfigPanel';
 import {
   createSsoProvider,
   updateSsoProvider,
@@ -171,25 +171,7 @@ export default function ProviderForm({ preset, existingProvider, orgGroups, onSa
 
   return (
     <div className="space-y-5">
-      {/* Callback URL */}
-      <div>
-        <label className="mb-1.5 block text-sm font-medium text-foreground">Callback URL</label>
-        {callbackUrl ? (
-          <div className="flex items-center gap-2">
-            <Input value={callbackUrl} readOnly className="font-mono text-xs bg-muted/40" />
-            <CopyButton text={callbackUrl} />
-          </div>
-        ) : (
-          <p className="rounded-md border border-dashed border-border bg-muted/20 px-3 py-2 text-xs text-muted-foreground">
-            Shown here once you save — register it with your identity provider afterwards.
-          </p>
-        )}
-        <p className="mt-1 text-xs text-muted-foreground">
-          {isGithub
-            ? 'Paste into the OAuth App\'s "Authorization callback URL".'
-            : "Paste into your identity provider's allowed redirect URIs."}
-        </p>
-      </div>
+      <IdpConfigPanel preset={preset} callbackUrl={callbackUrl} />
 
       <div>
         <label className="mb-1.5 block text-sm font-medium text-foreground">

@@ -79,7 +79,7 @@ function PolicyEvaluator({ open, onClose, policy }) {
   };
 
   return (
-    <Modal open={open} onClose={onClose} title="Policy Evaluator" size="md">
+    <Modal open={open} onClose={onClose} title="Policy evaluator" size="md">
       <div className="space-y-4">
         <p className="text-sm text-muted-foreground">
           Preview how this policy evaluates for a given user and server.
@@ -169,7 +169,7 @@ function PolicyEvaluator({ open, onClose, policy }) {
             {(result.policyName || result.policyId) && (
               <div>
                 <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground mb-1">
-                  Matched Policy
+                  Matched policy
                 </p>
                 <span className="text-xs font-medium text-foreground">
                   {result.policyName || 'Unnamed policy'}

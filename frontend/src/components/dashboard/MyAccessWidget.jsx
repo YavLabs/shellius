@@ -117,7 +117,7 @@ function MyAccessWidget() {
     <div className="rounded-lg border border-border bg-card p-5">
       <div className="flex items-center justify-between mb-4">
         <div>
-          <h2 className="text-sm font-semibold text-foreground">My Access</h2>
+          <h2 className="text-sm font-semibold text-foreground">My access</h2>
           <p className="text-xs text-muted-foreground mt-0.5">
             Servers you are permitted to access
           </p>

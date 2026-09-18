@@ -11,7 +11,7 @@ import useOrgName from '@/hooks/useOrgName';
 
 const DOCS = {
   privacy: {
-    title: 'Privacy Policy',
+    title: 'Privacy policy',
     intro:
       'Shellius is a self-hosted product. The instance you are using is operated by your organization, not by the Shellius project itself. Any personal data you enter — including your name, email address, SSH usernames, and connection metadata — is stored on infrastructure controlled by the operator of this instance.',
     sections: [
@@ -38,7 +38,7 @@ const DOCS = {
     ],
   },
   terms: {
-    title: 'Terms of Service',
+    title: 'Terms of service',
     intro:
       'By using this Shellius instance you agree to the following terms. These terms cover the relationship between you (the user) and the operator of this deployment.',
     sections: [
@@ -65,7 +65,7 @@ const DOCS = {
     ],
   },
   eula: {
-    title: 'End User License Agreement',
+    title: 'End user license agreement',
     intro:
       'The Shellius software is licensed under the GNU Affero General Public License v3.0 (AGPL-3.0). The full license text is included in the source repository.',
     sections: [

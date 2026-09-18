@@ -238,7 +238,7 @@ function CaTab() {
 
   return (
     <SectionCard
-      title="Certificate Authority"
+      title="Certificate authority"
       description="SSH CA key pair used to sign short-lived certificates for this organization."
     >
       {loading ? (
@@ -260,7 +260,7 @@ function CaTab() {
             </span>
           </MetaRow>
 
-          <MetaRow label="Public Key">
+          <MetaRow label="Public key">
             <div className="flex items-start gap-2">
               <pre className="flex-1 overflow-x-auto rounded border border-border bg-muted/40 px-3 py-2 font-mono text-xs text-muted-foreground whitespace-pre-wrap break-all">
                 {publicKey?.publicKey || '-'}
@@ -270,10 +270,10 @@ function CaTab() {
           </MetaRow>
 
           <MetaRow label="Created">{formatDateTime(status?.createdAt)}</MetaRow>
-          <MetaRow label="Last Rotated">
+          <MetaRow label="Last rotated">
             {status?.rotatedAt ? formatDateTime(status.rotatedAt) : 'Never'}
           </MetaRow>
-          <MetaRow label="Certificates Issued">{status?.certCount ?? '-'}</MetaRow>
+          <MetaRow label="Certificates issued">{status?.certCount ?? '-'}</MetaRow>
           <MetaRow label="Active">
             <span
               className={
@@ -325,7 +325,7 @@ function CaTab() {
 
       <ConfirmDialog
         open={rotateConfirm}
-        title="Rotate Certificate Authority"
+        title="Rotate certificate authority"
         message="Rotating the CA will invalidate all existing certificates. New certificates must be issued and hosts must fetch the new CA public key. This cannot be undone."
         confirmLabel="Rotate CA"
         variant="destructive"
@@ -343,7 +343,7 @@ function CaTab() {
 function CloudConnectorsTab() {
   return (
     <SectionCard
-      title="Cloud Connectors"
+      title="Cloud connectors"
       description="Auto-discover servers from AWS, Azure, and GCP."
     >
       <div className="rounded-lg border border-dashed border-border bg-muted/20 px-6 py-10 text-center">
@@ -635,7 +635,7 @@ function NotificationsTab() {
     <div className="space-y-6">
     <SmtpCard />
     <SectionCard
-      title="Notification Preferences"
+      title="Notification preferences"
       description="Control how you receive alerts from Shellius."
     >
       {loading ? (
@@ -828,7 +828,7 @@ function StorageTab() {
 
   return (
     <SectionCard
-      title="Object Storage"
+      title="Object storage"
       description="Where session recordings and uploads are stored. Use the bundled MinIO container, or bring your own AWS S3 / Azure Blob — DB settings here override environment variables with no restart."
     >
       {loading ? (

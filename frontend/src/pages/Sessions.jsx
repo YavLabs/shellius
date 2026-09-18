@@ -285,7 +285,7 @@ function SessionDetailDrawer({ sessionId, open, onClose, currentUser, sessionCon
   }, [sessionId, open]);
 
   return (
-    <Modal open={open} onClose={onClose} title="Session Details" size="lg">
+    <Modal open={open} onClose={onClose} title="Session details" size="lg">
       {loading && (
         <div className="space-y-2">
           {Array.from({ length: 8 }).map((_, i) => (
@@ -355,8 +355,8 @@ function SessionDetailDrawer({ sessionId, open, onClose, currentUser, sessionCon
           <DetailRow label="Protocol" value={session.protocol} />
           <DetailRow label="Client IP" value={session.clientIp} />
           <DetailRow label="Principal" value={session.principal} />
-          <DetailRow label="Started At" value={formatDateTime(session.startedAt)} />
-          <DetailRow label="Ended At" value={formatDateTime(session.endedAt)} />
+          <DetailRow label="Started at" value={formatDateTime(session.startedAt)} />
+          <DetailRow label="Ended at" value={formatDateTime(session.endedAt)} />
           <DetailRow
             label="Duration"
             value={session.status === 'ACTIVE' ? 'Active' : durationLabel(session.startedAt, session.endedAt)}
@@ -389,7 +389,7 @@ function SessionDetailDrawer({ sessionId, open, onClose, currentUser, sessionCon
           )}
           {session.terminatedBy && (
             <DetailRow
-              label="Terminated By"
+              label="Terminated by"
               value={session.terminatedBy?.name || session.terminatedBy?.email || 'Unknown'}
             />
           )}
@@ -400,7 +400,7 @@ function SessionDetailDrawer({ sessionId, open, onClose, currentUser, sessionCon
           <div className="mb-2 flex items-center justify-between">
             <div className="flex items-center gap-1.5 text-xs font-medium uppercase tracking-wide text-muted-foreground">
               <Film className="h-3.5 w-3.5" />
-              Session Replay
+              Session replay
             </div>
             <button
               onClick={() => downloadRecording(session.id)}
@@ -427,7 +427,7 @@ function SessionDetailDrawer({ sessionId, open, onClose, currentUser, sessionCon
 }
 
 const TABS = [
-  { key: 'all', label: 'All Sessions' },
+  { key: 'all', label: 'All sessions' },
   { key: 'active', label: 'Active' },
 ];
 
@@ -623,7 +623,7 @@ function Sessions() {
           hidden: (r) => !isOwnActiveSession(r, user),
           onClick: (r) => sessionConnect.openInNewWindow(r),
         },
-        { label: 'View Details', icon: Eye, onClick: (r) => openDetail(r.id) },
+        { label: 'View details', icon: Eye, onClick: (r) => openDetail(r.id) },
         ...(canTerminate
           ? [{
               label: 'Terminate',
@@ -696,7 +696,7 @@ function Sessions() {
 
       <ConfirmDialog
         open={!!terminateTarget}
-        title="Terminate Session"
+        title="Terminate session"
         message={`Terminate the active session for ${
           terminateTarget?.user?.name || terminateTarget?.user?.email || 'this user'
         } on ${terminateTarget?.server?.hostname || terminateTarget?.server?.name || 'this server'}? The connection will be immediately closed.`}

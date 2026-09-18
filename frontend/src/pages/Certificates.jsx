@@ -82,16 +82,16 @@ function DetailRow({ label, value }) {
 function CertDetailModal({ cert, open, onClose, onDownload }) {
   if (!cert) return null;
   return (
-    <Modal open={open} onClose={onClose} title="Certificate Details" size="lg">
+    <Modal open={open} onClose={onClose} title="Certificate details" size="lg">
       <dl>
         <DetailRow label="Serial" value={cert.serial} />
         <DetailRow label="Status" value={<CertStatusBadge status={cert.status} />} />
         <DetailRow
-          label="Issued To"
+          label="Issued to"
           value={cert.issuedTo ? <UserCell user={cert.issuedTo} /> : cert.userId}
         />
         <DetailRow
-          label="Issued For"
+          label="Issued for"
           value={
             cert.issuedFor ? (
               <span className="flex items-center gap-2">
@@ -110,15 +110,15 @@ function CertDetailModal({ cert, open, onClose, onDownload }) {
           value={Array.isArray(cert.principals) ? cert.principals.join(', ') : cert.principals}
         />
         <DetailRow label="Type" value={cert.certType} />
-        <DetailRow label="Valid After" value={formatDateTime(cert.validAfter)} />
-        <DetailRow label="Valid Before" value={formatDateTime(cert.validBefore)} />
-        <DetailRow label="Issued At" value={formatDateTime(cert.createdAt)} />
+        <DetailRow label="Valid after" value={formatDateTime(cert.validAfter)} />
+        <DetailRow label="Valid before" value={formatDateTime(cert.validBefore)} />
+        <DetailRow label="Issued at" value={formatDateTime(cert.createdAt)} />
         {cert.revokedAt && (
-          <DetailRow label="Revoked At" value={formatDateTime(cert.revokedAt)} />
+          <DetailRow label="Revoked at" value={formatDateTime(cert.revokedAt)} />
         )}
         {cert.revokedAt && (
           <DetailRow
-            label="Revoked By"
+            label="Revoked by"
             value={cert.revokedBy ? <UserCell user={cert.revokedBy} /> : 'Unknown'}
           />
         )}
@@ -235,7 +235,7 @@ function Certificates() {
     },
     {
       key: 'issuedTo',
-      label: 'Issued To',
+      label: 'Issued to',
       sortable: true,
       searchAccessor: (r) => `${r.issuedTo?.name || ''} ${r.issuedTo?.email || ''}`,
       render: (r) => <UserCell user={r.issuedTo} subtitle={r.issuedTo?.email || r.userId} />,
@@ -273,7 +273,7 @@ function Certificates() {
     },
     {
       key: 'validBefore',
-      label: 'Valid Until',
+      label: 'Valid until',
       sortable: true,
       render: (r) => <ExpiryPill validBefore={r.validBefore} />,
     },
@@ -289,7 +289,7 @@ function Certificates() {
       label: '',
       className: 'w-10',
       actions: [
-        { label: 'View Details', icon: Eye, onClick: (r) => setDetailCert(r) },
+        { label: 'View details', icon: Eye, onClick: (r) => setDetailCert(r) },
         { label: 'Download .pub', icon: Download, onClick: (r) => handleDownload(r) },
         ...(canAdmin
           ? [
@@ -354,7 +354,7 @@ function Certificates() {
 
       <ConfirmDialog
         open={!!revokeTarget}
-        title="Revoke Certificate"
+        title="Revoke certificate"
         message={`Revoke certificate for ${
           revokeTarget?.issuedTo?.name || revokeTarget?.issuedTo?.email || 'this user'
         } on ${revokeTarget?.issuedFor?.hostname || 'this server'}? This cannot be undone and will immediately terminate active sessions using this certificate.`}

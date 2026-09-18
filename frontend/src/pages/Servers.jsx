@@ -396,7 +396,7 @@ function Servers() {
     },
     {
       key: 'lastCheck',
-      label: 'Last Check',
+      label: 'Last check',
       hideBelow: 'md',
       render: (r) => (
         <span className="text-xs text-muted-foreground">
@@ -416,7 +416,7 @@ function Servers() {
       className: 'w-10',
       actions: [
         {
-          label: 'View Details',
+          label: 'View details',
           icon: Eye,
           onClick: (r) => navigate(`/servers/${r.id}`),
         },
@@ -431,17 +431,17 @@ function Servers() {
                 },
               },
               {
-                label: 'Bootstrap Host',
+                label: 'Bootstrap host',
                 icon: Download,
                 onClick: (r) => setBootstrapServer(r),
               },
               {
-                label: 'Uninstall Agent',
+                label: 'Uninstall agent',
                 icon: Eraser,
                 onClick: (r) => setUninstallServer(r),
               },
               {
-                label: 'Run Health Check',
+                label: 'Run health check',
                 icon: Activity,
                 onClick: (r) => handleHealthCheck(r),
               },

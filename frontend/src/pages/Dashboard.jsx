@@ -146,7 +146,7 @@ function Dashboard() {
       {/* Metric cards */}
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <MetricCard
-          title="Total Servers"
+          title="Total servers"
           value={serverStats.total}
           subtitle="Managed infrastructure"
           icon={Server}
@@ -168,7 +168,7 @@ function Dashboard() {
         />
 
         <MetricCard
-          title="Active Sessions"
+          title="Active sessions"
           value={activeSessions}
           subtitle="Currently connected"
           icon={Terminal}
@@ -185,7 +185,7 @@ function Dashboard() {
         />
 
         <MetricCard
-          title="Pending Requests"
+          title="Pending requests"
           value={pendingRequests}
           subtitle="Awaiting your review"
           icon={KeyRound}
@@ -202,7 +202,7 @@ function Dashboard() {
         />
 
         <MetricCard
-          title="Certificates Issued"
+          title="Certificates issued"
           value={activeCerts}
           subtitle="Currently active"
           icon={FileKey}

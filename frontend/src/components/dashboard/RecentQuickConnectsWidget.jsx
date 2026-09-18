@@ -166,7 +166,7 @@ function RecentQuickConnectsWidget() {
     <div className="flex h-full flex-col rounded-lg border border-border bg-card p-5">
       <div className="mb-4 flex items-center justify-between gap-2">
         <div>
-          <h2 className="text-sm font-semibold text-foreground">Recent Quick Connects</h2>
+          <h2 className="text-sm font-semibold text-foreground">Recent quick connects</h2>
           <p className="mt-0.5 text-xs text-muted-foreground">Last 7 days</p>
         </div>
         <div className="flex shrink-0 items-center gap-1.5">
@@ -176,7 +176,7 @@ function RecentQuickConnectsWidget() {
             className="inline-flex h-8 items-center gap-1.5 rounded-md bg-primary px-3 text-xs font-medium text-primary-foreground transition-colors hover:bg-primary/90"
           >
             <Zap className="h-3.5 w-3.5" />
-            Quick Connect
+            Quick connect
           </button>
           {items.length > 0 && (
             <DropdownMenu>
@@ -218,7 +218,7 @@ function RecentQuickConnectsWidget() {
       {!loading && items.length === 0 && (
         <div className="flex flex-1 flex-col items-center justify-center py-8 text-center">
           <Zap className="mb-2 h-8 w-8 text-muted-foreground/40" />
-          <p className="text-sm font-medium text-muted-foreground">No Quick Connects yet</p>
+          <p className="text-sm font-medium text-muted-foreground">No quick connects yet</p>
           <p className="mt-1 text-xs text-muted-foreground">
             Connect to any host ad-hoc without saving it as a server.
           </p>

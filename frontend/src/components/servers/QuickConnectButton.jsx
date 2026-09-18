@@ -106,12 +106,12 @@ function QuickConnectButton({ server, currentUser }) {
         ) : hasPending ? (
           <>
             <Clock className="h-4 w-4" />
-            Request Pending
+            Request pending
           </>
         ) : (
           <>
             <KeyRound className="h-4 w-4" />
-            Request Access
+            Request access
           </>
         )}
       </Button>

@@ -105,7 +105,7 @@ export const QUICK_ACTIONS = [
   },
   {
     id: 'quick-connect',
-    label: 'Quick Connect',
+    label: 'Quick connect',
     group: 'Operate',
     icon: Zap,
     quickConnect: true,
@@ -157,16 +157,16 @@ export const NAV_ITEMS = [
   { id: 'terminals', label: 'Terminals', icon: SquareTerminal, to: '/terminals', minRole: 'member' },
   { id: 'customers', label: 'Customers', icon: Building2, to: '/customers', minRole: 'member' },
   { id: 'servers', label: 'Servers', icon: Server, to: '/servers', minRole: 'member' },
-  { id: 'access-requests', label: 'Access Requests', icon: KeyRound, to: '/access-requests', minRole: 'member' },
+  { id: 'access-requests', label: 'Access requests', icon: KeyRound, to: '/access-requests', minRole: 'member' },
   { id: 'policies', label: 'Policies', icon: Shield, to: '/policies', minRole: 'admin' },
   { id: 'certificates', label: 'Certificates', icon: FileKey, to: '/certificates', minRole: 'admin' },
   { id: 'keystore', label: 'Keystore', icon: KeySquare, to: '/keystore', minRole: 'manager' },
   { id: 'sessions', label: 'Sessions', icon: Terminal, to: '/sessions', minRole: 'manager' },
-  { id: 'audit-log', label: 'Audit Log', icon: ScrollText, to: '/audit-log', minRole: 'admin' },
+  { id: 'audit-log', label: 'Audit log', icon: ScrollText, to: '/audit-log', minRole: 'admin' },
   { id: 'notifications', label: 'Notifications', icon: Bell, to: '/notifications', minRole: 'member' },
   { id: 'users', label: 'Users', icon: Users, to: '/users', minRole: 'admin' },
   { id: 'groups', label: 'Groups', icon: UsersRound, to: '/groups', minRole: 'admin' },
-  { id: 'bulk-import', label: 'Bulk Import', icon: Upload, to: '/bulk-import', minRole: 'admin' },
+  { id: 'bulk-import', label: 'Bulk import', icon: Upload, to: '/bulk-import', minRole: 'admin' },
 ];
 
 export function isQuickActionVisible(action, user, quickConnectAllowed) {
@@ -199,20 +199,20 @@ export function matchesQuery(label, query) {
  *             by the caller instead of navigating
  */
 export const NAV_SEQUENCES = [
-  { keys: ['g', 'd'], label: 'Go to Dashboard', to: '/dashboard' },
-  { keys: ['g', 't'], label: 'Go to Terminals', to: '/terminals' },
-  { keys: ['g', 's'], label: 'Go to Servers', to: '/servers' },
-  { keys: ['g', 'c'], label: 'Go to Customers', to: '/customers' },
-  { keys: ['g', 'a'], label: 'Go to Access Requests', to: '/access-requests' },
-  { keys: ['g', 'k'], label: 'Go to Keystore', to: '/keystore', minRole: 'manager' },
-  { keys: ['g', 'p'], label: 'Go to Policies', to: '/policies', minRole: 'admin' },
-  { keys: ['g', 'e'], label: 'Go to Certificates', to: '/certificates', minRole: 'admin' },
-  { keys: ['g', 'i'], label: 'Go to Sessions', to: '/sessions', minRole: 'manager' },
-  { keys: ['g', 'l'], label: 'Go to Audit Log', to: '/audit-log', minRole: 'admin' },
-  { keys: ['g', 'u'], label: 'Go to Users', to: '/users', minRole: 'admin' },
-  { keys: ['g', 'g'], label: 'Go to Groups', to: '/groups', minRole: 'admin' },
-  { keys: ['g', 'n'], label: 'Go to Notifications', to: '/notifications' },
-  { keys: ['g', 'q'], label: 'Open Quick Connect', action: 'quick-connect', quickConnect: true },
+  { keys: ['g', 'd'], label: 'Go to dashboard', to: '/dashboard' },
+  { keys: ['g', 't'], label: 'Go to terminals', to: '/terminals' },
+  { keys: ['g', 's'], label: 'Go to servers', to: '/servers' },
+  { keys: ['g', 'c'], label: 'Go to customers', to: '/customers' },
+  { keys: ['g', 'a'], label: 'Go to access requests', to: '/access-requests' },
+  { keys: ['g', 'k'], label: 'Go to keystore', to: '/keystore', minRole: 'manager' },
+  { keys: ['g', 'p'], label: 'Go to policies', to: '/policies', minRole: 'admin' },
+  { keys: ['g', 'e'], label: 'Go to certificates', to: '/certificates', minRole: 'admin' },
+  { keys: ['g', 'i'], label: 'Go to sessions', to: '/sessions', minRole: 'manager' },
+  { keys: ['g', 'l'], label: 'Go to audit log', to: '/audit-log', minRole: 'admin' },
+  { keys: ['g', 'u'], label: 'Go to users', to: '/users', minRole: 'admin' },
+  { keys: ['g', 'g'], label: 'Go to groups', to: '/groups', minRole: 'admin' },
+  { keys: ['g', 'n'], label: 'Go to notifications', to: '/notifications' },
+  { keys: ['g', 'q'], label: 'Open quick connect', action: 'quick-connect', quickConnect: true },
 ];
 
 export const CREATE_SEQUENCES = [

@@ -114,7 +114,7 @@ export const HELP_CONTENT = {
   },
 
   policies: {
-    title: 'Access Policies',
+    title: 'Access policies',
     summary:
       "Policies decide who can access which servers, for how long, and whether approval is required. Higher-priority policies override lower ones.",
     sections: [

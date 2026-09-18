@@ -244,7 +244,7 @@ function ServerForm({ server, customerId: initialCustomerId, onSubmit, onCancel 
 
       {/* ── 1. Basic Info ─────────────────────────────────────────────── */}
       <div className="space-y-3">
-        <h4 className={sectionCls}>Basic Info</h4>
+        <h4 className={sectionCls}>Basic info</h4>
         <div>
           <label className={labelCls}>Hostname <span className="text-destructive">*</span></label>
           <input
@@ -277,7 +277,7 @@ function ServerForm({ server, customerId: initialCustomerId, onSubmit, onCancel 
 
       {/* ── 2. OS Type — comes first so protocol options are driven by it ── */}
       <div className="space-y-3">
-        <h4 className={sectionCls}>Operating System</h4>
+        <h4 className={sectionCls}>Operating system</h4>
         <div className="grid grid-cols-2 gap-3">
           <div>
             <label className={labelCls}>OS Type</label>

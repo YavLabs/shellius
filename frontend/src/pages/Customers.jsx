@@ -173,11 +173,11 @@ function Customers() {
         onRowClick={(c) => navigate(`/customers/${c.id}`)}
       />
 
-      <Modal open={createOpen} onClose={() => setCreateOpen(false)} title="Add Customer">
+      <Modal open={createOpen} onClose={() => setCreateOpen(false)} title="Add customer">
         <CustomerForm onSubmit={handleCreate} onCancel={() => setCreateOpen(false)} />
       </Modal>
 
-      <Modal open={!!editing} onClose={() => setEditing(null)} title="Edit Customer">
+      <Modal open={!!editing} onClose={() => setEditing(null)} title="Edit customer">
         {editing && (
           <CustomerForm
             customer={editing}

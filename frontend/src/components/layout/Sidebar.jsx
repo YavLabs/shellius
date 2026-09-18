@@ -70,7 +70,7 @@ const NAV_SECTIONS = [
   {
     label: 'Access',
     items: [
-      { id: 'access-requests', label: 'Access Requests', icon: KeyRound, to: '/access-requests' },
+      { id: 'access-requests', label: 'Access requests', icon: KeyRound, to: '/access-requests' },
       { id: 'policies', label: 'Policies', icon: Shield, to: '/policies', minRole: 'admin' },
       {
         id: 'certificates',
@@ -92,7 +92,7 @@ const NAV_SECTIONS = [
     label: 'Audit',
     items: [
       { id: 'sessions', label: 'Sessions', icon: Terminal, to: '/sessions', minRole: 'manager' },
-      { id: 'audit-log', label: 'Audit Log', icon: ScrollText, to: '/audit-log', minRole: 'admin' },
+      { id: 'audit-log', label: 'Audit log', icon: ScrollText, to: '/audit-log', minRole: 'admin' },
       { id: 'notifications', label: 'Notifications', icon: Bell, to: '/notifications' },
     ],
   },

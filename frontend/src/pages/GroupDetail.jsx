@@ -203,7 +203,7 @@ function EditGroupModal({ open, group, onClose, onSaved }) {
   };
 
   return (
-    <Modal open={open} onClose={onClose} title="Edit Group">
+    <Modal open={open} onClose={onClose} title="Edit group">
       <form onSubmit={submit} className="space-y-4">
         {error && (
           <div className="rounded-md border border-destructive/50 bg-destructive/10 px-3 py-2 text-sm text-destructive">
@@ -279,7 +279,7 @@ function AddMemberModal({ open, groupId, existingIds, onClose, onAdded }) {
   };
 
   return (
-    <Modal open={open} onClose={onClose} title="Add Member">
+    <Modal open={open} onClose={onClose} title="Add member">
       <div className="space-y-3">
         {error && (
           <div className="rounded-md border border-destructive/50 bg-destructive/10 px-3 py-2 text-sm text-destructive">

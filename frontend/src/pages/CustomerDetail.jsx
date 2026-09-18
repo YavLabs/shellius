@@ -308,7 +308,7 @@ function CustomerDetail() {
     },
     {
       key: 'lastCheck',
-      label: 'Last Check',
+      label: 'Last check',
       hideBelow: 'md',
       render: (r) => (
         <span className="text-xs text-muted-foreground">
@@ -322,7 +322,7 @@ function CustomerDetail() {
       className: 'w-10',
       actions: [
         {
-          label: 'View Details',
+          label: 'View details',
           icon: Eye,
           onClick: (r) => navigate(`/servers/${r.id}`),
         },
@@ -453,7 +453,7 @@ function CustomerDetail() {
           {canManage && (
             <Button size="sm" onClick={() => setAddServerOpen(true)}>
               <Plus className="mr-1.5 h-3.5 w-3.5" />
-              Add Server
+              Add server
             </Button>
           )}
           {(canManage || canDelete) && (
@@ -467,7 +467,7 @@ function CustomerDetail() {
                 {canManage && (
                   <DropdownMenuItem onClick={() => setEditOpen(true)}>
                     <Pencil className="mr-2 h-4 w-4" />
-                    Edit Customer
+                    Edit customer
                   </DropdownMenuItem>
                 )}
                 {canDelete && (
@@ -478,7 +478,7 @@ function CustomerDetail() {
                       className="text-destructive focus:text-destructive"
                     >
                       <Trash2 className="mr-2 h-4 w-4" />
-                      Delete Customer
+                      Delete customer
                     </DropdownMenuItem>
                   </>
                 )}
@@ -492,13 +492,13 @@ function CustomerDetail() {
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
         <StatTile
           icon={Server}
-          label="Total Servers"
+          label="Total servers"
           value={total}
           iconClass="bg-primary/10 text-primary"
         />
         <StatTile
           icon={Activity}
-          label="Active Sessions"
+          label="Active sessions"
           value={activeSessions}
           iconClass="bg-emerald-500/10 text-emerald-500"
         />
@@ -510,7 +510,7 @@ function CustomerDetail() {
         />
         <StatTile
           icon={Clock}
-          label="Last Health Check"
+          label="Last health check"
           value={lastHealthCheck ? relativeTime(new Date(lastHealthCheck)) : 'Never'}
           iconClass="bg-zinc-500/10 text-zinc-500"
         />
@@ -532,7 +532,7 @@ function CustomerDetail() {
               {canManage && (
                 <Button size="sm" variant="outline" onClick={() => setAddServerOpen(true)}>
                   <Plus className="mr-1.5 h-3.5 w-3.5" />
-                  Add Server
+                  Add server
                 </Button>
               )}
             </div>
@@ -560,7 +560,7 @@ function CustomerDetail() {
         <div className="flex flex-col gap-5">
 
           {/* Customer Info card */}
-          <SectionCard title="Customer Info">
+          <SectionCard title="Customer info">
             <dl>
               <MetaRow label="Name">{customer.name}</MetaRow>
               <MetaRow label="Slug">
@@ -593,7 +593,7 @@ function CustomerDetail() {
           </SectionCard>
 
           {/* Health Summary card */}
-          <SectionCard title="Health Summary">
+          <SectionCard title="Health summary">
             <div className="space-y-3">
               {[
                 {
@@ -659,7 +659,7 @@ function CustomerDetail() {
                   onClick={() => setAddServerOpen(true)}
                 >
                   <Plus className="h-4 w-4" />
-                  Add Server
+                  Add server
                 </Button>
               )}
               <Button
@@ -688,7 +688,7 @@ function CustomerDetail() {
                   onClick={() => setEditOpen(true)}
                 >
                   <Pencil className="h-4 w-4" />
-                  Edit Customer
+                  Edit customer
                 </Button>
               )}
             </div>
@@ -699,7 +699,7 @@ function CustomerDetail() {
 
       {/* ---- MODALS ---- */}
 
-      <Modal open={editOpen} onClose={() => setEditOpen(false)} title="Edit Customer">
+      <Modal open={editOpen} onClose={() => setEditOpen(false)} title="Edit customer">
         <CustomerForm
           customer={customer}
           onSubmit={handleEdit}
@@ -710,7 +710,7 @@ function CustomerDetail() {
       <Modal
         open={addServerOpen}
         onClose={() => setAddServerOpen(false)}
-        title="Add Server"
+        title="Add server"
         size="lg"
       >
         <ServerForm
