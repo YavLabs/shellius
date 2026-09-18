@@ -8,7 +8,21 @@
  * hasPassphrase/hasPassword, never key/password material.
  */
 
-import { toSshKeyDTO, toCredentialDTO, toKeyDeploymentDTO } from '../keystoreService.js';
+import { execFile } from 'child_process';
+import { promisify } from 'util';
+import fs from 'fs/promises';
+import os from 'os';
+import path from 'path';
+
+import {
+  toSshKeyDTO,
+  toCredentialDTO,
+  toKeyDeploymentDTO,
+  resolveCredentialAuth,
+  validateAuthMaterial,
+} from '../keystoreService.js';
+
+const execFileAsync = promisify(execFile);
 
 describe('toSshKeyDTO', () => {
   const rawKey = {
@@ -64,6 +78,33 @@ describe('toSshKeyDTO', () => {
     expect(dto.createdBy).toEqual({ id: 'user-1', name: 'Alice' });
     expect(dto.credentialCount).toBe(3);
     expect(dto.deploymentCount).toBe(5);
+  });
+
+  it('defaults originalFormat/certificate to null when absent', () => {
+    const dto = toSshKeyDTO(rawKey);
+    expect(dto.originalFormat).toBeNull();
+    expect(dto.certificate).toBeNull();
+  });
+
+  it('surfaces originalFormat and a parsed certificate summary (never the raw cert text)', async () => {
+    const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'shellius-cert-dto-'));
+    try {
+      const caPath = path.join(tmpDir, 'ca');
+      const userPath = path.join(tmpDir, 'user');
+      await execFileAsync('ssh-keygen', ['-t', 'ed25519', '-N', '', '-f', caPath, '-q']);
+      await execFileAsync('ssh-keygen', ['-t', 'ed25519', '-N', '', '-f', userPath, '-q']);
+      await execFileAsync('ssh-keygen', [
+        '-s', caPath, '-I', 'dto-test', '-n', 'alice', '-V', '-1w:+52w', `${userPath}.pub`,
+      ]);
+      const certificate = await fs.readFile(`${userPath}-cert.pub`, 'utf8');
+
+      const dto = toSshKeyDTO({ ...rawKey, originalFormat: 'pkcs8', certificate });
+      expect(dto.originalFormat).toBe('pkcs8');
+      expect(dto.certificate).toMatchObject({ type: 'user', keyId: 'dto-test', principals: ['alice'] });
+      expect(JSON.stringify(dto)).not.toContain('ssh-ed25519-cert-v01@openssh.com'); // raw cert text absent
+    } finally {
+      await fs.rm(tmpDir, { recursive: true, force: true });
+    }
   });
 });
 
@@ -129,5 +170,63 @@ describe('toKeyDeploymentDTO', () => {
     expect(toKeyDeploymentDTO(base, map).deployedBy).toEqual({ id: 'user-1', name: 'Alice' });
     expect(toKeyDeploymentDTO({ ...base, deployedById: null }).deployedBy).toBeNull();
     expect(toKeyDeploymentDTO({ ...base, deployedById: 'unknown-user' }, map).deployedBy).toBeNull();
+  });
+});
+
+describe('resolveCredentialAuth', () => {
+  it('includes the key certificate when present, for authType "key"', async () => {
+    const { encrypt } = await import('../../utils/crypto.js');
+    const cred = {
+      username: 'deploy',
+      authType: 'key',
+      passwordEncrypted: null,
+      sshKey: {
+        privateKeyEncrypted: encrypt('-----BEGIN OPENSSH PRIVATE KEY-----\nfake\n-----END OPENSSH PRIVATE KEY-----\n'),
+        passphraseEncrypted: null,
+        certificate: 'ssh-ed25519-cert-v01@openssh.com AAAA... user@host',
+      },
+    };
+    const opts = resolveCredentialAuth(cred);
+    expect(opts.certificate).toBe(cred.sshKey.certificate);
+    expect(opts.privateKey).toContain('OPENSSH PRIVATE KEY');
+  });
+
+  it('omits certificate when the key has none', async () => {
+    const { encrypt } = await import('../../utils/crypto.js');
+    const cred = {
+      username: 'deploy',
+      authType: 'key',
+      passwordEncrypted: null,
+      sshKey: {
+        privateKeyEncrypted: encrypt('fake-key-text'),
+        passphraseEncrypted: null,
+        certificate: null,
+      },
+    };
+    expect(resolveCredentialAuth(cred).certificate).toBeUndefined();
+  });
+});
+
+describe('validateAuthMaterial — sshKeyId: null unlink (key_password -> password)', () => {
+  it('rejects clearing the key while authType still requires one', () => {
+    expect(() =>
+      validateAuthMaterial({ authType: 'key_password', password: 'x', sshKeyId: null, newKey: undefined })
+    ).toThrow(/requires both a key/);
+
+    expect(() =>
+      validateAuthMaterial({ authType: 'key', password: null, sshKeyId: null, newKey: undefined })
+    ).toThrow(/sshKeyId or newKey is required/);
+  });
+
+  it('allows sshKeyId: null when switching authType to password (with a stored password)', () => {
+    expect(() =>
+      validateAuthMaterial({ authType: 'password', password: 'x', sshKeyId: null, newKey: undefined })
+    ).not.toThrow();
+  });
+
+  it('still requires a stored password for authType "password"', () => {
+    expect(() =>
+      validateAuthMaterial({ authType: 'password', password: null, sshKeyId: null, newKey: undefined })
+    ).toThrow(/password is required/);
   });
 });

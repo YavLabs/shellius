@@ -52,12 +52,20 @@ const importKeySchema = Joi.object({
   description: Joi.string().allow('', null).max(1000),
   privateKey: Joi.string().required(),
   passphrase: Joi.string().allow('', null).max(255),
+  publicKey: Joi.string().allow('', null),
+  certificate: Joi.string().allow('', null),
+});
+
+const inspectKeySchema = Joi.object({
+  privateKey: Joi.string().required(),
+  passphrase: Joi.string().allow('', null).max(255),
 });
 
 const updateKeySchema = Joi.object({
   name: Joi.string().min(1).max(200),
   description: Joi.string().allow('', null).max(1000),
   comment: Joi.string().allow('', null).max(255),
+  certificate: Joi.string().allow(null),
 }).min(1);
 
 router.get(
@@ -86,6 +94,16 @@ router.post(
   asyncHandler(async (req, res) => {
     const result = await keystoreService.generateKey(req.orgId, req.body, req.user.userId);
     res.status(201).json({ success: true, data: result });
+  })
+);
+
+router.post(
+  '/keys/inspect',
+  requireRole(...VIEW_ROLES),
+  validate(inspectKeySchema),
+  asyncHandler(async (req, res) => {
+    const result = await keystoreService.inspectKey(req.body);
+    res.json({ success: true, data: result });
   })
 );
 

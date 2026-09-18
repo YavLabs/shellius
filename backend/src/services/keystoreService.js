@@ -24,6 +24,26 @@ import { log as auditLog } from './auditService.js';
 // DTOs
 // ---------------------------------------------------------------------------
 
+/** Public summary of a stored certificate — never includes the cert text itself. */
+function certificateSummary(certificateText) {
+  if (!certificateText) return null;
+  try {
+    const parsed = sshKeys.parseCertificate(certificateText);
+    return {
+      type: parsed.type,
+      keyId: parsed.keyId,
+      principals: parsed.principals,
+      validAfter: parsed.validAfter,
+      validBefore: parsed.validBefore,
+      expired: parsed.expired,
+      caFingerprint: parsed.caFingerprint,
+    };
+  } catch (err) {
+    logger.warn('keystoreService: stored certificate failed to parse', { error: err.message });
+    return null;
+  }
+}
+
 export function toSshKeyDTO(key, { createdBy, credentialCount, deploymentCount } = {}) {
   return {
     id: key.id,
@@ -36,6 +56,8 @@ export function toSshKeyDTO(key, { createdBy, credentialCount, deploymentCount }
     comment: key.comment ?? null,
     source: key.source,
     hasPassphrase: !!key.passphraseEncrypted,
+    originalFormat: key.originalFormat ?? null,
+    certificate: certificateSummary(key.certificate),
     createdAt: key.createdAt,
     updatedAt: key.updatedAt,
     lastExportedAt: key.lastExportedAt ?? null,
@@ -130,14 +152,44 @@ export async function getKey(orgId, id) {
   const deployedByMap = await loadUsersById(orgId, deployments.map((d) => d.deployedById));
 
   return {
-    key: toSshKeyDTO(key, {
+    key: { ...toSshKeyDTO(key, {
       createdBy: userMap.get(key.createdById) || null,
       credentialCount: key._count.credentials,
       deploymentCount: key._count.deployments,
-    }),
+    }), certificateText: key.certificate ?? null },
     credentials,
     deployments: deployments.map((d) => toKeyDeploymentDTO(d, deployedByMap)),
   };
+}
+
+/**
+ * Parse/validate a private key (and optional public key / certificate)
+ * without storing anything. Manager+ only — used by the import wizard to
+ * preview format/passphrase requirements before submitting.
+ */
+export async function inspectKey({ privateKey, passphrase }) {
+  const parsed = await sshKeys.normalizePrivateKey({ privateKey, passphrase });
+  return {
+    format: parsed.format,
+    encrypted: parsed.encrypted,
+    keyType: parsed.keyType,
+    bits: parsed.bits,
+    fingerprint: parsed.fingerprint,
+    publicKey: parsed.publicKey,
+    comment: parsed.comment,
+  };
+}
+
+/** Validate an optional certificate against a just-normalised private key; returns the cert text or null. */
+function validateCertificateForKey(certificate, parsed) {
+  if (!certificate) return null;
+  const certInfo = sshKeys.parseCertificate(certificate); // throws CERT_INVALID
+  if (certInfo.publicKeyFingerprint !== parsed.fingerprint) {
+    throw new ApiError(400, 'This certificate does not certify the supplied key', {
+      code: 'CERT_KEY_MISMATCH',
+    });
+  }
+  return certificate;
 }
 
 export async function generateKey(orgId, { name, description, keyType, bits, comment, passphrase }, createdById) {
@@ -159,6 +211,7 @@ export async function generateKey(orgId, { name, description, keyType, bits, com
       fingerprint: generated.fingerprint,
       comment: generated.comment || null,
       source: 'generated',
+      originalFormat: 'openssh',
       createdById: createdById || null,
     };
 
@@ -180,10 +233,17 @@ export async function generateKey(orgId, { name, description, keyType, bits, com
   }
 }
 
-export async function importKey(orgId, { name, description, privateKey, passphrase }, createdById) {
+export async function importKey(orgId, { name, description, privateKey, passphrase, publicKey, certificate }, createdById) {
   if (!name) throw new ApiError(400, 'name is required');
 
-  const parsed = await sshKeys.importPrivateKey({ privateKey, passphrase });
+  const parsed = await sshKeys.normalizePrivateKey({ privateKey, passphrase });
+
+  if (publicKey && !sshKeys.publicKeyMatches(parsed, publicKey)) {
+    throw new ApiError(400, 'The supplied public key does not match the private key', {
+      code: 'KEY_PUBLIC_MISMATCH',
+    });
+  }
+  const certificateToStore = validateCertificateForKey(certificate, parsed);
 
   const data = {
     orgId,
@@ -192,11 +252,13 @@ export async function importKey(orgId, { name, description, privateKey, passphra
     keyType: parsed.keyType,
     bits: parsed.bits,
     publicKey: parsed.publicKey,
-    privateKeyEncrypted: encrypt(privateKey),
+    privateKeyEncrypted: encrypt(parsed.privateKey),
     passphraseEncrypted: passphrase ? encrypt(passphrase) : null,
     fingerprint: parsed.fingerprint,
     comment: parsed.comment || null,
     source: 'imported',
+    originalFormat: parsed.format,
+    certificate: certificateToStore,
     createdById: createdById || null,
   };
 
@@ -208,7 +270,7 @@ export async function importKey(orgId, { name, description, privateKey, passphra
     action: 'keystore.key.import',
     resourceType: 'SshKey',
     resourceId: key.id,
-    metadata: { name: key.name, keyType: key.keyType, fingerprint: key.fingerprint },
+    metadata: { name: key.name, keyType: key.keyType, fingerprint: key.fingerprint, originalFormat: key.originalFormat },
   });
 
   return { key: toSshKeyDTO(key, { credentialCount: 0, deploymentCount: 0 }) };
@@ -225,7 +287,7 @@ async function createSshKeyRow(data) {
   }
 }
 
-export async function updateKey(orgId, id, { name, description, comment }) {
+export async function updateKey(orgId, id, { name, description, comment, certificate }) {
   const existing = await prisma.sshKey.findFirst({ where: { id, orgId } });
   if (!existing) throw new ApiError(404, 'Key not found');
 
@@ -233,6 +295,17 @@ export async function updateKey(orgId, id, { name, description, comment }) {
   if (name !== undefined) data.name = name;
   if (description !== undefined) data.description = description;
   if (comment !== undefined) data.comment = comment;
+  if (certificate !== undefined) {
+    if (certificate === null) {
+      data.certificate = null;
+    } else {
+      const certInfo = sshKeys.parseCertificate(certificate); // throws CERT_INVALID
+      if (certInfo.publicKeyFingerprint !== existing.fingerprint) {
+        throw new ApiError(400, 'This certificate does not certify this key', { code: 'CERT_KEY_MISMATCH' });
+      }
+      data.certificate = certificate;
+    }
+  }
 
   let key;
   try {
@@ -292,6 +365,7 @@ export async function exportKey(orgId, id, actorId) {
     publicKey: key.publicKey,
     privateKey,
     passphraseProtected: !!key.passphraseEncrypted,
+    certificate: key.certificate || null,
   };
 }
 
@@ -307,6 +381,7 @@ async function resolveNewKey(orgId, name, newKey, createdById) {
   let privateKeyText;
   let passphrase = newKey.passphrase || null;
 
+  let originalFormat;
   if (newKey.generate) {
     const generated = await sshKeys.generateKeyPair({
       keyType: newKey.keyType,
@@ -316,9 +391,11 @@ async function resolveNewKey(orgId, name, newKey, createdById) {
     });
     parsed = generated;
     privateKeyText = generated.privateKey;
+    originalFormat = 'openssh';
   } else if (newKey.privateKey) {
-    parsed = await sshKeys.importPrivateKey({ privateKey: newKey.privateKey, passphrase: newKey.passphrase });
-    privateKeyText = newKey.privateKey;
+    parsed = await sshKeys.normalizePrivateKey({ privateKey: newKey.privateKey, passphrase: newKey.passphrase });
+    privateKeyText = parsed.privateKey;
+    originalFormat = parsed.format;
   } else {
     throw new ApiError(400, 'newKey must be either { generate: true, ... } or { privateKey, passphrase? }');
   }
@@ -339,6 +416,7 @@ async function resolveNewKey(orgId, name, newKey, createdById) {
           fingerprint: parsed.fingerprint,
           comment: parsed.comment || null,
           source: newKey.generate ? 'generated' : 'imported',
+          originalFormat,
           createdById: createdById || null,
         },
       });
@@ -351,7 +429,7 @@ async function resolveNewKey(orgId, name, newKey, createdById) {
   return created;
 }
 
-function validateAuthMaterial({ authType, password, sshKeyId, newKey }) {
+export function validateAuthMaterial({ authType, password, sshKeyId, newKey }) {
   if (!AUTH_TYPES.includes(authType)) {
     throw new ApiError(400, `authType must be one of: ${AUTH_TYPES.join(', ')}`);
   }
@@ -577,6 +655,9 @@ export function resolveCredentialAuth(credential) {
     if (credential.sshKey.passphraseEncrypted) {
       opts.passphrase = decrypt(credential.sshKey.passphraseEncrypted);
     }
+    if (credential.sshKey.certificate) {
+      opts.certificate = credential.sshKey.certificate;
+    }
   }
   return opts;
 }
@@ -599,13 +680,21 @@ export async function testCredential(orgId, id, { serverId, host, port }, actorI
   }
   if (!targetHost) throw new ApiError(400, 'Provide serverId or host');
 
+  // Ad-hoc {host} tests (no serverId) go through the same target guard as
+  // Quick Connect — a saved server was already vetted when it was created.
+  let connectHost = targetHost;
+  if (!server) {
+    const resolved = await sshConnect.resolveTarget(targetHost);
+    connectHost = resolved.ip;
+  }
+
   const start = Date.now();
   const authOpts = resolveCredentialAuth(cred);
   let hostKeyInfo = null;
 
   try {
     const { client } = await sshConnect.connectSsh({
-      host: targetHost,
+      host: connectHost,
       port: targetPort,
       ...authOpts,
       readyTimeout: 10000,
@@ -691,6 +780,7 @@ export function toKeyDeploymentDTO(dep, deployedByMap = new Map()) {
 export default {
   listKeys,
   getKey,
+  inspectKey,
   generateKey,
   importKey,
   updateKey,
@@ -702,6 +792,7 @@ export default {
   updateCredential,
   deleteCredential,
   resolveCredentialAuth,
+  validateAuthMaterial,
   testCredential,
   toKeyDeploymentDTO,
   toSshKeyDTO,
