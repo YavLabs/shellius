@@ -132,7 +132,7 @@ export async function assertNotProdHost(orgId, host, resolvedIps = []) {
       const records = await dns.lookup(hostname, { all: true, verbatim: true });
       ips = records.map((r) => r.address);
     } catch (err) {
-      logger.warn('quickConnectService: prod guard DNS lookup failed (tolerated)', { hostname, error: err.message });
+      logger.debug('quickConnectService: prod guard DNS lookup failed (tolerated)', { hostname, error: err.message });
     }
     dnsCache.set(hostname, ips);
     return ips;

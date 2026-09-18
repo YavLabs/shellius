@@ -55,6 +55,7 @@ function WebTerminal({ requestId, ticket, label, principal, onClose }) {
   const termRef = useRef(null);
   const fitAddonRef = useRef(null);
   const wsRef = useRef(null);
+  const connectSignalRef = useRef(null);
   const resizeObserverRef = useRef(null);
 
   const isQuickConnect = !!ticket;
@@ -72,7 +73,12 @@ function WebTerminal({ requestId, ticket, label, principal, onClose }) {
     }
   }, []);
 
-  const connect = useCallback(async () => {
+  // `signal.cancelled` is set when the effect that started this connect is
+  // torn down (unmount, React StrictMode's dev double-mount, reconnect). A
+  // cancelled attempt must never open a WebSocket: Quick Connect tickets are
+  // single-use, so a stray first socket would burn the ticket and the real
+  // one would fail with "ticket is invalid or has expired".
+  const connect = useCallback(async (signal = { cancelled: false }) => {
     if (!requestId && !ticket) return;
 
     setStatus(STATUS.CONNECTING);
@@ -90,6 +96,7 @@ function WebTerminal({ requestId, ticket, label, principal, onClose }) {
       // If refresh fails, fall back to whatever's in storage and let the
       // backend reject — the user will get the auth error and can re-login.
     }
+    if (signal.cancelled) return;
     const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
     const host = window.location.host;
 
@@ -136,6 +143,7 @@ function WebTerminal({ requestId, ticket, label, principal, onClose }) {
       term.open(containerRef.current);
       // Small delay to allow DOM to settle before fitting
       setTimeout(() => {
+        if (signal.cancelled || termRef.current !== term) return;
         fitAddon.fit();
         const { cols, rows } = term;
         const params = new URLSearchParams({ token, cols: String(cols), rows: String(rows) });
@@ -306,7 +314,9 @@ function WebTerminal({ requestId, ticket, label, principal, onClose }) {
     // teardown can call it correctly.
     let cleanupFn = null;
     let cancelled = false;
-    connect().then((fn) => {
+    const signal = { cancelled: false };
+    connectSignalRef.current = signal;
+    connect(signal).then((fn) => {
       if (cancelled) {
         if (typeof fn === 'function') fn();
       } else {
@@ -316,6 +326,7 @@ function WebTerminal({ requestId, ticket, label, principal, onClose }) {
 
     return () => {
       cancelled = true;
+      signal.cancelled = true;
       if (resizeObserverRef.current) {
         resizeObserverRef.current.disconnect();
       }
@@ -352,7 +363,10 @@ function WebTerminal({ requestId, ticket, label, principal, onClose }) {
     if (resizeObserverRef.current) {
       resizeObserverRef.current.disconnect();
     }
-    connect();
+    if (connectSignalRef.current) connectSignalRef.current.cancelled = true;
+    const signal = { cancelled: false };
+    connectSignalRef.current = signal;
+    connect(signal);
   };
 
   const saveConnection = connectedInfo
