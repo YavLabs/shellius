@@ -67,15 +67,30 @@ Resize from any attached socket applies to the PTY (last writer wins).
 
 - Sidebar entry **Terminals** (all roles; badge = live session count) → `/terminals`.
 - Tab bar (Termius-like): status dot (connecting / live / detached / ended), label, env badge,
-  close ×; context menu: Rename, Duplicate, Split right, Split down, Open in new window,
-  Close, Close others, End session. `+` opens a "New connection" picker (servers you can
+  close ×; context menu: Rename, Duplicate, Split right, Split down, Remove from split, Open in
+  new window, Close, Close others, End session. Tabs that are part of a split show a small
+  split icon, highlighted when that split is on screen. `+` opens a "New connection" picker (servers you can
   connect to, recent Quick Connects, "Quick Connect…").
-- Panes: single, split right (2 columns), split down (2 rows), 2×2 grid; each pane shows a tab;
-  click to focus; drag-free (tabs assigned to panes via menu / drop-down per pane).
+- Panes: single, split right (2 columns), split down (2 rows), 2×2 grid. **Splits belong to their
+  tabs**, not to the whole page (`frontend/src/lib/workspaceLayout.js`, unit-tested in
+  `workspaceLayout.test.js`):
+  - Selecting or opening a tab that isn't in a split shows it **full size**. Any other splits
+    stay as they are, and selecting one of their tabs brings that split back.
+  - Several splits can exist at once. The Layout menu (and Single) only changes the split on
+    screen.
+  - "Split right/down" on the shown tab adds an empty, focused pane. Clicking a tab in the bar,
+    or opening a new connection, fills it. A split left with an unfilled pane is discarded when
+    you switch away.
+  - Dragging a tab onto a pane edge splits (a cross-axis edge on a 2-pane split makes a 2×2
+    grid); the centre replaces that pane. A tab dropped within its own split swaps places. A tab
+    moved out of a split, or a replaced tab, becomes standalone. A split left with one tab
+    dissolves, and a grid left with two becomes side-by-side.
+  - Terminals render into stable host nodes that are moved between panes, so switching tabs or
+    layouts never reconnects (no new ticket, no replay).
 - A side panel / section lists **all live sessions** (including detached ones not open in any
   tab) with Attach, Duplicate, End.
 - Workspace state (open tabs → sessionIds, labels, layout) persists in `localStorage`
-  (`shellius.workspace.v1`, no secrets; stale sessionIds are pruned against
+  (`shellius.workspace.v2`: tabs + split groups; v1's single layout is migrated. No secrets; stale sessionIds are pruned against
   `GET /api/terminal/sessions`). Leaving `/terminals` or reloading re-attaches every tab and
   replays recent output.
 - Every "Connect" entry point (server Connect modal, Quick Connect, dashboard "Connect again",

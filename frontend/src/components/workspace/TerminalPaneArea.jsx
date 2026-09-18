@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useRef, useState } from 'react';
+import { useCallback, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { MoreHorizontal, X } from 'lucide-react';
 import {
@@ -36,8 +36,8 @@ function slotArea(mode, paneIdx) {
 }
 
 // Quadrant the pointer is over within a pane's box, used both to decide the
-// drop overlay position and the actual split (see dropTabOnPane's doc
-// comment in TerminalWorkspaceContext for the placement rules). The centre
+// drop overlay position and the actual split (see dropTab in
+// lib/workspaceLayout.js for the placement rules). The centre
 // ~30% is its own "replace" zone so a drop doesn't have to be pixel-perfect
 // to land on an edge.
 function zoneFromPoint(rect, clientX, clientY) {
@@ -106,10 +106,13 @@ function PaneHoverChip({ tab, paneIndex, tabs, onAssign, onClosePane }) {
 }
 
 /**
- * TerminalPaneArea — renders the current layout (single / split-right /
- * split-down / 2x2 grid). Every open tab keeps a mounted TerminalView (up to
- * MAX_MOUNTED, portaled into whichever pane shows it, or into a hidden
- * holding area) so switching tabs or splitting panes never reconnects.
+ * TerminalPaneArea — renders the layout on screen (single / split-right /
+ * split-down / 2x2 grid). Each split belongs to the tabs in it (see
+ * lib/workspaceLayout.js), so this is the active tab's split, or the active
+ * tab alone. Every open tab keeps a mounted TerminalView (up to
+ * MAX_MOUNTED) in a stable host node that is moved into whichever pane
+ * shows it, or into a hidden holding area, so switching tabs or splitting
+ * panes never reconnects (see hostNodesRef).
  * Request tabs (`kind: 'request'`) render a RequestStatusCard instead.
  *
  * Single-pane mode has no header at all — the terminal fills the pane
@@ -118,13 +121,15 @@ function PaneHoverChip({ tab, paneIndex, tabs, onAssign, onClosePane }) {
  * gets a subtle 1px primary ring instead of a header bar.
  *
  * Dragging a tab from the tab bar onto a pane splits/replaces it — see the
- * `dropTabOnPane` doc comment in TerminalWorkspaceContext for the exact
- * zone → layout rules.
+ * `dropTab` in lib/workspaceLayout.js for the exact zone → layout rules.
  */
 function TerminalPaneArea({ workspace }) {
   const { tabs, layout, focusedPane, setFocusedPane, assignPane, dropTabOnPane, draggedTabId, setTabSessionInfo, setTabState } =
     workspace;
-  const [ratio, setRatio] = useState(50);
+  // Divider position per split (keyed by group id), so each split keeps its own.
+  const [ratios, setRatios] = useState({});
+  const ratio = ratios[layout.id] ?? 50;
+  const setRatio = useCallback((value) => setRatios((prev) => ({ ...prev, [layout.id]: value })), [layout.id]);
   const containerRef = useRef(null);
   const draggingRef = useRef(false);
   const [slotNodes, setSlotNodes] = useState({});
@@ -157,6 +162,38 @@ function TerminalPaneArea({ workspace }) {
     return slotRefCallbacks.current[idx];
   }, []);
 
+  // Each mounted tab renders into its OWN host <div>, which never changes, and
+  // that div is moved between panes / the hidden holder with plain DOM
+  // appendChild. Portaling straight into the pane slot would remount the
+  // TerminalView whenever the tab changes pane, because React recreates a
+  // portal when its container changes. Every tab switch or layout change
+  // would then open a new WebSocket: a new ticket, a re-attach, a replay, and
+  // "Too many requests" after a few quick switches.
+  const hostNodesRef = useRef(new Map());
+  const hostFor = (tabId) => {
+    let node = hostNodesRef.current.get(tabId);
+    if (!node) {
+      node = document.createElement('div');
+      node.className = 'h-full min-h-0';
+      hostNodesRef.current.set(tabId, node);
+    }
+    return node;
+  };
+
+  useLayoutEffect(() => {
+    const mountedIds = new Set(mountedTabs.map((t) => t.id));
+    for (const [tabId, node] of hostNodesRef.current) {
+      if (!mountedIds.has(tabId)) {
+        node.remove();
+        hostNodesRef.current.delete(tabId);
+        continue;
+      }
+      const paneIndex = layout.panes.indexOf(tabId);
+      const target = paneIndex !== -1 ? slotNodes[paneIndex] : hiddenNode;
+      if (target && node.parentNode !== target) target.appendChild(node);
+    }
+  });
+
   const startDrag = useCallback(
     (e) => {
       e.preventDefault();
@@ -178,7 +215,7 @@ function TerminalPaneArea({ workspace }) {
       window.addEventListener('pointermove', onMove);
       window.addEventListener('pointerup', onUp);
     },
-    [layout.mode]
+    [layout.mode, setRatio]
   );
 
   const showDivider = layout.mode === 'split-right' || layout.mode === 'split-down';
@@ -266,7 +303,9 @@ function TerminalPaneArea({ workspace }) {
             <div ref={setSlotRef(paneIndex)} className="min-h-0 flex-1">
               {!tab && (
                 <div className="flex h-full items-center justify-center text-xs text-muted-foreground">
-                  Drop a tab here, or select one from the tab bar
+                  {focusedPane === paneIndex
+                    ? 'Click a tab above or open a new connection to fill this pane'
+                    : 'Drop a tab here, or click to select this pane'}
                 </div>
               )}
             </div>
@@ -282,8 +321,6 @@ function TerminalPaneArea({ workspace }) {
       {mountedTabs.map((tab) => {
         const paneIndex = layout.panes.indexOf(tab.id);
         const visible = paneIndex !== -1;
-        const target = visible ? slotNodes[paneIndex] : hiddenNode;
-        if (!target) return null;
         return createPortal(
           <div className="h-full min-h-0" onMouseDownCapture={() => visible && setFocusedPane(paneIndex)}>
             {tab.kind === 'request' ? (
@@ -298,7 +335,7 @@ function TerminalPaneArea({ workspace }) {
               />
             )}
           </div>,
-          target,
+          hostFor(tab.id),
           tab.id
         );
       })}

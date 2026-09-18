@@ -16,6 +16,7 @@ import {
   Square as SquareIcon,
   PanelRight,
   ChevronDown,
+  Maximize2,
 } from 'lucide-react';
 import {
   DropdownMenu,
@@ -51,7 +52,10 @@ const LAYOUT_OPTIONS = [
 
 const DRAG_MIME = 'application/x-shellius-tab';
 
-function TabItem({ tab, index, active, onSelect, onClose, menu, dragProps }) {
+const SPLIT_ICON = { 'split-right': Columns, 'split-down': Rows, grid: LayoutGrid };
+
+// `split` is { mode, onScreen } when the tab is in a split, else undefined.
+function TabItem({ tab, index, active, split, onSelect, onClose, menu, dragProps }) {
   const [renaming, setRenaming] = useState(false);
   // Right-click opens the same menu as the ⋯ button (controlled dropdown).
   const [menuOpen, setMenuOpen] = useState(false);
@@ -74,6 +78,7 @@ function TabItem({ tab, index, active, onSelect, onClose, menu, dragProps }) {
   };
 
   const isTerminal = tab.kind !== 'request';
+  const SplitIcon = split ? SPLIT_ICON[split.mode] : null;
 
   return (
     <div
@@ -103,13 +108,19 @@ function TabItem({ tab, index, active, onSelect, onClose, menu, dragProps }) {
       }}
       className={cn(
         'group relative flex h-full shrink-0 cursor-pointer select-none items-center gap-1.5 border-r border-border px-3 text-sm transition-colors',
-        active ? 'bg-background text-foreground' : 'bg-muted/40 text-muted-foreground hover:bg-muted/70',
+        active
+          ? 'bg-background text-foreground'
+          : split?.onScreen
+            ? 'bg-background/60 text-foreground/80 hover:bg-muted/70'
+            : 'bg-muted/40 text-muted-foreground hover:bg-muted/70',
         dragProps.isDragging(tab.id) && 'opacity-40'
       )}
       title={
         tab.kind === 'request'
           ? `Access request — ${tab.label}`
-          : `${tab.username || ''}${tab.username && tab.host ? '@' : ''}${tab.host || ''}`
+          : `${tab.username || ''}${tab.username && tab.host ? '@' : ''}${tab.host || ''}${
+              split && !split.onScreen ? ' — in a split view, click to show it' : ''
+            }`
       }
     >
       {dragProps.insertBefore === index && (
@@ -137,6 +148,12 @@ function TabItem({ tab, index, active, onSelect, onClose, menu, dragProps }) {
         />
       ) : (
         <span className="max-w-[10rem] truncate">{tab.label}</span>
+      )}
+      {SplitIcon && (
+        <SplitIcon
+          className={cn('h-3 w-3 shrink-0', split.onScreen ? 'text-primary' : 'text-muted-foreground/70')}
+          aria-label="In a split view"
+        />
       )}
       {tab.env && <EnvironmentBadge environment={tab.env} className="hidden sm:inline-flex" />}
 
@@ -166,6 +183,11 @@ function TabItem({ tab, index, active, onSelect, onClose, menu, dragProps }) {
               <DropdownMenuItem onSelect={() => menu.onSplit(tab.id, 'down')}>
                 <SplitSquareVertical className="mr-2 h-3.5 w-3.5" /> Split down
               </DropdownMenuItem>
+              {split && (
+                <DropdownMenuItem onSelect={() => menu.onRemoveFromSplit(tab.id)}>
+                  <Maximize2 className="mr-2 h-3.5 w-3.5" /> Remove from split
+                </DropdownMenuItem>
+              )}
               <DropdownMenuItem onSelect={() => menu.onOpenNewWindow(tab.id)} disabled={!tab.sessionId}>
                 <ExternalLink className="mr-2 h-3.5 w-3.5" /> Open in new window
               </DropdownMenuItem>
@@ -220,6 +242,7 @@ function TerminalTabBar({ tabs, activeTabId, onSelect, workspace, onNewConnectio
     onRename: workspace.renameTab,
     onDuplicate: (id) => workspace.duplicateTab(id),
     onSplit: (id, dir) => workspace.splitWith(id, dir),
+    onRemoveFromSplit: (id) => workspace.removeFromSplit(id),
     onOpenNewWindow: (id) => {
       const tab = workspace.tabs.find((t) => t.id === id);
       if (!tab?.sessionId) return;
@@ -317,6 +340,7 @@ function TerminalTabBar({ tabs, activeTabId, onSelect, workspace, onNewConnectio
             tab={tab}
             index={index}
             active={tab.id === activeTabId}
+            split={workspace.splitInfo.get(tab.id)}
             onSelect={() => onSelect(tab.id)}
             onClose={() => workspace.closeTab(tab.id)}
             menu={menu}

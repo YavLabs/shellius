@@ -90,9 +90,16 @@ const TerminalView = forwardRef(function TerminalView(
     [onStateChange]
   );
 
+  // Only send real size changes. Each resize is a SIGWINCH on the remote
+  // shell, and readline redraws its prompt on every one.
+  const lastSizeRef = useRef(null);
   const sendResize = useCallback((cols, rows) => {
+    if (!cols || !rows) return;
+    const last = lastSizeRef.current;
+    if (last && last.cols === cols && last.rows === rows) return;
     if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
       wsRef.current.send(JSON.stringify({ type: 'resize', cols, rows }));
+      lastSizeRef.current = { cols, rows };
     }
   }, []);
 
@@ -233,6 +240,11 @@ const TerminalView = forwardRef(function TerminalView(
     })();
 
     const handleResize = () => {
+      // A hidden tab (moved into the workspace's display:none holder) has a
+      // zero-size box. Fitting to it would shrink the remote PTY to a
+      // couple of columns and garble the prompt, so wait until it's shown.
+      const box = containerRef.current;
+      if (!box || box.clientWidth < 20 || box.clientHeight < 20) return;
       try {
         fitAddonRef.current?.fit();
         sendResize(term.cols, term.rows);
@@ -263,6 +275,7 @@ const TerminalView = forwardRef(function TerminalView(
     function openWs(url, term, signal) {
       const ws = new WebSocket(url);
       wsRef.current = ws;
+      lastSizeRef.current = null; // new socket: next resize must go through
       ws.binaryType = 'arraybuffer';
       const isCurrent = () => wsRef.current === ws && !signal.cancelled;
 

@@ -6,9 +6,12 @@ import {
   renameTerminalSession,
   closeTerminalSession,
 } from '@/services/terminalService';
+import * as L from '@/lib/workspaceLayout';
 
-const STORAGE_KEY = 'shellius.workspace.v1';
-const PANE_COUNTS = { single: 1, 'split-right': 2, 'split-down': 2, grid: 4 };
+// v2: layout is per split group (see lib/workspaceLayout.js). v1 had a single
+// global layout and is migrated on load.
+const STORAGE_KEY = 'shellius.workspace.v2';
+const LEGACY_STORAGE_KEY = 'shellius.workspace.v1';
 
 const TerminalWorkspaceContext = createContext(null);
 
@@ -22,22 +25,22 @@ function uuid() {
 // sessionId yet (still connecting when the page unloaded) are dropped.
 function loadPersisted() {
   try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    if (!raw) return null;
-    const parsed = JSON.parse(raw);
-    if (!parsed || !Array.isArray(parsed.tabs)) return null;
-    return parsed;
+    for (const key of [STORAGE_KEY, LEGACY_STORAGE_KEY]) {
+      const raw = localStorage.getItem(key);
+      if (!raw) continue;
+      const parsed = JSON.parse(raw);
+      if (!parsed || !Array.isArray(parsed.tabs)) continue;
+      if (key === LEGACY_STORAGE_KEY) {
+        const migrated = L.migrateLegacyLayout(parsed.layout, parsed.activeTabId);
+        localStorage.removeItem(LEGACY_STORAGE_KEY);
+        return { tabs: parsed.tabs, groups: migrated.groups, activeTabId: migrated.activeTabId };
+      }
+      return parsed;
+    }
+    return null;
   } catch {
     return null;
   }
-}
-
-function normalizeLayout(layout, fallbackTabId) {
-  const mode = layout && PANE_COUNTS[layout.mode] ? layout.mode : 'single';
-  const count = PANE_COUNTS[mode];
-  const panes = Array.from({ length: count }, (_, i) => layout?.panes?.[i] ?? null);
-  if (!panes.some(Boolean) && fallbackTabId) panes[0] = fallbackTabId;
-  return { mode, panes };
 }
 
 function buildInitialState() {
@@ -72,9 +75,11 @@ function buildInitialState() {
             error: null,
           }
     );
-  const layout = normalizeLayout(persisted?.layout, tabs[0]?.id);
-  const activeTabId = tabs.some((t) => t.id === persisted?.activeTabId) ? persisted.activeTabId : tabs[0]?.id || null;
-  return { tabs, layout, activeTabId };
+  const ws = L.sanitize(
+    { groups: persisted?.groups || [], activeTabId: persisted?.activeTabId },
+    tabs.map((t) => t.id)
+  );
+  return { tabs, ws };
 }
 
 export function TerminalWorkspaceProvider({ children }) {
@@ -86,9 +91,11 @@ export function TerminalWorkspaceProvider({ children }) {
   if (!initialRef.current) initialRef.current = buildInitialState();
 
   const [tabs, setTabs] = useState(initialRef.current.tabs);
-  const [layout, setLayoutState] = useState(initialRef.current.layout);
-  const [activeTabId, setActiveTabId] = useState(initialRef.current.activeTabId);
-  const [focusedPane, setFocusedPane] = useState(0);
+  // { groups, activeTabId } — split groups + the tab on screen. The visible
+  // layout is derived from these (L.currentView), so each split belongs to
+  // its tabs instead of being one global layout.
+  const [ws, setWs] = useState(initialRef.current.ws);
+  const { activeTabId } = ws;
   const [liveCount, setLiveCount] = useState(0);
   // Ephemeral (not persisted) — the tab id currently being dragged, so the
   // pane-area drop overlay can show its label without relying on
@@ -148,11 +155,11 @@ export function TerminalWorkspaceProvider({ children }) {
           host: t.host,
           username: t.username,
         }));
-      localStorage.setItem(STORAGE_KEY, JSON.stringify({ tabs: persistTabs, layout, activeTabId }));
+      localStorage.setItem(STORAGE_KEY, JSON.stringify({ tabs: persistTabs, groups: ws.groups, activeTabId: ws.activeTabId }));
     } catch {
       /* ignore quota/serialization errors — workspace state is best-effort */
     }
-  }, [tabs, layout, activeTabId]);
+  }, [tabs, ws]);
 
   // Poll the live session list — feeds the Sessions panel + sidebar badge.
   // 15s while the workspace page is open, 60s elsewhere (cheap).
@@ -173,28 +180,17 @@ export function TerminalWorkspaceProvider({ children }) {
     };
   }, [onTerminalsPage]);
 
-  const assignToPane = useCallback((tabId, preferredPane) => {
-    setLayoutState((prev) => {
-      const panes = [...prev.panes];
-      if (typeof preferredPane === 'number' && preferredPane < panes.length) {
-        panes[preferredPane] = tabId;
-        setFocusedPane(preferredPane);
-        return { ...prev, panes };
-      }
-      const emptyIdx = panes.findIndex((p) => !p);
-      if (emptyIdx !== -1) {
-        panes[emptyIdx] = tabId;
-        setFocusedPane(emptyIdx);
-      } else {
-        panes[0] = tabId;
-        setFocusedPane(0);
-      }
-      return { ...prev, panes };
-    });
+  // Show a tab: its split if it's in one, otherwise full size.
+  // `fillEmptyPane` (tab-bar clicks): a focused empty pane in the split on
+  // screen takes the tab instead.
+  const selectTab = useCallback((id, opts) => {
+    setWs((prev) => L.selectTab(prev, id, opts));
   }, []);
 
   const openTab = useCallback(
     (connect, meta = {}) => {
+      // New tabs open full size (their own view), unless the split on screen
+      // has a focused empty pane waiting for a tab. See lib/workspaceLayout.js.
       const { label, env, host, username, focus = true, sessionId = null, pane } = meta;
       const id = uuid();
       setTabsMirrored((prev) => [
@@ -212,14 +208,13 @@ export function TerminalWorkspaceProvider({ children }) {
           error: null,
         },
       ]);
-      assignToPane(id, pane);
-      if (focus) {
-        setActiveTabId(id);
-        navigate('/terminals');
-      }
+      setWs((prev) =>
+        typeof pane === 'number' ? L.placeInPane(L.addTab(prev, id, { focus: false }), id, pane) : L.addTab(prev, id, { focus })
+      );
+      if (focus) navigate('/terminals');
       return id;
     },
-    [assignToPane, navigate]
+    [navigate]
   );
 
   // Opens a status-card tab bound to an access request (pending/denied/
@@ -229,8 +224,7 @@ export function TerminalWorkspaceProvider({ children }) {
     (accessRequest, meta = {}) => {
       const existing = tabsRef.current.find((t) => t.kind === 'request' && t.accessRequestId === accessRequest.id);
       if (existing) {
-        setActiveTabId(existing.id);
-        assignToPane(existing.id, meta.pane);
+        selectTab(existing.id);
         navigate('/terminals');
         return existing.id;
       }
@@ -252,14 +246,11 @@ export function TerminalWorkspaceProvider({ children }) {
           error: null,
         },
       ]);
-      assignToPane(id, meta.pane);
-      if (meta.focus !== false) {
-        setActiveTabId(id);
-        navigate('/terminals');
-      }
+      setWs((prev) => L.addTab(prev, id, { focus: meta.focus !== false }));
+      if (meta.focus !== false) navigate('/terminals');
       return id;
     },
-    [assignToPane, navigate]
+    [selectTab, navigate]
   );
 
   // Converts a request tab into a terminal tab in place (same id/pane slot)
@@ -328,13 +319,9 @@ export function TerminalWorkspaceProvider({ children }) {
 
   const closeTab = useCallback((id, opts = {}) => {
     const tab = tabsRef.current.find((t) => t.id === id);
+    const remaining = tabsRef.current.filter((t) => t.id !== id).map((t) => t.id);
     setTabsMirrored((prev) => prev.filter((t) => t.id !== id));
-    setLayoutState((prev) => ({ ...prev, panes: prev.panes.map((p) => (p === id ? null : p)) }));
-    setActiveTabId((prev) => {
-      if (prev !== id) return prev;
-      const remaining = tabsRef.current.filter((t) => t.id !== id);
-      return remaining[remaining.length - 1]?.id || null;
-    });
+    setWs((prev) => L.removeTab(prev, id, remaining));
     if (opts.end && tab?.sessionId) {
       closeTerminalSession(tab.sessionId).catch(() => {});
     }
@@ -370,120 +357,47 @@ export function TerminalWorkspaceProvider({ children }) {
     if (tab?.sessionId) renameTerminalSession(tab.sessionId, label).catch(() => {});
   }, []);
 
+  // Everything below acts on the split on screen only (see lib/workspaceLayout.js
+  // for the exact rules, and workspaceLayout.test.js for the scenarios).
   const splitWith = useCallback((id, direction) => {
-    setLayoutState({ mode: direction === 'right' ? 'split-right' : 'split-down', panes: [id, null] });
-    setFocusedPane(1);
+    setWs((prev) => L.splitWith(prev, id, direction));
   }, []);
 
-  const setLayout = useCallback(
-    (mode) => {
-      setLayoutState((prev) => normalizeLayout({ mode, panes: prev.panes }, activeTabId));
-      setFocusedPane(0);
-    },
-    [activeTabId]
-  );
+  const setLayout = useCallback((mode) => {
+    setWs((prev) => L.setLayoutMode(prev, mode));
+  }, []);
 
+  // Put a tab into a pane of the split on screen (null = close that pane;
+  // its tab stays open as a standalone tab).
   const assignPane = useCallback((paneIndex, tabId) => {
-    setLayoutState((prev) => {
-      const panes = [...prev.panes];
-      panes[paneIndex] = tabId || null;
-      return { ...prev, panes };
-    });
+    setWs((prev) => L.placeInPane(prev, tabId || null, paneIndex));
   }, []);
 
-  /**
-   * dropTabOnPane — Termius-style drag-a-tab-onto-the-pane-area split.
-   * `zone` is one of 'left' | 'right' | 'top' | 'bottom' | 'center', computed
-   * by the drop target from pointer position within the hovered pane's box.
-   *
-   * Rules (documented here since they're not obvious from the code):
-   *  - single pane: left/right → split-right (dragged tab goes to the side
-   *    dropped on, existing tab takes the other side); top/bottom →
-   *    split-down, same idea; centre → replace (stay single-pane).
-   *  - 2-pane layout (split-right/split-down), same-axis zone (e.g.
-   *    left/right while already split-right) or centre → replace the
-   *    hovered pane's tab (there's no 3rd column/row to add on that axis).
-   *  - 2-pane layout, cross-axis zone (e.g. top/bottom while split-right) →
-   *    promotes to a 2x2 grid. The hovered pane's column/row is split into
-   *    two (existing tab + dragged tab, ordered by which half was dropped
-   *    on); the *other* existing pane keeps its tab in the first row/column
-   *    of its own column/row and the newly-exposed 4th slot is left empty
-   *    (a tab can only occupy one slot, so a 3-tab drop can't fill all 4).
-   *  - grid (4 panes, already maxed out): any zone (including edges) simply
-   *    replaces the hovered pane's tab — there's no 5th slot to expand into.
-   */
+  const removeFromSplit = useCallback((tabId) => {
+    setWs((prev) => L.removeFromSplit(prev, tabId));
+  }, []);
+
+  const setFocusedPane = useCallback((paneIndex) => {
+    setWs((prev) => L.focusPane(prev, paneIndex));
+  }, []);
+
+  // Drag a tab from the tab bar onto the pane area. `zone`: 'left' | 'right'
+  // | 'top' | 'bottom' | 'center', from the pointer position in the pane.
   const dropTabOnPane = useCallback((tabId, paneIndex, zone) => {
-    setLayoutState((prev) => {
-      const mode = prev.mode;
-      const panes = [...prev.panes];
-
-      if (mode === 'grid' || zone === 'center') {
-        panes[paneIndex] = tabId;
-        return { ...prev, panes };
-      }
-
-      if (mode === 'single') {
-        const current = panes[0];
-        if (zone === 'right') return { mode: 'split-right', panes: [current, tabId] };
-        if (zone === 'left') return { mode: 'split-right', panes: [tabId, current] };
-        if (zone === 'bottom') return { mode: 'split-down', panes: [current, tabId] };
-        if (zone === 'top') return { mode: 'split-down', panes: [tabId, current] };
-        return prev;
-      }
-
-      const sameAxis =
-        (mode === 'split-right' && (zone === 'left' || zone === 'right')) ||
-        (mode === 'split-down' && (zone === 'top' || zone === 'bottom'));
-      if (sameAxis) {
-        panes[paneIndex] = tabId;
-        return { ...prev, panes };
-      }
-
-      // Cross-axis on a 2-pane layout → promote to a 2x2 grid (see comment above).
-      const otherIndex = paneIndex === 0 ? 1 : 0;
-      const hovered = panes[paneIndex];
-      const other = panes[otherIndex];
-      const grid = [null, null, null, null];
-      if (mode === 'split-right') {
-        const col = paneIndex;
-        const otherCol = otherIndex;
-        if (zone === 'bottom') {
-          grid[col] = hovered;
-          grid[2 + col] = tabId;
-        } else {
-          grid[col] = tabId;
-          grid[2 + col] = hovered;
-        }
-        grid[otherCol] = other;
-      } else {
-        const row = paneIndex;
-        const otherRow = otherIndex;
-        if (zone === 'right') {
-          grid[row * 2] = hovered;
-          grid[row * 2 + 1] = tabId;
-        } else {
-          grid[row * 2] = tabId;
-          grid[row * 2 + 1] = hovered;
-        }
-        grid[otherRow * 2] = other;
-      }
-      return { mode: 'grid', panes: grid };
-    });
-    setFocusedPane(paneIndex);
+    setWs((prev) => L.dropTab(prev, tabId, paneIndex, zone));
   }, []);
 
   const attachSession = useCallback(
     (sessionId, meta = {}) => {
       const existing = tabsRef.current.find((t) => t.sessionId === sessionId);
       if (existing) {
-        setActiveTabId(existing.id);
-        assignToPane(existing.id);
+        selectTab(existing.id);
         navigate('/terminals');
         return existing.id;
       }
       return openTab({ attach: sessionId }, { ...meta, sessionId, focus: true });
     },
-    [openTab, assignToPane, navigate]
+    [openTab, selectTab, navigate]
   );
 
   // Called by TerminalView (via the pane wrapper) once the socket reports
@@ -523,6 +437,20 @@ export function TerminalWorkspaceProvider({ children }) {
 
   const activeTab = useMemo(() => tabs.find((t) => t.id === activeTabId) || null, [tabs, activeTabId]);
 
+  // The layout on screen, in the shape the pane area has always consumed.
+  const view = useMemo(() => L.currentView(ws), [ws]);
+  const layout = useMemo(() => ({ id: view.group?.id || null, mode: view.mode, panes: view.panes }), [view]);
+  const focusedPane = view.focusedPane;
+  // tabId → { groupId, mode, onScreen } for the tab bar's split indicators.
+  const splitInfo = useMemo(() => {
+    const map = new Map();
+    for (const g of ws.groups) {
+      if (g.panes.filter(Boolean).length < 2) continue;
+      for (const id of g.panes) if (id) map.set(id, { groupId: g.id, mode: g.mode, onScreen: g.id === view.group?.id });
+    }
+    return map;
+  }, [ws.groups, view]);
+
   const value = useMemo(
     () => ({
       tabs,
@@ -530,10 +458,13 @@ export function TerminalWorkspaceProvider({ children }) {
       activeTabId,
       activeTab,
       focusedPane,
+      splitInfo,
       liveCount,
       draggedTabId,
       setDraggedTabId,
-      setActiveTabId,
+      selectTab,
+      // Kept for existing callers: selecting is the only way to change the active tab.
+      setActiveTabId: selectTab,
       setFocusedPane,
       openTab,
       openRequestTab,
@@ -544,6 +475,7 @@ export function TerminalWorkspaceProvider({ children }) {
       duplicateTab,
       renameTab,
       splitWith,
+      removeFromSplit,
       setLayout,
       assignPane,
       moveTab,
@@ -558,8 +490,11 @@ export function TerminalWorkspaceProvider({ children }) {
       activeTabId,
       activeTab,
       focusedPane,
+      splitInfo,
       liveCount,
       draggedTabId,
+      selectTab,
+      setFocusedPane,
       openTab,
       openRequestTab,
       openTabForAccessRequest,
@@ -569,6 +504,7 @@ export function TerminalWorkspaceProvider({ children }) {
       duplicateTab,
       renameTab,
       splitWith,
+      removeFromSplit,
       setLayout,
       assignPane,
       moveTab,

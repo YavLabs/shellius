@@ -150,22 +150,17 @@ function Terminals() {
   const [newConnOpen, setNewConnOpen] = useState(false);
   const [sessionsOpen, setSessionsOpen] = useState(false);
 
-  const { tabs, activeTabId, setActiveTabId, closeTab } = workspace;
+  const { tabs, activeTabId, selectTab, closeTab } = workspace;
 
   useEffect(() => {
-    // Active tab tracks the tab shown in the focused pane when possible.
-    if (!activeTabId && tabs.length > 0) setActiveTabId(tabs[tabs.length - 1].id);
-  }, [activeTabId, tabs, setActiveTabId]);
+    if (!activeTabId && tabs.length > 0) selectTab(tabs[tabs.length - 1].id);
+  }, [activeTabId, tabs, selectTab]);
 
-  const selectTab = useCallback(
-    (id) => {
-      setActiveTabId(id);
-      // Also surface it in the focused pane (or pane 0) so selecting a tab
-      // from the bar is immediately visible.
-      workspace.assignPane(workspace.focusedPane ?? 0, id);
-    },
-    [setActiveTabId, workspace]
-  );
+  // A click in the tab bar shows that tab, either its own split or full
+  // size. The exception is when the split on screen has a focused empty
+  // pane: then the clicked tab fills it. Keyboard cycling (below) only ever
+  // switches tabs.
+  const clickTab = useCallback((id) => selectTab(id, { fillEmptyPane: true }), [selectTab]);
 
   // Workspace keyboard shortcuts — only active on this page, and only when
   // xterm isn't swallowing the keys (see TerminalView's
@@ -218,7 +213,7 @@ function Terminals() {
       <TerminalTabBar
         tabs={tabs}
         activeTabId={activeTabId}
-        onSelect={selectTab}
+        onSelect={clickTab}
         workspace={workspace}
         onNewConnection={() => setNewConnOpen(true)}
         sessionsOpen={sessionsOpen}
