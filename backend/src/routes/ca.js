@@ -70,7 +70,8 @@ router.post(
   requireRole('super_admin'),
   audit('ca.rotate', 'CaKeyPair'),
   asyncHandler(async (req, res) => {
-    const name = req.body?.name || `rotated-${Date.now()}`;
+    const rawName = typeof req.body?.name === 'string' ? req.body.name.trim().slice(0, 100) : '';
+    const name = rawName || `rotated-${Date.now()}`;
     const { newKeyPair, oldKeyPairId } = await caService.rotateCaKeyPair(req.orgId, name);
     res.json({
       success: true,
