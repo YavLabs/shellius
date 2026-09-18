@@ -247,11 +247,107 @@ const FETCHERS = {
   policies: searchPolicies,
 };
 
+// ---------------------------------------------------------------------------
+// Per-type counters — total matches for a query, independent of `limit`, so
+// the UI can show "N more…" beyond the truncated `results` page. Each mirrors
+// its fetcher's WHERE clause exactly (same filters, no `take`/`LIMIT`).
+// ---------------------------------------------------------------------------
+
+async function countServers(orgId, q) {
+  const like = `%${q}%`;
+  const rows = await prisma.$queryRaw`
+    SELECT COUNT(*)::int AS count
+    FROM servers s
+    JOIN customers c ON c.id = s.customer_id
+    WHERE s.org_id = ${orgId}
+      AND (
+        s.hostname ILIKE ${like} OR
+        s.display_name ILIKE ${like} OR
+        s.ip_address ILIKE ${like} OR
+        s.description ILIKE ${like} OR
+        s.labels::text ILIKE ${like}
+      )
+  `;
+  return rows[0]?.count ?? 0;
+}
+
+function countCustomers(orgId, q) {
+  return prisma.customer.count({
+    where: {
+      orgId,
+      OR: [
+        { name: { contains: q, mode: 'insensitive' } },
+        { slug: { contains: q, mode: 'insensitive' } },
+      ],
+    },
+  });
+}
+
+function countUsers(orgId, q) {
+  return prisma.user.count({
+    where: {
+      orgId,
+      status: { not: 'deleted' },
+      OR: [
+        { name: { contains: q, mode: 'insensitive' } },
+        { email: { contains: q, mode: 'insensitive' } },
+      ],
+    },
+  });
+}
+
+function countIdentities(orgId, q) {
+  return prisma.credential.count({
+    where: {
+      orgId,
+      OR: [
+        { name: { contains: q, mode: 'insensitive' } },
+        { username: { contains: q, mode: 'insensitive' } },
+      ],
+    },
+  });
+}
+
+function countKeys(orgId, q) {
+  return prisma.sshKey.count({
+    where: {
+      orgId,
+      OR: [
+        { name: { contains: q, mode: 'insensitive' } },
+        { fingerprint: { contains: q, mode: 'insensitive' } },
+        { comment: { contains: q, mode: 'insensitive' } },
+      ],
+    },
+  });
+}
+
+function countPolicies(orgId, q) {
+  return prisma.accessPolicy.count({
+    where: {
+      orgId,
+      OR: [
+        { name: { contains: q, mode: 'insensitive' } },
+        { description: { contains: q, mode: 'insensitive' } },
+      ],
+    },
+  });
+}
+
+const COUNTERS = {
+  servers: countServers,
+  customers: countCustomers,
+  users: countUsers,
+  identities: countIdentities,
+  keys: countKeys,
+  policies: countPolicies,
+};
+
 /**
  * search({ orgId, role, q, limit }) — role-gated, org-scoped global search.
  * Types the role isn't allowed to see are omitted entirely (empty array,
  * count 0) rather than filtered post-hoc, so nothing gated ever touches the
- * network response.
+ * network response. `results[type]` is truncated to `limit`; `counts[type]`
+ * is the TOTAL number of matches for that type (so the UI can show "N more…").
  */
 export async function search({ orgId, role, q, limit = 5 }) {
   const query = String(q || '').trim();
@@ -270,23 +366,33 @@ export async function search({ orgId, role, q, limit = 5 }) {
 
   const settled = await Promise.all(
     allowedTypes.map(async (type) => {
-      try {
-        const items = await FETCHERS[type](orgId, query, limit);
-        return [type, items];
-      } catch (err) {
-        logger.error('[searchService] fetch failed', { type, error: err.message });
-        return [type, []];
-      }
+      const [items, total] = await Promise.all([
+        FETCHERS[type](orgId, query, limit).catch((err) => {
+          logger.error('[searchService] fetch failed', { type, error: err.message });
+          return [];
+        }),
+        COUNTERS[type](orgId, query).catch((err) => {
+          logger.error('[searchService] count failed', { type, error: err.message });
+          return 0;
+        }),
+      ]);
+      return [type, items, total];
     }),
   );
 
-  for (const [type, items] of settled) {
-    const ranked = rankAndLimit(items, limit);
-    results[type] = ranked;
-    counts[type] = ranked.length;
+  for (const [type, items, total] of settled) {
+    results[type] = rankAndLimit(items, limit);
+    counts[type] = total;
   }
 
   return { results, counts };
 }
 
-export default { search, getAllowedTypes, rankAndLimit, bestScore, SEARCH_TYPES, ROLE_RANK };
+export default {
+  search,
+  getAllowedTypes,
+  rankAndLimit,
+  bestScore,
+  SEARCH_TYPES,
+  ROLE_RANK,
+};

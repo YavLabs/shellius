@@ -198,4 +198,36 @@ describe('search — integration', () => {
     expect(results.servers[0].meta).toHaveProperty('onboarded');
     expect(typeof results.servers[0].meta.onboarded).toBe('boolean');
   });
+
+  test('counts are TOTAL matches, not the truncated results page', async () => {
+    if (!(await dbReachable())) return;
+    // Seed enough matching servers to exceed a small `limit`.
+    const extra = [];
+    for (let i = 0; i < 4; i++) {
+      extra.push(
+        prisma.server.create({
+          data: {
+            orgId: org.id,
+            customerId: customer.id,
+            hostname: `search-web-extra-${i}.acme.internal`,
+            ipAddress: `10.20.30.${50 + i}`,
+            environment: 'dev',
+            protocol: 'ssh',
+          },
+        }),
+      );
+    }
+    await Promise.all(extra);
+
+    const { results, counts } = await search({ orgId: org.id, role: 'admin', q: 'search-web', limit: 2 });
+    expect(results.servers).toHaveLength(2); // truncated to limit
+    expect(counts.servers).toBeGreaterThanOrEqual(5); // total (1 original + 4 extra)
+    expect(counts.servers).toBeGreaterThan(results.servers.length);
+  });
+
+  test('gated types report zero count for a role that cannot see them', async () => {
+    if (!(await dbReachable())) return;
+    const { counts } = await search({ orgId: org.id, role: 'member', q: 'Search Test Policy' });
+    expect(counts.policies).toBe(0);
+  });
 });
