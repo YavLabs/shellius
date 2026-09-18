@@ -56,7 +56,7 @@ function detectEnvPreset() {
 }
 
 export async function getEffective(orgId) {
-  const row = await prisma.ssoConfig.findUnique({ where: { orgId } });
+  const row = await prisma.ssoConfig.findFirst({ where: { orgId }, orderBy: { displayOrder: 'asc' } });
   // When no row exists, fall back to whichever preset is configured via env so
   // the Settings UI can prefill it.
   const presetId = row?.presetId || detectEnvPreset();
@@ -201,7 +201,7 @@ function maskRow(row) {
  * @returns {Promise<object|null>}
  */
 export async function get(orgId) {
-  const row = await prisma.ssoConfig.findUnique({ where: { orgId } });
+  const row = await prisma.ssoConfig.findFirst({ where: { orgId }, orderBy: { displayOrder: 'asc' } });
   return maskRow(row);
 }
 
@@ -233,7 +233,7 @@ export async function upsert(orgId, data) {
     defaultRole, defaultGroupId, autoProvision, allowedDomains, requireVerifiedEmail,
   } = data;
 
-  const existing = await prisma.ssoConfig.findUnique({ where: { orgId } });
+  const existing = await prisma.ssoConfig.findFirst({ where: { orgId }, orderBy: { displayOrder: 'asc' } });
 
   // Compute effective redirectUri — use supplied value, fall back to env-derived default
   const effectiveRedirectUri = redirectUri || DEFAULT_REDIRECT_URI;
@@ -273,7 +273,7 @@ export async function upsert(orgId, data) {
 
   let result;
   if (existing) {
-    result = await prisma.ssoConfig.update({ where: { orgId }, data: baseData });
+    result = await prisma.ssoConfig.update({ where: { id: existing.id }, data: baseData });
   } else {
     result = await prisma.ssoConfig.create({ data: { orgId, ...baseData } });
   }
@@ -295,7 +295,7 @@ export async function test(orgId, body) {
 
   // Fall back to saved config if caller didn't supply values
   if (!issuerUrl) {
-    const saved = await prisma.ssoConfig.findUnique({ where: { orgId } });
+    const saved = await prisma.ssoConfig.findFirst({ where: { orgId }, orderBy: { displayOrder: 'asc' } });
     if (!saved) throw new ApiError(400, 'No SSO configuration found and no issuerUrl provided');
     issuerUrl = saved.issuerUrl;
     provider = provider || saved.provider;

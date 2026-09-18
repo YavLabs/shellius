@@ -11,7 +11,7 @@ function redactSecret(config) {
 }
 
 export async function getSsoConfig(orgId) {
-  const cfg = await prisma.ssoConfig.findUnique({ where: { orgId } });
+  const cfg = await prisma.ssoConfig.findFirst({ where: { orgId }, orderBy: { displayOrder: 'asc' } });
   return redactSecret(cfg);
 }
 
@@ -41,12 +41,12 @@ export async function upsertSsoConfig(orgId, configData) {
     isActive: isActive !== undefined ? isActive : true,
   };
 
-  const existing = await prisma.ssoConfig.findUnique({ where: { orgId } });
+  const existing = await prisma.ssoConfig.findFirst({ where: { orgId }, orderBy: { displayOrder: 'asc' } });
 
   let result;
   if (existing) {
     result = await prisma.ssoConfig.update({
-      where: { orgId },
+      where: { id: existing.id },
       data: { ...data, ...(encrypted ? { clientSecretEncrypted: encrypted } : {}) },
     });
   } else {
@@ -111,7 +111,7 @@ function safeDefaultRole(role) {
  * defaultGroupId) — merging a DB row over env-var presets.
  */
 export async function getDecryptedConfig(orgId, { orgSlug = null, req = null } = {}) {
-  const cfg = await prisma.ssoConfig.findUnique({ where: { orgId } });
+  const cfg = await prisma.ssoConfig.findFirst({ where: { orgId }, orderBy: { displayOrder: 'asc' } });
   if (cfg) {
     // Secret from the row, or fall back to the preset's env secret/clientId so
     // an env-backed config (managed only for defaultRole/autoProvision) works.
@@ -156,7 +156,7 @@ export async function getDecryptedConfig(orgId, { orgSlug = null, req = null } =
  * { enabled, presetId }.
  */
 export async function getPublicSsoStatus(orgId) {
-  const row = await prisma.ssoConfig.findUnique({ where: { orgId } });
+  const row = await prisma.ssoConfig.findFirst({ where: { orgId }, orderBy: { displayOrder: 'asc' } });
   if (row && row.isActive) {
     return { enabled: true, presetId: row.presetId || 'oidc' };
   }

@@ -45,7 +45,7 @@ model Organization {
   servers         Server[]
   auditLogs       AuditLog[]
   groups          Group[]
-  ssoConfig       SsoConfig?
+  ssoConfigs      SsoConfig[]
   smtpConfig      SmtpConfig?
   deviceAuthRequests DeviceAuthRequest[]
   caKeyPairs      CaKeyPair[]
@@ -88,6 +88,7 @@ model User {
   directReports User[]       @relation("ManagerReports")
   refreshTokens RefreshToken[]
   userTokens    UserToken[]
+  identities    UserIdentity[]
   auditLogs     AuditLog[]
   groupMemberships GroupMembership[] @relation("GroupMemberships")
   groupsAddedBy    GroupMembership[] @relation("GroupsAdded")
@@ -316,11 +317,17 @@ model GroupMembership {
   @@map("group_memberships")
 }
 
+/// One SSO identity provider for an org. An org may enable several at once
+/// (e.g. Google + GitHub + Entra); each renders its own sign-in button.
 model SsoConfig {
   id                    String   @id @default(cuid())
-  orgId                 String   @unique @map("org_id")
+  orgId                 String   @map("org_id")
+  // oidc | github (github = OAuth 2.0, not OIDC — fixed endpoints, /user/emails)
   provider              String
-  presetId              String?  @map("preset_id")
+  presetId              String?  @map("preset_id") // google | entra | okta | auth0 | generic | github
+  // Button label on the login page, e.g. "Google" or "Acme Okta".
+  name                  String   @default("Single Sign-On")
+  displayOrder          Int      @default(0) @map("display_order")
   clientId              String   @map("client_id")
   // Nullable: env-preset configs (e.g. SSO_GOOGLE_CLIENT_SECRET) supply the
   // secret, so a row can manage defaultRole/autoProvision without storing it.
@@ -337,13 +344,40 @@ model SsoConfig {
   // Only link an SSO identity to an existing account by email when the IdP
   // asserts email_verified.
   requireVerifiedEmail  Boolean  @default(true) @map("require_verified_email")
+  // GitHub only: restrict sign-in to members of these GitHub organizations
+  // (requires the read:org scope). Empty = any GitHub account.
+  allowedOrgs           String[] @default([]) @map("allowed_orgs")
   isActive              Boolean  @default(true) @map("is_active")
   createdAt             DateTime @default(now()) @map("created_at")
   updatedAt             DateTime @updatedAt @map("updated_at")
 
-  organization Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  organization Organization   @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  identities   UserIdentity[]
 
+  @@index([orgId])
   @@map("sso_configs")
+}
+
+/// A user's linked external identity (one per SSO provider). Replaces the
+/// single User.ssoProvider/ssoSub pair, which is kept only for legacy reads.
+model UserIdentity {
+  id          String    @id @default(cuid())
+  orgId       String    @map("org_id")
+  userId      String    @map("user_id")
+  ssoConfigId String    @map("sso_config_id")
+  provider    String    // oidc | github (denormalised from SsoConfig)
+  subject     String    // OIDC sub / GitHub numeric user id
+  email       String?
+  lastLoginAt DateTime? @map("last_login_at")
+  createdAt   DateTime  @default(now()) @map("created_at")
+
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  ssoConfig SsoConfig @relation(fields: [ssoConfigId], references: [id], onDelete: Cascade)
+
+  @@unique([ssoConfigId, subject])
+  @@index([userId])
+  @@index([orgId])
+  @@map("user_identities")
 }
 
 model DeviceAuthRequest {
