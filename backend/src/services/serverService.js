@@ -47,11 +47,43 @@ const MUTABLE_FIELDS = [
   'sshKeyPath',
   'rdpUsername',
   'isActive',
+  'authMode',
+  'credentialId',
 ];
+
+const CUSTOMER_SELECT = { select: { id: true, name: true, slug: true } };
+const CREDENTIAL_SELECT = { select: { id: true, name: true, username: true, authType: true } };
+const SERVER_INCLUDE = { customer: CUSTOMER_SELECT, credential: CREDENTIAL_SELECT };
 
 function validateIp(ip) {
   if (!ip || typeof ip !== 'string') return false;
   return net.isIP(ip) !== 0;
+}
+
+/**
+ * Validate authMode/credentialId consistency and that credentialId (when
+ * present) belongs to this org. Returns a patch to merge into the write
+ * payload (credentialId forced to null for authMode='certificate').
+ */
+async function validateAuthMode(orgId, { authMode, credentialId }) {
+  if (authMode === undefined && credentialId === undefined) return {};
+  if (authMode === 'credential') {
+    if (!credentialId) {
+      throw new ApiError(400, 'credentialId is required when authMode is "credential"');
+    }
+    const credential = await prisma.credential.findFirst({ where: { id: credentialId, orgId } });
+    if (!credential) throw new ApiError(400, 'credentialId not found in organization');
+    return { authMode: 'credential', credentialId };
+  }
+  if (authMode === 'certificate') {
+    return { authMode: 'certificate', credentialId: null };
+  }
+  // authMode not changing, but credentialId was — validate it belongs to org.
+  if (credentialId) {
+    const credential = await prisma.credential.findFirst({ where: { id: credentialId, orgId } });
+    if (!credential) throw new ApiError(400, 'credentialId not found in organization');
+  }
+  return credentialId !== undefined ? { credentialId } : {};
 }
 
 export async function listServers(orgId, {
@@ -87,7 +119,7 @@ export async function listServers(orgId, {
       skip: (page - 1) * pageSize,
       take: pageSize,
       orderBy: { createdAt: 'desc' },
-      include: { customer: { select: { id: true, name: true, slug: true } } },
+      include: SERVER_INCLUDE,
     }),
     prisma.server.count({ where }),
   ]);
@@ -98,7 +130,7 @@ export async function listServers(orgId, {
 export async function getServer(orgId, serverId) {
   const server = await prisma.server.findFirst({
     where: { id: serverId, orgId },
-    include: { customer: { select: { id: true, name: true, slug: true } } },
+    include: SERVER_INCLUDE,
   });
   if (!server) throw new ApiError(404, 'Server not found');
   return stripRdpSecrets(server);
@@ -137,9 +169,12 @@ export async function createServer(orgId, customerId, data = {}) {
     payload.rdpPasswordEncrypted = encrypt(data.rdpPassword);
   }
 
+  const authPatch = await validateAuthMode(orgId, { authMode: data.authMode, credentialId: data.credentialId });
+  Object.assign(payload, authPatch);
+
   const server = await prisma.server.create({
     data: payload,
-    include: { customer: { select: { id: true, name: true, slug: true } } },
+    include: SERVER_INCLUDE,
   });
   return stripRdpSecrets(server);
 }
@@ -173,10 +208,33 @@ export async function updateServer(orgId, serverId, data = {}) {
     updateData.rdpPasswordEncrypted = encrypt(data.rdpPassword);
   }
 
+  if (updateData.authMode !== undefined || updateData.credentialId !== undefined) {
+    const authPatch = await validateAuthMode(orgId, {
+      authMode: updateData.authMode,
+      credentialId: updateData.credentialId,
+    });
+    Object.assign(updateData, authPatch);
+  }
+
   const server = await prisma.server.update({
     where: { id: serverId },
     data: updateData,
-    include: { customer: { select: { id: true, name: true, slug: true } } },
+    include: SERVER_INCLUDE,
+  });
+  return stripRdpSecrets(server);
+}
+
+/**
+ * Clear a server's pinned SSH host key (TOFU reset). Admin-only at the route
+ * level; audited. The next ssh2 connect will re-pin on first contact.
+ */
+export async function resetHostKey(orgId, serverId) {
+  const existing = await prisma.server.findFirst({ where: { id: serverId, orgId } });
+  if (!existing) throw new ApiError(404, 'Server not found');
+  const server = await prisma.server.update({
+    where: { id: serverId },
+    data: { hostKeyFingerprint: null, hostKeyAlgorithm: null, hostKeyPinnedAt: null },
+    include: SERVER_INCLUDE,
   });
   return stripRdpSecrets(server);
 }
@@ -262,7 +320,7 @@ export async function updateConnectionIp(orgId, serverId, ipAddress) {
   const updated = await prisma.server.update({
     where: { id: serverId },
     data: { ipAddress },
-    include: { customer: { select: { id: true, name: true, slug: true } } },
+    include: SERVER_INCLUDE,
   });
   return stripRdpSecrets(updated);
 }
@@ -272,12 +330,12 @@ export async function getServersByLabel(orgId, labels) {
   try {
     return await prisma.server.findMany({
       where: { orgId, labels: { array_contains: labelArray } },
-      include: { customer: { select: { id: true, name: true, slug: true } } },
+      include: SERVER_INCLUDE,
     });
   } catch {
     const all = await prisma.server.findMany({
       where: { orgId },
-      include: { customer: { select: { id: true, name: true, slug: true } } },
+      include: SERVER_INCLUDE,
     });
     return all.filter((s) => {
       const arr = Array.isArray(s.labels) ? s.labels : [];

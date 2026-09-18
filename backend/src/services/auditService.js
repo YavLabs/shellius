@@ -15,9 +15,15 @@ import logger from '../utils/logger.js';
 export const ACTIONS = {
   auth: {
     login: 'auth.login',
+    login_failed: 'auth.login_failed',
+    account_locked: 'auth.account_locked',
     logout: 'auth.logout',
     sso: 'auth.sso',
+    sso_login: 'auth.sso_login',
+    sso_failed: 'auth.sso_failed',
     device_approve: 'auth.device_approve',
+    refresh_reuse: 'auth.refresh_reuse',
+    mfa_failed: 'auth.mfa_failed',
   },
   user: {
     create: 'user.create',

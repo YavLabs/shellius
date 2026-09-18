@@ -6,6 +6,7 @@ import ApiError from '../utils/ApiError.js';
 import authenticate from '../middleware/auth.js';
 import tenant from '../middleware/tenant.js';
 import requireRole from '../middleware/rbac.js';
+import audit from '../middleware/audit.js';
 import config from '../config/index.js';
 import * as serverService from '../services/serverService.js';
 import * as healthCheckService from '../services/healthCheckService.js';
@@ -23,6 +24,7 @@ const validate = (schema) => (req, res, next) => {
 const ENVIRONMENTS = ['demo', 'dev', 'staging', 'prod'];
 const PROTOCOLS = ['ssh', 'rdp', 'both'];
 const HEALTH_STATUSES = ['healthy', 'unhealthy', 'unknown', 'maintenance'];
+const AUTH_MODES = ['certificate', 'credential'];
 
 const createSchema = Joi.object({
   customerId: Joi.string().required(),
@@ -50,6 +52,12 @@ const createSchema = Joi.object({
   rdpUsername: Joi.string().allow('', null).max(255),
   rdpPassword: Joi.string().allow('', null),
   isActive: Joi.boolean(),
+  authMode: Joi.string().valid(...AUTH_MODES).default('certificate'),
+  credentialId: Joi.when('authMode', {
+    is: 'credential',
+    then: Joi.string().required(),
+    otherwise: Joi.string().allow(null),
+  }),
 });
 
 const updateSchema = Joi.object({
@@ -73,6 +81,8 @@ const updateSchema = Joi.object({
   rdpUsername: Joi.string().allow('', null).max(255),
   rdpPassword: Joi.string().allow('', null),
   isActive: Joi.boolean(),
+  authMode: Joi.string().valid(...AUTH_MODES),
+  credentialId: Joi.string().allow(null),
 }).min(1);
 
 const bulkEnvSchema = Joi.object({
@@ -206,6 +216,18 @@ router.delete(
   })
 );
 
+// POST /api/servers/:id/host-key/reset — admin only; clears the pinned SSH
+// host key (TOFU) so the next ssh2 connection re-pins on first contact.
+router.post(
+  '/:id/host-key/reset',
+  requireRole('super_admin', 'admin'),
+  audit('server.host_key_reset', 'Server'),
+  asyncHandler(async (req, res) => {
+    const server = await serverService.resetHostKey(req.orgId, req.params.id);
+    res.json({ success: true, data: { server } });
+  })
+);
+
 router.post(
   '/:id/health-check',
   requireRole('super_admin', 'admin', 'manager'),
@@ -222,6 +244,7 @@ router.post(
 router.post(
   '/:id/provision',
   requireRole('super_admin', 'admin', 'manager'),
+  audit('server.provision', 'Server'),
   asyncHandler(async (req, res) => {
     const { privateKey, passphrase, password, sshUser, sudoPassword } = req.body;
     if (!privateKey && !password) throw new ApiError(400, 'Provide an SSH private key or a password');

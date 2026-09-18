@@ -89,11 +89,11 @@ export function encryptGuacToken(obj) {
  * @returns {string} encrypted token
  */
 export function buildRdpToken({ accessRequest, server }) {
-  const password = decryptRdpPassword(server) ?? '';
+  const { username, password } = resolveRdpCredentials(server);
   const settings = {
     hostname: server.ipAddress || server.hostname,
     port: String(server.rdpPort ?? server.port ?? 3389),
-    username: server.rdpUsername ?? '',
+    username,
     password,
     security: 'any',
     'ignore-cert': 'true',
@@ -215,6 +215,22 @@ export function decryptRdpPassword(server) {
   return decrypt(server.rdpPasswordEncrypted);
 }
 
+/**
+ * Resolve the RDP username/password to use for a connection. Credential-mode
+ * (Keystore) servers with a password-bearing identity use that identity's
+ * username/password instead of Server.rdpUsername/rdpPasswordEncrypted.
+ *
+ * @param {object} server - must include `credential` when authMode is 'credential'
+ * @returns {{ username: string, password: string }}
+ */
+export function resolveRdpCredentials(server) {
+  if (server.authMode === 'credential' && server.credential) {
+    const password = server.credential.passwordEncrypted ? decrypt(server.credential.passwordEncrypted) : '';
+    return { username: server.credential.username || '', password };
+  }
+  return { username: server.rdpUsername ?? '', password: decryptRdpPassword(server) ?? '' };
+}
+
 // ---------------------------------------------------------------------------
 // Guacamole handshake — createGuacdConnection
 // ---------------------------------------------------------------------------
@@ -271,10 +287,11 @@ export function createGuacdConnection({ server, width = 1280, height = 800, dpi 
           // fields[1..n] are the parameter names guacd expects in order
           const paramNames = fields.slice(1);
 
-          // Decrypt RDP password transiently — only in this closure
+          // Decrypt RDP credentials transiently — only in this closure
+          let rdpUsername = server.rdpUsername ?? '';
           let rdpPassword = null;
           try {
-            rdpPassword = decryptRdpPassword(server);
+            ({ username: rdpUsername, password: rdpPassword } = resolveRdpCredentials(server));
           } catch (decryptErr) {
             logger.error('rdpService: failed to decrypt RDP password', {
               serverId: server.id,
@@ -293,7 +310,7 @@ export function createGuacdConnection({ server, width = 1280, height = 800, dpi 
           const knownParams = {
             hostname: server.ipAddress || server.hostname,
             port: String(server.rdpPort ?? server.port ?? 3389),
-            username: server.rdpUsername ?? '',
+            username: rdpUsername,
             password: rdpPassword ?? '',
             security: 'any',
             'ignore-cert': 'true',
@@ -412,7 +429,7 @@ export async function createConnectionForRequest(accessRequestId) {
   const accessRequest = await prisma.accessRequest.findUnique({
     where: { id: accessRequestId },
     include: {
-      server: true,
+      server: { include: { credential: true } },
       requester: { select: { id: true, name: true, email: true } },
     },
   });
@@ -433,7 +450,8 @@ export async function createConnectionForRequest(accessRequestId) {
 
   const server = accessRequest.server;
   if (!server) throw new ApiError(404, 'Server not found on access request');
-  if (!server.rdpPasswordEncrypted) {
+  const hasCredentialPassword = server.authMode === 'credential' && !!server.credential?.passwordEncrypted;
+  if (!server.rdpPasswordEncrypted && !hasCredentialPassword) {
     throw new ApiError(400, 'No RDP password configured for this server');
   }
 

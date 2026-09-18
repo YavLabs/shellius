@@ -109,8 +109,12 @@ function filterPolicies(policies, server, serverId, requestedPrincipal) {
     // 4. Server ID filter: empty array = all servers
     if (p.targetServerIds.length > 0 && !p.targetServerIds.includes(serverId)) return false;
 
-    // 5. Principal filter: empty = wildcard; otherwise requestedPrincipal must be listed
-    if (requestedPrincipal && p.allowedPrincipals.length > 0) {
+    // 5. Principal filter: empty = wildcard; otherwise requestedPrincipal must be listed.
+    // Credential-mode servers (Keystore) use a stored identity's username, not
+    // a Linux principal drawn from the org's SSH allow-list — filtering on it
+    // would incorrectly reject an otherwise-matching policy. Treat principal
+    // filtering as not-applicable for those servers.
+    if (requestedPrincipal && p.allowedPrincipals.length > 0 && server.authMode !== 'credential') {
       if (!p.allowedPrincipals.includes(requestedPrincipal)) return false;
     }
 

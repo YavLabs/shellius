@@ -32,6 +32,10 @@ export function isServerOnboarded(server) {
   // RDP-only servers need no host agent — Guacamole injects credentials at
   // connect time, so they're connectable as soon as they're added.
   if (server.protocol === 'rdp') return true;
+  // Credential-mode (Keystore) servers connect via a stored identity over
+  // ssh2 — no CA bootstrap / agent required, so they're connectable as soon
+  // as they're added.
+  if (server.authMode === 'credential') return true;
   return !!server.agentId || !!server.agentLastSeen;
 }
 
@@ -224,7 +228,10 @@ export async function submit({
   }
 
   // Load server scoped to org
-  const server = await prisma.server.findFirst({ where: { id: serverId, orgId } });
+  const server = await prisma.server.findFirst({
+    where: { id: serverId, orgId },
+    include: { credential: true },
+  });
   if (!server) throw new ApiError(404, 'Server not found');
   if (!isServerOnboarded(server)) {
     throw new ApiError(400, 'This server has not been onboarded yet, so access cannot be requested.');
@@ -254,7 +261,21 @@ export async function submit({
   if (protocol === 'RDP') {
     // RDP uses the server's configured RDP account (injected by the gateway),
     // not an SSH/Linux principal — the SSH allow-list rules don't apply.
-    requestedPrincipal = server.rdpUsername || requestedPrincipal || 'Administrator';
+    // Credential-mode RDP servers use the stored identity's username instead
+    // of Server.rdpUsername (see rdpService.buildRdpToken).
+    requestedPrincipal =
+      (server.authMode === 'credential' ? server.credential?.username : null) ||
+      server.rdpUsername ||
+      requestedPrincipal ||
+      'Administrator';
+  } else if (server.authMode === 'credential') {
+    // Keystore (credential-mode) servers connect as the stored identity's
+    // fixed username — there is no Linux allow-list concept here, so the
+    // principal is not user-choosable.
+    if (!server.credential) {
+      throw new ApiError(400, 'This server has no identity configured');
+    }
+    requestedPrincipal = server.credential.username;
   } else {
     const jitPolicy = await jitManifestService.findJitPolicyForUserServer({
       orgId,

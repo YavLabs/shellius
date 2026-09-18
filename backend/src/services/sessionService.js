@@ -8,6 +8,8 @@ import logger from '../utils/logger.js';
 
 const SESSION_INCLUDE = {
   user: { select: { id: true, name: true, email: true } },
+  // Null for Quick Connect sessions to hosts that aren't saved servers — the
+  // caller should fall back to targetHost/targetPort/targetUser in that case.
   server: {
     select: {
       id: true,
@@ -40,10 +42,14 @@ const SESSION_INCLUDE = {
  * @param {object} params
  * @param {string}  params.orgId
  * @param {string}  params.userId
- * @param {string}  params.serverId
+ * @param {string|null} [params.serverId]  - null for Quick Connect to an unsaved host
  * @param {string}  [params.certificateId]
  * @param {string}  [params.accessRequestId]
  * @param {'SSH'|'RDP'} params.sessionType
+ * @param {'certificate'|'credential'|'quick_connect'} [params.authMethod='certificate']
+ * @param {string}  [params.targetHost]
+ * @param {number}  [params.targetPort]
+ * @param {string}  [params.targetUser]
  * @param {string}  [params.clientIp]
  * @param {string}  [params.userAgent]
  * @param {object}  [params.metadata]
@@ -56,13 +62,16 @@ export async function create({
   certificateId,
   accessRequestId,
   sessionType,
+  authMethod,
+  targetHost,
+  targetPort,
+  targetUser,
   clientIp,
   userAgent,
   metadata,
 }) {
   if (!orgId) throw new ApiError(400, 'orgId is required');
   if (!userId) throw new ApiError(400, 'userId is required');
-  if (!serverId) throw new ApiError(400, 'serverId is required');
   if (!sessionType || !['SSH', 'RDP'].includes(sessionType)) {
     throw new ApiError(400, "sessionType must be 'SSH' or 'RDP'");
   }
@@ -71,10 +80,14 @@ export async function create({
     data: {
       orgId,
       userId,
-      serverId,
+      serverId: serverId ?? null,
       certificateId: certificateId ?? null,
       accessRequestId: accessRequestId ?? null,
       sessionType,
+      authMethod: authMethod || 'certificate',
+      targetHost: targetHost ?? null,
+      targetPort: targetPort ?? null,
+      targetUser: targetUser ?? null,
       status: 'ACTIVE',
       clientIp: clientIp ?? null,
       userAgent: userAgent ?? null,

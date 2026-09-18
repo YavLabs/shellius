@@ -37,6 +37,8 @@ import approvalsRouter from './routes/approvals.js';
 import importRouter from './routes/import.js';
 import mfaRouter, { configRouter as mfaConfigRouter } from './routes/mfa.js';
 import cliRouter from './routes/cli.js';
+import keystoreRouter from './routes/keystore.js';
+import quickConnectRouter from './routes/quickConnect.js';
 import errorHandler from './middleware/errorHandler.js';
 import { startAllJobs } from './jobs/index.js';
 
@@ -99,6 +101,8 @@ app.use('/api/import', importRouter);
 app.use('/api/mfa', mfaRouter);
 app.use('/api/settings/mfa', mfaConfigRouter);
 app.use('/api/cli', cliRouter);
+app.use('/api/keystore', keystoreRouter);
+app.use('/api/quick-connect', quickConnectRouter);
 
 app.use(errorHandler);
 

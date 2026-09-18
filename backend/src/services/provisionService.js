@@ -137,7 +137,7 @@ export async function provisionServer(
 
     conn.connect({
       host: server.ipAddress,
-      port: 22,
+      port: server.port || 22,
       username: sshUser,
       ...(privateKey ? { privateKey, passphrase } : {}),
       ...(password ? { password } : {}),

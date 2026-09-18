@@ -3,14 +3,27 @@
  *
  * WebSocket-to-SSH proxy for the Shellius web terminal.
  *
- * Upgrade path: GET /api/terminal/ssh?token=<JWT>&requestId=<id>[&rows=24&cols=80]
+ * Upgrade paths:
+ *   GET /api/terminal/ssh?token=<JWT>&requestId=<id>[&cols&rows][&principal=]
+ *     - certificate-mode servers: spawns the real `ssh` client with an
+ *       ephemeral CA-signed cert (ssh2 can't do OpenSSH cert auth — see the
+ *       note above the cert-path code below).
+ *     - credential-mode (Keystore) servers: connects via ssh2 using the
+ *       server's stored identity (sshConnect.js).
+ *   GET /api/terminal/ssh?token=<JWT>&ticket=<quickConnectTicket>[&cols&rows]
+ *     - Quick Connect: consumes a single-use ticket (quickConnectService.js)
+ *       and connects via ssh2 with the ad-hoc auth material it carries.
  *
  * Security:
  *   - JWT verified before upgrade is accepted
- *   - Access request must be APPROVED and not expired
- *   - generateSshCredentials is called per-connection (ephemeral Ed25519 + CA cert)
- *   - Private key string is zeroed (Buffer.fill(0)) after ssh2 Client.connect() call
- *   - Session is created ACTIVE on connect, ended on any close/error
+ *   - Certificate path: access request must be APPROVED and not expired;
+ *     generateSshCredentials is called per-connection (ephemeral Ed25519 +
+ *     CA cert), private key string is zeroed after use.
+ *   - Credential / Quick Connect (ssh2) paths: host key is verified against
+ *     the server's pinned fingerprint (TOFU — see sshConnect.checkAndPinHostKey);
+ *     a mismatch refuses the connection.
+ *   - Session is created ACTIVE on connect, ended on any close/error, for
+ *     every path (including Quick Connect, where serverId may be null).
  *
  * Recording:
  *   - Each SSH session is recorded in asciinema v2 format (.cast file)
@@ -34,6 +47,8 @@ import * as accessRequestService from './accessRequestService.js';
 import * as sessionService from './sessionService.js';
 import * as rdpService from './rdpService.js';
 import * as storageService from './storageService.js';
+import * as sshConnect from './sshConnect.js';
+import * as quickConnectService from './quickConnectService.js';
 import GuacamoleLite from 'guacamole-lite';
 
 const GUACD_HOST = process.env.GUACD_HOST || '127.0.0.1';
@@ -138,7 +153,8 @@ async function openRecordingWriter(sessionId, orgId, { rows, cols }) {
 
 // ---------------------------------------------------------------------------
 // In-memory map of active connections
-// key: sessionId → { ws, sshClient, stream }
+// key: sessionId → { ws, sshProc } (certificate-mode)
+//                | { ws, ssh2Client, ssh2Stream } (credential-mode / Quick Connect)
 // ---------------------------------------------------------------------------
 const activeSessions = new Map();
 
@@ -326,6 +342,208 @@ function buildGuacamoleServer() {
 }
 
 // ---------------------------------------------------------------------------
+// runSsh2Session — shared ssh2-based PTY session (credential-mode servers +
+// Quick Connect). The certificate path (below, in handleConnection) still
+// shells out to the real `ssh` client — ssh2 can't do OpenSSH cert auth.
+// ---------------------------------------------------------------------------
+
+function sendControl(ws, obj) {
+  try {
+    if (ws.readyState === ws.constructor.OPEN) ws.send(JSON.stringify(obj));
+  } catch { /* ignore */ }
+}
+
+/**
+ * @param {import('ws').WebSocket} ws
+ * @param {import('http').IncomingMessage} req
+ * @param {object} params
+ * @param {object} params.connect        - sshConnect.connectSsh() opts (host/port/username/password|privateKey/passphrase/expectedFingerprint)
+ * @param {object|null} params.pinServer - Server row to TOFU-pin/verify the host key against, or null (unsaved Quick Connect target)
+ * @param {object} params.sessionMeta    - { orgId, userId, serverId, accessRequestId, authMethod, targetHost, targetPort, targetUser }
+ * @param {number} params.rows
+ * @param {number} params.cols
+ * @param {string} [params.credentialIdToBump] - Credential.id to stamp lastUsedAt on successful connect
+ */
+async function runSsh2Session(ws, req, { connect, pinServer, sessionMeta, rows, cols, credentialIdToBump }) {
+  const { orgId, userId } = sessionMeta;
+
+  let client;
+  let hostKeyInfo = null;
+  try {
+    const result = await sshConnect.connectSsh({
+      ...connect,
+      onHostKey: (hk) => { hostKeyInfo = hk; },
+    });
+    client = result.client;
+  } catch (err) {
+    sendError(ws, err.message || 'SSH connection failed');
+    safeClose(ws, 1011, 'SSH connection failed');
+    return;
+  }
+
+  // Host key verification / TOFU pinning.
+  let hostKeyStatus = connect.expectedFingerprint ? 'matched' : 'new';
+  if (pinServer && hostKeyInfo) {
+    try {
+      hostKeyStatus = await sshConnect.checkAndPinHostKey(pinServer, hostKeyInfo);
+    } catch (err) {
+      try { client.end(); } catch { /* ignore */ }
+      sendError(ws, err.message, { code: err.code });
+      safeClose(ws, 1008, 'Host key mismatch');
+      return;
+    }
+  }
+  if (hostKeyInfo) {
+    sendControl(ws, { type: 'hostkey', fingerprint: hostKeyInfo.fingerprint, algorithm: hostKeyInfo.algorithm, status: hostKeyStatus });
+  }
+
+  const clientIp =
+    req.headers['x-forwarded-for']?.split(',')[0]?.trim() || req.socket?.remoteAddress || null;
+  const userAgent = req.headers['user-agent'] || null;
+
+  let session;
+  try {
+    session = await sessionService.create({
+      orgId,
+      userId,
+      serverId: sessionMeta.serverId || null,
+      certificateId: null,
+      accessRequestId: sessionMeta.accessRequestId || null,
+      sessionType: 'SSH',
+      authMethod: sessionMeta.authMethod,
+      targetHost: sessionMeta.targetHost,
+      targetPort: sessionMeta.targetPort,
+      targetUser: sessionMeta.targetUser,
+      clientIp,
+      userAgent,
+      metadata: { rows, cols, host: sessionMeta.targetHost, port: sessionMeta.targetPort, username: sessionMeta.targetUser },
+    });
+  } catch (err) {
+    logger.error('terminalService: failed to create session row (ssh2)', { error: err.message });
+    try { client.end(); } catch { /* ignore */ }
+    safeClose(ws, 1011, 'Failed to create session');
+    return;
+  }
+
+  const sessionId = session.id;
+
+  if (credentialIdToBump) {
+    prisma.credential.update({ where: { id: credentialIdToBump }, data: { lastUsedAt: new Date() } }).catch(() => {});
+  }
+
+  sendControl(ws, {
+    type: 'connected',
+    sessionId,
+    authMethod: sessionMeta.authMethod,
+    host: sessionMeta.targetHost,
+    port: sessionMeta.targetPort,
+    username: sessionMeta.targetUser,
+  });
+
+  logger.info('terminalService: ssh2 session starting', {
+    sessionId, orgId, userId, authMethod: sessionMeta.authMethod, host: sessionMeta.targetHost,
+  });
+
+  let ended = false;
+  let recordingWriter = null;
+
+  const cleanup = async (statusOverride) => {
+    if (ended) return;
+    ended = true;
+    activeSessions.delete(sessionId);
+    try { client.end(); } catch { /* ignore */ }
+
+    if (recordingWriter) {
+      recordingWriter.close();
+      const upload = await recordingWriter.waitUpload();
+      if (upload) {
+        try {
+          await prisma.session.update({ where: { id: sessionId }, data: { recordingKey: recordingWriter.recordingKey } });
+        } catch (err) {
+          logger.warn('terminalService: failed to persist recordingKey (ssh2)', { sessionId, error: err.message });
+        }
+      }
+      recordingWriter = null;
+    }
+
+    try {
+      await sessionService.end(sessionId, { status: statusOverride ?? 'ENDED' });
+    } catch (err) {
+      logger.warn('terminalService: session end write failed (ssh2)', { sessionId, error: err.message });
+    }
+  };
+
+  client.shell({ term: 'xterm-256color', rows, cols }, async (err, stream) => {
+    if (err) {
+      logger.error('terminalService: ssh2 shell() failed', { sessionId, error: err.message });
+      sendError(ws, `Failed to open shell: ${err.message}`);
+      safeClose(ws, 1011, 'Failed to open shell');
+      await cleanup('TERMINATED');
+      return;
+    }
+
+    recordingWriter = await openRecordingWriter(sessionId, orgId, { rows, cols });
+    activeSessions.set(sessionId, { ws, ssh2Client: client, ssh2Stream: stream });
+
+    stream.on('data', (chunk) => {
+      if (recordingWriter) recordingWriter.write(chunk);
+      if (ws.readyState === ws.constructor.OPEN) ws.send(chunk);
+    });
+    stream.stderr.on('data', (chunk) => {
+      if (recordingWriter) recordingWriter.write(chunk);
+      if (ws.readyState === ws.constructor.OPEN) ws.send(chunk);
+    });
+
+    stream.on('close', () => {
+      safeClose(ws, 1000, 'ssh2 stream closed');
+      cleanup('ENDED');
+    });
+    stream.on('error', (streamErr) => {
+      logger.warn('terminalService: ssh2 stream error', { sessionId, error: streamErr.message });
+      cleanup('TERMINATED');
+    });
+
+    ws.on('message', (msg) => {
+      if (stream.destroyed) return;
+      if (typeof msg === 'string') {
+        let parsed;
+        try { parsed = JSON.parse(msg); } catch {
+          stream.write(msg);
+          return;
+        }
+        if (parsed && parsed.type === 'resize') {
+          const r = Math.max(1, parseInt(parsed.rows, 10) || rows);
+          const c = Math.max(1, parseInt(parsed.cols, 10) || cols);
+          try { stream.setWindow(r, c, 0, 0); } catch { /* ignore */ }
+        } else if (parsed && parsed.data !== undefined) {
+          stream.write(String(parsed.data));
+        }
+      } else {
+        stream.write(msg);
+      }
+    });
+
+    ws.on('close', () => { try { stream.close(); } catch { /* ignore */ } cleanup('ENDED'); });
+    ws.on('error', (wsErr) => {
+      logger.warn('terminalService: WebSocket error (ssh2)', { sessionId, error: wsErr.message });
+      try { stream.close(); } catch { /* ignore */ }
+      cleanup('TERMINATED');
+    });
+  });
+
+  client.on('error', (err) => {
+    logger.error('terminalService: ssh2 client error', { sessionId, error: err.message });
+    sendError(ws, `SSH error: ${err.message}`);
+    safeClose(ws, 1011, 'SSH error');
+    cleanup('TERMINATED');
+  });
+  client.on('close', () => {
+    // 'close' also fires on a clean end() — cleanup() is idempotent (ended guard).
+    cleanup('ENDED');
+  });
+}
+
+// ---------------------------------------------------------------------------
 // handleConnection — full lifecycle for one WebSocket upgrade
 // ---------------------------------------------------------------------------
 
@@ -339,7 +557,7 @@ async function handleConnection(ws, req) {
     return;
   }
 
-  const { token, requestId, principal: principalOverride } = query;
+  const { token, requestId, ticket, principal: principalOverride } = query;
   const rows = Math.max(1, parseInt(query.rows, 10) || 24);
   const cols = Math.max(1, parseInt(query.cols, 10) || 80);
 
@@ -347,8 +565,8 @@ async function handleConnection(ws, req) {
     safeClose(ws, 1008, 'Missing token');
     return;
   }
-  if (!requestId) {
-    safeClose(ws, 1008, 'Missing requestId');
+  if (!requestId && !ticket) {
+    safeClose(ws, 1008, 'Missing requestId or ticket');
     return;
   }
 
@@ -367,6 +585,45 @@ async function handleConnection(ws, req) {
   const user = await prisma.user.findFirst({ where: { id: userId, orgId } });
   if (!user) {
     safeClose(ws, 1008, 'User not found');
+    return;
+  }
+
+  // ── Quick Connect path (ticket) — ssh2, ad-hoc auth, no saved server ───
+  if (ticket) {
+    let connect;
+    try {
+      connect = await quickConnectService.consumeTicket(ticket, { userId, orgId });
+    } catch (err) {
+      safeClose(ws, 1008, err.message || 'Invalid Quick Connect ticket');
+      return;
+    }
+
+    // If this host matches a saved server, link the session to it and pin/
+    // verify against its host key. assertNotProdHost already refused prod
+    // hosts at ticket-creation time, so any match here is guaranteed non-prod.
+    const matchedServer = await prisma.server.findFirst({
+      where: {
+        orgId,
+        OR: [{ ipAddress: connect.host }, { hostname: { equals: connect.host, mode: 'insensitive' } }],
+      },
+    });
+
+    await runSsh2Session(ws, req, {
+      connect,
+      pinServer: matchedServer || null,
+      sessionMeta: {
+        orgId,
+        userId,
+        serverId: matchedServer?.id || null,
+        accessRequestId: null,
+        authMethod: 'quick_connect',
+        targetHost: connect.host,
+        targetPort: connect.port,
+        targetUser: connect.username,
+      },
+      rows,
+      cols,
+    });
     return;
   }
 
@@ -392,7 +649,45 @@ async function handleConnection(ws, req) {
     return;
   }
 
-  // ── 5. Generate ephemeral SSH credentials ────────────────────────────
+  // ── 4b. Credential-mode (Keystore) server — ssh2 with the server's identity ─
+  const fullServer = await prisma.server.findFirst({
+    where: { id: accessRequest.serverId, orgId },
+    include: { credential: { include: { sshKey: true } } },
+  });
+  if (!fullServer) {
+    safeClose(ws, 1008, 'Server not found');
+    return;
+  }
+
+  if (fullServer.authMode === 'credential') {
+    let connectOpts;
+    try {
+      connectOpts = await sshConnect.resolveServerAuth(fullServer);
+    } catch (err) {
+      safeClose(ws, 1011, err.message || 'Failed to resolve server identity');
+      return;
+    }
+    await runSsh2Session(ws, req, {
+      connect: connectOpts,
+      pinServer: fullServer,
+      sessionMeta: {
+        orgId,
+        userId,
+        serverId: fullServer.id,
+        accessRequestId: requestId,
+        authMethod: 'credential',
+        targetHost: connectOpts.host,
+        targetPort: connectOpts.port,
+        targetUser: connectOpts.username,
+      },
+      rows,
+      cols,
+      credentialIdToBump: fullServer.credentialId,
+    });
+    return;
+  }
+
+  // ── 5. Generate ephemeral SSH credentials (certificate-mode servers) ──
   let credentials;
   try {
     credentials = await accessRequestService.generateSshCredentials({
@@ -732,9 +1027,16 @@ export async function terminateSession(sessionId, byUserId) {
   const entry = activeSessions.get(sessionId);
   if (entry) {
     activeSessions.delete(sessionId);
-    // SSH subprocess (post-spawn refactor)
+    // SSH subprocess (certificate-mode path)
     try {
       if (entry.sshProc && !entry.sshProc.killed) entry.sshProc.kill('SIGTERM');
+    } catch { /* ignore */ }
+    // ssh2 client (credential-mode / Quick Connect path)
+    try {
+      if (entry.ssh2Stream) entry.ssh2Stream.close();
+    } catch { /* ignore */ }
+    try {
+      if (entry.ssh2Client) entry.ssh2Client.end();
     } catch { /* ignore */ }
     // RDP handle
     try {
