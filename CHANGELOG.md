@@ -9,6 +9,26 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 Tracked here as work lands on `main`; moved into a dated section on release
 (`node scripts/version.mjs bump <major|minor|patch>`).
 
+### Changed
+
+- Terminal workspace: **splits now belong to their tabs** instead of being one layout for the
+  whole page. Opening or selecting a tab outside a split shows it full size, with no empty half
+  pane. Choosing Single on one tab no longer collapses another split, and several splits can
+  exist side by side. Clicking any tab of a split brings the split back. New "Remove from
+  split" tab action and split icons on grouped tabs. See `docs/terminal-workspace.md`.
+
+### Fixed
+
+- Terminal workspace: switching tabs or layouts no longer reconnects every terminal it moves.
+  That produced "Too many requests" errors after a few quick switches or a reload with several
+  tabs, and stray prompt lines from resizes while a tab was hidden. Terminals also stop sending
+  no-op or zero-size resizes to the remote shell.
+- Access requests: the sidebar badge showed the unread-notification count. It now shows
+  requests waiting for your review, the same number as the "Pending reviews" tab, and updates
+  after you approve or deny.
+- Access requests: the status filter (`?status=`) was accepted by the API but ignored, so
+  "All statuses / Approved / Expired…" didn't filter.
+
 ## [1.1.0] - 2026-09-18
 
 This is a large release: a full secrets/credentials manager (Keystore), a new

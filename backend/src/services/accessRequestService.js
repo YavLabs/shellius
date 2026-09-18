@@ -1110,11 +1110,12 @@ export async function getActiveByServerForUser(orgId, userId, serverId) {
  * @param {string}  params.userId
  * @param {string}  params.role
  * @param {string}  [params.tab='mine']
+ * @param {string}  [params.status]   optional status filter (PENDING, APPROVED, …)
  * @param {number}  [params.page=1]
  * @param {number}  [params.limit=25]
  * @returns {Promise<{ items: object[], total: number, page: number, limit: number }>}
  */
-export async function list({ orgId, userId, role, tab = 'mine', page = 1, limit = 25 }) {
+export async function list({ orgId, userId, role, tab = 'mine', status, page = 1, limit = 25 }) {
   if (!orgId) throw new ApiError(400, 'orgId is required');
   if (!userId) throw new ApiError(400, 'userId is required');
 
@@ -1139,6 +1140,8 @@ export async function list({ orgId, userId, role, tab = 'mine', page = 1, limit 
     // 'mine' (default)
     where = { orgId, requesterId: userId };
   }
+  // AND-ed so it narrows the tab (to-review + APPROVED → nothing, not everything approved).
+  if (status) where = { AND: [where, { status }] };
 
   const [items, total] = await Promise.all([
     prisma.accessRequest.findMany({

@@ -33,6 +33,7 @@ import {
 import { useAuth } from '@/context/AuthContext';
 import { relativeTime, formatDateTime } from '@/utils/time';
 import { ACCESS_REQUEST_STATUS_LABELS } from '@/lib/labels';
+import { PENDING_REVIEWS_EVENT } from '@/hooks/usePendingReviewCount';
 
 const ROLE_RANK = { super_admin: 4, admin: 3, manager: 2, member: 1 };
 function isAtLeast(user, role) {
@@ -289,6 +290,8 @@ function AccessRequests() {
       const resp = await listAccessRequests({ tab: 'to-review', status: 'PENDING', limit: 1 });
       const count = resp.meta?.total ?? 0;
       setPendingReviewCount(count);
+      // Keep the sidebar badge in step with this tab (hooks/usePendingReviewCount).
+      window.dispatchEvent(new CustomEvent(PENDING_REVIEWS_EVENT, { detail: count }));
     } catch { /* ignore */ }
   }, []);
 

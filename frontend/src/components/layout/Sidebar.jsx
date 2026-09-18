@@ -34,6 +34,7 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from '@/components/ui/tooltip';
+import usePendingReviewCount from '@/hooks/usePendingReviewCount';
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -196,16 +197,23 @@ function SidebarBody({ collapsed, onToggle, onNavigate }) {
   const { user } = useAuth();
   const { unreadCount } = useNotifications();
   const { liveCount } = useTerminalWorkspace();
+  // Requests waiting for this user's review, the same number as the page's
+  // "Pending reviews" tab. (This used to show the unread notification count,
+  // which matched nothing on the Access requests page.)
+  const pendingReviews = usePendingReviewCount(unreadCount);
 
   const canSee = (item) => !item.minRole || isAtLeast(user, item.minRole);
 
   const renderItem = (item) => {
     if (!canSee(item)) return null;
     let badge = null;
-    if (item.id === 'access-requests' && unreadCount > 0 && !collapsed) {
+    if (item.id === 'access-requests' && pendingReviews > 0 && !collapsed) {
       badge = (
-        <span className="ml-2 flex h-5 min-w-5 items-center justify-center rounded-full bg-amber-500/20 px-1 text-[10px] font-semibold text-amber-600 dark:text-amber-400">
-          {unreadCount > 9 ? '9+' : unreadCount}
+        <span
+          className="ml-2 flex h-5 min-w-5 items-center justify-center rounded-full bg-amber-500/20 px-1 text-[10px] font-semibold text-amber-600 dark:text-amber-400"
+          title={`${pendingReviews} pending review${pendingReviews === 1 ? '' : 's'}`}
+        >
+          {pendingReviews > 9 ? '9+' : pendingReviews}
         </span>
       );
     }
