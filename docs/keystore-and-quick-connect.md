@@ -171,3 +171,94 @@ Mutations are audited.
   - `{ "type": "connected", "sessionId", "authMethod", "host", "port", "username" }`
 - Client → server: raw input, or `{ "type": "resize", "cols", "rows" }` (real
   PTY resize on the ssh2 path).
+
+---
+
+## Revision 2 — unified SSH engine, key import formats, search
+
+### One SSH engine (ssh2) for every connection
+
+All outbound SSH — web terminal (certificate, identity and Quick Connect),
+key deployment, credential tests and auto-provisioning — goes through
+`backend/src/services/sshConnect.js` (ssh2). The OpenSSH `ssh` binary is no
+longer spawned by the backend. OpenSSH user-certificate auth is supported by a
+narrowly scoped override of ssh2's publickey signing (the signature blob must
+carry the base algorithm, e.g. `ssh-ed25519`, while the userauth request
+carries `ssh-ed25519-cert-v01@openssh.com`); `ssh2` is pinned to an exact
+version and an end-to-end test covers it.
+
+`connectSsh()` accepts any combination of: `privateKey` (+ `passphrase`),
+`certificate` (paired with the key), `password`. Auth order: certificate →
+publickey → password → keyboard-interactive (answering password prompts).
+Servers that require *both* a key and a password (`AuthenticationMethods
+publickey,password`) work via SSH partial success.
+
+Target guard (Quick Connect, credential test, save-as-server): the host is
+resolved once; loopback, link-local (incl. `169.254.169.254`), unspecified and
+multicast addresses are refused (`TARGET_NOT_ALLOWED`); the connection is made
+to the resolved IP (no DNS rebinding). The prod guard compares the *resolved*
+IPs against every saved prod server's `ipAddress`/resolved `hostname`.
+
+### Identities: password, key, or both
+
+`authType`: `password` | `key` | `key_password` (both stored; key tried first,
+then password — also satisfies hosts requiring both). Quick Connect ticket
+auth: `{ type: 'password', password }` | `{ type: 'key', privateKey,
+passphrase?, password? }` | `{ type: 'credential', credentialId }`. The same
+`auth` shape is used by `POST /quick-connect/save` `identity.mode: 'new'`.
+
+### Key import
+
+Supported private key inputs (auto-detected from content, not extension):
+OpenSSH (`-----BEGIN OPENSSH PRIVATE KEY-----`, incl. bcrypt-encrypted),
+PEM PKCS#1 RSA (`BEGIN RSA PRIVATE KEY`, incl. legacy `Proc-Type: 4,ENCRYPTED`),
+SEC1 EC (`BEGIN EC PRIVATE KEY`), PKCS#8 (`BEGIN PRIVATE KEY` /
+`BEGIN ENCRYPTED PRIVATE KEY`), PuTTY `.ppk` v2 and v3 (encrypted v3 uses
+Argon2). Key types: ed25519, rsa, ecdsa (nistp256/384/521). DSA is rejected
+(deprecated). Keys are normalised to OpenSSH format; a passphrase-protected
+input stays passphrase-protected at rest (in addition to AES-GCM).
+
+- `POST /keystore/keys/inspect` `{ privateKey, passphrase? }` → `{ format,
+  encrypted, keyType, bits, fingerprint, publicKey, comment }` (nothing is
+  stored). Errors (400): `KEY_PASSPHRASE_REQUIRED` (key is encrypted; UI shows
+  a passphrase field), `KEY_PASSPHRASE_INVALID`, `KEY_UNSUPPORTED_FORMAT`,
+  `KEY_UNSUPPORTED_TYPE`.
+- `POST /keystore/keys/import` `{ name, description?, privateKey, passphrase?,
+  publicKey?, certificate? }` → 201 `{ key }`. `publicKey` (optional) must match
+  the private key (`KEY_PUBLIC_MISMATCH`). `certificate` (optional OpenSSH user
+  cert) must certify this key (`CERT_KEY_MISMATCH`) and parse
+  (`CERT_INVALID`).
+- `PATCH /keystore/keys/:id` also accepts `certificate` (string to set, `null`
+  to clear).
+- `SshKeyDTO` adds `originalFormat` and `certificate: null | { type, keyId,
+  principals, validAfter, validBefore, expired, caFingerprint }` (the cert text
+  itself is public and is returned by `GET /keystore/keys/:id` as
+  `certificateText`).
+
+### Global search — `GET /api/search`
+
+`?q=<text>&limit=5` (min 2 chars) → `{ results: { servers, customers, users,
+identities, keys, policies }, counts }`. Each item: `{ id, type, title,
+subtitle, href, meta }`, where `meta` carries type-specific fields used for
+result actions (servers: `environment, protocol, authMode, ipAddress,
+hostname, onboarded`; users: `email, role, status`; identities: `username,
+authType`; keys: `fingerprint, keyType`; customers: `serverCount`; policies:
+`effect, isActive`). Role gating: servers/customers — any member;
+identities/keys — manager+; users/policies — admin+. All org-scoped,
+case-insensitive, prefix/contains match on names, hostnames, IPs, emails,
+usernames, fingerprints.
+
+### Deep-link actions (used by Quick Actions + command palette)
+
+Pages open their create/import modals from `?action=`:
+`/customers?action=new`, `/servers?action=new`, `/users?action=invite`,
+`/policies?action=new`, `/access-requests?action=new`,
+`/keystore?tab=identities&action=new`, `/keystore?tab=keys&action=generate`,
+`/keystore?tab=keys&action=import`, `/keystore?tab=deployments&action=deploy`.
+The param is removed from the URL once handled.
+
+### Demo data
+
+`cd backend && npm run db:seed:demo` seeds an idempotent demo dataset (tagged
+so it can be removed with `npm run db:seed:demo -- --reset`). Never runs
+automatically.
