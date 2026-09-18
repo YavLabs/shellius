@@ -293,7 +293,7 @@ function CommandPalette() {
         if (canDeployKeys) {
           actions.push({
             id: 'deploy-key',
-            label: 'Deploy SSH key',
+            label: 'Export key to servers',
             icon: Send,
             run: () => goTo(`/keystore?tab=deployments&action=deploy&serverId=${item.id}`),
           });

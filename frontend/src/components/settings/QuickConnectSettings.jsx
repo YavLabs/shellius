@@ -3,11 +3,12 @@ import { SectionCard } from '@/components/settings/shared';
 import { Button } from '@/components/ui/button';
 import SearchableSelect from '@/components/ui/SearchableSelect';
 import { getQuickConnectSettings, updateQuickConnectSettings } from '@/services/quickConnectService';
+import { ROLE_LABELS } from '@/lib/labels';
 
 const ROLES = [
-  { value: 'manager', label: 'Manager' },
-  { value: 'admin', label: 'Admin' },
-  { value: 'super_admin', label: 'Super Admin' },
+  { value: 'manager', label: ROLE_LABELS.manager },
+  { value: 'admin', label: ROLE_LABELS.admin },
+  { value: 'super_admin', label: ROLE_LABELS.super_admin },
 ];
 
 function QuickConnectSettings() {

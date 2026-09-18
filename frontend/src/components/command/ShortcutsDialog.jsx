@@ -1,4 +1,11 @@
-import { Dialog, DialogContent, DialogTitle, DialogDescription } from '@/components/ui/dialog';
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogBody,
+  DialogTitle,
+  DialogDescription,
+} from '@/components/ui/dialog';
 import { useAuth } from '@/context/AuthContext';
 import { useQuickConnect } from '@/context/QuickConnectContext';
 import { NAV_SEQUENCES, CREATE_SEQUENCES, GENERAL_SHORTCUTS, isSequenceVisible } from '@/lib/commands';
@@ -45,14 +52,16 @@ function ShortcutsDialog({ open, onClose }) {
 
   return (
     <Dialog open={open} onOpenChange={(o) => !o && onClose?.()}>
-      <DialogContent className="max-w-md">
-        <DialogTitle>Keyboard shortcuts</DialogTitle>
-        <DialogDescription>
-          Press the first key, then the second within a second. Shortcuts are disabled while
-          typing in a field.
-        </DialogDescription>
+      <DialogContent size="sm">
+        <DialogHeader>
+          <DialogTitle>Keyboard shortcuts</DialogTitle>
+          <DialogDescription>
+            Press the first key, then the second within a second. Shortcuts are disabled while
+            typing in a field.
+          </DialogDescription>
+        </DialogHeader>
 
-        <div className="mt-2 space-y-5">
+        <DialogBody className="space-y-5">
           <section>
             <h3 className="mb-1 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
               General
@@ -89,7 +98,7 @@ function ShortcutsDialog({ open, onClose }) {
               </div>
             </section>
           )}
-        </div>
+        </DialogBody>
       </DialogContent>
     </Dialog>
   );

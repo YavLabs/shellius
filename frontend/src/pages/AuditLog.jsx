@@ -25,6 +25,7 @@ import {
 import { listAudit, exportAudit } from '@/services/auditService';
 import { useAuth } from '@/context/AuthContext';
 import { relativeTime, formatDateTime } from '@/utils/time';
+import { formatLabel } from '@/utils/format';
 
 // ---------------------------------------------------------------------------
 // Action category configuration
@@ -320,7 +321,7 @@ function AuditLog() {
             options={[
               { value: '', label: 'All actions' },
               ...Object.entries(ACTION_CATEGORIES).flatMap(([, cat]) =>
-                cat.actions.map((action) => ({ value: action, label: action }))
+                cat.actions.map((action) => ({ value: action, label: formatLabel(action) }))
               ),
             ]}
           />

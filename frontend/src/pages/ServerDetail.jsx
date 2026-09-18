@@ -46,6 +46,7 @@ import {
   resetHostKey,
 } from '@/services/serverService';
 import { formatDateTime, relativeTime } from '@/utils/time';
+import { PROVISION_STATUS_LABELS } from '@/lib/labels';
 
 function Card({ title, children }) {
   return (
@@ -257,7 +258,7 @@ function ServerDetail() {
                       Keystore
                     </DropdownMenuLabel>
                     <DropdownMenuItem onSelect={() => setDeployWizardOpen(true)}>
-                      <Send className="mr-2 h-4 w-4" /> Deploy SSH key…
+                      <Send className="mr-2 h-4 w-4" /> Export key to servers…
                     </DropdownMenuItem>
                     <DropdownMenuItem onSelect={() => setResetHostKeyConfirm(true)}>
                       <RotateCw className="mr-2 h-4 w-4" /> Reset host key
@@ -370,7 +371,10 @@ function ServerDetail() {
             </>
           ) : (
             <>
-              <Field label="Status" value={server.provisionStatus || 'pending'} />
+              <Field
+                label="Status"
+                value={PROVISION_STATUS_LABELS[server.provisionStatus] || PROVISION_STATUS_LABELS.pending}
+              />
               {server.provisionStatus === 'failed' && (
                 <Field label="Error" value={server.provisionError} />
               )}

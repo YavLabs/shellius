@@ -136,8 +136,8 @@ function Policies() {
         onChange={(v) => { setEffectFilter(v); setPage(1); }}
         options={[
           { value: '', label: 'All effects' },
-          { value: 'ALLOW', label: 'ALLOW' },
-          { value: 'DENY', label: 'DENY' },
+          { value: 'ALLOW', label: 'Allow' },
+          { value: 'DENY', label: 'Deny' },
         ]}
         placeholder="All effects"
         searchable={false}

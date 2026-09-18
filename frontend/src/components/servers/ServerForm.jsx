@@ -9,6 +9,7 @@ import PasswordInput from '@/components/ui/PasswordInput';
 import IdentityFormModal from '@/components/keystore/IdentityFormModal';
 import { useAuth } from '@/context/AuthContext';
 import { roleAtLeast } from '@/lib/permissions';
+import { ENVIRONMENT_LABELS } from '@/lib/labels';
 
 const ENVIRONMENTS = ['demo', 'dev', 'staging', 'prod'];
 const OS_TYPES = ['', 'linux', 'windows', 'macos', 'other'];
@@ -527,7 +528,7 @@ function ServerForm({ server, customerId: initialCustomerId, onSubmit, onCancel 
             <SearchableSelect
               value={environment}
               onChange={(v) => setEnvironment(v)}
-              options={ENVIRONMENTS.map((env) => ({ value: env, label: env }))}
+              options={ENVIRONMENTS.map((env) => ({ value: env, label: ENVIRONMENT_LABELS[env] || env }))}
               searchable={false}
               clearable={false}
             />

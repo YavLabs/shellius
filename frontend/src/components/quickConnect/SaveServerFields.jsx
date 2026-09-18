@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { Info } from 'lucide-react';
 import SearchableSelect from '@/components/ui/SearchableSelect';
 import { listCustomers } from '@/services/customerService';
+import { ENVIRONMENT_LABELS } from '@/lib/labels';
 
 const ENVIRONMENTS = ['demo', 'dev', 'staging', 'prod'];
 
@@ -77,7 +78,7 @@ function SaveServerFields({
           <SearchableSelect
             value={values.environment || 'dev'}
             onChange={set('environment')}
-            options={ENVIRONMENTS.map((e) => ({ value: e, label: e }))}
+            options={ENVIRONMENTS.map((e) => ({ value: e, label: ENVIRONMENT_LABELS[e] || e }))}
             searchable={false}
             clearable={false}
           />

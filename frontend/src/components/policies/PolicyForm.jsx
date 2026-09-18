@@ -185,7 +185,7 @@ function Step1({ form, onChange, errors }) {
                   eff === 'ALLOW' ? 'text-emerald-600 dark:text-emerald-400' : 'text-red-600 dark:text-red-400',
                 ].join(' ')}
               >
-                {eff}
+                {eff === 'ALLOW' ? 'Allow' : 'Deny'}
               </span>
             </label>
           ))}

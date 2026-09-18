@@ -19,6 +19,7 @@ import SearchableSelect from '@/components/ui/SearchableSelect';
 import { listCertificates, revokeCertificate } from '@/services/certificateService';
 import { useAuth } from '@/context/AuthContext';
 import { formatDateTime } from '@/utils/time';
+import { CERT_STATUS_LABELS } from '@/lib/labels';
 
 const ROLE_RANK = { super_admin: 4, admin: 3, manager: 2, member: 1 };
 function isAtLeast(user, role) {
@@ -213,7 +214,7 @@ function Certificates() {
       onChange={(v) => { setStatusFilter(v); setPage(1); }}
       options={[
         { value: '', label: 'All statuses' },
-        ...STATUSES.map((s) => ({ value: s, label: s })),
+        ...STATUSES.map((s) => ({ value: s, label: CERT_STATUS_LABELS[s] || s })),
       ]}
       placeholder="All statuses"
       searchable={false}

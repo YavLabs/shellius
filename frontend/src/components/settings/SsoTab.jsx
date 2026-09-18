@@ -6,6 +6,7 @@ import {
   Dialog,
   DialogContent,
   DialogHeader,
+  DialogBody,
   DialogTitle,
   DialogDescription,
 } from '@/components/ui/dialog';
@@ -109,16 +110,16 @@ function SsoTab() {
 
       {/* Add provider dialog */}
       <Dialog open={!!addStep} onOpenChange={(open) => !open && closeAddDialog()}>
-        <DialogContent className="max-h-[85vh] max-w-3xl overflow-y-auto">
+        <DialogContent size="xl" className="max-h-[85vh]">
           {addStep === 'pick' ? (
             <>
               <DialogHeader>
                 <DialogTitle>Add a provider</DialogTitle>
                 <DialogDescription>Choose an identity provider to configure.</DialogDescription>
               </DialogHeader>
-              <div className="mt-2">
+              <DialogBody>
                 <ProviderPicker onSelect={(preset) => setAddStep(preset)} />
-              </div>
+              </DialogBody>
             </>
           ) : addStep ? (
             <>
@@ -134,14 +135,14 @@ function SsoTab() {
                 <DialogTitle>{addStep.label}</DialogTitle>
                 <DialogDescription>{addStep.description}</DialogDescription>
               </DialogHeader>
-              <div className="mt-2">
+              <DialogBody>
                 <ProviderForm
                   preset={addStep}
                   orgGroups={orgGroups}
                   onSaved={handleAdded}
                   onCancel={closeAddDialog}
                 />
-              </div>
+              </DialogBody>
             </>
           ) : null}
         </DialogContent>
@@ -149,7 +150,7 @@ function SsoTab() {
 
       {/* Edit provider dialog */}
       <Dialog open={!!editingProvider} onOpenChange={(open) => !open && closeEditDialog()}>
-        <DialogContent className="max-h-[85vh] max-w-3xl overflow-y-auto">
+        <DialogContent size="xl" className="max-h-[85vh]">
           {editingProvider && (
             <>
               <DialogHeader>
@@ -158,7 +159,7 @@ function SsoTab() {
                   {getProvider(editingProvider.presetId)?.description || 'Update this provider\'s configuration.'}
                 </DialogDescription>
               </DialogHeader>
-              <div className="mt-2">
+              <DialogBody>
                 <ProviderForm
                   preset={getProvider(editingProvider.presetId) || { id: editingProvider.presetId, label: editingProvider.name, fields: ['clientId', 'clientSecret'], protocol: editingProvider.provider }}
                   existingProvider={editingProvider}
@@ -166,7 +167,7 @@ function SsoTab() {
                   onSaved={handleEdited}
                   onCancel={closeEditDialog}
                 />
-              </div>
+              </DialogBody>
             </>
           )}
         </DialogContent>

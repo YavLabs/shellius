@@ -50,6 +50,7 @@ import { relativeTime, formatDateTime } from '@/utils/time';
 import Skeleton from '@/components/ui/Skeleton';
 import { useAuth } from '@/context/AuthContext';
 import { roleAtLeast } from '@/lib/permissions';
+import { ENVIRONMENT_LABELS } from '@/lib/labels';
 
 // ---------------------------------------------------------------------------
 // Sub-components
@@ -340,7 +341,7 @@ function CustomerDetail() {
       clearable={false}
       options={[
         { value: '', label: 'All environments' },
-        ...ENVIRONMENTS.map((e) => ({ value: e, label: e })),
+        ...ENVIRONMENTS.map((e) => ({ value: e, label: ENVIRONMENT_LABELS[e] || e })),
       ]}
     />
   );

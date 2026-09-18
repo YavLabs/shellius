@@ -22,6 +22,7 @@ import { listSessions, listActiveSessions, getSession, terminateSession, downloa
 import { useAuth } from '@/context/AuthContext';
 import { relativeTime, formatDateTime } from '@/utils/time';
 import { extractCommands, formatOffset } from '@/utils/castCommands';
+import { SESSION_STATUS_LABELS } from '@/lib/labels';
 
 const ROLE_RANK = { super_admin: 4, admin: 3, manager: 2, member: 1 };
 function isAtLeast(user, role) {
@@ -357,7 +358,7 @@ function Sessions() {
       onChange={(v) => { setStatusFilter(v); setPage(1); }}
       options={[
         { value: '', label: 'All statuses' },
-        ...SESSION_STATUSES.map((s) => ({ value: s, label: s })),
+        ...SESSION_STATUSES.map((s) => ({ value: s, label: SESSION_STATUS_LABELS[s] || s })),
       ]}
       placeholder="All statuses"
       searchable={false}

@@ -27,6 +27,7 @@ import UserForm from '@/components/users/UserForm';
 import SshKeyDialog from '@/components/users/SshKeyDialog';
 import PageHeader from '@/components/common/PageHeader';
 import { formatLabel } from '@/utils/format';
+import { ROLE_LABELS, USER_STATUS_LABELS } from '@/lib/labels';
 import { Button } from '@/components/ui/button';
 import SearchableSelect from '@/components/ui/SearchableSelect';
 import {
@@ -270,7 +271,7 @@ function Users() {
         onChange={(v) => { setRole(v); setPage(1); }}
         options={[
           { value: '', label: 'All roles' },
-          ...ROLES.map((r) => ({ value: r, label: formatLabel(r) })),
+          ...ROLES.map((r) => ({ value: r, label: ROLE_LABELS[r] || formatLabel(r) })),
         ]}
         placeholder="All roles"
         searchable={false}
@@ -282,7 +283,7 @@ function Users() {
         onChange={(v) => { setStatus(v); setPage(1); }}
         options={[
           { value: '', label: 'All statuses' },
-          ...STATUSES.map((s) => ({ value: s, label: formatLabel(s) })),
+          ...STATUSES.map((s) => ({ value: s, label: USER_STATUS_LABELS[s] || formatLabel(s) })),
         ]}
         placeholder="All statuses"
         searchable={false}
@@ -304,7 +305,7 @@ function Users() {
       label: 'Role',
       sortable: true,
       searchAccessor: (r) => r.role || '',
-      render: (r) => <Badge tone={roleTone(r.role).tone}>{formatLabel(r.role)}</Badge>,
+      render: (r) => <Badge tone={roleTone(r.role).tone}>{roleTone(r.role).label}</Badge>,
     },
     {
       key: 'status',
@@ -313,7 +314,7 @@ function Users() {
       searchAccessor: (r) => r.status || '',
       render: (r) => (
         <div className="flex flex-wrap items-center gap-1.5">
-          <Badge tone={statusTone(r.status).tone}>{formatLabel(r.status)}</Badge>
+          <Badge tone={statusTone(r.status).tone}>{statusTone(r.status).label}</Badge>
           {isLocked(r) && (
             <Badge tone="danger" icon={Lock}>
               Locked

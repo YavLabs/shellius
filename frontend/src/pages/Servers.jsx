@@ -42,6 +42,7 @@ import { listCustomers } from '@/services/customerService';
 import { useAuth } from '@/context/AuthContext';
 import { roleAtLeast } from '@/lib/permissions';
 import { relativeTime } from '@/utils/time';
+import { ENVIRONMENT_LABELS, HEALTH_STATUS_LABELS } from '@/lib/labels';
 
 const ENVIRONMENTS = ['demo', 'dev', 'staging', 'prod'];
 const HEALTH_STATUSES = ['healthy', 'unhealthy', 'unknown', 'maintenance'];
@@ -187,7 +188,7 @@ function Servers() {
     { value: 'sshUser', label: 'SSH User' },
   ];
   const bulkValueOptions = {
-    environment: ENVIRONMENTS.map((e) => ({ value: e, label: e })),
+    environment: ENVIRONMENTS.map((e) => ({ value: e, label: ENVIRONMENT_LABELS[e] || e })),
     customerId: customers.map((c) => ({ value: c.id, label: c.name })),
     protocol: [
       { value: 'ssh', label: 'SSH' },
@@ -214,7 +215,7 @@ function Servers() {
         onChange={(v) => { setEnvironment(v); setPage(1); }}
         options={[
           { value: '', label: 'All environments' },
-          ...ENVIRONMENTS.map((e) => ({ value: e, label: e })),
+          ...ENVIRONMENTS.map((e) => ({ value: e, label: ENVIRONMENT_LABELS[e] || e })),
         ]}
         placeholder="All environments"
         searchable={false}
@@ -226,7 +227,7 @@ function Servers() {
         onChange={(v) => { setHealthStatus(v); setPage(1); }}
         options={[
           { value: '', label: 'All health' },
-          ...HEALTH_STATUSES.map((h) => ({ value: h, label: h })),
+          ...HEALTH_STATUSES.map((h) => ({ value: h, label: HEALTH_STATUS_LABELS[h] || h })),
         ]}
         placeholder="All health"
         searchable={false}
@@ -292,7 +293,7 @@ function Servers() {
           </Button>
           {canDeployKeys && (
             <Button variant="outline" size="sm" onClick={() => setDeployWizardOpen(true)}>
-              <Send className="mr-1 h-4 w-4" /> Deploy SSH key
+              <Send className="mr-1 h-4 w-4" /> Export key to servers
             </Button>
           )}
           <Button

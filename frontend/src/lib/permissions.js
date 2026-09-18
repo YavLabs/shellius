@@ -53,7 +53,7 @@ export function can(user, capability) {
 }
 
 export const ROLE_LABELS = {
-  super_admin: 'Super Admin',
+  super_admin: 'Super admin',
   admin: 'Admin',
   manager: 'Manager',
   member: 'Member',

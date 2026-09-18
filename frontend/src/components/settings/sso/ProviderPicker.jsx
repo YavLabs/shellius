@@ -1,4 +1,5 @@
 import { SSO_PROVIDERS } from '@/config/ssoProviders';
+import { Badge } from '@/components/ui/badge';
 import ProviderIcon from './ProviderIcon';
 
 /**
@@ -16,16 +17,16 @@ export default function ProviderPicker({ onSelect }) {
           disabled={provider.disabled}
           onClick={() => onSelect(provider)}
           className={[
-            'group relative flex flex-col items-start gap-3 rounded-lg border p-4 text-left transition-colors',
+            'group relative flex flex-col items-start gap-3 rounded-lg border p-4 text-left transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-card',
             provider.disabled
               ? 'cursor-not-allowed border-border bg-muted/30 opacity-60'
               : 'cursor-pointer border-border bg-card hover:border-primary/50 hover:bg-accent',
           ].join(' ')}
         >
           {provider.disabled && (
-            <span className="absolute right-3 top-3 rounded-full bg-muted px-2 py-0.5 text-xs font-medium text-muted-foreground">
+            <Badge tone="neutral" className="absolute right-3 top-3">
               Coming soon
-            </span>
+            </Badge>
           )}
           <ProviderIcon
             presetId={provider.id}
