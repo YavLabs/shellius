@@ -282,11 +282,14 @@ async function main() {
   let ws2;
   await step('reattach: replay contains marker1', async () => {
     ws2 = connectTerminalWs(`token=${encodeURIComponent(admin.accessToken)}&attach=${encodeURIComponent(sessionId)}&cols=80&rows=24`);
-    const attached = await waitForFrame(ws2, 'attached');
+    // Listen for both BEFORE anything arrives: the replay follows the
+    // 'attached' frame immediately and often lands in the same read.
+    const attachedP = waitForFrame(ws2, 'attached');
+    const replayP = waitForOutput(ws2, Buffer.from('marker1'), 5000);
+    const attached = await attachedP;
     assert(attached.sessionId === sessionId, 'attached frame sessionId mismatch');
     assert(attached.replayBytes > 0, 'replayBytes should be > 0 (marker1 was written before detach)');
-    // The replay bytes follow immediately as a binary frame.
-    const replay = await waitForOutput(ws2, Buffer.from('marker1'), 5000);
+    const replay = await replayP;
     assert(replay.length > 0, 'no replay bytes received');
   });
 
