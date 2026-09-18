@@ -49,4 +49,31 @@ router.put(
   })
 );
 
+// Joi schema for PUT /api/org/access-settings
+const updateAccessSettingsSchema = Joi.object({
+  prodApprovalBypassMinRole: Joi.string().valid('admin', 'super_admin', 'none').required(),
+});
+
+// GET /api/org/access-settings — admin+
+router.get(
+  '/access-settings',
+  requireRole('admin'),
+  asyncHandler(async (req, res) => {
+    const settings = await orgService.getAccessSettings(req.orgId);
+    res.json({ success: true, data: settings });
+  })
+);
+
+// PUT /api/org/access-settings — super_admin only
+router.put(
+  '/access-settings',
+  requireRole('super_admin'),
+  audit('org.access_settings.update', 'Organization'),
+  validate(updateAccessSettingsSchema),
+  asyncHandler(async (req, res) => {
+    const settings = await orgService.updateAccessSettings(req.orgId, req.body);
+    res.json({ success: true, data: settings });
+  })
+);
+
 export default router;

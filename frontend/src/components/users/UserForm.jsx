@@ -4,6 +4,7 @@ import api from '@/services/api';
 import PasswordInput from '@/components/ui/PasswordInput';
 import SearchableSelect from '@/components/ui/SearchableSelect';
 import Avatar from '@/components/ui/Avatar';
+import { ROLE_LABELS, USER_STATUS_LABELS } from '@/lib/labels';
 
 const ROLES = ['super_admin', 'admin', 'manager', 'member'];
 const STATUSES = ['active', 'invited', 'suspended', 'deactivated'];
@@ -165,7 +166,7 @@ function UserForm({ user, onSubmit, onCancel }) {
         <SearchableSelect
           value={role}
           onChange={(v) => setRole(v)}
-          options={ROLES.map((r) => ({ value: r, label: r }))}
+          options={ROLES.map((r) => ({ value: r, label: ROLE_LABELS[r] || r }))}
           searchable={false}
           clearable={false}
         />
@@ -177,7 +178,7 @@ function UserForm({ user, onSubmit, onCancel }) {
           <SearchableSelect
             value={status}
             onChange={(v) => setStatus(v)}
-            options={STATUSES.map((s) => ({ value: s, label: s }))}
+            options={STATUSES.map((s) => ({ value: s, label: USER_STATUS_LABELS[s] || s }))}
             searchable={false}
             clearable={false}
           />

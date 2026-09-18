@@ -23,12 +23,24 @@ export const resendInvite = (id) =>
 export const triggerPasswordReset = (id) =>
   api.post(`/users/${id}/password-reset`).then((r) => r.data?.data ?? r.data);
 
+// Auth hardening — admin actions
+export const unlockUser = (id) =>
+  api.post(`/users/${id}/unlock`).then((r) => r.data?.data ?? r.data);
+export const revokeUserSessions = (id) =>
+  api.post(`/users/${id}/revoke-sessions`).then((r) => r.data?.data ?? r.data);
+
 // Profile / GDPR (Phase 17F)
 export const getMe = () => api.get('/users/me').then((r) => r.data?.data?.user ?? r.data?.data);
 export const updateMe = (data) =>
   api.put('/users/me', data).then((r) => r.data?.data?.user ?? r.data?.data);
 export const changeMyPassword = (body) =>
   api.put('/users/me/password', body).then((r) => r.data?.data ?? r.data);
+
+// Profile avatar — ephemeral client-side crop/resize, uploaded as a data URL.
+export const uploadMyAvatar = (dataUrl) =>
+  api.put('/users/me/avatar', { dataUrl }).then((r) => r.data?.data?.user ?? r.data?.data);
+export const removeMyAvatar = () =>
+  api.delete('/users/me/avatar').then((r) => r.data?.data?.user ?? r.data?.data);
 export const exportMyData = () =>
   api.get('/users/me/export', { responseType: 'blob' }).then((r) => {
     const url = URL.createObjectURL(new Blob([r.data], { type: 'application/json' }));

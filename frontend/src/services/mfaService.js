@@ -7,8 +7,16 @@ export const getMfa = () => api.get('/mfa').then(unwrap);
 export const beginTotp = () => api.post('/mfa/totp/begin').then(unwrap);
 export const confirmTotp = (code) => api.post('/mfa/totp/confirm', { code }).then(unwrap);
 export const enableEmailMfa = () => api.post('/mfa/email/enable').then(unwrap);
-export const regenerateBackupCodes = () => api.post('/mfa/backup-codes/regenerate').then(unwrap);
-export const disableMfa = () => api.post('/mfa/disable').then(unwrap);
+// `verification` is { method, code } or { password } — required by the
+// hardened API for both of these (previously unauthenticated no-ops).
+export const regenerateBackupCodes = (verification) =>
+  api.post('/mfa/backup-codes/regenerate', verification).then(unwrap);
+export const disableMfa = (verification) => api.post('/mfa/disable', verification).then(unwrap);
+// ASSUMPTION (not in docs/auth-hardening.md): a self-service equivalent of
+// /auth/mfa/send-otp for an already-authenticated user who needs an email
+// code to verify a disable/regenerate action. If the backend doesn't expose
+// this, the email option in VerifyAction should be hidden/adjusted.
+export const sendMfaEmailCode = () => api.post('/mfa/email/send-code').then(unwrap);
 
 // Login challenge (public)
 export const verifyMfa = (mfaToken, method, code) =>

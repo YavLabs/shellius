@@ -2,6 +2,8 @@ import { useState, useEffect } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
 import { Lock, Eye, EyeOff, Loader2, User } from 'lucide-react';
 import { BrandMark } from '@/components/common/BrandLogo';
+import MfaChallenge from '@/components/auth/MfaChallenge';
+import { useAuth } from '@/context/AuthContext';
 import { getInvite, acceptInvite } from '@/services/userTokenService';
 
 function validatePassword(password) {
@@ -14,6 +16,7 @@ function validatePassword(password) {
 function AcceptInvite() {
   const { token } = useParams();
   const navigate = useNavigate();
+  const { applyAuthResult } = useAuth();
 
   const [inviteData, setInviteData] = useState(null);
   const [loadError, setLoadError] = useState('');
@@ -27,6 +30,7 @@ function AcceptInvite() {
   const [showConfirm, setShowConfirm] = useState(false);
   const [error, setError] = useState('');
   const [submitting, setSubmitting] = useState(false);
+  const [mfaChallenge, setMfaChallenge] = useState(null);
 
   useEffect(() => {
     setLoadingInvite(true);
@@ -57,15 +61,18 @@ function AcceptInvite() {
       return;
     }
     if (!termsAccepted) {
-      setError('You must accept the Terms of Service and Privacy Policy to continue.');
+      setError('You must accept the terms of service and privacy policy to continue.');
       return;
     }
 
     setSubmitting(true);
     try {
       const data = await acceptInvite(token, password, name.trim());
-      if (data?.accessToken) localStorage.setItem('accessToken', data.accessToken);
-      if (data?.refreshToken) localStorage.setItem('refreshToken', data.refreshToken);
+      if (data?.mfaRequired) {
+        setMfaChallenge(data);
+        return;
+      }
+      applyAuthResult(data);
       navigate('/', { replace: true });
     } catch (err) {
       const msg =
@@ -111,7 +118,20 @@ function AcceptInvite() {
             </div>
           )}
 
-          {!loadingInvite && !loadError && inviteData && (
+          {!loadingInvite && !loadError && inviteData && mfaChallenge && (
+            <MfaChallenge
+              mfaToken={mfaChallenge.mfaToken}
+              methods={mfaChallenge.methods}
+              emailHint={mfaChallenge.emailHint}
+              onSuccess={(data) => {
+                applyAuthResult(data);
+                navigate('/', { replace: true });
+              }}
+              onStartOver={() => setMfaChallenge(null)}
+            />
+          )}
+
+          {!loadingInvite && !loadError && inviteData && !mfaChallenge && (
             <form onSubmit={handleSubmit} className="space-y-4">
               <div className="rounded-md border border-border bg-muted/30 px-4 py-3 text-sm">
                 <p className="text-muted-foreground">
@@ -231,11 +251,11 @@ function AcceptInvite() {
                 <label htmlFor="invite-terms" className="text-sm text-muted-foreground leading-snug">
                   I agree to the{' '}
                   <a href="#" className="text-primary underline-offset-4 hover:underline">
-                    Terms of Service
+                    Terms of service
                   </a>{' '}
                   and{' '}
                   <a href="#" className="text-primary underline-offset-4 hover:underline">
-                    Privacy Policy
+                    Privacy policy
                   </a>
                 </label>
               </div>

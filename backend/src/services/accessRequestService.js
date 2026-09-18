@@ -32,6 +32,10 @@ export function isServerOnboarded(server) {
   // RDP-only servers need no host agent — Guacamole injects credentials at
   // connect time, so they're connectable as soon as they're added.
   if (server.protocol === 'rdp') return true;
+  // Credential-mode (Keystore) servers connect via a stored identity over
+  // ssh2 — no CA bootstrap / agent required, so they're connectable as soon
+  // as they're added.
+  if (server.authMode === 'credential') return true;
   return !!server.agentId || !!server.agentLastSeen;
 }
 
@@ -165,8 +169,8 @@ async function resolveApprovers({ orgId, requesterId, policy, manager }) {
 // Internal include shapes (reused across queries)
 // ---------------------------------------------------------------------------
 const REQUEST_INCLUDE = {
-  requester: { select: { id: true, name: true, email: true } },
-  reviewer: { select: { id: true, name: true, email: true } },
+  requester: { select: { id: true, name: true, email: true, avatarUrl: true } },
+  reviewer: { select: { id: true, name: true, email: true, avatarUrl: true } },
   server: {
     select: {
       id: true,
@@ -224,7 +228,10 @@ export async function submit({
   }
 
   // Load server scoped to org
-  const server = await prisma.server.findFirst({ where: { id: serverId, orgId } });
+  const server = await prisma.server.findFirst({
+    where: { id: serverId, orgId },
+    include: { credential: true },
+  });
   if (!server) throw new ApiError(404, 'Server not found');
   if (!isServerOnboarded(server)) {
     throw new ApiError(400, 'This server has not been onboarded yet, so access cannot be requested.');
@@ -254,7 +261,21 @@ export async function submit({
   if (protocol === 'RDP') {
     // RDP uses the server's configured RDP account (injected by the gateway),
     // not an SSH/Linux principal — the SSH allow-list rules don't apply.
-    requestedPrincipal = server.rdpUsername || requestedPrincipal || 'Administrator';
+    // Credential-mode RDP servers use the stored identity's username instead
+    // of Server.rdpUsername (see rdpService.buildRdpToken).
+    requestedPrincipal =
+      (server.authMode === 'credential' ? server.credential?.username : null) ||
+      server.rdpUsername ||
+      requestedPrincipal ||
+      'Administrator';
+  } else if (server.authMode === 'credential') {
+    // Keystore (credential-mode) servers connect as the stored identity's
+    // fixed username — there is no Linux allow-list concept here, so the
+    // principal is not user-choosable.
+    if (!server.credential) {
+      throw new ApiError(400, 'This server has no identity configured');
+    }
+    requestedPrincipal = server.credential.username;
   } else {
     const jitPolicy = await jitManifestService.findJitPolicyForUserServer({
       orgId,
@@ -416,21 +437,81 @@ export async function submit({
     metadata: { accessRequestId: accessRequest.id, serverId, expiresAt },
   });
 
-  await writeAudit(orgId, requesterId, 'access_request.auto_approved', accessRequest.id, {
-    serverId,
-    environment: server.environment,
-    protocol,
-    effectiveDuration,
-    policyId: policyResult.policyId,
-  });
+  // Production approval bypass (see docs/auth-hardening.md Revision 2
+  // "Production approval"): the requester's role is at/above the org's
+  // prodApprovalBypassMinRole, so the request skipped manager review. This is
+  // distinct from an ordinary non-prod policy auto-approve — audited under a
+  // dedicated action and the server's resolved approvers are notified
+  // after the fact so the bypass is visible even though it wasn't reviewed.
+  if (policyResult.prodBypass) {
+    await writeAudit(orgId, requesterId, 'access_request.prod_bypass', accessRequest.id, {
+      serverId,
+      environment: server.environment,
+      protocol,
+      effectiveDuration,
+      policyId: policyResult.policyId,
+      requesterRole: callerRole,
+      reason,
+    });
 
-  logger.info('accessRequestService.submit: request auto-approved', {
-    orgId,
-    requestId: accessRequest.id,
-    requesterId,
-    serverId,
-    effectiveDuration,
-  });
+    logger.info('accessRequestService.submit: prod approval bypassed by role', {
+      orgId,
+      requestId: accessRequest.id,
+      requesterId,
+      requesterRole: callerRole,
+      serverId,
+      effectiveDuration,
+    });
+
+    // Best-effort — notify the server's resolved approver set (from the
+    // matched policy's routing, falling back to the requester's manager) so
+    // the bypass doesn't happen silently. Never blocks the response.
+    try {
+      const approverPolicy = await policyService.findApproverPolicy({
+        orgId,
+        userId: requesterId,
+        serverId,
+        requestedPrincipal,
+      });
+      const approvers = await resolveApprovers({
+        orgId,
+        requesterId,
+        policy: approverPolicy,
+        manager: requester.manager,
+      });
+      for (const approver of approvers) {
+        await notificationService.create({
+          orgId,
+          userId: approver.id,
+          type: 'ACCESS_REQUEST_APPROVED',
+          title: `Production access bypass — ${requester.name}`,
+          body: `${requester.name} (${callerRole}) was auto-approved for ${protocol} access to ${server.hostname} (prod) without review, per your organization's approval bypass setting. Reason: ${reason}`,
+          metadata: { accessRequestId: accessRequest.id, requesterId, serverId, bypass: true },
+        });
+      }
+    } catch (err) {
+      logger.warn('accessRequestService.submit: prod bypass approver notification failed', {
+        requestId: accessRequest.id,
+        error: err.message,
+      });
+    }
+  } else {
+    await writeAudit(orgId, requesterId, 'access_request.auto_approved', accessRequest.id, {
+      serverId,
+      environment: server.environment,
+      protocol,
+      effectiveDuration,
+      policyId: policyResult.policyId,
+    });
+
+    logger.info('accessRequestService.submit: request auto-approved', {
+      orgId,
+      requestId: accessRequest.id,
+      requesterId,
+      serverId,
+      effectiveDuration,
+    });
+  }
 
   return accessRequest;
 }
@@ -461,7 +542,6 @@ export async function review({ requestId, reviewerId, decision, approvedDuration
     where: { id: requestId },
     include: {
       ...REQUEST_INCLUDE,
-      requester: { select: { id: true, name: true, email: true } },
       approvers: { select: { userId: true } },
     },
   });
@@ -1030,11 +1110,12 @@ export async function getActiveByServerForUser(orgId, userId, serverId) {
  * @param {string}  params.userId
  * @param {string}  params.role
  * @param {string}  [params.tab='mine']
+ * @param {string}  [params.status]   optional status filter (PENDING, APPROVED, …)
  * @param {number}  [params.page=1]
  * @param {number}  [params.limit=25]
  * @returns {Promise<{ items: object[], total: number, page: number, limit: number }>}
  */
-export async function list({ orgId, userId, role, tab = 'mine', page = 1, limit = 25 }) {
+export async function list({ orgId, userId, role, tab = 'mine', status, page = 1, limit = 25 }) {
   if (!orgId) throw new ApiError(400, 'orgId is required');
   if (!userId) throw new ApiError(400, 'userId is required');
 
@@ -1059,6 +1140,8 @@ export async function list({ orgId, userId, role, tab = 'mine', page = 1, limit 
     // 'mine' (default)
     where = { orgId, requesterId: userId };
   }
+  // AND-ed so it narrows the tab (to-review + APPROVED → nothing, not everything approved).
+  if (status) where = { AND: [where, { status }] };
 
   const [items, total] = await Promise.all([
     prisma.accessRequest.findMany({
@@ -1088,12 +1171,14 @@ export async function list({ orgId, userId, role, tab = 'mine', page = 1, limit 
  * @param {string} params.callerRole
  * @returns {Promise<object>}
  */
-export async function getById({ requestId, callerId, callerRole }) {
+export async function getById({ requestId, orgId, callerId, callerRole }) {
   if (!requestId) throw new ApiError(400, 'requestId is required');
+  if (!orgId) throw new ApiError(400, 'orgId is required');
   if (!callerId) throw new ApiError(400, 'callerId is required');
 
-  const accessRequest = await prisma.accessRequest.findUnique({
-    where: { id: requestId },
+  // Org-scoped: an admin's "can view any request" applies to their own org only.
+  const accessRequest = await prisma.accessRequest.findFirst({
+    where: { id: requestId, orgId },
     include: REQUEST_INCLUDE,
   });
 
@@ -1329,6 +1414,7 @@ export default {
   notifyExpiringAccess,
   createBreakGlass,
   getAccessIntent,
+  getAccessIntentsBulk,
 };
 
 // ---------------------------------------------------------------------------
@@ -1435,6 +1521,90 @@ export async function getAccessIntent({ orgId, userId, userRole, serverId }) {
     jitEnabled: !!jitPolicy,
     breakGlass: !!activeAr?.breakGlass,
   };
+}
+
+// ---------------------------------------------------------------------------
+// getAccessIntentsBulk — batched version of getAccessIntent for N servers
+// ---------------------------------------------------------------------------
+
+/**
+ * Lightweight, batched sibling of `getAccessIntent`: given a list of server
+ * ids, reports just enough for a list UI (e.g. the "New connection" dialog)
+ * to pick Connect / Pending / Request access per row without an N+1 request
+ * fan-out. Two `findMany` calls total, regardless of `serverIds.length`.
+ *
+ * Does NOT resolve JIT/preferred-principal state (see `getAccessIntent` for
+ * that) — callers that need the full single-server intent (e.g. to actually
+ * open a connection) should still call `getAccessIntent` for that one server.
+ *
+ * Admin/super_admin bypass: mirrors `getAccessIntent`, which does not grant
+ * admins implicit access — `hasActiveAccess` only reflects a real APPROVED,
+ * unexpired AccessRequest row the caller owns. Admins get the same
+ * `hasActiveAccess`/`hasPendingRequest` as anyone else; their only special
+ * power (bypassing manager approval) happens inside `submit()` and shows up
+ * here as a normal APPROVED row once they submit.
+ *
+ * @param {object} params
+ * @param {string} params.orgId
+ * @param {string} params.userId
+ * @param {string[]} params.serverIds - already deduped/capped by the caller (route enforces max 50)
+ * @returns {Promise<Record<string, {hasActiveAccess:boolean, activeRequestId:string|null, hasPendingRequest:boolean, pendingRequestId:string|null, expiresAt:string|null}>>}
+ */
+export async function getAccessIntentsBulk({ orgId, userId, serverIds }) {
+  const ids = [...new Set(serverIds)].filter(Boolean);
+  const intents = {};
+  for (const id of ids) {
+    intents[id] = {
+      hasActiveAccess: false,
+      activeRequestId: null,
+      hasPendingRequest: false,
+      pendingRequestId: null,
+      expiresAt: null,
+    };
+  }
+  if (ids.length === 0) return intents;
+
+  const [activeArs, pendingArs] = await Promise.all([
+    prisma.accessRequest.findMany({
+      where: {
+        orgId,
+        requesterId: userId,
+        serverId: { in: ids },
+        status: 'APPROVED',
+        expiresAt: { gt: new Date() },
+      },
+      orderBy: { approvedAt: 'desc' },
+      select: { id: true, serverId: true, expiresAt: true },
+    }),
+    prisma.accessRequest.findMany({
+      where: {
+        orgId,
+        requesterId: userId,
+        serverId: { in: ids },
+        status: 'PENDING',
+      },
+      orderBy: { createdAt: 'desc' },
+      select: { id: true, serverId: true },
+    }),
+  ]);
+
+  // Most-recent-first ordering above means the first hit per serverId wins,
+  // matching getAccessIntent's orderBy: { approvedAt: 'desc' }.
+  for (const ar of activeArs) {
+    const entry = intents[ar.serverId];
+    if (!entry || entry.hasActiveAccess) continue;
+    entry.hasActiveAccess = true;
+    entry.activeRequestId = ar.id;
+    entry.expiresAt = ar.expiresAt;
+  }
+  for (const ar of pendingArs) {
+    const entry = intents[ar.serverId];
+    if (!entry || entry.hasActiveAccess || entry.hasPendingRequest) continue;
+    entry.hasPendingRequest = true;
+    entry.pendingRequestId = ar.id;
+  }
+
+  return intents;
 }
 
 // ---------------------------------------------------------------------------

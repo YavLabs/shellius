@@ -1,10 +1,17 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Check, ChevronsUpDown, Search, X } from 'lucide-react';
+import { Popover, PopoverTrigger, PopoverContent } from '@/components/ui/popover';
 
 /**
  * SearchableSelect — universal single/multi select with type-ahead search and
  * custom option rendering. Replaces native <select> and the shadcn Select for
  * any picker that benefits from search (users, servers, customers, groups…).
+ *
+ * The dropdown is a Radix Popover: it renders in a portal at document.body,
+ * flips above the trigger when there's no room below, matches the trigger's
+ * width, sits above modals (z-50), and closes on outside click / Esc without
+ * fighting a parent Dialog/Modal's own focus trap. This keeps it working
+ * correctly even when the select sits near the bottom of a scrollable modal.
  *
  * Props:
  *   options      {Array<{ value, label, ...extra }>}  choices
@@ -49,7 +56,6 @@ export default function SearchableSelect({
 }) {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState('');
-  const rootRef = useRef(null);
   const inputRef = useRef(null);
 
   const keyOf = getKey || ((o) => o.value);
@@ -66,27 +72,7 @@ export default function SearchableSelect({
     [options, query, filterFn]
   );
 
-  // Close on outside click / Escape.
   useEffect(() => {
-    if (!open) return undefined;
-    function onDocClick(e) {
-      if (rootRef.current && !rootRef.current.contains(e.target)) setOpen(false);
-    }
-    function onKey(e) {
-      if (e.key === 'Escape') setOpen(false);
-    }
-    // Capture phase so it still fires when a parent (e.g. a modal) stops
-    // propagation of the bubbling event.
-    document.addEventListener('mousedown', onDocClick, true);
-    document.addEventListener('keydown', onKey);
-    return () => {
-      document.removeEventListener('mousedown', onDocClick, true);
-      document.removeEventListener('keydown', onKey);
-    };
-  }, [open]);
-
-  useEffect(() => {
-    if (open && inputRef.current) inputRef.current.focus();
     if (!open) setQuery('');
   }, [open]);
 
@@ -147,69 +133,79 @@ export default function SearchableSelect({
     ? selectedValues.length > 0
     : selectedValues !== undefined && selectedValues !== null && selectedValues !== '';
 
+  // `className` sizes the wrapper (e.g. `w-[160px]` in filter bars), exactly
+  // as before the Popover rewrite; the trigger always fills the wrapper.
   return (
-    <div ref={rootRef} className={`relative ${className}`}>
-      <button
-        type="button"
-        id={id}
-        disabled={disabled}
-        onClick={() => !disabled && setOpen((o) => !o)}
-        className="flex h-9 w-full items-center justify-between gap-2 rounded-md border border-input bg-background px-3 text-left text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
-      >
-        <span className="flex min-w-0 flex-1 items-center">{triggerLabel()}</span>
-        <span className="flex items-center gap-1">
-          {clearable && hasSelection && !disabled && (
-            <X
-              className="h-3.5 w-3.5 text-muted-foreground hover:text-foreground"
-              onClick={clear}
-            />
-          )}
-          <ChevronsUpDown className="h-4 w-4 shrink-0 text-muted-foreground" />
-        </span>
-      </button>
-
-      {open && (
-        <div className="absolute z-50 mt-1 w-full overflow-hidden rounded-md border border-border bg-popover shadow-md">
-          {searchable && (
-            <div className="flex items-center gap-2 border-b border-border px-2.5">
-              <Search className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
-              <input
-                ref={inputRef}
-                value={query}
-                onChange={(e) => setQuery(e.target.value)}
-                placeholder={searchPlaceholder}
-                className="h-8 w-full bg-transparent text-sm text-foreground placeholder:text-muted-foreground focus:outline-none"
+    <div className={`relative ${className}`}>
+    <Popover open={open} onOpenChange={(o) => !disabled && setOpen(o)}>
+      <PopoverTrigger asChild>
+        <button
+          type="button"
+          id={id}
+          disabled={disabled}
+          className={`flex h-9 w-full items-center justify-between gap-2 rounded-md border border-input bg-background px-3 text-left text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-ring disabled:cursor-not-allowed disabled:opacity-50`}
+        >
+          <span className="flex min-w-0 flex-1 items-center">{triggerLabel()}</span>
+          <span className="flex items-center gap-1">
+            {clearable && hasSelection && !disabled && (
+              <X
+                className="h-3.5 w-3.5 text-muted-foreground hover:text-foreground"
+                onClick={clear}
               />
-            </div>
-          )}
-          <ul className="max-h-60 overflow-y-auto py-1">
-            {filtered.length === 0 && (
-              <li className="px-3 py-2 text-sm text-muted-foreground">{emptyMessage}</li>
             )}
-            {filtered.map((o) => {
-              const selected = isSelected(o);
-              return (
-                <li key={keyOf(o)}>
-                  <button
-                    type="button"
-                    onClick={() => pick(o)}
-                    className={`flex w-full items-center gap-2 px-2.5 py-1.5 text-left text-sm hover:bg-accent ${
-                      selected ? 'bg-accent/50' : ''
-                    }`}
-                  >
-                    <Check
-                      className={`h-4 w-4 shrink-0 ${selected ? 'opacity-100 text-primary' : 'opacity-0'}`}
-                    />
-                    <span className="min-w-0 flex-1">
-                      {renderOption ? renderOption(o) : <span className="truncate">{o.label}</span>}
-                    </span>
-                  </button>
-                </li>
-              );
-            })}
-          </ul>
-        </div>
-      )}
+            <ChevronsUpDown className="h-4 w-4 shrink-0 text-muted-foreground" />
+          </span>
+        </button>
+      </PopoverTrigger>
+      <PopoverContent
+        onOpenAutoFocus={(e) => {
+          if (searchable) {
+            e.preventDefault();
+            inputRef.current?.focus();
+          }
+        }}
+        className="w-[var(--radix-popover-trigger-width)] p-0"
+      >
+        {searchable && (
+          <div className="flex items-center gap-2 border-b border-border px-2.5">
+            <Search className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+            <input
+              ref={inputRef}
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              placeholder={searchPlaceholder}
+              className="h-8 w-full bg-transparent text-sm text-foreground placeholder:text-muted-foreground focus:outline-none"
+            />
+          </div>
+        )}
+        <ul className="max-h-60 overflow-y-auto py-1">
+          {filtered.length === 0 && (
+            <li className="px-3 py-2 text-sm text-muted-foreground">{emptyMessage}</li>
+          )}
+          {filtered.map((o) => {
+            const selected = isSelected(o);
+            return (
+              <li key={keyOf(o)}>
+                <button
+                  type="button"
+                  onClick={() => pick(o)}
+                  className={`flex w-full items-center gap-2 px-2.5 py-1.5 text-left text-sm hover:bg-accent ${
+                    selected ? 'bg-accent/50' : ''
+                  }`}
+                >
+                  <Check
+                    className={`h-4 w-4 shrink-0 ${selected ? 'opacity-100 text-primary' : 'opacity-0'}`}
+                  />
+                  <span className="min-w-0 flex-1">
+                    {renderOption ? renderOption(o) : <span className="truncate">{o.label}</span>}
+                  </span>
+                </button>
+              </li>
+            );
+          })}
+        </ul>
+      </PopoverContent>
+    </Popover>
     </div>
   );
 }

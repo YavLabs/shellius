@@ -187,7 +187,7 @@ function CreateGroupModal({ open, onClose, onCreated }) {
   };
 
   return (
-    <Modal open={open} onClose={onClose} title="Create Group">
+    <Modal open={open} onClose={onClose} title="Create group">
       <form onSubmit={submit} className="space-y-4">
         {error && (
           <div className="rounded-md border border-destructive/50 bg-destructive/10 px-3 py-2 text-sm text-destructive">

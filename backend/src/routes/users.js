@@ -73,6 +73,10 @@ const preferencesSchema = Joi.object({
   expiringSoonAlerts: Joi.boolean(),
 }).min(1);
 
+const avatarSchema = Joi.object({
+  dataUrl: Joi.string().max(300000).required(), // ~150KB decoded + base64 overhead + headroom
+});
+
 router.use(authenticate, tenant);
 
 router.get(
@@ -135,6 +139,30 @@ router.put(
 );
 
 // ---------------------------------------------------------------------------
+// PUT /me/avatar — upload a custom avatar (strict Joi + server-side decode
+// validation in userService/utils/avatar.js). DELETE removes it.
+// ---------------------------------------------------------------------------
+
+router.put(
+  '/me/avatar',
+  validate(avatarSchema),
+  audit('user.avatar.updated', 'User'),
+  asyncHandler(async (req, res) => {
+    const user = await userService.setAvatar(req.user.userId, req.body.dataUrl);
+    res.json({ success: true, data: { user } });
+  })
+);
+
+router.delete(
+  '/me/avatar',
+  audit('user.avatar.removed', 'User'),
+  asyncHandler(async (req, res) => {
+    const user = await userService.clearAvatar(req.user.userId);
+    res.json({ success: true, data: { user } });
+  })
+);
+
+// ---------------------------------------------------------------------------
 // PUT /me/password — change password (LOCAL users only)
 // ---------------------------------------------------------------------------
 
@@ -145,8 +173,15 @@ router.put(
   asyncHandler(async (req, res) => {
     const { currentPassword, newPassword } = req.body;
 
-    // changePassword throws ApiError on mismatch or SSO account
-    await userService.changePassword(req.user.userId, currentPassword, newPassword);
+    // changePassword throws ApiError on mismatch or SSO account; revokes
+    // every other session and returns a fresh token pair for the caller.
+    const tokens = await userService.changePassword(
+      req.user.userId,
+      currentPassword,
+      newPassword,
+      req.ip,
+      req.get('user-agent') || ''
+    );
 
     // Send security notification email (fire-and-forget; never block the response)
     setImmediate(async () => {
@@ -181,7 +216,7 @@ router.put(
       userAgent: req.headers['user-agent'],
     });
 
-    res.json({ success: true });
+    res.json({ success: true, data: tokens });
   })
 );
 
@@ -516,6 +551,35 @@ router.post(
     const data = { success: true };
     if (!mailResult.delivered) data.resetUrl = resetUrl;
     res.json({ success: true, data });
+  })
+);
+
+// ---------------------------------------------------------------------------
+// POST /:id/unlock — admin+; clears a lockout (failedLoginCount/lockedUntil)
+// ---------------------------------------------------------------------------
+
+router.post(
+  '/:id/unlock',
+  requireRole('super_admin', 'admin'),
+  audit('user.unlocked', 'User'),
+  asyncHandler(async (req, res) => {
+    const user = await userService.unlockUser(req.orgId, req.params.id);
+    res.json({ success: true, data: { user } });
+  })
+);
+
+// ---------------------------------------------------------------------------
+// POST /:id/revoke-sessions — admin+; revokes every session + bumps
+// sessionsValidFrom so all of the user's outstanding access tokens die too
+// ---------------------------------------------------------------------------
+
+router.post(
+  '/:id/revoke-sessions',
+  requireRole('super_admin', 'admin'),
+  audit('user.sessions.revoked', 'User'),
+  asyncHandler(async (req, res) => {
+    const result = await userService.adminRevokeSessions(req.orgId, req.params.id, req.user.role);
+    res.json({ success: true, data: result });
   })
 );
 

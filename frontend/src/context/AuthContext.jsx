@@ -49,12 +49,18 @@ export function AuthProvider({ children }) {
       const res = await api.post('/auth/login', { email, password });
       return applyAuthResult(res.data?.data || {});
     } catch (e) {
+      const errBody = e.response?.data?.error;
+      const code = errBody?.code;
       const msg =
-        e.response?.status === 401
+        code === 'INVALID_CREDENTIALS'
           ? 'Invalid email or password'
-          : e.response?.data?.error?.message || e.message || 'Login failed';
+          : errBody?.message || e.message || 'Login failed';
       setError(msg);
-      throw new Error(msg);
+      const err = new Error(msg);
+      err.code = code;
+      err.details = errBody?.details;
+      err.status = e.response?.status;
+      throw err;
     }
   }, [applyAuthResult]);
 
@@ -77,6 +83,25 @@ export function AuthProvider({ children }) {
     const u = res.data?.data?.user || null;
     setUser(u);
     return u;
+  }, []);
+
+  // Store a fresh token pair without an accompanying `user` payload — used
+  // after changing your own password, which rotates tokens and revokes every
+  // other session but doesn't re-send the user object.
+  const applyTokenPair = useCallback(({ accessToken: at, refreshToken: rt }) => {
+    if (at) localStorage.setItem('accessToken', at);
+    if (rt) localStorage.setItem('refreshToken', rt);
+    setAccessToken(at);
+  }, []);
+
+  // Clear local session state without calling the API — used when the server
+  // tells us the session is already gone (SESSION_REVOKED) so we don't loop
+  // trying to refresh a token that will never work again.
+  const clearSession = useCallback(() => {
+    localStorage.removeItem('accessToken');
+    localStorage.removeItem('refreshToken');
+    setAccessToken(null);
+    setUser(null);
   }, []);
 
   const logout = useCallback(async () => {
@@ -115,6 +140,10 @@ export function AuthProvider({ children }) {
     login,
     loginWithTokens,
     completeMfa,
+    applyAuthResult,
+    applyTokenPair,
+    clearSession,
+    refreshUser: loadMe,
     logout,
     refresh,
   };

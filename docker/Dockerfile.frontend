@@ -1,5 +1,14 @@
 FROM node:20-alpine AS builder
 
+# APP_VERSION is not consumed directly here — the build reads the version
+# from frontend/package.json (see vite.config.js `define: { __APP_VERSION__ }`),
+# which CI keeps in sync with VERSION via `node scripts/version.mjs sync`
+# before this build runs. GIT_SHA is threaded through as VITE_GIT_SHA so the
+# footer can show a build fingerprint.
+ARG APP_VERSION=0.0.0-dev
+ARG GIT_SHA=unknown
+ENV VITE_GIT_SHA=${GIT_SHA}
+
 WORKDIR /app
 
 COPY frontend/package*.json ./
@@ -10,7 +19,16 @@ RUN npm run build
 
 FROM nginx:alpine
 
-RUN adduser -D -g '' appuser
+ARG APP_VERSION=0.0.0-dev
+ARG GIT_SHA=unknown
+
+LABEL org.opencontainers.image.title="shellius-frontend" \
+      org.opencontainers.image.version="${APP_VERSION}" \
+      org.opencontainers.image.revision="${GIT_SHA}" \
+      org.opencontainers.image.source="https://github.com/YavLabs/shellius"
+
+# apk upgrade: OS security fixes (e.g. OpenSSL) newer than the base image.
+RUN apk upgrade --no-cache && adduser -D -g '' appuser
 
 COPY --from=builder /app/dist /usr/share/nginx/html
 COPY docker/nginx-frontend.conf /etc/nginx/conf.d/default.conf

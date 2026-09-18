@@ -1,28 +1,37 @@
 import { useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { useAuth } from '@/context/AuthContext';
+import { useQuickConnect } from '@/context/QuickConnectContext';
+import { SEQUENCES, isSequenceVisible } from '@/lib/commands';
 
-const CHORD_ROUTES = {
-  d: '/dashboard',
-  s: '/servers',
-  a: '/access-requests',
-  c: '/certificates',
-};
+const SEQUENCE_TIMEOUT_MS = 1000;
 
 /**
  * useKeyboardShortcuts
  *
- * Registers global keyboard shortcuts:
- *   /           → focus first [data-global-search] input
- *   g then d    → navigate /dashboard
- *   g then s    → navigate /servers
- *   g then a    → navigate /access-requests
- *   g then c    → navigate /certificates
+ * Generic two-key sequence handler ("g" then "d", "c" then "s", ...) driven
+ * entirely by the SEQUENCES registry in lib/commands.js — this hook knows
+ * nothing about routes itself. Also opens the Keyboard Shortcuts help
+ * dialog on "?" (shift+/).
  *
- * Shortcuts are ignored when an input, textarea, or select is focused.
+ * Rules:
+ *   - No modifier keys (Cmd/Ctrl/Alt) — plain key presses only.
+ *   - Ignored while typing in an input, textarea, select, or
+ *     contenteditable element.
+ *   - The first key must be followed by the second key within
+ *     SEQUENCE_TIMEOUT_MS, or the sequence resets.
+ *
+ * NOT handled here (registered elsewhere, since they need modal state that
+ * lives outside this hook):
+ *   g q          → Quick Connect (components/quickConnect/QuickConnectButton.jsx)
+ *   ⌘K / Ctrl+K  → command palette (components/command/CommandPalette.jsx, works even while typing)
+ *   /            → command palette (components/command/CommandPalette.jsx, only when not typing)
  */
 function useKeyboardShortcuts() {
   const navigate = useNavigate();
-  const gPressedAt = useRef(null);
+  const { user } = useAuth();
+  const { allowed: quickConnectAllowed } = useQuickConnect();
+  const pending = useRef(null); // { key, at }
 
   useEffect(() => {
     function isInputFocused() {
@@ -30,37 +39,51 @@ function useKeyboardShortcuts() {
       return tag === 'input' || tag === 'textarea' || tag === 'select' || document.activeElement?.isContentEditable;
     }
 
+    function hasModifier(e) {
+      return e.metaKey || e.ctrlKey || e.altKey;
+    }
+
     function handleKeyDown(e) {
-      if (isInputFocused()) return;
+      if (isInputFocused() || hasModifier(e)) return;
 
-      // / → focus search
-      if (e.key === '/') {
+      // "?" (shift+/) — open the Keyboard Shortcuts help dialog.
+      if (e.key === '?') {
         e.preventDefault();
-        const searchEl = document.querySelector('[data-global-search]');
-        if (searchEl) searchEl.focus();
+        pending.current = null;
+        window.dispatchEvent(new CustomEvent('shellius:open-shortcuts'));
         return;
       }
 
-      // g chord: wait up to 500ms for second key
-      if (e.key === 'g') {
-        gPressedAt.current = Date.now();
+      const key = e.key.toLowerCase();
+      if (key.length !== 1) return; // ignore Shift/Escape/arrow keys etc.
+
+      // Start (or restart) a sequence on the first key.
+      if (!pending.current || Date.now() - pending.current.at > SEQUENCE_TIMEOUT_MS) {
+        pending.current = { key, at: Date.now() };
         return;
       }
 
-      if (gPressedAt.current !== null) {
-        const elapsed = Date.now() - gPressedAt.current;
-        gPressedAt.current = null;
-        if (elapsed <= 500 && CHORD_ROUTES[e.key]) {
-          e.preventDefault();
-          navigate(CHORD_ROUTES[e.key]);
-          return;
-        }
+      const first = pending.current.key;
+      const elapsed = Date.now() - pending.current.at;
+      pending.current = null;
+
+      if (elapsed > SEQUENCE_TIMEOUT_MS) {
+        // Too slow — treat this keypress as a fresh possible first key.
+        pending.current = { key, at: Date.now() };
+        return;
       }
+
+      const match = SEQUENCES.find((s) => s.keys[0] === first && s.keys[1] === key);
+      if (!match || !isSequenceVisible(match, user, quickConnectAllowed)) return;
+      if (!match.to) return; // action-only entries (e.g. quick-connect) are handled elsewhere
+
+      e.preventDefault();
+      navigate(match.to);
     }
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [navigate]);
+  }, [navigate, user, quickConnectAllowed]);
 }
 
 export default useKeyboardShortcuts;

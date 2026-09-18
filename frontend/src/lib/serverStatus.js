@@ -10,6 +10,9 @@
  */
 export function isServerOnboarded(server) {
   if (!server) return false;
+  // Credential-mode servers (Keystore identity) need no agent/bootstrap —
+  // Shellius connects with the stored identity directly.
+  if (server.authMode === 'credential') return true;
   if (server.provisionStatus === 'provisioned') return true;
   // RDP-only servers need no host agent — Guacamole injects credentials at
   // connect time, so they're connectable as soon as they're added.

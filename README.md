@@ -4,7 +4,7 @@
 
 <p align="center">
   <a href="#license"><img src="https://img.shields.io/badge/license-AGPL--3.0-blue.svg" alt="License" /></a>
-  <img src="https://img.shields.io/badge/version-0.3.0-green.svg" alt="Version" />
+  <img src="https://img.shields.io/badge/version-1.1.0-green.svg" alt="Version" />
   <img src="https://img.shields.io/badge/docker-compose-blue.svg" alt="Docker" />
   <img src="https://img.shields.io/badge/go-1.22+-00ADD8.svg" alt="Go" />
   <img src="https://img.shields.io/badge/node-20+-339933.svg" alt="Node" />
@@ -89,41 +89,17 @@ Open `.env.prod` and fill in the required values. At minimum:
 docker compose -f docker-compose.prod.yml --env-file .env.prod up -d
 ```
 
-This starts: PostgreSQL, Redis, `guacd` (RDP gateway), the backend API, the React frontend, and an Nginx reverse proxy.
-
-### 4. Run database migrations
+This starts: PostgreSQL, Redis, `guacd` (RDP gateway), the backend API, the React frontend, and an Nginx reverse proxy. Database migrations and an idempotent seed (bootstrap organization + your initial super admin, from the `SEED_*` variables in `.env.prod`) run automatically on the backend's first boot — no manual migration step needed.
 
 ```bash
-docker compose -f docker-compose.prod.yml --env-file .env.prod \
-  exec backend npx prisma migrate deploy
+docker compose -f docker-compose.prod.yml ps   # wait for every service to report "healthy"
 ```
 
-### 5. Create the initial super admin
+### 4. Access Shellius
 
-```bash
-docker compose -f docker-compose.prod.yml --env-file .env.prod exec backend node -e '
-import("@prisma/client").then(async ({PrismaClient}) => {
-  const bcrypt = (await import("bcryptjs")).default;
-  const p = new PrismaClient();
-  const org = await p.organization.upsert({
-    where: { slug: "yavlabs" },
-    update: {},
-    create: { name: "Yavlabs", slug: "yavlabs", domain: "yavlabs.com" },
-  });
-  const hash = await bcrypt.hash("CHANGE_ME", 12);
-  await p.user.upsert({
-    where: { orgId_email: { orgId: org.id, email: "admin@yavlabs.com" } },
-    update: { passwordHash: hash, role: "super_admin", status: "active" },
-    create: { orgId: org.id, email: "admin@yavlabs.com", name: "Super Admin",
-              passwordHash: hash, role: "super_admin", status: "active" },
-  });
-  await p.$disconnect();
-});'
-```
+Open `https://<your-host>` in your browser. Log in with `SEED_ADMIN_EMAIL` / `SEED_ADMIN_PASSWORD` from `.env.prod`, then change that password immediately from Profile → Change password.
 
-### 6. Access Shellius
-
-Open `https://<your-host>` in your browser. Log in with the credentials you just created.
+For upgrading an existing deployment, Coolify, TLS/reverse proxy details, and the full environment variable reference, see **[`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md)**.
 
 ## TUI Client (Shellius CLI)
 
@@ -287,18 +263,9 @@ cd tui && go test ./...
 
 ## Environment Variables
 
-All environment variables are documented in [`.env.prod.example`](.env.prod.example). The file is organized into sections:
+Example files: [`.env.example`](.env.example) (dev) and [`.env.prod.example`](.env.prod.example) (production). The full reference table — every variable, whether it's required, its default, and which ones must be secrets — lives in **[`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md#3-environment-variables-reference)**.
 
-- **Node.js** -- runtime mode and listen port
-- **PostgreSQL** -- credentials and connection URL
-- **Redis** -- cache and BullMQ
-- **Auth / JWT** -- access and refresh token signing secrets
-- **Encryption** -- `SERVER_ENCRYPTION_KEY` (CA + RDP) and `AGENT_SHARED_SECRET` (host agents)
-- **Public URLs** -- `TRAEFIK_HOST`, `FRONTEND_URL`, `CORS_ORIGIN`, `PUBLIC_GATEWAY_HOST`
-- **Recordings** -- on-disk path and retention window
-- **Metrics** -- `METRICS_TOKEN` (Prometheus scrape protection)
-
-SSO provider credentials are configured per-organization through the Settings page and stored encrypted in the database.
+SSO provider credentials can also be configured per-organization through the Settings page and stored encrypted in the database, instead of (or alongside) env presets.
 
 ## Architecture
 
@@ -382,7 +349,7 @@ shellius/
 │       └── tui/            # Bubble Tea views
 ├── docker/                 # Dockerfiles, nginx-proxy.conf
 ├── scripts/                # backup-db.sh, backup-recordings.sh
-├── docs/                   # deployment.md (more under construction)
+├── docs/                   # DEPLOYMENT.md, auth/SSO/SMTP/keystore/terminal design docs
 ├── docker-compose.yml      # dev
 ├── docker-compose.prod.yml # prod (Traefik labels)
 └── .env.prod.example

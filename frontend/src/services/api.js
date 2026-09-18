@@ -39,7 +39,31 @@ api.interceptors.response.use(
   async (error) => {
     const originalRequest = error.config;
     const status = error.response?.status;
+    const code = error.response?.data?.error?.code;
     const url = originalRequest?.url || '';
+
+    // The server has authoritatively revoked this session (role change,
+    // suspension, refresh-token reuse, etc). Refreshing would just fail
+    // again, so go straight to sign-in instead of looping through the
+    // refresh interceptor below.
+    if (status === 401 && code === 'SESSION_REVOKED') {
+      localStorage.removeItem('accessToken');
+      localStorage.removeItem('refreshToken');
+      if (window.location.pathname !== '/login') {
+        window.location.href = '/login?reason=session_revoked';
+      }
+      return Promise.reject(error);
+    }
+
+    // Org enforces MFA and this user hasn't enrolled yet — every route except
+    // the handful the backend exempts (auth/me, logout, refresh, sessions,
+    // /mfa/*) returns this until they finish setup.
+    if (status === 403 && code === 'MFA_SETUP_REQUIRED') {
+      if (window.location.pathname !== '/mfa-setup') {
+        window.location.href = '/mfa-setup';
+      }
+      return Promise.reject(error);
+    }
 
     if (
       status === 401 &&

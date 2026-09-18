@@ -3,6 +3,7 @@ import Joi from 'joi';
 import asyncHandler from '../utils/asyncHandler.js';
 import ApiError from '../utils/ApiError.js';
 import prisma from '../config/db.js';
+import agentAuth from '../middleware/agentAuth.js';
 
 const router = express.Router();
 
@@ -17,25 +18,14 @@ const heartbeatSchema = Joi.object({
 
 // POST /api/hosts/heartbeat
 // Called by the installed Shellius agent every 60 s via its systemd timer.
-// Authentication: X-Agent-Token header (the shared secret written to
-// /etc/shellius/agent-token during bootstrap). The Server model does not have
-// a dedicated agentToken column — the shared secret written to the host is the
-// AGENT_SHARED_SECRET env var, which is the same for every host in the org.
-// We validate it here before allowing any state update.
-router.post('/heartbeat', asyncHandler(async (req, res) => {
-  const agentToken = req.headers['x-agent-token']
-    || (req.headers['authorization'] || '').replace(/^Bearer\s+/i, '');
-
-  if (!agentToken) throw new ApiError(401, 'Agent token required');
-
-  // Validate the agent shared secret before processing the payload.
-  // AGENT_SHARED_SECRET is required in production; skip in test environments
-  // where it may be unset.
-  const sharedSecret = process.env.AGENT_SHARED_SECRET;
-  if (sharedSecret && agentToken !== sharedSecret) {
-    throw new ApiError(401, 'Invalid agent token');
-  }
-
+// Authentication: X-Agent-Token header, resolved by agentAuth (per-host
+// token preferred; falls back to the legacy AGENT_SHARED_SECRET — see
+// middleware/agentAuth.js). Per-host tokens resolve the server/org identity
+// themselves, so the body's serverId/orgId are IGNORED in that mode — a
+// stolen/legacy token (or a compromised host) can no longer forge another
+// server's heartbeat by editing the request body. Legacy mode has no
+// per-host identity to fall back on, so it keeps the old body-scoped lookup.
+router.post('/heartbeat', agentAuth, asyncHandler(async (req, res) => {
   const { error, value } = heartbeatSchema.validate(req.body, {
     abortEarly: false,
     stripUnknown: true,
@@ -47,8 +37,22 @@ router.post('/heartbeat', asyncHandler(async (req, res) => {
     return res.json({ success: true, data: { received: false } });
   }
 
+  let serverId;
+  let orgId;
+  if (req.agentServer) {
+    // Per-host token — identity comes from the token, never the body.
+    serverId = req.agentServer.id;
+    orgId = req.agentServer.orgId;
+  } else {
+    // Legacy shared-secret mode — no per-host identity available from the
+    // token itself; fall back to the body, but the lookup below still
+    // requires serverId to belong to orgId (unchanged from prior behaviour).
+    serverId = value.serverId;
+    orgId = value.orgId;
+  }
+
   const server = await prisma.server.findFirst({
-    where: { id: value.serverId, orgId: value.orgId },
+    where: { id: serverId, orgId },
     select: { id: true },
   });
   if (!server) throw new ApiError(404, 'Server not found');

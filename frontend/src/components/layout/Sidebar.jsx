@@ -9,11 +9,12 @@ import {
   Shield,
   KeyRound,
   FileKey,
+  KeySquare,
   Terminal,
+  SquareTerminal,
   ScrollText,
   Bell,
   Cloud,
-  Upload,
   ChevronUp,
   PanelLeft,
   PanelLeftClose,
@@ -22,6 +23,7 @@ import {
 } from 'lucide-react';
 import { useAuth } from '@/context/AuthContext';
 import { useNotifications } from '@/context/NotificationContext';
+import { useTerminalWorkspace } from '@/context/TerminalWorkspaceContext';
 import { cn } from '@/lib/utils';
 import BrandLogo, { BrandMark } from '@/components/common/BrandLogo';
 import UserMenu from '@/components/layout/UserMenu';
@@ -32,6 +34,7 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from '@/components/ui/tooltip';
+import usePendingReviewCount from '@/hooks/usePendingReviewCount';
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -53,7 +56,10 @@ function isAtLeast(user, role) {
 const NAV_SECTIONS = [
   {
     label: 'Overview',
-    items: [{ id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard, to: '/' }],
+    items: [
+      { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard, to: '/' },
+      { id: 'terminals', label: 'Terminals', icon: SquareTerminal, to: '/terminals' },
+    ],
   },
   {
     label: 'Inventory',
@@ -65,7 +71,7 @@ const NAV_SECTIONS = [
   {
     label: 'Access',
     items: [
-      { id: 'access-requests', label: 'Access Requests', icon: KeyRound, to: '/access-requests' },
+      { id: 'access-requests', label: 'Access requests', icon: KeyRound, to: '/access-requests' },
       { id: 'policies', label: 'Policies', icon: Shield, to: '/policies', minRole: 'admin' },
       {
         id: 'certificates',
@@ -74,13 +80,20 @@ const NAV_SECTIONS = [
         to: '/certificates',
         minRole: 'admin',
       },
+      {
+        id: 'keystore',
+        label: 'Keystore',
+        icon: KeySquare,
+        to: '/keystore',
+        minRole: 'manager',
+      },
     ],
   },
   {
     label: 'Audit',
     items: [
       { id: 'sessions', label: 'Sessions', icon: Terminal, to: '/sessions', minRole: 'manager' },
-      { id: 'audit-log', label: 'Audit Log', icon: ScrollText, to: '/audit-log', minRole: 'admin' },
+      { id: 'audit-log', label: 'Audit log', icon: ScrollText, to: '/audit-log', minRole: 'admin' },
       { id: 'notifications', label: 'Notifications', icon: Bell, to: '/notifications' },
     ],
   },
@@ -89,7 +102,6 @@ const NAV_SECTIONS = [
     items: [
       { id: 'users', label: 'Users', icon: Users, to: '/users', minRole: 'admin' },
       { id: 'groups', label: 'Groups', icon: UsersRound, to: '/groups', minRole: 'admin' },
-      { id: 'bulk-import', label: 'Bulk Import', icon: Upload, to: '/bulk-import', minRole: 'admin' },
     ],
   },
 ];
@@ -184,16 +196,31 @@ function NavItem({ to, icon: Icon, label, badge, collapsed, exact = false, onNav
 function SidebarBody({ collapsed, onToggle, onNavigate }) {
   const { user } = useAuth();
   const { unreadCount } = useNotifications();
+  const { liveCount } = useTerminalWorkspace();
+  // Requests waiting for this user's review, the same number as the page's
+  // "Pending reviews" tab. (This used to show the unread notification count,
+  // which matched nothing on the Access requests page.)
+  const pendingReviews = usePendingReviewCount(unreadCount);
 
   const canSee = (item) => !item.minRole || isAtLeast(user, item.minRole);
 
   const renderItem = (item) => {
     if (!canSee(item)) return null;
     let badge = null;
-    if (item.id === 'access-requests' && unreadCount > 0 && !collapsed) {
+    if (item.id === 'access-requests' && pendingReviews > 0 && !collapsed) {
       badge = (
-        <span className="ml-2 flex h-5 min-w-5 items-center justify-center rounded-full bg-amber-500/20 px-1 text-[10px] font-semibold text-amber-600 dark:text-amber-400">
-          {unreadCount > 9 ? '9+' : unreadCount}
+        <span
+          className="ml-2 flex h-5 min-w-5 items-center justify-center rounded-full bg-amber-500/20 px-1 text-[10px] font-semibold text-amber-600 dark:text-amber-400"
+          title={`${pendingReviews} pending review${pendingReviews === 1 ? '' : 's'}`}
+        >
+          {pendingReviews > 9 ? '9+' : pendingReviews}
+        </span>
+      );
+    }
+    if (item.id === 'terminals' && liveCount > 0 && !collapsed) {
+      badge = (
+        <span className="ml-2 flex h-5 min-w-5 items-center justify-center rounded-full bg-emerald-500/20 px-1 text-[10px] font-semibold text-emerald-600 dark:text-emerald-400">
+          {liveCount > 9 ? '9+' : liveCount}
         </span>
       );
     }
@@ -284,8 +311,9 @@ function SidebarBody({ collapsed, onToggle, onNavigate }) {
       </nav>
 
       {/* Bottom: user — clickable, opens the same UserMenu dropdown the
-          topbar avatar uses. Profile / Settings / Theme / Install CLI /
-          Sign out all live in the shared menu now. */}
+          topbar avatar uses. Profile / Settings / Bulk import / Install CLI /
+          Keyboard shortcuts / Sign out all live in the shared menu now.
+          Theme selection lives in the topbar's standalone ThemeMenu. */}
       <div className="shrink-0 border-t border-border px-2 py-3">
         {user && (
           <UserMenu

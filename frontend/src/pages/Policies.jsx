@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import {
   Plus,
   Pencil,
@@ -10,13 +11,14 @@ import DataTable from '@/components/shared/DataTable';
 import ConfirmDialog from '@/components/shared/ConfirmDialog';
 import DeletePolicyDialog from '@/components/policies/DeletePolicyDialog';
 import EnvironmentBadge from '@/components/shared/EnvironmentBadge';
-import Badge from '@/components/shared/Badge';
+import { Badge } from '@/components/ui/badge';
+import { policyEffectTone } from '@/lib/badgeTones';
 import PolicyForm from '@/components/policies/PolicyForm';
 import PolicyEvaluator from '@/components/policies/PolicyEvaluator';
 import PageHeader from '@/components/common/PageHeader';
 import { Button } from '@/components/ui/button';
 import SearchableSelect from '@/components/ui/SearchableSelect';
-import { listPolicies, createPolicy, updatePolicy } from '@/services/policyService';
+import { listPolicies, createPolicy, updatePolicy, getPolicy } from '@/services/policyService';
 import { listCustomers } from '@/services/customerService';
 import { useAuth } from '@/context/AuthContext';
 import { relativeTime } from '@/utils/time';
@@ -27,8 +29,8 @@ function isAtLeast(user, role) {
 }
 
 function EffectBadge({ effect }) {
-  if (effect === 'ALLOW') return <Badge variant="success">ALLOW</Badge>;
-  return <Badge variant="danger">DENY</Badge>;
+  const { tone, label } = policyEffectTone(effect);
+  return <Badge tone={tone}>{label}</Badge>;
 }
 
 function Policies() {
@@ -52,6 +54,34 @@ function Policies() {
   const [confirm, setConfirm] = useState(null);
   const [deleteTarget, setDeleteTarget] = useState(null);
   const [evaluatorPolicy, setEvaluatorPolicy] = useState(null);
+  const [searchParams, setSearchParams] = useSearchParams();
+
+  // Deep links: /policies?action=new opens the create modal; ?highlight=<id>
+  // opens that policy's edit modal (DataTable has no row-highlight affordance).
+  useEffect(() => {
+    const action = searchParams.get('action');
+    const highlightId = searchParams.get('highlight');
+    if (action === 'new' && canAdmin) {
+      setEditing(null);
+      setFormOpen(true);
+    } else if (highlightId && canAdmin) {
+      getPolicy(highlightId)
+        .then((p) => {
+          if (p) {
+            setEditing(p);
+            setFormOpen(true);
+          }
+        })
+        .catch(() => {});
+    }
+    if (action || highlightId) {
+      const next = new URLSearchParams(searchParams);
+      next.delete('action');
+      next.delete('highlight');
+      setSearchParams(next, { replace: true });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const fetchCustomers = useCallback(async () => {
     try {
@@ -106,8 +136,8 @@ function Policies() {
         onChange={(v) => { setEffectFilter(v); setPage(1); }}
         options={[
           { value: '', label: 'All effects' },
-          { value: 'ALLOW', label: 'ALLOW' },
-          { value: 'DENY', label: 'DENY' },
+          { value: 'ALLOW', label: 'Allow' },
+          { value: 'DENY', label: 'Deny' },
         ]}
         placeholder="All effects"
         searchable={false}
@@ -211,7 +241,7 @@ function Policies() {
       label: 'Status',
       searchAccessor: (r) => (r.isActive ? 'active' : 'inactive'),
       render: (r) =>
-        r.isActive ? <Badge variant="success">Active</Badge> : <Badge variant="default">Inactive</Badge>,
+        r.isActive ? <Badge tone="success">Active</Badge> : <Badge tone="neutral">Inactive</Badge>,
     },
     {
       key: 'updatedAt',

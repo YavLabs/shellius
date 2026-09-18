@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { Plus, Building2, Server, Eye, Pencil, Trash2, RefreshCw } from 'lucide-react';
 import Badge from '@/components/shared/Badge';
 import Modal from '@/components/shared/Modal';
@@ -25,6 +25,18 @@ function Customers() {
   const [editing, setEditing] = useState(null);
   const [confirm, setConfirm] = useState(null);
   const [deleteTarget, setDeleteTarget] = useState(null);
+  const [searchParams, setSearchParams] = useSearchParams();
+
+  // Deep link: /customers?action=new — open the create modal on mount.
+  useEffect(() => {
+    if (searchParams.get('action') === 'new' && canManage) {
+      setCreateOpen(true);
+      const next = new URLSearchParams(searchParams);
+      next.delete('action');
+      setSearchParams(next, { replace: true });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const fetch = useCallback(async () => {
     setLoading(true);
@@ -161,11 +173,11 @@ function Customers() {
         onRowClick={(c) => navigate(`/customers/${c.id}`)}
       />
 
-      <Modal open={createOpen} onClose={() => setCreateOpen(false)} title="Add Customer">
+      <Modal open={createOpen} onClose={() => setCreateOpen(false)} title="Add customer">
         <CustomerForm onSubmit={handleCreate} onCancel={() => setCreateOpen(false)} />
       </Modal>
 
-      <Modal open={!!editing} onClose={() => setEditing(null)} title="Edit Customer">
+      <Modal open={!!editing} onClose={() => setEditing(null)} title="Edit customer">
         {editing && (
           <CustomerForm
             customer={editing}

@@ -2,7 +2,8 @@ name: Build & Push Docker Images
 
 # Triggers:
 #   • Every push to main  → builds images tagged :latest + :sha-<short>
-#   • Every v* tag push   → builds images tagged :<version> + :latest
+#   • Every v* tag push   → builds images tagged :<version> + :<major.minor> + :latest,
+#                            and creates a GitHub Release with that version's CHANGELOG section
 #   • Manual trigger      → useful for re-pushing without a code change
 on:
   push:
@@ -16,7 +17,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write  # needed to create a GitHub Release on tag pushes
 
 # Opt into Node.js 24 now — Node.js 20 actions are deprecated and will
 # be force-removed from GitHub runners on September 16th, 2026.
@@ -24,10 +25,23 @@ env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
   BACKEND_IMAGE: yavadmin/shellius-backend
   FRONTEND_IMAGE: yavadmin/shellius-frontend
+  # Web UI + API + nginx in one container (docker/Dockerfile.allinone)
+  ALLINONE_IMAGE: yavadmin/shellius
 
 jobs:
+  version-check:
+    name: Version check
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: node scripts/version.mjs check
+        run: node scripts/version.mjs check
+
   build-and-push:
     name: Build & Push
+    needs: version-check
     runs-on: ubuntu-latest
 
     steps:
@@ -39,17 +53,22 @@ jobs:
         id: meta
         run: |
           SHORT_SHA="${GITHUB_SHA::7}"
+          APP_VERSION="$(cat VERSION | tr -d '[:space:]')"
           echo "sha=${SHORT_SHA}" >> "$GITHUB_OUTPUT"
+          echo "app_version=${APP_VERSION}" >> "$GITHUB_OUTPUT"
 
           if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
             VERSION="${GITHUB_REF_NAME#v}"
+            MAJOR_MINOR="$(echo "$VERSION" | cut -d. -f1,2)"
             echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
-            echo "backend_tags=${{ env.BACKEND_IMAGE }}:${VERSION},${{ env.BACKEND_IMAGE }}:latest" >> "$GITHUB_OUTPUT"
-            echo "frontend_tags=${{ env.FRONTEND_IMAGE }}:${VERSION},${{ env.FRONTEND_IMAGE }}:latest" >> "$GITHUB_OUTPUT"
+            echo "backend_tags=${{ env.BACKEND_IMAGE }}:${VERSION},${{ env.BACKEND_IMAGE }}:${MAJOR_MINOR},${{ env.BACKEND_IMAGE }}:latest,${{ env.BACKEND_IMAGE }}:sha-${SHORT_SHA}" >> "$GITHUB_OUTPUT"
+            echo "frontend_tags=${{ env.FRONTEND_IMAGE }}:${VERSION},${{ env.FRONTEND_IMAGE }}:${MAJOR_MINOR},${{ env.FRONTEND_IMAGE }}:latest,${{ env.FRONTEND_IMAGE }}:sha-${SHORT_SHA}" >> "$GITHUB_OUTPUT"
+            echo "allinone_tags=${{ env.ALLINONE_IMAGE }}:${VERSION},${{ env.ALLINONE_IMAGE }}:${MAJOR_MINOR},${{ env.ALLINONE_IMAGE }}:latest,${{ env.ALLINONE_IMAGE }}:sha-${SHORT_SHA}" >> "$GITHUB_OUTPUT"
           else
-            echo "version=latest" >> "$GITHUB_OUTPUT"
+            echo "version=${APP_VERSION}" >> "$GITHUB_OUTPUT"
             echo "backend_tags=${{ env.BACKEND_IMAGE }}:latest,${{ env.BACKEND_IMAGE }}:sha-${SHORT_SHA}" >> "$GITHUB_OUTPUT"
             echo "frontend_tags=${{ env.FRONTEND_IMAGE }}:latest,${{ env.FRONTEND_IMAGE }}:sha-${SHORT_SHA}" >> "$GITHUB_OUTPUT"
+            echo "allinone_tags=${{ env.ALLINONE_IMAGE }}:latest,${{ env.ALLINONE_IMAGE }}:sha-${SHORT_SHA}" >> "$GITHUB_OUTPUT"
           fi
 
       # ── Docker Hub login ─────────────────────────────────────────────────
@@ -71,9 +90,13 @@ jobs:
           file: docker/Dockerfile.backend
           push: true
           tags: ${{ steps.meta.outputs.backend_tags }}
+          build-args: |
+            APP_VERSION=${{ steps.meta.outputs.app_version }}
+            GIT_SHA=${{ steps.meta.outputs.sha }}
           labels: |
             org.opencontainers.image.source=https://github.com/YavLabs/shellius
             org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.version=${{ steps.meta.outputs.version }}
           cache-from: type=registry,ref=${{ env.BACKEND_IMAGE }}:buildcache
           cache-to:   type=registry,ref=${{ env.BACKEND_IMAGE }}:buildcache,mode=max
 
@@ -85,8 +108,66 @@ jobs:
           file: docker/Dockerfile.frontend
           push: true
           tags: ${{ steps.meta.outputs.frontend_tags }}
+          build-args: |
+            APP_VERSION=${{ steps.meta.outputs.app_version }}
+            GIT_SHA=${{ steps.meta.outputs.sha }}
           labels: |
             org.opencontainers.image.source=https://github.com/YavLabs/shellius
             org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.version=${{ steps.meta.outputs.version }}
           cache-from: type=registry,ref=${{ env.FRONTEND_IMAGE }}:buildcache
           cache-to:   type=registry,ref=${{ env.FRONTEND_IMAGE }}:buildcache,mode=max
+
+      # ── Build & push all-in-one (web UI + API + nginx) ───────────────────
+      - name: Build & push all-in-one image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: docker/Dockerfile.allinone
+          push: true
+          tags: ${{ steps.meta.outputs.allinone_tags }}
+          build-args: |
+            APP_VERSION=${{ steps.meta.outputs.app_version }}
+            GIT_SHA=${{ steps.meta.outputs.sha }}
+          labels: |
+            org.opencontainers.image.source=https://github.com/YavLabs/shellius
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.version=${{ steps.meta.outputs.version }}
+          cache-from: type=registry,ref=${{ env.ALLINONE_IMAGE }}:buildcache
+          cache-to:   type=registry,ref=${{ env.ALLINONE_IMAGE }}:buildcache,mode=max
+
+  release:
+    name: Create GitHub Release
+    needs: build-and-push
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Extract CHANGELOG section for this version
+        id: notes
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          # Print the block between "## [<version>]" and the next "## [" heading.
+          awk -v ver="## [${VERSION}]" '
+            $0 ~ "^" ver { found=1; next }
+            found && /^## \[/ { exit }
+            found { print }
+          ' CHANGELOG.md > /tmp/release-notes.md
+
+          if [ ! -s /tmp/release-notes.md ]; then
+            echo "No CHANGELOG.md section found for [${VERSION}] — falling back to a generic note." >&2
+            echo "See CHANGELOG.md for details." > /tmp/release-notes.md
+          fi
+          cat /tmp/release-notes.md
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: "Shellius ${{ github.ref_name }}"
+          body_path: /tmp/release-notes.md
+          draft: false
+          prerelease: ${{ contains(github.ref_name, '-') }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

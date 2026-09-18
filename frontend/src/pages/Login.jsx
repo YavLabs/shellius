@@ -1,7 +1,9 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useNavigate, Link, useSearchParams } from 'react-router-dom';
-import { Mail, Lock, Eye, EyeOff, KeyRound, Loader2 } from 'lucide-react';
+import { Mail, Lock, Eye, EyeOff, Loader2, ShieldAlert, LogOut } from 'lucide-react';
 import { BrandMark } from '@/components/common/BrandLogo';
+import MfaChallenge from '@/components/auth/MfaChallenge';
+import ProviderIcon from '@/components/settings/sso/ProviderIcon';
 import { useAuth } from '@/context/AuthContext';
 import { getRegistrationStatus } from '@/services/registrationService';
 import api from '@/services/api';
@@ -32,25 +34,89 @@ function GoogleGlyph({ className = '' }) {
   );
 }
 
+// Live "Try again in Nm Ss" countdown driven by details.retryAfterSeconds
+// from a 423 ACCOUNT_LOCKED response.
+function useCountdown(initialSeconds) {
+  const [remaining, setRemaining] = useState(initialSeconds || 0);
+  const startedAt = useRef(Date.now());
+
+  useEffect(() => {
+    if (!initialSeconds) {
+      setRemaining(0);
+      return undefined;
+    }
+    startedAt.current = Date.now();
+    setRemaining(initialSeconds);
+    const t = setInterval(() => {
+      const elapsed = Math.floor((Date.now() - startedAt.current) / 1000);
+      setRemaining(Math.max(0, initialSeconds - elapsed));
+    }, 1000);
+    return () => clearInterval(t);
+  }, [initialSeconds]);
+
+  return remaining;
+}
+
+function formatRetry(seconds) {
+  const m = Math.floor(seconds / 60);
+  const s = seconds % 60;
+  if (m <= 0) return `${s}s`;
+  return `${m}m ${s}s`;
+}
+
+// Friendly fallback label for the legacy single-provider shape
+// (`{ enabled, presetId }` with no `providers` array).
+function ssoLoginLabel(presetId) {
+  const names = { google: 'Google', entra: 'Microsoft', okta: 'Okta', auth0: 'Auth0', github: 'GitHub' };
+  return names[presetId] || 'SSO';
+}
+
+/** One "Continue with {name}" button per active SSO provider. */
+function SsoProviderButtons({ providers, submitting, onSelect }) {
+  return (
+    <div className="space-y-2">
+      {providers.map((provider) => (
+        <button
+          key={provider.id ?? provider.presetId}
+          type="button"
+          onClick={() => onSelect(provider.id)}
+          disabled={submitting}
+          className="flex h-9 w-full items-center justify-center rounded-md border border-input bg-background text-sm font-medium text-foreground transition-colors hover:bg-accent disabled:cursor-not-allowed disabled:opacity-50"
+        >
+          {submitting ? (
+            <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+          ) : provider.presetId === 'google' ? (
+            <GoogleGlyph className="mr-2 h-4 w-4" />
+          ) : (
+            <ProviderIcon presetId={provider.presetId} className="mr-2 h-4 w-4" />
+          )}
+          {submitting ? 'Opening sign-in window…' : `Continue with ${provider.name || ssoLoginLabel(provider.presetId)}`}
+        </button>
+      ))}
+    </div>
+  );
+}
+
 function Login() {
-  const [step, setStep] = useState('email'); // 'email' | 'password' | 'sent'
+  const [step, setStep] = useState('email'); // 'email' | 'password' | 'mfa' | 'sent' | 'sso'
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState('');
+  const [lockout, setLockout] = useState(null); // { retryAfterSeconds }
   const [submitting, setSubmitting] = useState(false);
   const [continuing, setContinuing] = useState(false);
   const [registrationEnabled, setRegistrationEnabled] = useState(false);
-  const [ssoStatus, setSsoStatus] = useState({ enabled: false, presetId: null, orgSlug: null });
+  const [ssoStatus, setSsoStatus] = useState({ enabled: false, presetId: null, orgSlug: null, providers: [] });
   const [ssoSubmitting, setSsoSubmitting] = useState(false);
-  const { login, loginWithTokens, completeMfa } = useAuth();
+  const { login, loginWithTokens, applyAuthResult } = useAuth();
   const [mfaChallenge, setMfaChallenge] = useState(null); // { mfaToken, methods, emailHint }
-  const [mfaMethod, setMfaMethod] = useState('totp');
-  const [mfaCode, setMfaCode] = useState('');
-  const [otpSent, setOtpSent] = useState(false);
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const isDeleted = searchParams.get('deleted') === '1';
+  const sessionRevoked = searchParams.get('reason') === 'session_revoked';
+
+  const retryRemaining = useCountdown(lockout?.retryAfterSeconds);
 
   // Honor ?redirect=<path> after successful login. This is how the device-auth
   // page (and any other page that gates on auth) preserves its destination
@@ -71,8 +137,16 @@ function Login() {
       .catch(() => setRegistrationEnabled(false));
     api
       .get('/auth/sso/public-status')
-      .then((r) => setSsoStatus(r.data?.data || { enabled: false }))
-      .catch(() => setSsoStatus({ enabled: false }));
+      .then((r) => {
+        const data = r.data?.data || {};
+        setSsoStatus({
+          enabled: !!data.enabled,
+          presetId: data.presetId || null,
+          orgSlug: data.orgSlug || null,
+          providers: Array.isArray(data.providers) ? data.providers : [],
+        });
+      })
+      .catch(() => setSsoStatus({ enabled: false, presetId: null, orgSlug: null, providers: [] }));
   }, []);
 
   // Listen for the SSO popup completion (postMessage + localStorage fallback)
@@ -118,8 +192,12 @@ function Login() {
     };
   }, [loginWithTokens, navigate, safePostLoginDest]);
 
-  const handleSsoLogin = () => {
-    if (!ssoStatus.enabled || !ssoStatus.orgSlug) return;
+  // Start the OIDC/GitHub round-trip for one provider. `providerId` selects a
+  // specific SsoProviderDTO (?provider=<id>); omitted, the backend falls back
+  // to the org's first active provider (legacy single-provider orgs).
+  const handleSsoLogin = (providerId, orgSlugOverride) => {
+    const orgSlug = orgSlugOverride || ssoStatus.orgSlug;
+    if (!orgSlug) return;
     setError('');
     setSsoSubmitting(true);
     // Full-page redirect (no popup). Popups are unreliable across the
@@ -132,7 +210,8 @@ function Login() {
     } catch {
       /* ignore */
     }
-    window.location.href = `/api/auth/sso/${ssoStatus.orgSlug}`;
+    const qs = providerId ? `?provider=${encodeURIComponent(providerId)}` : '';
+    window.location.href = `/api/auth/sso/${orgSlug}${qs}`;
   };
 
   // Email-first: decide whether to show a password field, start SSO, or send a
@@ -144,11 +223,27 @@ function Login() {
     try {
       const r = await api.post('/auth/login-options', { email });
       const opts = r.data?.data || {};
+      const providers = Array.isArray(opts.providers) ? opts.providers : null;
       if (opts.hasPassword) {
         setStep('password');
+      } else if (providers && providers.length > 0) {
+        // No local password — show the provider button(s) prominently rather
+        // than guessing which one to redirect to.
+        setSsoStatus((prev) => ({
+          ...prev,
+          enabled: true,
+          providers,
+          orgSlug: opts.orgSlug || prev.orgSlug,
+        }));
+        if (providers.length === 1) {
+          handleSsoLogin(providers[0].id, opts.orgSlug);
+        } else {
+          setStep('sso');
+        }
       } else if (opts.ssoEnabled) {
-        // No local password — sign in via the identity provider.
-        handleSsoLogin();
+        // Legacy single-provider backend with no `providers` array — go
+        // straight to the identity provider.
+        handleSsoLogin(undefined, opts.orgSlug);
       } else {
         // No password and no SSO — email a secure set-password link rather than
         // letting anyone set a password just by knowing the address.
@@ -165,55 +260,44 @@ function Login() {
   const handleSubmit = async (e) => {
     e.preventDefault();
     setError('');
+    setLockout(null);
     setSubmitting(true);
     try {
       const result = await login(email, password);
       if (result?.mfaRequired) {
         setMfaChallenge(result);
-        setMfaMethod(result.methods?.includes('totp') ? 'totp' : result.methods?.[0] || 'totp');
         setStep('mfa');
         return;
       }
       navigate(safePostLoginDest, { replace: true });
     } catch (err) {
-      setError(err.message || 'Login failed');
+      if (err.code === 'ACCOUNT_LOCKED') {
+        setLockout({ retryAfterSeconds: err.details?.retryAfterSeconds || 900 });
+        setError('Too many failed attempts.');
+      } else if (err.code === 'ACCOUNT_DISABLED') {
+        setError('This account has been disabled. Contact your administrator.');
+      } else {
+        setError(err.message || 'Login failed');
+      }
     } finally {
       setSubmitting(false);
     }
   };
 
-  const handleMfaVerify = async (e) => {
-    e.preventDefault();
-    setError('');
-    setSubmitting(true);
-    try {
-      await completeMfa(mfaChallenge.mfaToken, mfaMethod, mfaCode.trim());
-      navigate(safePostLoginDest, { replace: true });
-    } catch (err) {
-      setError(err?.response?.data?.error?.message || err.message || 'Verification failed');
-    } finally {
-      setSubmitting(false);
-    }
-  };
-
-  const sendOtp = async () => {
-    setError('');
-    try {
-      await import('@/services/mfaService').then((m) => m.sendMfaOtp(mfaChallenge.mfaToken));
-      setOtpSent(true);
-    } catch (err) {
-      setError(err?.response?.data?.error?.message || err.message || 'Could not send code');
-    }
+  const handleMfaSuccess = (data) => {
+    applyAuthResult(data);
+    navigate(safePostLoginDest, { replace: true });
   };
 
   const resetToEmail = () => {
     setStep('email');
     setPassword('');
     setError('');
+    setLockout(null);
     setMfaChallenge(null);
-    setMfaCode('');
-    setOtpSent(false);
   };
+
+  const locked = !!lockout && retryRemaining > 0;
 
   return (
     <div className="flex min-h-screen items-center justify-center bg-background px-4">
@@ -222,6 +306,16 @@ function Login() {
           <div className="mb-4 rounded-md border border-amber-500/40 bg-amber-500/10 px-4 py-3 text-sm text-amber-700 dark:text-amber-400">
             Your account has been deleted. If this was a mistake, contact your administrator within
             30 days.
+          </div>
+        )}
+
+        {sessionRevoked && !isDeleted && (
+          <div className="mb-4 flex items-start gap-2 rounded-md border border-amber-500/40 bg-amber-500/10 px-4 py-3 text-sm text-amber-700 dark:text-amber-400">
+            <LogOut className="mt-0.5 h-4 w-4 shrink-0" />
+            <span>
+              You were signed out because your session was revoked or your account changed. Please
+              sign in again.
+            </span>
           </div>
         )}
 
@@ -251,87 +345,56 @@ function Login() {
                 Use a different email
               </button>
             </div>
-          ) : step === 'mfa' ? (
-            <form onSubmit={handleMfaVerify} className="space-y-4">
+          ) : step === 'sso' ? (
+            <div className="space-y-4">
+              <p className="text-center text-sm text-foreground">
+                <span className="font-medium">{email}</span> signs in with single sign-on.
+              </p>
+              <SsoProviderButtons
+                providers={ssoStatus.providers}
+                submitting={ssoSubmitting}
+                onSelect={(id) => handleSsoLogin(id)}
+              />
               {error && (
-                <div className="rounded-md border border-destructive/50 bg-destructive/10 px-3 py-2 text-sm text-destructive">
+                <div role="alert" className="rounded-md border border-destructive/50 bg-destructive/10 px-3 py-2 text-sm text-destructive">
                   {error}
                 </div>
               )}
-              <p className="text-sm text-muted-foreground">
-                Two-factor authentication is required. Enter a verification code to continue.
-              </p>
-
-              {mfaChallenge?.methods?.length > 1 && (
-                <div className="flex gap-1 rounded-md border border-border p-1">
-                  {mfaChallenge.methods.includes('totp') && (
-                    <button
-                      type="button"
-                      onClick={() => setMfaMethod('totp')}
-                      className={`flex-1 rounded px-2 py-1 text-xs font-medium ${mfaMethod === 'totp' ? 'bg-primary text-primary-foreground' : 'text-muted-foreground'}`}
-                    >
-                      Authenticator
-                    </button>
-                  )}
-                  {mfaChallenge.methods.includes('email') && (
-                    <button
-                      type="button"
-                      onClick={() => setMfaMethod('email')}
-                      className={`flex-1 rounded px-2 py-1 text-xs font-medium ${mfaMethod === 'email' ? 'bg-primary text-primary-foreground' : 'text-muted-foreground'}`}
-                    >
-                      Email code
-                    </button>
-                  )}
-                </div>
-              )}
-
-              {mfaMethod === 'email' && (
-                <button
-                  type="button"
-                  onClick={sendOtp}
-                  className="text-xs text-primary underline-offset-4 hover:underline"
-                >
-                  {otpSent ? `Code sent to ${mfaChallenge?.emailHint || 'your email'} — resend` : `Send a code to ${mfaChallenge?.emailHint || 'your email'}`}
-                </button>
-              )}
-
-              <div>
-                <label className="mb-1.5 block text-sm font-medium text-foreground">
-                  {mfaMethod === 'backup' ? 'Backup code' : 'Verification code'} <span className="text-destructive">*</span>
-                </label>
-                <input
-                  value={mfaCode}
-                  onChange={(e) => setMfaCode(e.target.value)}
-                  placeholder={mfaMethod === 'totp' ? '6-digit code' : 'Enter code'}
-                  autoFocus
-                  inputMode="numeric"
-                  className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm tracking-widest text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring"
-                />
-              </div>
-
               <button
-                type="submit"
-                disabled={submitting || !mfaCode.trim()}
-                className="flex h-9 w-full items-center justify-center rounded-md bg-primary text-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-50"
+                type="button"
+                onClick={resetToEmail}
+                className="block w-full text-center text-sm text-muted-foreground hover:text-foreground"
               >
-                {submitting ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
-                Verify
+                Use a different email
               </button>
-
-              <div className="flex items-center justify-between text-xs">
-                <button type="button" onClick={() => setMfaMethod('backup')} className="text-muted-foreground hover:text-foreground">
-                  Use a backup code
-                </button>
-                <button type="button" onClick={resetToEmail} className="text-muted-foreground hover:text-foreground">
-                  Cancel
-                </button>
-              </div>
-            </form>
+            </div>
+          ) : step === 'mfa' ? (
+            <MfaChallenge
+              mfaToken={mfaChallenge?.mfaToken}
+              methods={mfaChallenge?.methods}
+              emailHint={mfaChallenge?.emailHint}
+              onSuccess={handleMfaSuccess}
+              onStartOver={resetToEmail}
+            />
           ) : (
           <form onSubmit={step === 'password' ? handleSubmit : handleContinue} className="space-y-4">
             {error && (
-              <div className="rounded-md border border-destructive/50 bg-destructive/10 px-3 py-2 text-sm text-destructive">
-                {error}
+              <div
+                role="alert"
+                aria-live="polite"
+                className="rounded-md border border-destructive/50 bg-destructive/10 px-3 py-2 text-sm text-destructive"
+              >
+                <div className="flex items-start gap-2">
+                  {locked && <ShieldAlert className="mt-0.5 h-4 w-4 shrink-0" />}
+                  <span>
+                    {error}
+                    {locked && (
+                      <span className="block mt-0.5">
+                        Try again in <span className="font-medium tabular-nums">{formatRetry(retryRemaining)}</span>.
+                      </span>
+                    )}
+                  </span>
+                </div>
               </div>
             )}
 
@@ -406,7 +469,7 @@ function Login() {
             {step === 'password' ? (
               <button
                 type="submit"
-                disabled={submitting}
+                disabled={submitting || locked}
                 className="flex h-9 w-full items-center justify-center rounded-md bg-primary text-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-50"
               >
                 {submitting ? (
@@ -414,6 +477,8 @@ function Login() {
                     <Loader2 className="mr-2 h-4 w-4 animate-spin" />
                     Signing in...
                   </>
+                ) : locked ? (
+                  `Try again in ${formatRetry(retryRemaining)}`
                 ) : (
                   'Sign in'
                 )}
@@ -448,44 +513,15 @@ function Login() {
                   </div>
                 </div>
 
-                <button
-                  type="button"
-                  onClick={handleSsoLogin}
-                  disabled={ssoSubmitting}
-                  className="flex h-9 w-full items-center justify-center rounded-md border border-input bg-background text-sm font-medium text-foreground transition-colors hover:bg-accent disabled:cursor-not-allowed disabled:opacity-50"
-                >
-                  {ssoSubmitting ? (
-                    <>
-                      <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                      Opening sign-in window…
-                    </>
-                  ) : ssoStatus.presetId === 'google' ? (
-                    <>
-                      <GoogleGlyph className="mr-2 h-4 w-4" />
-                      Sign in with Google
-                    </>
-                  ) : ssoStatus.presetId === 'entra' ? (
-                    <>
-                      <KeyRound className="mr-2 h-4 w-4" />
-                      Sign in with Microsoft
-                    </>
-                  ) : ssoStatus.presetId === 'okta' ? (
-                    <>
-                      <KeyRound className="mr-2 h-4 w-4" />
-                      Sign in with Okta
-                    </>
-                  ) : ssoStatus.presetId === 'auth0' ? (
-                    <>
-                      <KeyRound className="mr-2 h-4 w-4" />
-                      Sign in with Auth0
-                    </>
-                  ) : (
-                    <>
-                      <KeyRound className="mr-2 h-4 w-4" />
-                      Sign in with SSO
-                    </>
-                  )}
-                </button>
+                <SsoProviderButtons
+                  providers={
+                    ssoStatus.providers?.length
+                      ? ssoStatus.providers
+                      : [{ id: null, name: ssoLoginLabel(ssoStatus.presetId), presetId: ssoStatus.presetId }]
+                  }
+                  submitting={ssoSubmitting}
+                  onSelect={(id) => handleSsoLogin(id)}
+                />
               </>
             )}
 

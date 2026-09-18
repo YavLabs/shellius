@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import {
   Plus,
   Pencil,
@@ -13,6 +13,8 @@ import {
   Eye,
   Eraser,
   RefreshCw,
+  KeyRound,
+  Send,
 } from 'lucide-react';
 import DataTable from '@/components/shared/DataTable';
 import Modal from '@/components/shared/Modal';
@@ -24,6 +26,8 @@ import ServerForm from '@/components/servers/ServerForm';
 import BootstrapModal from '@/components/servers/BootstrapModal';
 import UninstallHostModal from '@/components/servers/UninstallHostModal';
 import QuickConnectButton from '@/components/servers/QuickConnectButton';
+import QuickConnectHeaderButton from '@/components/quickConnect/QuickConnectButton';
+import DeployWizardModal from '@/components/keystore/DeployWizardModal';
 import PageHeader from '@/components/common/PageHeader';
 import { Button } from '@/components/ui/button';
 import SearchableSelect from '@/components/ui/SearchableSelect';
@@ -38,6 +42,7 @@ import { listCustomers } from '@/services/customerService';
 import { useAuth } from '@/context/AuthContext';
 import { roleAtLeast } from '@/lib/permissions';
 import { relativeTime } from '@/utils/time';
+import { ENVIRONMENT_LABELS, HEALTH_STATUS_LABELS } from '@/lib/labels';
 
 const ENVIRONMENTS = ['demo', 'dev', 'staging', 'prod'];
 const HEALTH_STATUSES = ['healthy', 'unhealthy', 'unknown', 'maintenance'];
@@ -48,6 +53,7 @@ function Servers() {
   // Managers onboard/manage servers; only admins delete (matches the API).
   const canManage = roleAtLeast(user, 'manager');
   const canDelete = roleAtLeast(user, 'admin');
+  const canDeployKeys = roleAtLeast(user, 'admin');
 
   const [servers, setServers] = useState([]);
   const [total, setTotal] = useState(0);
@@ -73,6 +79,24 @@ function Servers() {
   const [deleteTarget, setDeleteTarget] = useState(null);
   const [bootstrapServer, setBootstrapServer] = useState(null);
   const [uninstallServer, setUninstallServer] = useState(null);
+  const [deployWizardOpen, setDeployWizardOpen] = useState(false);
+  const [newServerCustomerId, setNewServerCustomerId] = useState('');
+  const [searchParams, setSearchParams] = useSearchParams();
+
+  // Deep link: /servers?action=new[&customerId=] — open the create modal,
+  // optionally prefilling the customer.
+  useEffect(() => {
+    if (searchParams.get('action') === 'new' && canManage) {
+      setEditing(null);
+      setNewServerCustomerId(searchParams.get('customerId') || '');
+      setFormOpen(true);
+      const next = new URLSearchParams(searchParams);
+      next.delete('action');
+      next.delete('customerId');
+      setSearchParams(next, { replace: true });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const fetchCustomers = useCallback(async () => {
     try {
@@ -164,7 +188,7 @@ function Servers() {
     { value: 'sshUser', label: 'SSH User' },
   ];
   const bulkValueOptions = {
-    environment: ENVIRONMENTS.map((e) => ({ value: e, label: e })),
+    environment: ENVIRONMENTS.map((e) => ({ value: e, label: ENVIRONMENT_LABELS[e] || e })),
     customerId: customers.map((c) => ({ value: c.id, label: c.name })),
     protocol: [
       { value: 'ssh', label: 'SSH' },
@@ -191,7 +215,7 @@ function Servers() {
         onChange={(v) => { setEnvironment(v); setPage(1); }}
         options={[
           { value: '', label: 'All environments' },
-          ...ENVIRONMENTS.map((e) => ({ value: e, label: e })),
+          ...ENVIRONMENTS.map((e) => ({ value: e, label: ENVIRONMENT_LABELS[e] || e })),
         ]}
         placeholder="All environments"
         searchable={false}
@@ -203,7 +227,7 @@ function Servers() {
         onChange={(v) => { setHealthStatus(v); setPage(1); }}
         options={[
           { value: '', label: 'All health' },
-          ...HEALTH_STATUSES.map((h) => ({ value: h, label: h })),
+          ...HEALTH_STATUSES.map((h) => ({ value: h, label: HEALTH_STATUS_LABELS[h] || h })),
         ]}
         placeholder="All health"
         searchable={false}
@@ -267,6 +291,11 @@ function Servers() {
           >
             Apply
           </Button>
+          {canDeployKeys && (
+            <Button variant="outline" size="sm" onClick={() => setDeployWizardOpen(true)}>
+              <Send className="mr-1 h-4 w-4" /> Export key to servers
+            </Button>
+          )}
           <Button
             variant="outline"
             size="sm"
@@ -298,7 +327,15 @@ function Servers() {
           >
             <ProtoIcon className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
             <span>
-              <span className="block font-medium text-foreground">{r.displayName || r.hostname}</span>
+              <span className="flex items-center gap-1.5">
+                <span className="font-medium text-foreground">{r.displayName || r.hostname}</span>
+                {r.authMode === 'credential' && (
+                  <KeyRound
+                    className="h-3 w-3 shrink-0 text-amber-600 dark:text-amber-400"
+                    title={`Stored identity${r.credential?.name ? `: ${r.credential.name}` : ''} (no bootstrap)`}
+                  />
+                )}
+              </span>
               {r.displayName && (
                 <span className="block font-mono text-[11px] text-muted-foreground">{r.hostname}</span>
               )}
@@ -359,7 +396,7 @@ function Servers() {
     },
     {
       key: 'lastCheck',
-      label: 'Last Check',
+      label: 'Last check',
       hideBelow: 'md',
       render: (r) => (
         <span className="text-xs text-muted-foreground">
@@ -379,7 +416,7 @@ function Servers() {
       className: 'w-10',
       actions: [
         {
-          label: 'View Details',
+          label: 'View details',
           icon: Eye,
           onClick: (r) => navigate(`/servers/${r.id}`),
         },
@@ -394,17 +431,17 @@ function Servers() {
                 },
               },
               {
-                label: 'Bootstrap Host',
+                label: 'Bootstrap host',
                 icon: Download,
                 onClick: (r) => setBootstrapServer(r),
               },
               {
-                label: 'Uninstall Agent',
+                label: 'Uninstall agent',
                 icon: Eraser,
                 onClick: (r) => setUninstallServer(r),
               },
               {
-                label: 'Run Health Check',
+                label: 'Run health check',
                 icon: Activity,
                 onClick: (r) => handleHealthCheck(r),
               },
@@ -432,6 +469,7 @@ function Servers() {
         title="Servers"
         subtitle="Manage target servers across customers." helpKey="servers">
         <div className="flex items-center gap-2">
+          <QuickConnectHeaderButton />
           <Button variant="outline" onClick={() => fetch()} disabled={loading}>
             <RefreshCw className={`mr-2 h-4 w-4 ${loading ? 'animate-spin' : ''}`} /> Refresh
           </Button>
@@ -439,6 +477,7 @@ function Servers() {
             <Button
               onClick={() => {
                 setEditing(null);
+                setNewServerCustomerId('');
                 setFormOpen(true);
               }}
             >
@@ -481,16 +520,19 @@ function Servers() {
         onClose={() => {
           setFormOpen(false);
           setEditing(null);
+          setNewServerCustomerId('');
         }}
         title={editing ? 'Edit Server' : 'Add Server'}
         size="lg"
       >
         <ServerForm
           server={editing}
+          customerId={!editing ? newServerCustomerId : undefined}
           onSubmit={handleSubmit}
           onCancel={() => {
             setFormOpen(false);
             setEditing(null);
+            setNewServerCustomerId('');
           }}
         />
       </Modal>
@@ -506,6 +548,17 @@ function Servers() {
         server={uninstallServer}
         onClose={() => setUninstallServer(null)}
       />
+
+      {deployWizardOpen && (
+        <DeployWizardModal
+          open={deployWizardOpen}
+          onClose={() => setDeployWizardOpen(false)}
+          preselectedServerIds={selected}
+          onDone={() => {
+            setSelected([]);
+          }}
+        />
+      )}
 
       <ConfirmDialog
         open={bulkConfirm}

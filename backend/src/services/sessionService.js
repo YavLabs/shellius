@@ -7,7 +7,9 @@ import logger from '../utils/logger.js';
 // ---------------------------------------------------------------------------
 
 const SESSION_INCLUDE = {
-  user: { select: { id: true, name: true, email: true } },
+  user: { select: { id: true, name: true, email: true, avatarUrl: true } },
+  // Null for Quick Connect sessions to hosts that aren't saved servers — the
+  // caller should fall back to targetHost/targetPort/targetUser in that case.
   server: {
     select: {
       id: true,
@@ -40,10 +42,14 @@ const SESSION_INCLUDE = {
  * @param {object} params
  * @param {string}  params.orgId
  * @param {string}  params.userId
- * @param {string}  params.serverId
+ * @param {string|null} [params.serverId]  - null for Quick Connect to an unsaved host
  * @param {string}  [params.certificateId]
  * @param {string}  [params.accessRequestId]
  * @param {'SSH'|'RDP'} params.sessionType
+ * @param {'certificate'|'credential'|'quick_connect'} [params.authMethod='certificate']
+ * @param {string}  [params.targetHost]
+ * @param {number}  [params.targetPort]
+ * @param {string}  [params.targetUser]
  * @param {string}  [params.clientIp]
  * @param {string}  [params.userAgent]
  * @param {object}  [params.metadata]
@@ -56,13 +62,16 @@ export async function create({
   certificateId,
   accessRequestId,
   sessionType,
+  authMethod,
+  targetHost,
+  targetPort,
+  targetUser,
   clientIp,
   userAgent,
   metadata,
 }) {
   if (!orgId) throw new ApiError(400, 'orgId is required');
   if (!userId) throw new ApiError(400, 'userId is required');
-  if (!serverId) throw new ApiError(400, 'serverId is required');
   if (!sessionType || !['SSH', 'RDP'].includes(sessionType)) {
     throw new ApiError(400, "sessionType must be 'SSH' or 'RDP'");
   }
@@ -71,10 +80,14 @@ export async function create({
     data: {
       orgId,
       userId,
-      serverId,
+      serverId: serverId ?? null,
       certificateId: certificateId ?? null,
       accessRequestId: accessRequestId ?? null,
       sessionType,
+      authMethod: authMethod || 'certificate',
+      targetHost: targetHost ?? null,
+      targetPort: targetPort ?? null,
+      targetUser: targetUser ?? null,
       status: 'ACTIVE',
       clientIp: clientIp ?? null,
       userAgent: userAgent ?? null,
@@ -105,9 +118,11 @@ export async function create({
  * @param {string} sessionId
  * @param {object} [opts]
  * @param {'ENDED'|'TERMINATED'} [opts.status='ENDED']
+ * @param {object} [opts.metadataPatch] - merged into the existing Session.metadata JSON
+ *   (e.g. `{ endReason: 'expired' }`) — never overwrites the whole field.
  * @returns {Promise<object>}
  */
-export async function end(sessionId, { status = 'ENDED' } = {}) {
+export async function end(sessionId, { status = 'ENDED', metadataPatch } = {}) {
   if (!sessionId) throw new ApiError(400, 'sessionId is required');
   if (!['ENDED', 'TERMINATED'].includes(status)) {
     throw new ApiError(400, "status must be 'ENDED' or 'TERMINATED'");
@@ -119,13 +134,14 @@ export async function end(sessionId, { status = 'ENDED' } = {}) {
   const now = new Date();
   const durationSeconds = Math.floor((now.getTime() - existing.startedAt.getTime()) / 1000);
 
+  const data = { status, endedAt: now, durationSeconds };
+  if (metadataPatch && typeof metadataPatch === 'object') {
+    data.metadata = { ...(existing.metadata ?? {}), ...metadataPatch };
+  }
+
   const updated = await prisma.session.update({
     where: { id: sessionId },
-    data: {
-      status,
-      endedAt: now,
-      durationSeconds,
-    },
+    data,
     include: SESSION_INCLUDE,
   });
 
@@ -233,14 +249,19 @@ export async function getById(orgId, id) {
  * Returns the updated session row; the caller (terminalService) is responsible
  * for closing the associated WebSocket and SSH connections.
  *
+ * Org-scoped — a sessionId belonging to another org 404s rather than leaking
+ * existence (B-4 hardening).
+ *
+ * @param {string} orgId
  * @param {string} sessionId
  * @param {string} byUserId  - ID of the admin performing the termination
  * @returns {Promise<object>}
  */
-export async function terminate(sessionId, byUserId) {
+export async function terminate(orgId, sessionId, byUserId) {
+  if (!orgId) throw new ApiError(400, 'orgId is required');
   if (!sessionId) throw new ApiError(400, 'sessionId is required');
 
-  const existing = await prisma.session.findUnique({ where: { id: sessionId } });
+  const existing = await prisma.session.findFirst({ where: { id: sessionId, orgId } });
   if (!existing) throw new ApiError(404, 'Session not found');
 
   if (existing.status !== 'ACTIVE') {

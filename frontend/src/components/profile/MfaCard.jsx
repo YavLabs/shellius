@@ -1,6 +1,9 @@
 import { useState, useEffect, useCallback } from 'react';
-import { ShieldCheck, ShieldOff, Loader2, Copy, Check } from 'lucide-react';
+import { ShieldCheck, ShieldOff } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import TotpEnrollPanel from '@/components/mfa/TotpEnrollPanel';
+import BackupCodesPanel from '@/components/mfa/BackupCodesPanel';
+import VerifyAction from '@/components/mfa/VerifyAction';
 import {
   getMfa,
   beginTotp,
@@ -10,42 +13,24 @@ import {
   disableMfa,
 } from '@/services/mfaService';
 
-function BackupCodes({ codes }) {
-  const [copied, setCopied] = useState(false);
-  const copy = async () => {
-    try {
-      await navigator.clipboard.writeText(codes.join('\n'));
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
-    } catch {
-      /* ignore */
-    }
-  };
-  return (
-    <div className="rounded-md border border-amber-500/40 bg-amber-500/10 p-3">
-      <p className="mb-2 text-xs font-medium text-amber-700 dark:text-amber-300">
-        Save these backup codes somewhere safe — each works once if you lose your device.
-      </p>
-      <div className="grid grid-cols-2 gap-1 font-mono text-xs text-foreground">
-        {codes.map((c) => (
-          <span key={c}>{c}</span>
-        ))}
-      </div>
-      <button onClick={copy} className="mt-2 inline-flex items-center gap-1 text-xs text-primary hover:underline">
-        {copied ? <Check className="h-3 w-3" /> : <Copy className="h-3 w-3" />} Copy all
-      </button>
-    </div>
-  );
-}
-
-export default function MfaCard() {
+/**
+ * MfaCard — self-service two-factor management on the Profile page.
+ * Disabling a factor or regenerating backup codes now requires proving
+ * you're still you (a code from an enrolled method, or your password).
+ */
+export default function MfaCard({ hasPassword }) {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
+
   const [enroll, setEnroll] = useState(null); // { qrDataUrl, secret }
-  const [code, setCode] = useState('');
+  const [replacing, setReplacing] = useState(false);
+  const [totpError, setTotpError] = useState('');
+
   const [backupCodes, setBackupCodes] = useState(null);
+  const [pendingAction, setPendingAction] = useState(null); // 'disable' | 'regenerate'
+  const [verifyError, setVerifyError] = useState('');
 
   const refresh = useCallback(() => {
     setLoading(true);
@@ -80,29 +65,36 @@ export default function MfaCard() {
     );
   }
 
-  const startTotp = async () => {
+  const enrolledMethods = [
+    status?.totpEnabled && 'totp',
+    status?.emailEnabled && 'email',
+    status?.backupCodesRemaining > 0 && 'backup',
+  ].filter(Boolean);
+
+  const startTotp = async (isReplace) => {
     setBusy(true);
-    setError('');
+    setTotpError('');
+    setReplacing(!!isReplace);
     try {
       setEnroll(await beginTotp());
     } catch (e) {
-      setError(e?.response?.data?.error?.message || e.message);
+      setTotpError(e?.response?.data?.error?.message || e.message);
     } finally {
       setBusy(false);
     }
   };
 
-  const finishTotp = async () => {
+  const finishTotp = async (code) => {
     setBusy(true);
-    setError('');
+    setTotpError('');
     try {
-      const { backupCodes: bc } = await confirmTotp(code.trim());
-      setBackupCodes(bc);
+      const { backupCodes: bc } = await confirmTotp(code);
+      if (bc) setBackupCodes(bc);
       setEnroll(null);
-      setCode('');
+      setReplacing(false);
       await refresh();
     } catch (e) {
-      setError(e?.response?.data?.error?.message || e.message);
+      setTotpError(e?.response?.data?.error?.message || e.message);
     } finally {
       setBusy(false);
     }
@@ -121,27 +113,21 @@ export default function MfaCard() {
     }
   };
 
-  const doRegen = async () => {
+  const handleVerify = async (verification) => {
     setBusy(true);
+    setVerifyError('');
     try {
-      const { backupCodes: bc } = await regenerateBackupCodes();
-      setBackupCodes(bc);
+      if (pendingAction === 'regenerate') {
+        const { backupCodes: bc } = await regenerateBackupCodes(verification);
+        setBackupCodes(bc);
+      } else if (pendingAction === 'disable') {
+        await disableMfa(verification);
+        setBackupCodes(null);
+      }
+      setPendingAction(null);
       await refresh();
     } catch (e) {
-      setError(e?.response?.data?.error?.message || e.message);
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  const doDisable = async () => {
-    if (!window.confirm('Disable two-factor authentication?')) return;
-    setBusy(true);
-    try {
-      await disableMfa();
-      await refresh();
-    } catch (e) {
-      setError(e?.response?.data?.error?.message || e.message);
+      setVerifyError(e?.response?.data?.error?.message || e.message || 'Verification failed');
     } finally {
       setBusy(false);
     }
@@ -169,7 +155,7 @@ export default function MfaCard() {
         </div>
       )}
 
-      {backupCodes && <BackupCodes codes={backupCodes} />}
+      {backupCodes && <BackupCodesPanel codes={backupCodes} />}
 
       <div className="space-y-1 text-sm text-muted-foreground">
         <p>Authenticator app: {status?.totpEnabled ? <span className="text-emerald-600">enabled</span> : 'not set up'}</p>
@@ -177,29 +163,27 @@ export default function MfaCard() {
         {status?.enrolled && <p>Backup codes remaining: {status.backupCodesRemaining}</p>}
       </div>
 
-      {/* TOTP enrollment */}
       {enroll ? (
-        <div className="space-y-3 rounded-md border border-border p-4">
-          <p className="text-sm text-foreground">Scan this QR code with your authenticator app, then enter the 6-digit code.</p>
-          {enroll.qrDataUrl && <img src={enroll.qrDataUrl} alt="TOTP QR" className="h-40 w-40" />}
-          <p className="text-xs text-muted-foreground">Or enter this secret manually: <span className="font-mono">{enroll.secret}</span></p>
-          <div className="flex gap-2">
-            <input
-              value={code}
-              onChange={(e) => setCode(e.target.value)}
-              placeholder="6-digit code"
-              className="h-9 w-32 rounded-md border border-input bg-background px-3 text-sm"
-            />
-            <Button onClick={finishTotp} disabled={busy || !code.trim()}>
-              {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : 'Verify & enable'}
-            </Button>
-          </div>
-        </div>
+        <TotpEnrollPanel enroll={enroll} onConfirm={finishTotp} busy={busy} error={totpError} replacing={replacing} />
+      ) : pendingAction ? (
+        <VerifyAction
+          enrolledMethods={enrolledMethods}
+          hasPassword={hasPassword}
+          busy={busy}
+          error={verifyError}
+          onVerify={handleVerify}
+          onCancel={() => { setPendingAction(null); setVerifyError(''); }}
+        />
       ) : (
         <div className="flex flex-wrap gap-2">
           {policy?.allowTotp && !status?.totpEnabled && (
-            <Button variant="outline" onClick={startTotp} disabled={busy}>
+            <Button variant="outline" onClick={() => startTotp(false)} disabled={busy}>
               Set up authenticator app
+            </Button>
+          )}
+          {policy?.allowTotp && status?.totpEnabled && (
+            <Button variant="outline" onClick={() => startTotp(true)} disabled={busy}>
+              Replace authenticator
             </Button>
           )}
           {policy?.allowEmailOtp && !status?.emailEnabled && (
@@ -208,12 +192,12 @@ export default function MfaCard() {
             </Button>
           )}
           {status?.enrolled && (
-            <Button variant="outline" onClick={doRegen} disabled={busy}>
+            <Button variant="outline" onClick={() => setPendingAction('regenerate')} disabled={busy}>
               Regenerate backup codes
             </Button>
           )}
           {status?.enrolled && !policy?.enforced && (
-            <Button variant="outline" onClick={doDisable} disabled={busy}>
+            <Button variant="outline" onClick={() => setPendingAction('disable')} disabled={busy}>
               Disable 2FA
             </Button>
           )}

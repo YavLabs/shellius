@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import {
   Plus,
   KeyRound,
@@ -10,9 +11,15 @@ import {
   RotateCcw,
   Copy,
   Check,
+  Lock,
+  Unlock,
+  ShieldCheck,
+  LogOut,
 } from 'lucide-react';
 import DataTable from '@/components/shared/DataTable';
-import Badge from '@/components/shared/Badge';
+import { Badge } from '@/components/ui/badge';
+import { roleTone, statusTone } from '@/lib/badgeTones';
+import UserCell from '@/components/shared/UserCell';
 import Modal from '@/components/shared/Modal';
 import ConfirmDialog from '@/components/shared/ConfirmDialog';
 import DeleteUserDialog from '@/components/users/DeleteUserDialog';
@@ -20,6 +27,7 @@ import UserForm from '@/components/users/UserForm';
 import SshKeyDialog from '@/components/users/SshKeyDialog';
 import PageHeader from '@/components/common/PageHeader';
 import { formatLabel } from '@/utils/format';
+import { ROLE_LABELS, USER_STATUS_LABELS } from '@/lib/labels';
 import { Button } from '@/components/ui/button';
 import SearchableSelect from '@/components/ui/SearchableSelect';
 import {
@@ -31,29 +39,16 @@ import {
   getUser,
   resendInvite,
   triggerPasswordReset,
+  unlockUser,
+  revokeUserSessions,
 } from '@/services/userService';
 
 const ROLES = ['super_admin', 'admin', 'manager', 'member'];
 const STATUSES = ['active', 'invited', 'suspended', 'deactivated'];
 
-const roleVariant = (role) => {
-  switch (role) {
-    case 'super_admin': return 'danger';
-    case 'admin': return 'info';
-    case 'manager': return 'warning';
-    default: return 'default';
-  }
-};
-
-const statusVariant = (status) => {
-  switch (status) {
-    case 'active': return 'success';
-    case 'invited': return 'info';
-    case 'suspended': return 'warning';
-    case 'deactivated': return 'danger';
-    default: return 'default';
-  }
-};
+function isLocked(u) {
+  return !!u.lockedUntil && new Date(u.lockedUntil).getTime() > Date.now();
+}
 
 function formatDate(d) {
   if (!d) return '-';
@@ -107,6 +102,35 @@ function Users() {
 
   const [urlModal, setUrlModal] = useState(null);
   const [actionMsg, setActionMsg] = useState('');
+  const [searchParams, setSearchParams] = useSearchParams();
+
+  // Deep links: /users?action=invite opens the invite modal; ?highlight=<id>
+  // opens that user's edit modal (no inline row-highlight affordance in
+  // DataTable, so this is the closest equivalent).
+  useEffect(() => {
+    const action = searchParams.get('action');
+    const highlightId = searchParams.get('highlight');
+    if (action === 'invite') {
+      setEditingUser(null);
+      setFormOpen(true);
+    } else if (highlightId) {
+      getUser(highlightId)
+        .then((u) => {
+          if (u) {
+            setEditingUser(u);
+            setFormOpen(true);
+          }
+        })
+        .catch(() => {});
+    }
+    if (action || highlightId) {
+      const next = new URLSearchParams(searchParams);
+      next.delete('action');
+      next.delete('highlight');
+      setSearchParams(next, { replace: true });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const fetchUsers = useCallback(async () => {
     setLoading(true);
@@ -183,6 +207,34 @@ function Users() {
 
   const handleDelete = (u) => setDeleteTarget(u);
 
+  const handleUnlock = (u) => {
+    setConfirm({
+      title: 'Unlock account',
+      message: `Clear the failed-login lockout for ${u.name}? They'll be able to sign in immediately.`,
+      variant: 'default',
+      confirmLabel: 'Unlock',
+      onConfirm: async () => {
+        await unlockUser(u.id);
+        setConfirm(null);
+        fetchUsers();
+      },
+    });
+  };
+
+  const handleRevokeSessions = (u) => {
+    setConfirm({
+      title: 'Sign out all sessions',
+      message: `Sign ${u.name} out of every device and application? Their next request will require signing in again.`,
+      variant: 'destructive',
+      confirmLabel: 'Sign out everywhere',
+      onConfirm: async () => {
+        await revokeUserSessions(u.id);
+        setConfirm(null);
+        fetchUsers();
+      },
+    });
+  };
+
   const handleResendInvite = async (u) => {
     try {
       const result = await resendInvite(u.id);
@@ -219,7 +271,7 @@ function Users() {
         onChange={(v) => { setRole(v); setPage(1); }}
         options={[
           { value: '', label: 'All roles' },
-          ...ROLES.map((r) => ({ value: r, label: formatLabel(r) })),
+          ...ROLES.map((r) => ({ value: r, label: ROLE_LABELS[r] || formatLabel(r) })),
         ]}
         placeholder="All roles"
         searchable={false}
@@ -231,7 +283,7 @@ function Users() {
         onChange={(v) => { setStatus(v); setPage(1); }}
         options={[
           { value: '', label: 'All statuses' },
-          ...STATUSES.map((s) => ({ value: s, label: formatLabel(s) })),
+          ...STATUSES.map((s) => ({ value: s, label: USER_STATUS_LABELS[s] || formatLabel(s) })),
         ]}
         placeholder="All statuses"
         searchable={false}
@@ -245,27 +297,44 @@ function Users() {
       key: 'name',
       label: 'Name',
       sortable: true,
-      render: (r) => <span className="font-medium">{r.name}</span>,
-    },
-    {
-      key: 'email',
-      label: 'Email',
-      sortable: true,
-      render: (r) => <span className="text-muted-foreground">{r.email}</span>,
+      searchAccessor: (r) => `${r.name || ''} ${r.email || ''}`,
+      render: (r) => <UserCell user={r} />,
     },
     {
       key: 'role',
       label: 'Role',
       sortable: true,
       searchAccessor: (r) => r.role || '',
-      render: (r) => <Badge variant={roleVariant(r.role)}>{formatLabel(r.role)}</Badge>,
+      render: (r) => <Badge tone={roleTone(r.role).tone}>{roleTone(r.role).label}</Badge>,
     },
     {
       key: 'status',
       label: 'Status',
       sortable: true,
       searchAccessor: (r) => r.status || '',
-      render: (r) => <Badge variant={statusVariant(r.status)}>{formatLabel(r.status)}</Badge>,
+      render: (r) => (
+        <div className="flex flex-wrap items-center gap-1.5">
+          <Badge tone={statusTone(r.status).tone}>{statusTone(r.status).label}</Badge>
+          {isLocked(r) && (
+            <Badge tone="danger" icon={Lock}>
+              Locked
+            </Badge>
+          )}
+        </div>
+      ),
+    },
+    {
+      key: 'mfa',
+      label: 'MFA',
+      hideBelow: 'md',
+      render: (r) =>
+        r.mfaEnabled ? (
+          <span className="inline-flex items-center gap-1 text-xs font-medium text-emerald-600 dark:text-emerald-400">
+            <ShieldCheck className="h-3.5 w-3.5" /> Enabled
+          </span>
+        ) : (
+          <span className="text-xs text-muted-foreground">&mdash;</span>
+        ),
     },
     {
       key: 'manager',
@@ -275,7 +344,7 @@ function Users() {
     },
     {
       key: 'lastLogin',
-      label: 'Last Login',
+      label: 'Last login',
       hideBelow: 'lg',
       render: (r) => <span className="text-muted-foreground">{formatDate(r.lastLoginAt || r.lastLogin)}</span>,
     },
@@ -286,8 +355,10 @@ function Users() {
       actions: [
         { label: 'Edit', icon: Pencil, onClick: (r) => openEdit(r) },
         { label: 'Upload SSH Key', icon: KeyRound, onClick: (r) => openSsh(r) },
-        { label: 'Resend Invite', icon: Mail, onClick: (r) => handleResendInvite(r) },
-        { label: 'Send Password Reset', icon: RotateCcw, onClick: (r) => handleTriggerPasswordReset(r) },
+        { label: 'Resend invite', icon: Mail, onClick: (r) => handleResendInvite(r) },
+        { label: 'Send password reset', icon: RotateCcw, onClick: (r) => handleTriggerPasswordReset(r) },
+        { label: 'Unlock account', icon: Unlock, hidden: (r) => !isLocked(r), onClick: (r) => handleUnlock(r) },
+        { label: 'Sign out all sessions', icon: LogOut, onClick: (r) => handleRevokeSessions(r) },
         { label: 'Deactivate', icon: UserX, onClick: (r) => handleDeactivate(r) },
         { separator: true },
         { label: 'Delete', icon: Trash2, variant: 'destructive', onClick: (r) => handleDelete(r) },

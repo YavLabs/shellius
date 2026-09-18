@@ -1,7 +1,6 @@
 import express from 'express';
 import Joi from 'joi';
 import bcrypt from 'bcryptjs';
-import crypto from 'crypto';
 import asyncHandler from '../utils/asyncHandler.js';
 import ApiError from '../utils/ApiError.js';
 import authenticate from '../middleware/auth.js';
@@ -16,15 +15,8 @@ import { renderTemplate } from '../email/index.js';
 import { log as auditLog } from '../services/auditService.js';
 import prisma from '../config/db.js';
 import config from '../config/index.js';
-import {
-  generateAccessToken,
-  generateRefreshToken,
-  hashToken,
-} from '../utils/jwt.js';
 
 const router = express.Router();
-
-const REFRESH_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 
 const validate = (schema) => (req, res, next) => {
   const { error, value } = schema.validate(req.body, { abortEarly: false, stripUnknown: true });
@@ -94,42 +86,30 @@ const registerSchema = Joi.object({
 // ---------------------------------------------------------------------------
 
 /**
- * Issue access + refresh tokens for a user and persist the refresh token.
- * Used by both invite-accept and password-reset flows.
+ * Resolve the tenant org for public (unauthenticated) endpoints.
+ *
+ * Resolution priority:
+ *   1. Hostname-based: find org whose `domain` matches req.hostname
+ *   2. Single-tenant fallback: return the first org (ordered by createdAt ASC)
+ *
+ * Returns null when no org exists at all (fresh install before seed).
+ *
+ * @param {import('express').Request} req
+ * @returns {Promise<object|null>}
  */
-async function issueTokenPair(user, req) {
-  const accessToken = generateAccessToken({
-    userId: user.id,
-    orgId: user.orgId,
-    role: user.role,
-    email: user.email,
-  });
+async function resolvePublicOrg(req) {
+  const hostname = req.hostname || req.get('host') || '';
 
-  const tokenId = crypto.randomUUID();
-  const refreshToken = generateRefreshToken({ userId: user.id, tokenId });
+  // Attempt hostname-based resolution for multi-tenant deploys
+  if (hostname) {
+    const byDomain = await prisma.organization.findFirst({
+      where: { domain: hostname },
+    });
+    if (byDomain) return byDomain;
+  }
 
-  await prisma.refreshToken.create({
-    data: {
-      userId: user.id,
-      tokenHash: hashToken(refreshToken),
-      clientType: 'web',
-      ipAddress: req.ip,
-      userAgent: req.get('user-agent') || '',
-      expiresAt: new Date(Date.now() + REFRESH_TTL_MS),
-    },
-  });
-
-  await prisma.user.update({
-    where: { id: user.id },
-    data: { lastLoginAt: new Date() },
-  });
-
-  return { accessToken, refreshToken };
-}
-
-function safeUser(user) {
-  const { passwordHash, ...rest } = user;
-  return rest;
+  // Single-tenant fallback: first org
+  return prisma.organization.findFirst({ orderBy: { createdAt: 'asc' } });
 }
 
 // ---------------------------------------------------------------------------
@@ -152,7 +132,7 @@ router.post(
 // POST /login-options — public; drives the email-first login UI. Given an
 // email, tells the frontend whether to show a password field, start SSO, or
 // offer a set-password (invite) path. Returns a small, low-enumeration shape.
-const loginOptionsSchema = Joi.object({ email: Joi.string().email().required() });
+const loginOptionsSchema = Joi.object({ email: Joi.string().email({ tlds: { allow: false } }).required() });
 router.post(
   '/login-options',
   authLimiter,
@@ -160,7 +140,7 @@ router.post(
   asyncHandler(async (req, res) => {
     const { email } = req.body;
     const org = await resolvePublicOrg(req);
-    const sso = org ? await ssoService.getPublicSsoStatus(org.id) : { enabled: false, presetId: null };
+    const sso = org ? await ssoService.getPublicSsoSummary(org.id) : { enabled: false, presetId: null, providers: [] };
     const state = await authService.getLoginState(email);
     res.json({
       success: true,
@@ -168,6 +148,7 @@ router.post(
         hasPassword: state.hasPassword,
         ssoEnabled: !!sso.enabled,
         ssoPresetId: sso.presetId || null,
+        providers: sso.providers || [],
         orgSlug: org?.slug || null,
       },
     });
@@ -204,9 +185,11 @@ router.post(
   validate(mfaSendOtpSchema),
   asyncHandler(async (req, res) => {
     const payload = mfaService.verifyMfaToken(req.body.mfaToken);
-    if (!payload) throw new ApiError(401, 'MFA session expired — sign in again');
+    if (!payload) {
+      throw new ApiError(401, 'MFA session expired — sign in again', { code: 'MFA_CHALLENGE_EXPIRED' });
+    }
     const user = await prisma.user.findUnique({ where: { id: payload.userId } });
-    if (user && user.mfaEmailEnabled) await mfaService.sendEmailOtp(user);
+    if (user && user.mfaEmailEnabled) await mfaService.sendEmailOtp(user, payload.jti);
     res.json({ success: true, data: { sent: true } });
   })
 );
@@ -239,7 +222,82 @@ router.get(
   authenticate,
   asyncHandler(async (req, res) => {
     const user = await authService.getProfile(req.user.userId);
-    res.json({ success: true, data: { user } });
+    const identities = await ssoService.listUserIdentities(req.user.userId);
+    res.json({ success: true, data: { user: { ...user, identities } } });
+  })
+);
+
+// ---------------------------------------------------------------------------
+// DELETE /identities/:id — unlink one of the caller's SSO identities
+// ---------------------------------------------------------------------------
+
+router.delete(
+  '/identities/:id',
+  authenticate,
+  asyncHandler(async (req, res) => {
+    await ssoService.deleteUserIdentity(req.user.userId, req.params.id);
+    await auditLog({
+      orgId: req.user.orgId,
+      actorId: req.user.userId,
+      action: 'auth.identity.unlinked',
+      resourceType: 'User',
+      resourceId: req.user.userId,
+      metadata: { identityId: req.params.id },
+      ipAddress: req.ip,
+      userAgent: req.headers['user-agent'],
+    });
+    res.status(204).send();
+  })
+);
+
+// ---------------------------------------------------------------------------
+// Sessions — self-service listing/revocation of refresh-token families
+// ---------------------------------------------------------------------------
+
+router.get(
+  '/sessions',
+  authenticate,
+  asyncHandler(async (req, res) => {
+    const sessions = await authService.listSessions(req.user.userId, req.user.fid);
+    res.json({ success: true, data: { sessions } });
+  })
+);
+
+router.delete(
+  '/sessions/:id',
+  authenticate,
+  asyncHandler(async (req, res) => {
+    await authService.revokeSessionForUser(req.user.userId, req.params.id);
+    await auditLog({
+      orgId: req.user.orgId,
+      actorId: req.user.userId,
+      action: 'auth.session.revoked',
+      resourceType: 'User',
+      resourceId: req.user.userId,
+      metadata: { familyId: req.params.id },
+      ipAddress: req.ip,
+      userAgent: req.headers['user-agent'],
+    });
+    res.status(204).send();
+  })
+);
+
+router.post(
+  '/sessions/revoke-others',
+  authenticate,
+  asyncHandler(async (req, res) => {
+    const revoked = await authService.revokeOtherSessionsForUser(req.user.userId, req.user.fid);
+    await auditLog({
+      orgId: req.user.orgId,
+      actorId: req.user.userId,
+      action: 'auth.sessions.revoke_others',
+      resourceType: 'User',
+      resourceId: req.user.userId,
+      metadata: { revoked },
+      ipAddress: req.ip,
+      userAgent: req.headers['user-agent'],
+    });
+    res.json({ success: true, data: { revoked } });
   })
 );
 
@@ -289,11 +347,9 @@ router.post(
 
     const updatedUser = await prisma.user.update({
       where: { id: user.id },
-      data: { passwordHash, status: 'active' },
+      data: { passwordHash, status: 'active', passwordChangedAt: new Date() },
       include: { organization: true },
     });
-
-    const { accessToken, refreshToken } = await issueTokenPair(updatedUser, req);
 
     await auditLog({
       orgId: updatedUser.orgId,
@@ -305,14 +361,15 @@ router.post(
       userAgent: req.headers['user-agent'],
     });
 
-    res.json({
-      success: true,
-      data: {
-        user: safeUser(updatedUser),
-        accessToken,
-        refreshToken,
-      },
-    });
+    // MFA gate — an invited user who already has a factor enrolled from a
+    // prior account (rare, but possible for re-invites) must still verify it.
+    const gate = await authService.mfaGate(updatedUser);
+    if (gate) {
+      return res.json({ success: true, data: gate });
+    }
+
+    const session = await authService.issueSession(updatedUser, req.ip, req.get('user-agent') || '', 'web');
+    res.json({ success: true, data: session });
   })
 );
 
@@ -358,15 +415,29 @@ router.post(
       inviteService.TOKEN_TYPES.PASSWORD_RESET
     );
 
+    // A reset token can outlive a status change (suspend/deactivate/delete)
+    // that happened after it was issued. Never let consuming it resurrect a
+    // disabled account — only invited/pending_verification are eligible to
+    // flip to 'active' here, matching the invite-accept flow.
+    if (['suspended', 'deactivated', 'deleted'].includes(user.status)) {
+      throw new ApiError(403, 'Account is disabled', { code: 'ACCOUNT_DISABLED' });
+    }
+
     const passwordHash = await bcrypt.hash(req.body.password, config.bcryptRounds);
+    const updateData = { passwordHash, passwordChangedAt: new Date() };
+    if (['invited', 'pending_verification'].includes(user.status)) {
+      updateData.status = 'active';
+    }
 
     const updatedUser = await prisma.user.update({
       where: { id: user.id },
-      data: { passwordHash, status: 'active' },
+      data: updateData,
       include: { organization: true },
     });
 
-    const { accessToken, refreshToken } = await issueTokenPair(updatedUser, req);
+    // A password reset is a credential-compromise-recovery action — kill
+    // every other outstanding session (and any live terminal sessions).
+    await authService.revokeAllSessions(updatedUser.id, updatedUser.orgId, 'password_reset');
 
     await auditLog({
       orgId: updatedUser.orgId,
@@ -378,14 +449,13 @@ router.post(
       userAgent: req.headers['user-agent'],
     });
 
-    res.json({
-      success: true,
-      data: {
-        user: safeUser(updatedUser),
-        accessToken,
-        refreshToken,
-      },
-    });
+    const gate = await authService.mfaGate(updatedUser);
+    if (gate) {
+      return res.json({ success: true, data: gate });
+    }
+
+    const session = await authService.issueSession(updatedUser, req.ip, req.get('user-agent') || '', 'web');
+    res.json({ success: true, data: session });
   })
 );
 
@@ -457,37 +527,6 @@ router.post(
     });
   })
 );
-
-// ---------------------------------------------------------------------------
-// Helper: resolve org for unauthenticated public routes
-// ---------------------------------------------------------------------------
-
-/**
- * Resolve the tenant org for public (unauthenticated) endpoints.
- *
- * Resolution priority:
- *   1. Hostname-based: find org whose `domain` matches req.hostname
- *   2. Single-tenant fallback: return the first org (ordered by createdAt ASC)
- *
- * Returns null when no org exists at all (fresh install before seed).
- *
- * @param {import('express').Request} req
- * @returns {Promise<object|null>}
- */
-async function resolvePublicOrg(req) {
-  const hostname = req.hostname || req.get('host') || '';
-
-  // Attempt hostname-based resolution for multi-tenant deploys
-  if (hostname) {
-    const byDomain = await prisma.organization.findFirst({
-      where: { domain: hostname },
-    });
-    if (byDomain) return byDomain;
-  }
-
-  // Single-tenant fallback: first org
-  return prisma.organization.findFirst({ orderBy: { createdAt: 'asc' } });
-}
 
 // ---------------------------------------------------------------------------
 // GET /registration-status — public; returns { enabled: bool }

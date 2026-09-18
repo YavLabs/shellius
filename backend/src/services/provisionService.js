@@ -1,7 +1,7 @@
-import { Client } from 'ssh2';
 import prisma from '../config/db.js';
 import ApiError from '../utils/ApiError.js';
 import logger from '../utils/logger.js';
+import * as sshConnect from './sshConnect.js';
 
 /**
  * Provisions a server by SSHing in and running the Shellius bootstrap script.
@@ -42,108 +42,89 @@ export async function provisionServer(
       .update({ where: { id: serverId }, data: { provisionStatus: 'failed', provisionError: String(message || 'unknown error').slice(0, 500) } })
       .catch((e) => logger.warn({ err: e.message, serverId }, 'failed to set failed state'));
 
+  const emit = (line) => {
+    if (onOutput) onOutput(line);
+  };
+
+  let client;
+  try {
+    const result = await sshConnect.connectSsh({
+      host: server.ipAddress,
+      port: server.port || 22,
+      username: sshUser,
+      privateKey,
+      passphrase,
+      password,
+      readyTimeout: 20000,
+      pinContext: serverId,
+    });
+    client = result.client;
+  } catch (err) {
+    logger.error({ err: err.message, serverId }, 'SSH provision connection error');
+    await markFailed(err?.message);
+    throw err instanceof ApiError ? err : new ApiError(500, `SSH connection failed: ${err.message}`);
+  }
+
+  emit('[shellius] SSH connection established');
+
+  // Build the remote command based on the privilege situation:
+  //   root user       → pipe curl output directly to bash
+  //   sudo + password → download script, then run with sudo -S (password via stdin)
+  //   sudo (no pass)  → pipe curl output to sudo bash (assumes passwordless sudo)
+  let cmd;
+  if (sshUser === 'root') {
+    cmd = `curl -fsSL '${bootstrapUrl}' | bash`;
+  } else if (sudoPassword) {
+    cmd = [
+      `curl -fsSL '${bootstrapUrl}' -o /tmp/.shellius-install.sh`,
+      `sudo -S bash /tmp/.shellius-install.sh`,
+      'ec=$?',
+      'rm -f /tmp/.shellius-install.sh',
+      'exit $ec',
+    ].join(' && ');
+  } else {
+    cmd = `curl -fsSL '${bootstrapUrl}' | sudo bash`;
+  }
+
   return new Promise((resolve, reject) => {
-    const conn = new Client();
-
-    const emit = (line) => {
-      if (onOutput) onOutput(line);
-    };
-
-    // Wrap resolve/reject so provisioning state is persisted before settling.
     const settleOk = () => markProvisioned().finally(() => resolve());
     const settleErr = (err) => markFailed(err?.message).finally(() => reject(err));
 
-    conn.on('ready', () => {
-      emit('[shellius] SSH connection established');
-
-      // Build the remote command based on the privilege situation:
-      //   root user       → pipe curl output directly to bash
-      //   sudo + password → download script, then run with sudo -S (password via printf)
-      //   sudo (no pass)  → pipe curl output to sudo bash (assumes passwordless sudo)
-      let cmd;
-      if (sshUser === 'root') {
-        cmd = `curl -fsSL '${bootstrapUrl}' | bash`;
-      } else if (sudoPassword) {
-        // Single-quote-escape the sudo password for safe embedding in shell.
-        const escapedPass = sudoPassword.replace(/'/g, "'\\''");
-        cmd = [
-          `curl -fsSL '${bootstrapUrl}' -o /tmp/.shellius-install.sh`,
-          `printf '%s\\n' '${escapedPass}' | sudo -S bash /tmp/.shellius-install.sh`,
-          'ec=$?',
-          'rm -f /tmp/.shellius-install.sh',
-          'exit $ec',
-        ].join(' && ');
-      } else {
-        cmd = `curl -fsSL '${bootstrapUrl}' | sudo bash`;
+    client.exec(cmd, { pty: true }, (err, stream) => {
+      if (err) {
+        client.end();
+        return settleErr(new ApiError(500, `SSH exec failed: ${err.message}`));
       }
 
-      conn.exec(cmd, { pty: true }, (err, stream) => {
-        if (err) {
-          conn.end();
-          return settleErr(new ApiError(500, `SSH exec failed: ${err.message}`));
+      // sudo -S reads the password from the exec channel's stdin — never
+      // placed on the command line, never logged.
+      if (sudoPassword && sshUser !== 'root') {
+        try { stream.write(`${sudoPassword}\n`); } catch { /* ignore */ }
+      }
+
+      stream.on('data', (data) => {
+        const lines = data.toString().split(/\r?\n/);
+        for (const line of lines) {
+          if (line.trim()) emit(line);
         }
-
-        stream.on('data', (data) => {
-          const lines = data.toString().split(/\r?\n/);
-          for (const line of lines) {
-            if (line.trim()) emit(line);
-          }
-        });
-
-        stream.stderr.on('data', (data) => {
-          const lines = data.toString().split(/\r?\n/);
-          for (const line of lines) {
-            if (line.trim()) emit(`[stderr] ${line}`);
-          }
-        });
-
-        stream.on('close', (code) => {
-          conn.end();
-          if (code === 0 || code === null) {
-            emit('[shellius] Provisioning completed successfully');
-            settleOk();
-          } else {
-            settleErr(new ApiError(500, `Bootstrap script exited with code ${code}`));
-          }
-        });
       });
-    });
 
-    conn.on('error', (err) => {
-      // Log serverId only — never log the private key or credentials
-      logger.error({ err: err.message, serverId }, 'SSH provision connection error');
-      settleErr(new ApiError(500, `SSH connection failed: ${err.message}`));
-    });
-
-    // Answer keyboard-interactive prompts (many sshd setups present the login
-    // password this way) with the supplied password.
-    if (password) {
-      conn.on('keyboard-interactive', (name, instructions, lang, prompts, finish) => {
-        finish(prompts.map(() => password));
+      stream.stderr.on('data', (data) => {
+        const lines = data.toString().split(/\r?\n/);
+        for (const line of lines) {
+          if (line.trim()) emit(`[stderr] ${line}`);
+        }
       });
-    }
 
-    // Offer whichever methods we have credentials for, in order. ssh2 will try
-    // each and also continue through multi-factor servers that require more than
-    // one (e.g. AuthenticationMethods "publickey,password").
-    const authMethods = [];
-    if (privateKey) {
-      authMethods.push({ type: 'publickey', username: sshUser, key: privateKey, passphrase });
-    }
-    if (password) {
-      authMethods.push({ type: 'password', username: sshUser, password });
-      authMethods.push({ type: 'keyboard-interactive', username: sshUser });
-    }
-
-    conn.connect({
-      host: server.ipAddress,
-      port: 22,
-      username: sshUser,
-      ...(privateKey ? { privateKey, passphrase } : {}),
-      ...(password ? { password } : {}),
-      tryKeyboard: !!password,
-      ...(authMethods.length ? { authHandler: authMethods } : {}),
-      readyTimeout: 20000,
+      stream.on('close', (code) => {
+        client.end();
+        if (code === 0 || code === null) {
+          emit('[shellius] Provisioning completed successfully');
+          settleOk();
+        } else {
+          settleErr(new ApiError(500, `Bootstrap script exited with code ${code}`));
+        }
+      });
     });
   });
 }

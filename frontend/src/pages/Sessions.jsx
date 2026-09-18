@@ -6,20 +6,38 @@ import {
   Square,
   Download,
   ListOrdered,
+  Zap,
+  Loader2,
+  ExternalLink,
+  X,
 } from 'lucide-react';
 import DataTable from '@/components/shared/DataTable';
 import ServerName, { serverSearchString } from '@/components/shared/ServerName';
 import Badge from '@/components/shared/Badge';
 import EnvironmentBadge from '@/components/shared/EnvironmentBadge';
+import UserCell from '@/components/shared/UserCell';
 import Modal from '@/components/shared/Modal';
 import ConfirmDialog from '@/components/shared/ConfirmDialog';
 import SessionPlayer from '@/components/sessions/SessionPlayer';
 import PageHeader from '@/components/common/PageHeader';
 import SearchableSelect from '@/components/ui/SearchableSelect';
+import ConnectModal from '@/components/servers/ConnectModal';
 import { listSessions, listActiveSessions, getSession, terminateSession, downloadRecording } from '@/services/sessionService';
+import { listTerminalSessions } from '@/services/terminalService';
+import { getAccessIntent } from '@/services/accessRequestService';
 import { useAuth } from '@/context/AuthContext';
+import { useTerminalWorkspace } from '@/context/TerminalWorkspaceContext';
+import { useQuickConnect } from '@/context/QuickConnectContext';
 import { relativeTime, formatDateTime } from '@/utils/time';
 import { extractCommands, formatOffset } from '@/utils/castCommands';
+import { SESSION_STATUS_LABELS } from '@/lib/labels';
+
+// A session row is "connectable" from this page when it's the caller's own
+// still-ACTIVE session — matches the terminal hub's "caller's own sessions
+// only" scoping (docs/terminal-workspace.md REST section).
+function isOwnActiveSession(session, user) {
+  return session?.status === 'ACTIVE' && !!user && (session.user?.id === user.id || session.userId === user.id);
+}
 
 const ROLE_RANK = { super_admin: 4, admin: 3, manager: 2, member: 1 };
 function isAtLeast(user, role) {
@@ -37,6 +55,44 @@ function SessionStatusBadge({ status }) {
   return <Badge variant={meta.variant}>{meta.label}</Badge>;
 }
 
+const AUTH_METHOD_LABEL = {
+  certificate: 'Certificate',
+  credential: 'Identity',
+  quick_connect: 'Quick Connect',
+};
+
+function AuthMethodBadge({ authMethod }) {
+  if (!authMethod) return <span className="text-muted-foreground">-</span>;
+  return <Badge variant="default">{AUTH_METHOD_LABEL[authMethod] || authMethod}</Badge>;
+}
+
+/**
+ * SessionTarget — renders the server name, or for Quick Connect sessions
+ * (server: null) the ad-hoc target host/user, with a "Quick Connect" badge.
+ */
+function SessionTarget({ session }) {
+  if (!session.server && session.authMethod === 'quick_connect') {
+    const host = session.targetHost || session.host;
+    const port = session.targetPort || session.port;
+    const targetUser = session.targetUser || session.principal;
+    return (
+      <div className="flex flex-col leading-tight">
+        <span className="flex items-center gap-1.5 text-sm font-medium text-foreground">
+          <span className="font-mono">
+            {targetUser ? `${targetUser}@` : ''}
+            {host || 'unknown host'}
+            {port && port !== 22 ? `:${port}` : ''}
+          </span>
+        </span>
+        <span className="flex items-center gap-1 text-[11px] text-amber-600 dark:text-amber-400">
+          <Zap className="h-2.5 w-2.5" /> Quick Connect
+        </span>
+      </div>
+    );
+  }
+  return <ServerName server={session.server} fallback={session.serverId} />;
+}
+
 function durationLabel(startedAt, endedAt) {
   if (!startedAt) return '-';
   const start = new Date(startedAt).getTime();
@@ -50,6 +106,110 @@ function durationLabel(startedAt, endedAt) {
   if (h > 0) return `${h}h ${m % 60}m`;
   if (m > 0) return `${m}m ${diffSec % 60}s`;
   return `${diffSec}s`;
+}
+
+/**
+ * useSessionConnect — shared "Connect" behavior for own-ACTIVE session rows,
+ * used by both the table row action and the detail drawer. Before attaching,
+ * checks GET /api/terminal/sessions: a stale ACTIVE row (e.g. surviving a
+ * backend/hub restart) isn't actually live in the hub, so this offers a
+ * reconnect path instead of attaching to nothing.
+ */
+function useSessionConnect() {
+  const workspace = useTerminalWorkspace();
+  const { openQuickConnect } = useQuickConnect();
+  const [checkingId, setCheckingId] = useState('');
+  const [staleInfo, setStaleInfo] = useState(null); // { message, reconnect?: fn }
+  const [connectTarget, setConnectTarget] = useState(null); // { server, intent }
+
+  const connect = useCallback(
+    async (session) => {
+      setStaleInfo(null);
+      setCheckingId(session.id);
+      try {
+        const live = await listTerminalSessions();
+        if (live.some((s) => s.id === session.id)) {
+          const isQuickConnect = session.authMethod === 'quick_connect';
+          workspace.attachSession(session.id, {
+            label: session.server
+              ? session.server.displayName || session.server.hostname
+              : isQuickConnect
+                ? `${session.targetUser || session.principal || 'user'}@${session.targetHost || session.host}`
+                : undefined,
+            env: session.server?.environment,
+            host: session.server?.ipAddress || session.server?.hostname || session.targetHost || session.host,
+            username: session.principal || session.targetUser,
+          });
+          return;
+        }
+
+        // Stale — the row says ACTIVE but the hub no longer has it live.
+        if (session.authMethod === 'quick_connect') {
+          setStaleInfo({
+            message: 'This session is no longer running — start a new connection.',
+            reconnect: () => {
+              setStaleInfo(null);
+              openQuickConnect({
+                host: session.targetHost || session.host,
+                port: session.targetPort || session.port,
+                username: session.targetUser || session.principal,
+              });
+            },
+          });
+          return;
+        }
+        if (session.server?.id) {
+          const intent = await getAccessIntent(session.server.id);
+          if (intent?.hasActiveAccess && intent.activeRequestId) {
+            setStaleInfo({
+              message: 'This session is no longer running — start a new connection.',
+              reconnect: () => {
+                setStaleInfo(null);
+                setConnectTarget({ server: session.server, intent });
+              },
+            });
+          } else {
+            setStaleInfo({
+              message:
+                'This session is no longer running, and there is no active access request to reconnect with.',
+            });
+          }
+          return;
+        }
+        setStaleInfo({ message: 'This session is no longer running — start a new connection.' });
+      } catch (err) {
+        setStaleInfo({ message: err.response?.data?.error?.message || 'Failed to check session status.' });
+      } finally {
+        setCheckingId('');
+      }
+    },
+    [workspace, openQuickConnect]
+  );
+
+  const openInNewWindow = useCallback((session) => {
+    window.open(`/terminal?attach=${encodeURIComponent(session.id)}`, '_blank');
+  }, []);
+
+  return { connect, openInNewWindow, checkingId, staleInfo, dismissStale: () => setStaleInfo(null), connectTarget, setConnectTarget };
+}
+
+function StaleSessionBanner({ staleInfo, onDismiss }) {
+  if (!staleInfo) return null;
+  return (
+    <div className="flex items-center justify-between gap-3 rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-sm text-amber-700 dark:text-amber-400">
+      <span>{staleInfo.message}</span>
+      <div className="flex shrink-0 items-center gap-3">
+        {staleInfo.reconnect && (
+          <button type="button" onClick={staleInfo.reconnect} className="text-xs font-medium underline">
+            Reconnect
+          </button>
+        )}
+        <button type="button" onClick={onDismiss} className="text-amber-700 hover:text-amber-900 dark:text-amber-400 dark:hover:text-amber-300">
+          <X className="h-3.5 w-3.5" />
+        </button>
+      </div>
+    </div>
+  );
 }
 
 function DetailRow({ label, value }) {
@@ -107,7 +267,7 @@ function SessionCommands({ castText }) {
   );
 }
 
-function SessionDetailDrawer({ sessionId, open, onClose }) {
+function SessionDetailDrawer({ sessionId, open, onClose, currentUser, sessionConnect }) {
   const [session, setSession] = useState(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
@@ -125,7 +285,7 @@ function SessionDetailDrawer({ sessionId, open, onClose }) {
   }, [sessionId, open]);
 
   return (
-    <Modal open={open} onClose={onClose} title="Session Details" size="lg">
+    <Modal open={open} onClose={onClose} title="Session details" size="lg">
       {loading && (
         <div className="space-y-2">
           {Array.from({ length: 8 }).map((_, i) => (
@@ -136,6 +296,38 @@ function SessionDetailDrawer({ sessionId, open, onClose }) {
       {!loading && error && (
         <div className="rounded-md border border-destructive/50 bg-destructive/10 px-3 py-2 text-sm text-destructive">
           {error}
+        </div>
+      )}
+      {!loading && (
+        <div className="mb-3">
+          <StaleSessionBanner staleInfo={sessionConnect.staleInfo} onDismiss={sessionConnect.dismissStale} />
+        </div>
+      )}
+      {!loading && session && isOwnActiveSession(session, currentUser) && (
+        <div className="mb-4 flex items-center justify-between gap-3 rounded-md border border-emerald-500/30 bg-emerald-500/5 px-3 py-2">
+          <span className="text-xs text-emerald-700 dark:text-emerald-400">This is your active session.</span>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              disabled={sessionConnect.checkingId === session.id}
+              onClick={() => sessionConnect.connect(session)}
+              className="inline-flex h-7 items-center gap-1.5 rounded-md bg-primary px-2.5 text-xs font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-60"
+            >
+              {sessionConnect.checkingId === session.id ? (
+                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+              ) : (
+                <TerminalIcon className="h-3.5 w-3.5" />
+              )}
+              Connect
+            </button>
+            <button
+              type="button"
+              onClick={() => sessionConnect.openInNewWindow(session)}
+              className="inline-flex h-7 items-center gap-1 rounded-md border border-border px-2.5 text-xs font-medium text-foreground hover:bg-accent"
+            >
+              <ExternalLink className="h-3.5 w-3.5" /> New window
+            </button>
+          </div>
         </div>
       )}
       {!loading && session && (
@@ -151,25 +343,20 @@ function SessionDetailDrawer({ sessionId, open, onClose }) {
                     <EnvironmentBadge environment={session.server.environment} />
                   )}
                 </span>
+              ) : session.authMethod === 'quick_connect' ? (
+                <SessionTarget session={session} />
               ) : (
                 <span className="italic text-muted-foreground">unknown server</span>
               )
             }
           />
-          <DetailRow
-            label="User"
-            value={
-              session.user?.name ||
-              session.user?.email || (
-                <span className="italic text-muted-foreground">unknown user</span>
-              )
-            }
-          />
+          <DetailRow label="Auth method" value={<AuthMethodBadge authMethod={session.authMethod} />} />
+          <DetailRow label="User" value={<UserCell user={session.user} fallback="Unknown user" />} />
           <DetailRow label="Protocol" value={session.protocol} />
           <DetailRow label="Client IP" value={session.clientIp} />
           <DetailRow label="Principal" value={session.principal} />
-          <DetailRow label="Started At" value={formatDateTime(session.startedAt)} />
-          <DetailRow label="Ended At" value={formatDateTime(session.endedAt)} />
+          <DetailRow label="Started at" value={formatDateTime(session.startedAt)} />
+          <DetailRow label="Ended at" value={formatDateTime(session.endedAt)} />
           <DetailRow
             label="Duration"
             value={session.status === 'ACTIVE' ? 'Active' : durationLabel(session.startedAt, session.endedAt)}
@@ -202,7 +389,7 @@ function SessionDetailDrawer({ sessionId, open, onClose }) {
           )}
           {session.terminatedBy && (
             <DetailRow
-              label="Terminated By"
+              label="Terminated by"
               value={session.terminatedBy?.name || session.terminatedBy?.email || 'Unknown'}
             />
           )}
@@ -213,7 +400,7 @@ function SessionDetailDrawer({ sessionId, open, onClose }) {
           <div className="mb-2 flex items-center justify-between">
             <div className="flex items-center gap-1.5 text-xs font-medium uppercase tracking-wide text-muted-foreground">
               <Film className="h-3.5 w-3.5" />
-              Session Replay
+              Session replay
             </div>
             <button
               onClick={() => downloadRecording(session.id)}
@@ -240,7 +427,7 @@ function SessionDetailDrawer({ sessionId, open, onClose }) {
 }
 
 const TABS = [
-  { key: 'all', label: 'All Sessions' },
+  { key: 'all', label: 'All sessions' },
   { key: 'active', label: 'Active' },
 ];
 
@@ -249,6 +436,7 @@ const SESSION_STATUSES = ['ACTIVE', 'ENDED', 'TERMINATED'];
 function Sessions() {
   const { user } = useAuth();
   const canTerminate = isAtLeast(user, 'admin');
+  const sessionConnect = useSessionConnect();
 
   const [activeTab, setActiveTab] = useState('all');
   const [sessions, setSessions] = useState([]);
@@ -322,7 +510,7 @@ function Sessions() {
       onChange={(v) => { setStatusFilter(v); setPage(1); }}
       options={[
         { value: '', label: 'All statuses' },
-        ...SESSION_STATUSES.map((s) => ({ value: s, label: s })),
+        ...SESSION_STATUSES.map((s) => ({ value: s, label: SESSION_STATUS_LABELS[s] || s })),
       ]}
       placeholder="All statuses"
       searchable={false}
@@ -335,10 +523,11 @@ function Sessions() {
       key: 'server',
       label: 'Server',
       sortable: true,
-      searchAccessor: (r) => serverSearchString(r.server),
+      searchAccessor: (r) =>
+        r.server ? serverSearchString(r.server) : `${r.targetUser || ''} ${r.targetHost || r.host || ''}`,
       render: (r) => (
         <div className="flex items-center gap-2">
-          <ServerName server={r.server} fallback={r.serverId} />
+          <SessionTarget session={r} />
           {r.server?.environment && <EnvironmentBadge environment={r.server.environment} />}
           {(r.recordingKey || r.recordingPath) && (
             <button
@@ -350,6 +539,22 @@ function Sessions() {
               <Film className="h-3.5 w-3.5" />
             </button>
           )}
+          {isOwnActiveSession(r, user) && (
+            <button
+              type="button"
+              disabled={sessionConnect.checkingId === r.id}
+              onClick={(e) => { e.stopPropagation(); sessionConnect.connect(r); }}
+              title="Open in Terminals"
+              className="inline-flex h-6 shrink-0 items-center gap-1 rounded border border-border px-1.5 text-[11px] font-medium text-foreground hover:bg-accent disabled:opacity-60"
+            >
+              {sessionConnect.checkingId === r.id ? (
+                <Loader2 className="h-3 w-3 animate-spin" />
+              ) : (
+                <TerminalIcon className="h-3 w-3" />
+              )}
+              Connect
+            </button>
+          )}
         </div>
       ),
     },
@@ -358,11 +563,7 @@ function Sessions() {
       label: 'User',
       sortable: true,
       searchAccessor: (r) => r.user?.name || r.user?.email || '',
-      render: (r) => (
-        <span className="text-sm text-foreground">
-          {r.user?.name || r.user?.email || r.userId || '-'}
-        </span>
-      ),
+      render: (r) => <UserCell user={r.user} fallback={r.userId || 'Unknown user'} />,
     },
     {
       key: 'startedAt',
@@ -392,6 +593,12 @@ function Sessions() {
       render: (r) => <SessionStatusBadge status={r.status} />,
     },
     {
+      key: 'authMethod',
+      label: 'Auth',
+      hideBelow: 'md',
+      render: (r) => <AuthMethodBadge authMethod={r.authMethod} />,
+    },
+    {
       key: 'clientIp',
       label: 'Client IP',
       hideBelow: 'lg',
@@ -404,7 +611,19 @@ function Sessions() {
       label: '',
       className: 'w-10',
       actions: [
-        { label: 'View Details', icon: Eye, onClick: (r) => openDetail(r.id) },
+        {
+          label: 'Connect',
+          icon: TerminalIcon,
+          hidden: (r) => !isOwnActiveSession(r, user),
+          onClick: (r) => sessionConnect.connect(r),
+        },
+        {
+          label: 'Open in new window',
+          icon: ExternalLink,
+          hidden: (r) => !isOwnActiveSession(r, user),
+          onClick: (r) => sessionConnect.openInNewWindow(r),
+        },
+        { label: 'View details', icon: Eye, onClick: (r) => openDetail(r.id) },
         ...(canTerminate
           ? [{
               label: 'Terminate',
@@ -449,6 +668,8 @@ function Sessions() {
         </div>
       )}
 
+      <StaleSessionBanner staleInfo={sessionConnect.staleInfo} onDismiss={sessionConnect.dismissStale} />
+
       <DataTable
         columns={columns}
         data={sessions}
@@ -469,11 +690,13 @@ function Sessions() {
         sessionId={detailId}
         open={detailOpen}
         onClose={() => { setDetailOpen(false); setDetailId(null); }}
+        currentUser={user}
+        sessionConnect={sessionConnect}
       />
 
       <ConfirmDialog
         open={!!terminateTarget}
-        title="Terminate Session"
+        title="Terminate session"
         message={`Terminate the active session for ${
           terminateTarget?.user?.name || terminateTarget?.user?.email || 'this user'
         } on ${terminateTarget?.server?.hostname || terminateTarget?.server?.name || 'this server'}? The connection will be immediately closed.`}
@@ -482,6 +705,16 @@ function Sessions() {
         onConfirm={handleTerminate}
         onCancel={() => setTerminateTarget(null)}
       />
+
+      {sessionConnect.connectTarget && (
+        <ConnectModal
+          open={!!sessionConnect.connectTarget}
+          onClose={() => sessionConnect.setConnectTarget(null)}
+          server={sessionConnect.connectTarget.server}
+          intent={sessionConnect.connectTarget.intent}
+          currentUser={user}
+        />
+      )}
     </div>
   );
 }

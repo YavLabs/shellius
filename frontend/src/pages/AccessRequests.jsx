@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
+import { useTerminalWorkspace } from '@/context/TerminalWorkspaceContext';
 import { useSearchParams } from 'react-router-dom';
 import {
   Plus,
@@ -16,6 +17,7 @@ import DataTable from '@/components/shared/DataTable';
 import ServerName, { serverSearchString } from '@/components/shared/ServerName';
 import Badge from '@/components/shared/Badge';
 import EnvironmentBadge from '@/components/shared/EnvironmentBadge';
+import UserCell from '@/components/shared/UserCell';
 import Modal from '@/components/shared/Modal';
 import RequestForm from '@/components/access-requests/RequestForm';
 import ApprovalCard from '@/components/access-requests/ApprovalCard';
@@ -30,6 +32,8 @@ import {
 } from '@/services/accessRequestService';
 import { useAuth } from '@/context/AuthContext';
 import { relativeTime, formatDateTime } from '@/utils/time';
+import { ACCESS_REQUEST_STATUS_LABELS } from '@/lib/labels';
+import { PENDING_REVIEWS_EVENT } from '@/hooks/usePendingReviewCount';
 
 const ROLE_RANK = { super_admin: 4, admin: 3, manager: 2, member: 1 };
 function isAtLeast(user, role) {
@@ -155,20 +159,20 @@ function RequestDetailModal({ requestId, open, onClose, onRefresh, currentUser }
             <DetailRow label="Status" value={<StatusBadge status={request.status} />} />
             <DetailRow
               label="Requester"
-              value={request.requester?.name || request.requester?.email || request.requesterId}
+              value={request.requester ? <UserCell user={request.requester} /> : request.requesterId}
             />
             <DetailRow
               label="Reviewer"
-              value={request.reviewer?.name || request.reviewer?.email || request.reviewerId || '-'}
+              value={request.reviewer ? <UserCell user={request.reviewer} /> : request.reviewerId || '-'}
             />
             <DetailRow label="Reason" value={request.reason} />
-            <DetailRow label="Requested Duration" value={formatDuration(request.requestedDuration)} />
-            <DetailRow label="Approved Duration" value={formatDuration(request.approvedDuration)} />
+            <DetailRow label="Requested duration" value={formatDuration(request.requestedDuration)} />
+            <DetailRow label="Approved duration" value={formatDuration(request.approvedDuration)} />
             <DetailRow label="Principal" value={request.requestedPrincipal} />
-            <DetailRow label="Denied Reason" value={request.deniedReason} />
-            <DetailRow label="Expires At" value={formatDateTime(request.expiresAt)} />
+            <DetailRow label="Denied reason" value={request.deniedReason} />
+            <DetailRow label="Expires at" value={formatDateTime(request.expiresAt)} />
             <DetailRow label="Created" value={formatDateTime(request.createdAt)} />
-            <DetailRow label="Reviewed At" value={formatDateTime(request.reviewedAt)} />
+            <DetailRow label="Reviewed at" value={formatDateTime(request.reviewedAt)} />
           </dl>
 
           {isReviewer && request.status === 'PENDING' && (
@@ -187,12 +191,12 @@ function RequestDetailModal({ requestId, open, onClose, onRefresh, currentUser }
                   className="border-destructive/50 text-destructive hover:bg-destructive/10"
                 >
                   <Ban className="mr-2 h-4 w-4" />
-                  Revoke Access
+                  Revoke access
                 </Button>
               ) : (
                 <div className="rounded-md border border-destructive/30 p-3 space-y-2">
                   <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
-                    Revoke Access
+                    Revoke access
                   </p>
                   <textarea
                     className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring"
@@ -220,14 +224,15 @@ function RequestDetailModal({ requestId, open, onClose, onRefresh, currentUser }
 }
 
 const TABS = [
-  { key: 'mine', label: 'My Requests' },
-  { key: 'to-review', label: 'Pending Reviews' },
+  { key: 'mine', label: 'My requests' },
+  { key: 'to-review', label: 'Pending reviews' },
 ];
 
 const STATUSES = ['PENDING', 'APPROVED', 'DENIED', 'EXPIRED', 'REVOKED'];
 
 function AccessRequests() {
   const { user } = useAuth();
+  const { openTab } = useTerminalWorkspace();
   const isAdmin = isAtLeast(user, 'admin');
   const tabs = isAdmin ? [...TABS, { key: 'all', label: 'All' }] : TABS;
 
@@ -248,11 +253,15 @@ function AccessRequests() {
   const [searchParams, setSearchParams] = useSearchParams();
 
   useEffect(() => {
-    if (searchParams.get('new') === '1') {
+    // Supports both the legacy `?new=1` trigger and the documented
+    // `?action=new` deep-link contract (components/command/CommandPalette.jsx,
+    // components/command/QuickActionsMenu.jsx).
+    if (searchParams.get('new') === '1' || searchParams.get('action') === 'new') {
       setInitialServerId(searchParams.get('serverId') || '');
       setFormOpen(true);
       const next = new URLSearchParams(searchParams);
       next.delete('new');
+      next.delete('action');
       next.delete('serverId');
       setSearchParams(next, { replace: true });
     }
@@ -281,6 +290,8 @@ function AccessRequests() {
       const resp = await listAccessRequests({ tab: 'to-review', status: 'PENDING', limit: 1 });
       const count = resp.meta?.total ?? 0;
       setPendingReviewCount(count);
+      // Keep the sidebar badge in step with this tab (hooks/usePendingReviewCount).
+      window.dispatchEvent(new CustomEvent(PENDING_REVIEWS_EVENT, { detail: count }));
     } catch { /* ignore */ }
   }, []);
 
@@ -307,7 +318,22 @@ function AccessRequests() {
   // Quick Connect — open the web terminal for an approved request. The Terminal
   // page detects the protocol (SSH/RDP) from the request and connects.
   const quickConnect = (r) => {
-    window.open(`/terminal?requestId=${r.id}`, '_blank', 'noopener');
+    // RDP stays a standalone window (guacamole canvas); SSH opens a tab in
+    // the Terminals workspace.
+    if (r.protocol === 'RDP') {
+      window.open(`/terminal?requestId=${r.id}`, '_blank', 'noopener');
+      return;
+    }
+    const server = r.server || {};
+    openTab(
+      { requestId: r.id, principal: r.requestedPrincipal || undefined },
+      {
+        label: server.displayName || server.hostname || 'Terminal',
+        env: server.environment,
+        host: server.ipAddress || server.hostname,
+        username: r.requestedPrincipal,
+      }
+    );
   };
 
   const handleRefresh = () => {
@@ -322,7 +348,7 @@ function AccessRequests() {
       onChange={(v) => { setStatusFilter(v); setPage(1); }}
       options={[
         { value: '', label: 'All statuses' },
-        ...STATUSES.map((s) => ({ value: s, label: s })),
+        ...STATUSES.map((s) => ({ value: s, label: ACCESS_REQUEST_STATUS_LABELS[s] || s })),
       ]}
       placeholder="All statuses"
       searchable={false}
@@ -349,11 +375,7 @@ function AccessRequests() {
           label: 'Requester',
           sortable: true,
           searchAccessor: (r) => r.requester?.name || r.requester?.email || '',
-          render: (r) => (
-            <span className="text-sm text-foreground">
-              {r.requester?.name || r.requester?.email || r.requesterId}
-            </span>
-          ),
+          render: (r) => <UserCell user={r.requester} fallback={r.requesterId || 'Unknown user'} />,
         }]
       : []),
     ...(activeTab === 'mine'
@@ -412,7 +434,7 @@ function AccessRequests() {
           onClick: (r) => quickConnect(r),
         },
         {
-          label: 'View Details',
+          label: 'View details',
           icon: Eye,
           onClick: (r) => openDetail(r.id),
         },
@@ -440,7 +462,7 @@ function AccessRequests() {
           </Button>
           <Button onClick={() => setFormOpen(true)}>
             <Plus className="mr-2 h-4 w-4" />
-            New Request
+            New request
           </Button>
         </div>
       </PageHeader>

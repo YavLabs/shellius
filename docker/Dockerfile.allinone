@@ -1,0 +1,114 @@
+# syntax=docker/dockerfile:1.7
+# =============================================================================
+# Shellius all-in-one image: web UI + API + nginx in one container.
+#
+#   docker build -f docker/Dockerfile.allinone -t shellius:local .
+#   docker run -p 8080:8080 --env-file .env shellius:local
+#
+# Still external (as with the two-image setup): PostgreSQL, Redis, and
+# optionally S3/MinIO for recordings and guacd for RDP. See
+# docker-compose.allinone.yml and docs/DEPLOYMENT.md.
+#
+# Layout: nginx :8080 serves the built SPA from disk and proxies /api (REST +
+# terminal WebSockets) to Node on 127.0.0.1:3001. tini is PID 1;
+# docker/start-allinone.sh runs migrations and the seed, then supervises both
+# processes. Everything runs as the unprivileged `app` user.
+#
+# Size: production dependencies only (plus the Prisma CLI for `migrate
+# deploy`); npm/yarn/corepack are removed from the runtime layer; source
+# maps, type declarations and docs are stripped from node_modules; only
+# `ssh-keygen` is added (the CA signs certificates with it).
+# =============================================================================
+
+ARG NODE_IMAGE=node:20-alpine
+
+# ── 1. Web UI build ──────────────────────────────────────────────────────────
+FROM ${NODE_IMAGE} AS web
+ARG GIT_SHA=unknown
+ENV VITE_GIT_SHA=${GIT_SHA}
+WORKDIR /web
+COPY frontend/package.json frontend/package-lock.json ./
+RUN --mount=type=cache,target=/root/.npm npm ci --no-audit --no-fund
+COPY frontend/ ./
+RUN npm run build
+
+# ── 2. API production dependencies ───────────────────────────────────────────
+FROM ${NODE_IMAGE} AS api-deps
+WORKDIR /app
+COPY backend/package.json backend/package-lock.json ./
+# Prisma CLI is a devDependency, but `migrate deploy` runs at every boot, so
+# add exactly the locked version on top of the production install.
+RUN --mount=type=cache,target=/root/.npm \
+    npm ci --omit=dev --no-audit --no-fund \
+ && PRISMA_VERSION="$(node -p "require('./package-lock.json').packages['node_modules/prisma'].version")" \
+ && npm install --no-save --no-package-lock --omit=dev --no-audit --no-fund "prisma@${PRISMA_VERSION}"
+COPY backend/prisma ./prisma
+RUN node node_modules/prisma/build/index.js generate \
+ # Trim what Node never loads at runtime.
+ && find node_modules -type f \( -name '*.map' -o -name '*.d.ts' -o -name '*.d.mts' -o -name '*.d.cts' \
+      -o -name '*.md' -o -name '*.markdown' -o -name '*.tsbuildinfo' -o -name '.eslintrc*' -o -name '.prettierrc*' \
+      -o -name 'tsconfig*.json' -o -name '*.flow' \) -delete \
+ && find node_modules -type d \( -name '__tests__' -o -name 'test' -o -name 'tests' -o -name 'docs' -o -name 'example' -o -name 'examples' \) \
+      -not -path '*/@prisma/*' -not -path '*/prisma/*' -prune -exec rm -rf {} + \
+ # Prisma: the app uses the native Postgres query engine (.prisma/client) and
+ # `migrate deploy` uses the schema engine. Drop the WebAssembly engines for
+ # other databases / edge runtimes and the two duplicate native query engines
+ # the CLI packages carry.
+ && cd node_modules \
+ && find @prisma/client/runtime prisma/build -type f \( -name 'query_engine_bg.*' -o -name 'query_compiler_bg.*' \) \
+      -not -name '*.postgresql.*' -delete \
+ && rm -f .prisma/client/query_engine_bg.wasm .prisma/client/query_engine_bg.js \
+          prisma/libquery_engine-* @prisma/engines/libquery_engine-*
+
+# ── 3. Runtime ───────────────────────────────────────────────────────────────
+FROM ${NODE_IMAGE}
+
+ARG APP_VERSION=0.0.0-dev
+ARG GIT_SHA=unknown
+LABEL org.opencontainers.image.title="shellius" \
+      org.opencontainers.image.description="Shellius all-in-one: web UI, API and nginx" \
+      org.opencontainers.image.version="${APP_VERSION}" \
+      org.opencontainers.image.revision="${GIT_SHA}" \
+      org.opencontainers.image.source="https://github.com/YavLabs/shellius"
+
+# nginx (serves UI + proxies API), tini (PID 1, signal forwarding, zombie
+# reaping), ssh-keygen (SSH CA). `apk upgrade` pulls OS security fixes
+# (e.g. OpenSSL) released after the base image was built. Drop
+# npm/yarn/corepack: nothing runs them here.
+RUN apk upgrade --no-cache \
+ && apk add --no-cache nginx tini openssh-keygen \
+ && rm -rf /usr/local/lib/node_modules/npm /usr/local/lib/node_modules/corepack \
+           /usr/local/bin/npm /usr/local/bin/npx /usr/local/bin/corepack /opt/yarn* \
+           /usr/local/bin/yarn /usr/local/bin/yarnpkg \
+ && addgroup -g 1001 -S app && adduser -S -D -H -u 1001 -G app app \
+ && mkdir -p /data/recordings /tmp/nginx /var/lib/nginx/logs /run/nginx \
+ && chown -R app:app /data /tmp/nginx /var/lib/nginx /run/nginx \
+ && ln -sf /dev/stdout /var/lib/nginx/logs/access.log \
+ && ln -sf /dev/stderr /var/lib/nginx/logs/error.log
+
+ENV NODE_ENV=production \
+    PORT=3001
+
+WORKDIR /app
+COPY --from=api-deps --chown=app:app /app/node_modules ./node_modules
+COPY --chown=app:app backend/package.json ./package.json
+COPY --chown=app:app backend/prisma ./prisma
+COPY --chown=app:app backend/src ./src
+COPY --chown=app:app backend/scripts/reencrypt.mjs ./scripts/reencrypt.mjs
+# Served by the API at /api/cli/install.sh and /api/cli/bin/<name>
+# (populate tui-bin/ with scripts/build-tui-binaries.sh before building).
+COPY --chown=app:app scripts/install-tui.sh ./scripts/install-tui.sh
+COPY --chown=app:app tui-bin/ ./tui-bin/
+
+COPY --from=web /web/dist /usr/share/shellius/web
+COPY docker/nginx-allinone.conf /etc/nginx/nginx.conf
+COPY --chmod=755 docker/start-allinone.sh /usr/local/bin/shellius-start
+
+USER app
+EXPOSE 8080
+
+HEALTHCHECK --interval=30s --timeout=5s --start-period=60s --retries=3 \
+  CMD wget -q -O /dev/null http://127.0.0.1:8080/api/health || exit 1
+
+ENTRYPOINT ["/sbin/tini", "--"]
+CMD ["shellius-start"]

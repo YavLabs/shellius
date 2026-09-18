@@ -1,14 +1,19 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
+import { isSafeImageUrl } from '@/utils/safeUrl';
 
 /**
  * Avatar — circular user avatar. Renders the user's profile picture
- * (avatarUrl, e.g. from Google SSO) when present, otherwise initials.
+ * (avatarUrl — SSO picture or a custom uploaded `data:` URL) when present,
+ * with a graceful fallback to initials if the image is missing or fails to
+ * load. Consistent sizing + a subtle ring everywhere it's used.
  *
  * Props:
- *   name?   {string}  display name (used for initials + alt)
- *   email?  {string}  fallback for initials/alt
- *   src?    {string}  image URL (avatarUrl)
- *   size?   'xs'|'sm'|'md'|'lg'|'xl'
+ *   name?      {string}  display name (used for initials + alt)
+ *   email?     {string}  fallback for initials/alt
+ *   src?       {string}  image URL (avatarUrl) — `avatarUrl` also accepted
+ *   avatarUrl? {string}  alias for `src`
+ *   size?      'xs'|'sm'|'md'|'lg'|'xl'
+ *   ring?      {boolean} show a subtle ring (default true)
  *   className?
  */
 const SIZES = {
@@ -27,18 +32,32 @@ export function initialsOf(name, email) {
   return s.slice(0, 2).toUpperCase();
 }
 
-export default function Avatar({ name, email, src, size = 'md', className = '' }) {
+export default function Avatar({ name, email, src, avatarUrl, size = 'md', ring = true, className = '' }) {
+  const rawSrc = src || avatarUrl;
+  // Only ever render https:// or raster data:image/* URLs — guards against
+  // a malicious SSO `picture` claim or imported record smuggling a
+  // javascript:/data:text/html URL into an <img src>.
+  const imgSrc = isSafeImageUrl(rawSrc) ? rawSrc : null;
   const [errored, setErrored] = useState(false);
-  const showImg = src && !errored;
+
+  // Reset the error flag if the image source changes (e.g. after a profile
+  // photo upload) so a previously-broken avatar can recover.
+  useEffect(() => {
+    setErrored(false);
+  }, [imgSrc]);
+
+  const showImg = imgSrc && !errored;
 
   return (
     <span
-      className={`inline-flex shrink-0 select-none items-center justify-center overflow-hidden rounded-full bg-primary/10 font-semibold uppercase text-primary ${SIZES[size] || SIZES.md} ${className}`}
+      className={`inline-flex shrink-0 select-none items-center justify-center overflow-hidden rounded-full bg-primary/10 font-semibold uppercase text-primary ${
+        ring ? 'ring-1 ring-border' : ''
+      } ${SIZES[size] || SIZES.md} ${className}`}
       title={name || email || undefined}
     >
       {showImg ? (
         <img
-          src={src}
+          src={imgSrc}
           alt={name || email || 'avatar'}
           className="h-full w-full object-cover"
           // Google profile images can 403 when a referrer is sent.

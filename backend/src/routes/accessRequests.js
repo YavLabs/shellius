@@ -203,6 +203,31 @@ router.get(
 );
 
 // ---------------------------------------------------------------------------
+// GET /api/access-requests/intents?serverIds=a,b,c — bulk sibling of /intent
+// MUST be registered BEFORE /:id. Max 50 ids to bound query cost.
+// ---------------------------------------------------------------------------
+
+router.get(
+  '/intents',
+  asyncHandler(async (req, res) => {
+    const raw = typeof req.query.serverIds === 'string' ? req.query.serverIds : '';
+    const serverIds = raw
+      .split(',')
+      .map((s) => s.trim())
+      .filter(Boolean);
+    if (serverIds.length === 0) throw new ApiError(400, 'serverIds query parameter is required (comma-separated)');
+    if (serverIds.length > 50) throw new ApiError(400, 'serverIds accepts at most 50 ids per request');
+
+    const intents = await accessRequestService.getAccessIntentsBulk({
+      orgId: req.orgId,
+      userId: req.user.userId,
+      serverIds,
+    });
+    res.json({ success: true, data: { intents } });
+  })
+);
+
+// ---------------------------------------------------------------------------
 // POST /api/access-requests/break-glass — admin-only emergency access
 // Registered before /:id/* routes to avoid the "break-glass" path being
 // interpreted as an id lookup.
@@ -241,6 +266,7 @@ router.get(
   asyncHandler(async (req, res) => {
     const accessRequest = await accessRequestService.getById({
       requestId: req.params.id,
+      orgId: req.orgId,
       callerId: req.user.userId,
       callerRole: req.user.role,
     });
@@ -311,11 +337,25 @@ router.post(
     // set opens it up.
     const ar = await prisma.accessRequest.findFirst({
       where: { id: req.params.id, orgId: req.orgId },
-      include: { requester: { select: { id: true, role: true } } },
+      include: {
+        requester: { select: { id: true, role: true } },
+        server: { select: { authMode: true } },
+      },
     });
     if (!ar) throw new ApiError(404, 'Access request not found');
     if (ar.requesterId !== req.user.userId) {
       throw new ApiError(403, 'Only the requester may download credentials');
+    }
+
+    // Credential-mode (Keystore) servers never expose their stored secret —
+    // there is no ephemeral cert to hand out. Refuse with a plain 403 so
+    // clients (including the TUI) fall back to the web terminal, exactly as
+    // they already do for policy-disabled key download.
+    if (ar.server?.authMode === 'credential') {
+      throw new ApiError(
+        403,
+        'This server uses a stored identity — SSH key download is not available. Use the web terminal instead.'
+      );
     }
 
     // Find any ALLOW policy in the org that permits key download.
@@ -397,6 +437,7 @@ router.post(
     // Verify caller is the requester and request is accessible
     const accessRequest = await accessRequestService.getById({
       requestId: id,
+      orgId: req.orgId,
       callerId: req.user.userId,
       callerRole: req.user.role,
     });
@@ -428,6 +469,7 @@ router.post(
     // Verify caller is the requester and request is approved (delegate to getById)
     const accessRequest = await accessRequestService.getById({
       requestId: id,
+      orgId: req.orgId,
       callerId: req.user.userId,
       callerRole: req.user.role,
     });

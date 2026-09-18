@@ -3,28 +3,16 @@ import { FlaskConical } from 'lucide-react';
 import Modal from '@/components/shared/Modal';
 import SearchableSelect from '@/components/ui/SearchableSelect';
 import Avatar from '@/components/ui/Avatar';
+import { Badge } from '@/components/ui/badge';
 import { listUsers } from '@/services/userService';
 import { listServers } from '@/services/serverService';
 import { evaluatePolicy } from '@/services/policyService';
 
-// Outcome badge colors
+// Outcome badge — allow / deny / requires approval
 function OutcomeBadge({ outcome }) {
-  const styles = {
-    allow: 'bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 border border-emerald-500/30',
-    deny: 'bg-destructive/10 text-destructive border border-destructive/30',
-    requires_approval: 'bg-amber-500/15 text-amber-700 dark:text-amber-300 border border-amber-500/30',
-  };
-  const labels = {
-    allow: 'Allow',
-    deny: 'Deny',
-    requires_approval: 'Requires Approval',
-  };
-  const cls = styles[outcome] || 'bg-muted text-muted-foreground border border-border';
-  return (
-    <span className={`inline-flex items-center rounded-full px-3 py-1 text-sm font-semibold ${cls}`}>
-      {labels[outcome] || outcome || '—'}
-    </span>
-  );
+  const tones = { allow: 'success', deny: 'danger', requires_approval: 'warning' };
+  const labels = { allow: 'Allow', deny: 'Deny', requires_approval: 'Requires approval' };
+  return <Badge tone={tones[outcome] || 'neutral'}>{labels[outcome] || outcome || '—'}</Badge>;
 }
 
 // Phase 18D: derive a canonical outcome string from whatever shape the
@@ -91,7 +79,7 @@ function PolicyEvaluator({ open, onClose, policy }) {
   };
 
   return (
-    <Modal open={open} onClose={onClose} title="Policy Evaluator" size="md">
+    <Modal open={open} onClose={onClose} title="Policy evaluator" size="md">
       <div className="space-y-4">
         <p className="text-sm text-muted-foreground">
           Preview how this policy evaluates for a given user and server.
@@ -181,7 +169,7 @@ function PolicyEvaluator({ open, onClose, policy }) {
             {(result.policyName || result.policyId) && (
               <div>
                 <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground mb-1">
-                  Matched Policy
+                  Matched policy
                 </p>
                 <span className="text-xs font-medium text-foreground">
                   {result.policyName || 'Unnamed policy'}

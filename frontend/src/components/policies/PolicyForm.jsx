@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
-import { X, Plus, FlaskConical, Info, CheckCircle2, XCircle, Zap, Siren, Key, Check } from 'lucide-react';
+import { Badge } from '@/components/ui/badge';
+import { Plus, FlaskConical, Info, CheckCircle2, XCircle, Zap, Siren, Key, Check } from 'lucide-react';
 import Modal from '@/components/shared/Modal';
 import EnvironmentBadge from '@/components/shared/EnvironmentBadge';
 import { listCustomers } from '@/services/customerService';
@@ -135,16 +136,9 @@ const errorCls = 'text-xs text-destructive mt-1';
 
 function Chip({ label, onRemove }) {
   return (
-    <span className="inline-flex items-center gap-1 rounded-full bg-accent px-2.5 py-0.5 text-xs font-medium text-foreground">
+    <Badge onRemove={onRemove} removeLabel={`Remove ${label}`}>
       {label}
-      <button
-        type="button"
-        onClick={onRemove}
-        className="ml-0.5 text-muted-foreground hover:text-foreground"
-      >
-        <X className="h-3 w-3" />
-      </button>
-    </span>
+    </Badge>
   );
 }
 
@@ -153,7 +147,7 @@ function Step1({ form, onChange, errors }) {
   return (
     <div className="space-y-4">
       <div>
-        <label className={labelCls}>Policy Name <span className="text-destructive">*</span></label>
+        <label className={labelCls}>Policy name <span className="text-destructive">*</span></label>
         <input
           className={inputCls}
           value={form.name}
@@ -191,7 +185,7 @@ function Step1({ form, onChange, errors }) {
                   eff === 'ALLOW' ? 'text-emerald-600 dark:text-emerald-400' : 'text-red-600 dark:text-red-400',
                 ].join(' ')}
               >
-                {eff}
+                {eff === 'ALLOW' ? 'Allow' : 'Deny'}
               </span>
             </label>
           ))}
@@ -325,7 +319,7 @@ function Step3({ form, onChange, errors }) {
   return (
     <div className="space-y-5">
       <div>
-        <label className={labelCls}>Customer Scope</label>
+        <label className={labelCls}>Customer scope</label>
         <SearchableSelect
           value={form.customerId || ''}
           onChange={(v) => {
@@ -339,7 +333,7 @@ function Step3({ form, onChange, errors }) {
       </div>
 
       <div>
-        <label className={labelCls}>Target Environments</label>
+        <label className={labelCls}>Target environments</label>
         <div className="flex flex-wrap gap-2 mt-1">
           {ENVIRONMENTS.map((env) => {
             const active = (form.targetEnvironments || []).includes(env);
@@ -364,7 +358,7 @@ function Step3({ form, onChange, errors }) {
       </div>
 
       <div>
-        <label className={labelCls}>Target Servers</label>
+        <label className={labelCls}>Target servers</label>
         <input
           className={inputCls}
           placeholder="Search servers..."
@@ -406,7 +400,7 @@ function Step3({ form, onChange, errors }) {
       </div>
 
       <div>
-        <label className={labelCls}>Allowed Principals <span className="text-destructive">*</span></label>
+        <label className={labelCls}>Allowed principals <span className="text-destructive">*</span></label>
         <div className="flex gap-2">
           <input
             className={inputCls}
@@ -439,7 +433,7 @@ function Step3({ form, onChange, errors }) {
       </div>
 
       <div>
-        <label className={labelCls}>Target Labels (key/value)</label>
+        <label className={labelCls}>Target labels (key/value)</label>
         <div className="flex gap-2">
           <input
             className={inputCls}
@@ -505,7 +499,7 @@ function Step4({ form, onChange, errors }) {
   return (
     <div className="space-y-5">
       <div>
-        <label className={labelCls}>Max Session Duration (minutes) <span className="text-destructive">*</span></label>
+        <label className={labelCls}>Max session duration (minutes) <span className="text-destructive">*</span></label>
         <input
           className={inputCls}
           type="number"

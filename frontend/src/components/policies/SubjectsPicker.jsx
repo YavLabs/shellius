@@ -1,4 +1,5 @@
 /**
+import { Badge } from '@/components/ui/badge';
  * SubjectsPicker — unified searchable picker for Users, Groups, and Roles
  * in the Policy form (Step 2 — "Who does this apply to?").
  *
@@ -29,7 +30,7 @@ const WINDOW_SIZE = 50;
 const ROLES = [
   {
     id: 'super_admin',
-    label: 'Super Admin',
+    label: 'Super admin',
     description: 'Full access, bypasses policy evaluation',
   },
   {
@@ -92,27 +93,14 @@ function SkeletonRow() {
 // Chip for a selected subject — colour-coded by type.
 function SubjectChip({ subject, onRemove }) {
   const { subjectType, subjectId, _label } = subject;
-  const cls =
-    subjectType === 'ROLE'
-      ? 'bg-violet-500/15 text-violet-700 dark:text-violet-300 border-violet-500/30'
-      : subjectType === 'GROUP'
-      ? 'bg-blue-500/12 text-blue-700 dark:text-blue-300 border-blue-500/25'
-      : 'bg-primary/12 text-primary border-primary/25';
+  // Same tones as role/group/user badges elsewhere (lib/badgeTones).
+  const tone = subjectType === 'ROLE' ? 'accent' : subjectType === 'GROUP' ? 'info' : 'neutral';
+  const label = _label || subjectId;
 
   return (
-    <span
-      className={`inline-flex items-center gap-1 rounded-full border px-2.5 py-0.5 text-xs font-medium ${cls}`}
-    >
-      <span className="max-w-[120px] truncate">{_label || subjectId}</span>
-      <button
-        type="button"
-        onClick={() => onRemove(subjectType, subjectId)}
-        className="ml-0.5 opacity-60 hover:opacity-100 transition-opacity"
-        aria-label={`Remove ${_label || subjectId}`}
-      >
-        <X className="h-3 w-3" />
-      </button>
-    </span>
+    <Badge tone={tone} onRemove={() => onRemove(subjectType, subjectId)} removeLabel={`Remove ${label}`}>
+      <span className="max-w-[120px] truncate">{label}</span>
+    </Badge>
   );
 }
 

@@ -2,13 +2,22 @@ import crypto from 'crypto';
 import prisma from '../config/db.js';
 import config from '../config/index.js';
 import ApiError from '../utils/ApiError.js';
-import { generateAccessToken, generateRefreshToken, hashToken } from '../utils/jwt.js';
+import * as authService from './authService.js';
 
 const SAFE_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
 const DEVICE_TTL_MS = 15 * 60 * 1000;
 const DEFAULT_INTERVAL = 5;
-const REFRESH_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 const FRONTEND_URL = config.frontendUrl;
+
+// deviceCode is a bearer-style credential (whoever holds it can complete the
+// login), so it is stored hashed — the raw UUID is only ever returned to the
+// polling client, never persisted. Lookups hash the incoming value and match
+// against the stored hash. SHA-256 (not bcrypt) is appropriate here: the
+// input is a high-entropy random UUID, not a low-entropy human secret, so
+// there's nothing for an offline dictionary attack to exploit.
+function hashDeviceCode(deviceCode) {
+  return crypto.createHash('sha256').update(deviceCode).digest('hex');
+}
 
 export function generateUserCode() {
   const bytes = crypto.randomBytes(8);
@@ -41,7 +50,7 @@ export async function createDeviceRequest(orgSlug, clientId, scope) {
 
   await prisma.deviceAuthRequest.create({
     data: {
-      deviceCode,
+      deviceCode: hashDeviceCode(deviceCode),
       userCode,
       clientId: clientId || 'shellius-tui',
       scope: scope || '',
@@ -63,7 +72,9 @@ export async function createDeviceRequest(orgSlug, clientId, scope) {
 }
 
 export async function pollDeviceRequest(deviceCode, ipAddress, userAgent) {
-  const req = await prisma.deviceAuthRequest.findUnique({ where: { deviceCode } });
+  const req = await prisma.deviceAuthRequest.findUnique({
+    where: { deviceCode: hashDeviceCode(deviceCode) },
+  });
   if (!req) throw new ApiError(400, 'invalid_grant');
 
   const now = new Date();
@@ -97,33 +108,16 @@ export async function pollDeviceRequest(deviceCode, ipAddress, userAgent) {
     const user = await prisma.user.findUnique({ where: { id: req.userId } });
     if (!user || user.status !== 'active') throw new ApiError(403, 'access_denied');
 
-    const accessToken = generateAccessToken({
-      userId: user.id,
-      orgId: user.orgId,
-      role: user.role,
-      email: user.email,
-    });
-    const refreshToken = generateRefreshToken({
-      userId: user.id,
-      tokenId: crypto.randomUUID(),
-    });
-
-    await prisma.refreshToken.create({
-      data: {
-        userId: user.id,
-        tokenHash: hashToken(refreshToken),
-        clientType: 'tui',
-        ipAddress,
-        userAgent,
-        expiresAt: new Date(Date.now() + REFRESH_TTL_MS),
-      },
-    });
+    // Device-auth issued tokens get their own refresh-token family, same as
+    // password/SSO/MFA logins, so they participate in rotation/reuse
+    // detection and show up in GET /api/auth/sessions.
+    const session = await authService.issueSession(user, ipAddress, userAgent, 'tui');
 
     await prisma.deviceAuthRequest.delete({ where: { id: req.id } });
 
     return {
-      accessToken,
-      refreshToken,
+      accessToken: session.accessToken,
+      refreshToken: session.refreshToken,
       user: {
         id: user.id,
         email: user.email,

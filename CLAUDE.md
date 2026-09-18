@@ -23,8 +23,8 @@ Shellius is a centralized SSH and RDP access management platform with short-live
 
 ## Architecture Principles
 
-1. **Zero static keys** — All SSH access uses short-lived certificates signed by the Shellius CA. No authorized_keys management on hosts.
-2. **Prod always requires approval** — Hard-coded invariant. `server.environment === 'prod'` triggers manager approval flow regardless of policy configuration.
+1. **Zero static keys (default)** — SSH access to bootstrapped hosts uses short-lived certificates signed by the Shellius CA. The **Keystore** (stored identities/keys for non-bootstrapped hosts, key deployment, Quick Connect) is the one sanctioned exception — see `docs/keystore-and-quick-connect.md`. Keystore secrets are encrypted at rest, never returned by list/get APIs, and only decrypted at connect/deploy time or on an audited admin export.
+2. **Prod requires approval below the org's bypass role** — `server.environment === 'prod'` requires manager approval for every requester UNLESS their role is at or above `Organization.settings.access.prodApprovalBypassMinRole` (`'admin'` default, or `'super_admin'` / `'none'`). A policy's `autoApprove` flag can never grant an unreviewed prod session to a requester below that role. Bypassed requests are still created (as `APPROVED`, reason required), audited (`access_request.prod_bypass`), and the server's approvers are notified after the fact — see `policyService.evaluate()` / `accessRequestService.submit()`.
 3. **Real-time access validation** — Target hosts run `check-principals` which calls the Shellius API on every SSH connection to verify the cert is still valid and access hasn't been revoked.
 4. **Multi-tenant via org_id scoping** — Every tenant-scoped table has `org_id`. All queries are scoped. Prisma middleware enforces this.
 5. **Audit everything** — All read/write/access/revoke actions logged with actor, target, timestamp, IP. AuditLog is immutable (no UPDATE/DELETE).
@@ -114,7 +114,9 @@ shellius/
 - **AccessPolicy** — Rules defining who can access which servers, with what principals, for how long
 - **AccessRequest** — Approval workflow record (pending → approved/denied → expired). Required for prod servers.
 - **Certificate** — Short-lived SSH cert signed by the CA, bound to a user and server with expiry
-- **Session** — An active or historical SSH/RDP connection with optional recording
+- **Session** — An active or historical SSH/RDP connection with optional recording (`serverId` is null for Quick Connect sessions)
+- **Credential ("Identity")** — Keystore entry: username + password and/or stored SshKey, reusable across servers with `authMode: credential`
+- **SshKey** — Keystore key pair (generated or imported); can be deployed/rotated across hosts via **KeyDeployment**
 - **AuditLog** — Immutable record of every action in the system
 
 ## Roles
@@ -129,14 +131,14 @@ shellius/
 - RDP passwords MUST never be exposed to the frontend — injected via Guacamole only
 - check-principals on hosts validates every connection in real-time against the Shellius API
 - Certificates auto-expire. Access requests auto-expire. No permanent access.
-- Production servers ALWAYS require manager approval — this is not configurable
+- Production servers require manager approval for every requester below the org's approval-bypass role (default: `admin`); the bypass role is admin-configurable (`GET`/`PUT /api/org/access-settings`, super_admin only) but never lets a policy silently grant unreviewed prod access to a lower role
 - All audit log entries are immutable — no UPDATE or DELETE operations
 
 ## Important Warnings
 
 - NEVER write TypeScript files (.ts, .tsx) — this project is JavaScript only
 - NEVER log plaintext secrets, private keys, passwords, or certificate contents
-- NEVER store SSH private keys server-side after returning them to the user
+- NEVER store SSH private keys server-side after returning them to the user (Keystore keys are the documented exception: encrypted, admin-managed, never in list/get responses)
 - NEVER skip org_id scoping on database queries
-- NEVER allow direct production server access without approval flow
+- NEVER allow direct production server access without approval flow for a requester below the org's `prodApprovalBypassMinRole` (applies to certificate AND credential servers; Quick Connect refuses hosts matching a saved prod server). Requesters at/above the bypass role still get an audited, notified `APPROVED` request — never a silent, unaudited connection.
 - NEVER hard-delete cloud-terminated servers — mark as terminated to preserve audit trail

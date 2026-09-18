@@ -6,7 +6,7 @@
  */
 
 import prisma from '../config/db.js';
-import logger from '../utils/logger.js';
+import logger, { redactValue } from '../utils/logger.js';
 
 // ---------------------------------------------------------------------------
 // Action taxonomy
@@ -15,9 +15,15 @@ import logger from '../utils/logger.js';
 export const ACTIONS = {
   auth: {
     login: 'auth.login',
+    login_failed: 'auth.login_failed',
+    account_locked: 'auth.account_locked',
     logout: 'auth.logout',
     sso: 'auth.sso',
+    sso_login: 'auth.sso_login',
+    sso_failed: 'auth.sso_failed',
     device_approve: 'auth.device_approve',
+    refresh_reuse: 'auth.refresh_reuse',
+    mfa_failed: 'auth.mfa_failed',
   },
   user: {
     create: 'user.create',
@@ -51,6 +57,10 @@ export const ACTIONS = {
     deny: 'access_request.deny',
     expire: 'access_request.expire',
     revoke: 'access_request.revoke',
+    // Immediate prod APPROVED because the requester's role is at/above the
+    // org's Organization.settings.access.prodApprovalBypassMinRole — see
+    // policyService.evaluate() / accessRequestService.submit().
+    prod_bypass: 'access_request.prod_bypass',
   },
   cert: {
     issue: 'cert.issue',
@@ -60,6 +70,11 @@ export const ACTIONS = {
     start: 'session.start',
     end: 'session.end',
     terminate: 'session.terminate',
+    attach: 'session.attach',
+    detach: 'session.detach',
+    duplicate: 'session.duplicate',
+    rename: 'session.rename',
+    close: 'session.close',
   },
   ca: {
     generate: 'ca.generate',
@@ -104,6 +119,10 @@ export async function log({
     const mergedMeta = userAgent
       ? { ...(metadata ?? {}), userAgent }
       : (metadata ?? null);
+    // AuditLog is immutable (no UPDATE/DELETE) and often surfaced directly
+    // in the UI/export — never let a caller accidentally persist a secret
+    // (password, token, private key, etc.) via metadata.
+    const safeMeta = mergedMeta ? redactValue(mergedMeta) : mergedMeta;
 
     await prisma.auditLog.create({
       data: {
@@ -112,7 +131,7 @@ export async function log({
         action,
         resourceType,
         resourceId: resourceId ?? null,
-        metadata: mergedMeta,
+        metadata: safeMeta,
         ipAddress: ipAddress ?? null,
       },
     });
@@ -285,7 +304,7 @@ async function enrichAuditItems(items, orgId) {
       prisma.user
         .findMany({
           where: { id: { in: [...byType.get('User')] }, orgId },
-          select: { id: true, name: true, email: true },
+          select: { id: true, name: true, email: true, avatarUrl: true },
         })
         .then((rows) => {
           lookups.User = new Map(rows.map((r) => [r.id, r]));
@@ -392,15 +411,19 @@ async function enrichAuditItems(items, orgId) {
   return items.map((it) => {
     const out = { ...it };
 
-    // Actor display name
+    // Actor display name + lean user DTO ({ id, name, email, avatarUrl }) so
+    // the UI can render a consistent user cell (see docs/auth-hardening.md
+    // Revision 2 "Avatars").
     if (it.actorId && lookups.User) {
       const u = lookups.User.get(it.actorId);
       if (u) {
         out.actorName = u.name || (u.email || '').split('@')[0] || 'Unknown';
         out.actorEmail = u.email;
+        out.actor = { id: u.id, name: u.name, email: u.email, avatarUrl: u.avatarUrl };
       }
     }
     if (!out.actorName) out.actorName = it.actorId ? 'Unknown user' : 'System';
+    if (!out.actor) out.actor = null;
 
     // Resource label + link — links MUST point at routes that actually
     // exist in the frontend. Detail pages exist only for Server, Group,

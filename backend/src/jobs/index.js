@@ -16,6 +16,10 @@ import {
   registerSessionCleanupJob,
   startSessionCleanupWorker,
 } from './sessionCleanup.js';
+import {
+  registerQuickConnectHistoryPruneJob,
+  startQuickConnectHistoryPruneWorker,
+} from './quickConnectHistoryPrune.js';
 import { seedDefaultPolicies } from './seedDefaultPolicies.js';
 import {
   startServerOnboardingWorker,
@@ -23,6 +27,7 @@ import {
   reconcileStuckImports,
   startOnboardingReaperWorker,
 } from './serverOnboarding.js';
+import { startKeyDeploymentWorker, reapStaleDeployments } from './keyDeployment.js';
 import logger from '../utils/logger.js';
 
 export async function startAllJobs() {
@@ -46,12 +51,19 @@ export async function startAllJobs() {
   await registerSessionCleanupJob();
   startSessionCleanupWorker();
 
+  await registerQuickConnectHistoryPruneJob();
+  startQuickConnectHistoryPruneWorker();
+
   // Bulk-import server onboarding (parallel) + ephemeral-credential TTL reaper.
   startServerOnboardingWorker();
   await registerOnboardingReaper();
   startOnboardingReaperWorker();
   // Unstick any import job left in 'onboarding' from before this fix.
   reconcileStuckImports().catch(() => {});
+
+  // Keystore key deployments (push/remove/rotate authorized_keys entries).
+  startKeyDeploymentWorker();
+  reapStaleDeployments().catch(() => {});
 
   // Idempotent one-shot: seed default policies for any org with zero rows.
   // Runs in the background so a slow DB doesn't block boot.

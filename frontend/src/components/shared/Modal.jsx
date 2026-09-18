@@ -30,7 +30,11 @@ function Modal({ open, onClose, title, children, footer, size = 'md' }) {
   useEffect(() => {
     if (!open) return;
     const onKey = (e) => {
-      if (e.key === 'Escape') onClose?.();
+      // Radix primitives (Popover, Select, Dialog) nested inside this modal
+      // call preventDefault() on their own Escape handling when they dismiss
+      // themselves, specifically so an ancestor like this doesn't also close.
+      // Respect that signal instead of closing both layers on one Escape.
+      if (e.key === 'Escape' && !e.defaultPrevented) onClose?.();
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
@@ -43,6 +47,7 @@ function Modal({ open, onClose, title, children, footer, size = 'md' }) {
     sm: 'max-w-sm',
     md: 'max-w-lg',
     lg: 'max-w-2xl',
+    xl: 'max-w-3xl',
   };
 
   const modal = (

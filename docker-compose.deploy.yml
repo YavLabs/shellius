@@ -42,6 +42,9 @@ services:
     build:
       context: .
       dockerfile: docker/Dockerfile.backend
+      args:
+        APP_VERSION: ${APP_VERSION:-dev}
+        GIT_SHA: ${GIT_SHA:-local}
     image: shellius-backend:local
     container_name: shellius-api
     restart: unless-stopped
@@ -72,6 +75,9 @@ services:
     build:
       context: .
       dockerfile: docker/Dockerfile.frontend
+      args:
+        APP_VERSION: ${APP_VERSION:-dev}
+        GIT_SHA: ${GIT_SHA:-local}
     image: shellius-frontend:local
     container_name: shellius-web
     restart: unless-stopped

@@ -1,4 +1,5 @@
 import express from 'express';
+import { createDecryptStream } from '../utils/recordingCrypto.js';
 import Joi from 'joi';
 import fs from 'fs';
 import path from 'path';
@@ -128,7 +129,13 @@ router.get(
         logger.warn('sessions: MinIO stream error', { sessionId: session.id, error: err.message });
         res.destroy(err);
       });
-      objStream.pipe(res);
+      // Decrypts SHREC1-encrypted recordings; legacy plaintext casts pass through.
+      const plain = createDecryptStream();
+      plain.on('error', (err) => {
+        logger.warn('sessions: recording decrypt failed', { sessionId: session.id, error: err.message });
+        res.destroy(err);
+      });
+      objStream.pipe(plain).pipe(res);
       return;
     }
 
@@ -161,7 +168,8 @@ router.post(
   audit('session.terminate', 'Session'),
   asyncHandler(async (req, res) => {
     // terminateSession updates DB and force-closes in-memory WS/SSH handles
-    const session = await terminateSession(req.params.id, req.user.userId);
+    // (org-scoped — see B-4 hardening in services/terminalService.js)
+    const session = await terminateSession(req.orgId, req.params.id, req.user.userId);
     res.json({ success: true, data: { session } });
   })
 );

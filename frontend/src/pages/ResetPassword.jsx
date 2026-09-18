@@ -2,6 +2,8 @@ import { useState, useEffect } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
 import { Lock, Eye, EyeOff, Loader2 } from 'lucide-react';
 import { BrandMark } from '@/components/common/BrandLogo';
+import MfaChallenge from '@/components/auth/MfaChallenge';
+import { useAuth } from '@/context/AuthContext';
 import { getResetToken, resetPassword } from '@/services/userTokenService';
 
 function validatePassword(password) {
@@ -14,6 +16,7 @@ function validatePassword(password) {
 function ResetPassword() {
   const { token } = useParams();
   const navigate = useNavigate();
+  const { applyAuthResult } = useAuth();
 
   const [tokenData, setTokenData] = useState(null);
   const [loadError, setLoadError] = useState('');
@@ -25,6 +28,7 @@ function ResetPassword() {
   const [showConfirm, setShowConfirm] = useState(false);
   const [error, setError] = useState('');
   const [submitting, setSubmitting] = useState(false);
+  const [mfaChallenge, setMfaChallenge] = useState(null);
 
   useEffect(() => {
     setLoadingToken(true);
@@ -51,8 +55,11 @@ function ResetPassword() {
     setSubmitting(true);
     try {
       const data = await resetPassword(token, password);
-      if (data?.accessToken) localStorage.setItem('accessToken', data.accessToken);
-      if (data?.refreshToken) localStorage.setItem('refreshToken', data.refreshToken);
+      if (data?.mfaRequired) {
+        setMfaChallenge(data);
+        return;
+      }
+      applyAuthResult(data);
       navigate('/', { replace: true });
     } catch (err) {
       const msg =
@@ -98,7 +105,20 @@ function ResetPassword() {
             </div>
           )}
 
-          {!loadingToken && !loadError && tokenData && (
+          {!loadingToken && !loadError && tokenData && mfaChallenge && (
+            <MfaChallenge
+              mfaToken={mfaChallenge.mfaToken}
+              methods={mfaChallenge.methods}
+              emailHint={mfaChallenge.emailHint}
+              onSuccess={(data) => {
+                applyAuthResult(data);
+                navigate('/', { replace: true });
+              }}
+              onStartOver={() => setMfaChallenge(null)}
+            />
+          )}
+
+          {!loadingToken && !loadError && tokenData && !mfaChallenge && (
             <form onSubmit={handleSubmit} className="space-y-4">
               <div className="rounded-md border border-border bg-muted/30 px-4 py-3 text-sm">
                 <p className="text-muted-foreground">

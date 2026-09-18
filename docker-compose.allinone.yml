@@ -1,0 +1,122 @@
+# =============================================================================
+# Shellius — all-in-one image (web UI + API + nginx in ONE container)
+#
+#   cp .env.prod.example .env.prod      # fill every <CHANGE_ME>
+#   docker compose -f docker-compose.allinone.yml --env-file .env.prod up -d
+#   open http://<host>:8080
+#
+# Same .env.prod as docker-compose.prod.yml. PostgreSQL, Redis, MinIO and
+# guacd are still separate services; the bundled ones are behind profiles,
+# like the prod file:
+#   COMPOSE_PROFILES=postgres,redis,minio   (in .env.prod) → everything bundled
+#   drop a profile and set DATABASE_URL / REDIS_URL / STORAGE_* for managed ones
+#
+# Put your TLS proxy (Traefik, Caddy, Coolify, a cloud LB) in front of port
+# 8080. Behind one, set TRUST_PROXY=2 (proxy → bundled nginx → API) so
+# rate limiting and audit logs see real client IPs, and TRAEFIK_HOST to your
+# public hostname (works with any proxy). See docs/DEPLOYMENT.md, "All-in-one image".
+# =============================================================================
+
+name: shellius
+
+services:
+  shellius:
+    image: yavadmin/shellius:${SHELLIUS_VERSION:-latest}
+    # Or build locally:  docker compose -f docker-compose.allinone.yml build
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.allinone
+    container_name: shellius
+    restart: unless-stopped
+    env_file: .env.prod
+    environment:
+      GUACD_HOST: guacd
+      GUACD_PORT: "4822"
+    ports:
+      - "${SHELLIUS_PORT:-8080}:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+        required: false
+      redis:
+        condition: service_healthy
+        required: false
+      minio:
+        condition: service_healthy
+        required: false
+      guacd:
+        condition: service_started
+    # Healthcheck (GET /api/health through the bundled nginx) is built into the image.
+    stop_grace_period: 20s
+    networks: [internal]
+
+  postgres:
+    image: postgres:16-alpine
+    profiles: ["postgres"]
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    networks:
+      internal:
+        aliases: [postgres]
+
+  redis:
+    image: redis:7-alpine
+    profiles: ["redis"]
+    restart: unless-stopped
+    command: redis-server --appendonly yes
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    networks:
+      internal:
+        aliases: [redis]
+
+  minio:
+    image: minio/minio:latest
+    profiles: ["minio"]
+    restart: unless-stopped
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ACCESS_KEY}
+      MINIO_ROOT_PASSWORD: ${MINIO_SECRET_KEY}
+    volumes:
+      - minio_data:/data
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    networks:
+      internal:
+        aliases: [minio]
+
+  # RDP gateway; harmless to run even if you only use SSH.
+  guacd:
+    image: guacamole/guacd:1.5.5
+    restart: unless-stopped
+    networks: [internal]
+
+volumes:
+  postgres_data:
+  redis_data:
+  minio_data:
+
+networks:
+  internal:

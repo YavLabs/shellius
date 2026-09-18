@@ -236,7 +236,7 @@ function ProvisionModal({ server, onClose }) {
                 className="inline-flex h-9 items-center gap-2 rounded-md bg-primary px-4 text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
               >
                 <Terminal className="h-4 w-4" />
-                Start Provisioning
+                Start provisioning
               </button>
             </>
           )}

@@ -19,6 +19,8 @@ import {
   downloadTemplate,
 } from '@/services/importService';
 import SearchableSelect from '@/components/ui/SearchableSelect';
+import { Badge } from '@/components/ui/badge';
+import { statusTone } from '@/lib/badgeTones';
 
 const ENTITY_TYPES = [
   { value: '', label: 'Auto-detect (JSON object / ZIP)' },
@@ -30,21 +32,11 @@ const ENTITY_TYPES = [
   { value: 'memberships', label: 'Memberships' },
 ];
 
-const ACTION_BADGE = {
-  create: 'bg-emerald-500/15 text-emerald-700 dark:text-emerald-400',
-  conflict: 'bg-amber-500/15 text-amber-700 dark:text-amber-400',
-  error: 'bg-destructive/15 text-destructive',
-  skip: 'bg-muted text-muted-foreground',
-};
-
-const STATUS_BADGE = {
-  imported: 'bg-emerald-500/15 text-emerald-700 dark:text-emerald-400',
-  done: 'bg-emerald-500/15 text-emerald-700 dark:text-emerald-400',
-  skipped: 'bg-muted text-muted-foreground',
-  failed: 'bg-destructive/15 text-destructive',
-  pending: 'bg-blue-500/15 text-blue-700 dark:text-blue-400',
-  staged: 'bg-blue-500/15 text-blue-700 dark:text-blue-400',
-  running: 'bg-amber-500/15 text-amber-700 dark:text-amber-400',
+const ACTION_TONE = {
+  create: 'success',
+  conflict: 'warning',
+  error: 'danger',
+  skip: 'neutral',
 };
 
 const ONBOARDING_LABEL = {
@@ -54,12 +46,6 @@ const ONBOARDING_LABEL = {
   pending: 'queued',
   staged: 'queued',
 };
-
-function Badge({ cls, children }) {
-  return (
-    <span className={`inline-block rounded px-2 py-0.5 text-[11px] font-medium ${cls}`}>{children}</span>
-  );
-}
 
 function BulkImport() {
   const [step, setStep] = useState('upload'); // upload | review | done
@@ -288,7 +274,7 @@ function BulkImport() {
                       {r.raw?.name || r.raw?.hostname || r.raw?.email || r.raw?.group || '—'}
                     </td>
                     <td className="px-3 py-2">
-                      <Badge cls={ACTION_BADGE[r.action] || 'bg-muted'}>
+                      <Badge tone={ACTION_TONE[r.action] || 'neutral'}>
                         {r.action === 'conflict' ? `conflict → ${r.decision}` : r.action}
                       </Badge>
                     </td>
@@ -365,7 +351,7 @@ function BulkImport() {
                     <tr key={o.id} className="border-t border-border">
                       <td className="px-3 py-2 font-mono text-xs text-foreground">{o.serverRef}</td>
                       <td className="px-3 py-2">
-                        <Badge cls={STATUS_BADGE[o.status] || 'bg-muted'}>{ONBOARDING_LABEL[o.status] || o.status}</Badge>
+                        <Badge tone={statusTone(o.status).tone}>{ONBOARDING_LABEL[o.status] || o.status}</Badge>
                       </td>
                       <td className="px-3 py-2 text-xs text-muted-foreground">{o.attempts}</td>
                     </tr>

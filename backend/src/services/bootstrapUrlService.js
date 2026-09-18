@@ -1,3 +1,4 @@
+import crypto from 'crypto';
 /**
  * bootstrapUrlService — builds a signed install.sh URL for a server, without a
  * request object (used by the background onboarding worker). Mirrors the
@@ -22,7 +23,7 @@ export function resolveBackendUrl() {
  * @returns {Promise<string>} full https URL to install.sh with a 30-min token
  */
 export async function buildBootstrapUrl(orgId, serverId) {
-  const token = jwt.sign({ kind: 'bootstrap', serverId, orgId }, config.jwt.secret, { expiresIn: 30 * 60 });
+  const token = jwt.sign({ kind: 'bootstrap', serverId, orgId, jti: crypto.randomUUID() }, config.jwt.secret, { expiresIn: 30 * 60 });
   return `${resolveBackendUrl()}/api/bootstrap/install.sh?token=${token}`;
 }
 
