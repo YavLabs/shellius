@@ -48,6 +48,7 @@
  *   - RECORDINGS_DIR env var: path to recording storage directory
  */
 
+import { createEncryptStream } from '../utils/recordingCrypto.js';
 import { WebSocketServer } from 'ws';
 import { URL } from 'url';
 import { PassThrough } from 'stream';
@@ -154,9 +155,12 @@ async function openRecordingWriter(sessionId, orgId, { rows, cols }) {
     });
     passThrough.write(header + '\n');
 
+    // Encrypted at rest (utils/recordingCrypto): recordings contain
+    // everything printed in the terminal.
+    const encrypted = passThrough.pipe(createEncryptStream());
     const uploadPromise = storageService
-      .putObjectStream(recordingKey, passThrough, {
-        contentType: 'application/x-asciicast',
+      .putObjectStream(recordingKey, encrypted, {
+        contentType: 'application/octet-stream',
         metadata: { 'x-amz-meta-session-id': sessionId, 'x-amz-meta-org-id': orgId },
       })
       .catch((err) => {

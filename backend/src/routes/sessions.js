@@ -1,4 +1,5 @@
 import express from 'express';
+import { createDecryptStream } from '../utils/recordingCrypto.js';
 import Joi from 'joi';
 import fs from 'fs';
 import path from 'path';
@@ -128,7 +129,13 @@ router.get(
         logger.warn('sessions: MinIO stream error', { sessionId: session.id, error: err.message });
         res.destroy(err);
       });
-      objStream.pipe(res);
+      // Decrypts SHREC1-encrypted recordings; legacy plaintext casts pass through.
+      const plain = createDecryptStream();
+      plain.on('error', (err) => {
+        logger.warn('sessions: recording decrypt failed', { sessionId: session.id, error: err.message });
+        res.destroy(err);
+      });
+      objStream.pipe(plain).pipe(res);
       return;
     }
 

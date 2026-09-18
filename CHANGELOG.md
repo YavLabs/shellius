@@ -56,6 +56,10 @@ Breaking changes).
   revoking their sessions, or changing/resetting their password now **ends
   their live terminal sessions immediately**; new terminal connections apply
   the same account-status and session-revocation checks as the REST API.
+- **Fixed:** session recordings are now **encrypted at rest** (AES-256-GCM
+  with a per-recording data key wrapped by `SERVER_ENCRYPTION_KEY`) before
+  upload to object storage, independent of bucket settings; replay decrypts
+  on the fly and existing unencrypted recordings still play.
 - **Fixed:** admins could terminate another organization's session by id;
   terminate is now scoped to the caller's organization.
 - **Fixed:** secrets are masked in application logs and audit-log metadata;
