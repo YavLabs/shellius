@@ -234,6 +234,13 @@ input stays passphrase-protected at rest (in addition to AES-GCM).
   principals, validAfter, validBefore, expired, caFingerprint }` (the cert text
   itself is public and is returned by `GET /keystore/keys/:id` as
   `certificateText`).
+- `PATCH /keystore/credentials/:id` accepts `sshKeyId: null` to unlink the
+  identity's key (e.g. `key_password` → `password`). The resulting `authType`
+  is still validated: `password`/`key_password` require a stored password,
+  `key`/`key_password` require a key (`sshKeyId` or `newKey`) — so
+  `sshKeyId: null` alone only succeeds if `authType` is also being changed (or
+  already is) `password`. Omitting `sshKeyId` entirely leaves the existing key
+  untouched, as before.
 
 ### Global search — `GET /api/search`
 
