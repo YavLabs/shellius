@@ -73,7 +73,7 @@ function TabItem({ tab, active, onSelect, onClose, onContextMenu, menu }) {
         if (e.key === 'Enter' || e.key === ' ') onSelect();
       }}
       className={cn(
-        'group flex h-9 shrink-0 cursor-pointer select-none items-center gap-1.5 border-r border-border px-3 text-sm transition-colors',
+        'group flex h-full shrink-0 cursor-pointer select-none items-center gap-1.5 border-r border-border px-3 text-sm transition-colors',
         active ? 'bg-background text-foreground' : 'bg-muted/40 text-muted-foreground hover:bg-muted/70'
       )}
       title={`${tab.username || ''}${tab.username && tab.host ? '@' : ''}${tab.host || ''}`}
@@ -184,7 +184,7 @@ function TerminalTabBar({ tabs, activeTabId, onSelect, workspace, onNewConnectio
     <div
       role="tablist"
       aria-label="Open terminals"
-      className="flex h-9 shrink-0 items-stretch overflow-x-auto border-b border-border bg-muted/20"
+      className="no-scrollbar flex h-9 shrink-0 items-stretch overflow-x-auto overflow-y-hidden border-b border-border bg-muted/20"
     >
       {tabs.map((tab) => (
         <TabItem
@@ -199,7 +199,7 @@ function TerminalTabBar({ tabs, activeTabId, onSelect, workspace, onNewConnectio
       <button
         type="button"
         onClick={onNewConnection}
-        className="flex h-9 w-9 shrink-0 items-center justify-center text-muted-foreground hover:bg-accent hover:text-foreground"
+        className="flex h-full w-9 shrink-0 items-center justify-center text-muted-foreground hover:bg-accent hover:text-foreground"
         aria-label="New connection"
         title="New connection (Ctrl+Shift+T)"
       >

@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
+import { listTerminalSessions } from '@/services/terminalService';
 import {
   SquareTerminal,
   Rows,
@@ -87,8 +88,29 @@ function EmptyState({ onNewConnection }) {
       openQuickConnect({ host: item.host, port: item.port, username: item.username, authTab: 'credential' });
     }
   };
-  // attachSession unused directly here but kept for parity/future use
-  void attachSession;
+  // Live sessions not open in any tab (e.g. detached after a reload or when
+  // the browser tab was closed) — surfaced here so they can be re-attached.
+  const [running, setRunning] = useState([]);
+  useEffect(() => {
+    let cancelled = false;
+    const load = () =>
+      listTerminalSessions()
+        .then((list) => !cancelled && setRunning(list || []))
+        .catch(() => !cancelled && setRunning([]));
+    load();
+    const id = setInterval(load, 15000);
+    return () => {
+      cancelled = true;
+      clearInterval(id);
+    };
+  }, []);
+  const attach = (session) =>
+    attachSession(session.id, {
+      label: session.label || session.server?.displayName || session.host,
+      env: session.server?.environment,
+      host: session.host,
+      username: session.username,
+    });
 
   return (
     <div className="flex h-full flex-col items-center justify-center gap-4 p-6 text-center">
@@ -116,8 +138,38 @@ function EmptyState({ onNewConnection }) {
         )}
       </div>
 
+      {running.length > 0 && (
+        <div className="mt-4 w-full max-w-md text-left">
+          <p className="mb-1.5 text-xs font-medium text-muted-foreground">Running sessions</p>
+          <ul className="divide-y divide-border rounded-md border border-border bg-card">
+            {running.map((session) => (
+              <li key={session.id} className="flex items-center gap-3 px-3 py-2">
+                <span
+                  className={`h-2 w-2 shrink-0 rounded-full ${session.state === 'attached' ? 'bg-emerald-500' : 'bg-muted-foreground/50'}`}
+                  aria-hidden="true"
+                />
+                <span className="min-w-0 flex-1">
+                  <span className="block truncate text-sm text-foreground">{session.label || session.host}</span>
+                  <span className="block truncate font-mono text-xs text-muted-foreground">
+                    {session.username}@{session.host}
+                    {session.state === 'detached' ? ' · detached' : ''}
+                  </span>
+                </span>
+                <button
+                  type="button"
+                  onClick={() => attach(session)}
+                  className="inline-flex h-7 items-center rounded-md bg-primary px-2.5 text-xs font-medium text-primary-foreground hover:bg-primary/90"
+                >
+                  Attach
+                </button>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+
       {recent.length > 0 && (
-        <div className="mt-4 w-full max-w-sm text-left">
+        <div className="mt-4 w-full max-w-md text-left">
           <p className="mb-1.5 text-xs font-medium uppercase tracking-wide text-muted-foreground">
             Recent Quick Connects
           </p>

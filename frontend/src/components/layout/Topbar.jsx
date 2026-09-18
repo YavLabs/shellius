@@ -29,6 +29,7 @@ const routeNames = {
   '/settings': 'Settings',
   '/install-cli': 'Install CLI',
   '/keystore': 'Keystore',
+  '/terminals': 'Terminals',
   '/dashboard': 'Dashboard',
   '/profile': 'Profile',
   '/notifications': 'Notifications',

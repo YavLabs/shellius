@@ -274,9 +274,14 @@ export function TerminalWorkspaceProvider({ children }) {
     setTabsMirrored((prev) =>
       prev.map((t) => {
         if (t.id !== id) return t;
+        const sessionId = info.sessionId || t.sessionId;
         return {
           ...t,
-          sessionId: info.sessionId || t.sessionId,
+          sessionId,
+          // From now on this tab resumes by attaching to its own session: a
+          // Quick Connect ticket is single-use, and re-using an access request
+          // would silently open a second SSH session.
+          connect: sessionId ? { attach: sessionId } : t.connect,
           host: info.host ?? t.host,
           port: info.port ?? t.port,
           username: info.username ?? t.username,

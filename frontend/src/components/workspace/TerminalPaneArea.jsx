@@ -103,12 +103,19 @@ function TerminalPaneArea({ workspace }) {
     return [...assigned, ...rest.slice(-budget)];
   }, [tabs, assignedIds]);
 
-  const setSlotRef = useCallback(
-    (idx) => (node) => {
-      setSlotNodes((prev) => (prev[idx] === node ? prev : { ...prev, [idx]: node }));
-    },
-    []
-  );
+  // One STABLE ref callback per pane index. Returning a fresh closure each
+  // render made React detach (null) and re-attach the ref on every commit;
+  // both calls set state, which re-rendered, which looped forever
+  // ("Maximum update depth exceeded").
+  const slotRefCallbacks = useRef({});
+  const setSlotRef = useCallback((idx) => {
+    if (!slotRefCallbacks.current[idx]) {
+      slotRefCallbacks.current[idx] = (node) => {
+        setSlotNodes((prev) => (prev[idx] === node ? prev : { ...prev, [idx]: node }));
+      };
+    }
+    return slotRefCallbacks.current[idx];
+  }, []);
 
   const startDrag = useCallback(
     (e) => {

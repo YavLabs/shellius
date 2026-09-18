@@ -107,7 +107,9 @@ function NewConnectionDialog({ open, onClose }) {
 
   return (
     <>
-      <Dialog open={open} onOpenChange={(v) => !v && onClose()}>
+      {/* Hidden while the request form is up: a Radix Dialog traps focus and
+          pointer events, which froze the RequestForm modal layered above it. */}
+      <Dialog open={open && !requestTarget} onOpenChange={(v) => !v && onClose()}>
         <DialogContent size="md" className="max-h-[80vh]">
           <DialogHeader>
             <DialogTitle>New connection</DialogTitle>

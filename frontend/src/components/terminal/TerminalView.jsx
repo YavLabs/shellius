@@ -73,6 +73,7 @@ const TerminalView = forwardRef(function TerminalView(
   const wsRef = useRef(null);
   const resizeObserverRef = useRef(null);
   const connectKeyRef = useRef(null);
+  const liveSessionRef = useRef(null); // sessionId this view is currently attached to
 
   const [status, setStatus] = useState('connecting');
   const [error, setError] = useState('');
@@ -130,7 +131,16 @@ const TerminalView = forwardRef(function TerminalView(
     return undefined;
   }, [visible, sendResize]);
 
-  const connectKey = connect ? JSON.stringify(connect) : null;
+  // Once this view is live on a session, the workspace switches the tab's
+  // connect spec to {attach: <that session>} (so a remount — e.g. navigating
+  // away and back — re-attaches instead of reusing a spent ticket or opening a
+  // brand-new session). That spec change must NOT reconnect the live view, so
+  // "attach to the session I'm already on" keeps the previous key.
+  const rawConnectKey = connect ? JSON.stringify(connect) : null;
+  const connectKey =
+    connect?.attach && connect.attach === liveSessionRef.current && connectKeyRef.current
+      ? connectKeyRef.current
+      : rawConnectKey;
 
   useEffect(() => {
     if (!connect) return undefined;
@@ -220,6 +230,7 @@ const TerminalView = forwardRef(function TerminalView(
       let sshUp = false;
       const markUp = (info) => {
         if (!isCurrent()) return;
+        if (info?.sessionId) liveSessionRef.current = info.sessionId;
         sshUp = true;
         clearTimeout(openTimer);
         clearTimeout(handshakeTimer);

@@ -104,3 +104,14 @@
     background: transparent;
   }
 }
+
+/* Horizontal strips (terminal tab bar) that scroll without showing a bar. */
+@layer utilities {
+  .no-scrollbar {
+    scrollbar-width: none;
+    -ms-overflow-style: none;
+  }
+  .no-scrollbar::-webkit-scrollbar {
+    display: none;
+  }
+}
