@@ -12,6 +12,7 @@ import DataTable from '@/components/shared/DataTable';
 import ServerName, { serverSearchString } from '@/components/shared/ServerName';
 import Badge from '@/components/shared/Badge';
 import EnvironmentBadge from '@/components/shared/EnvironmentBadge';
+import UserCell from '@/components/shared/UserCell';
 import Modal from '@/components/shared/Modal';
 import ConfirmDialog from '@/components/shared/ConfirmDialog';
 import SessionPlayer from '@/components/sessions/SessionPlayer';
@@ -46,11 +47,7 @@ const AUTH_METHOD_LABEL = {
 
 function AuthMethodBadge({ authMethod }) {
   if (!authMethod) return <span className="text-muted-foreground">-</span>;
-  return (
-    <span className="inline-flex items-center rounded-full bg-muted px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
-      {AUTH_METHOD_LABEL[authMethod] || authMethod}
-    </span>
-  );
+  return <Badge variant="default">{AUTH_METHOD_LABEL[authMethod] || authMethod}</Badge>;
 }
 
 /**
@@ -202,15 +199,7 @@ function SessionDetailDrawer({ sessionId, open, onClose }) {
             }
           />
           <DetailRow label="Auth method" value={<AuthMethodBadge authMethod={session.authMethod} />} />
-          <DetailRow
-            label="User"
-            value={
-              session.user?.name ||
-              session.user?.email || (
-                <span className="italic text-muted-foreground">unknown user</span>
-              )
-            }
-          />
+          <DetailRow label="User" value={<UserCell user={session.user} fallback="Unknown user" />} />
           <DetailRow label="Protocol" value={session.protocol} />
           <DetailRow label="Client IP" value={session.clientIp} />
           <DetailRow label="Principal" value={session.principal} />
@@ -405,11 +394,7 @@ function Sessions() {
       label: 'User',
       sortable: true,
       searchAccessor: (r) => r.user?.name || r.user?.email || '',
-      render: (r) => (
-        <span className="text-sm text-foreground">
-          {r.user?.name || r.user?.email || r.userId || '-'}
-        </span>
-      ),
+      render: (r) => <UserCell user={r.user} fallback={r.userId || 'Unknown user'} />,
     },
     {
       key: 'startedAt',

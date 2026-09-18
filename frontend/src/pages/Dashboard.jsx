@@ -18,19 +18,13 @@ import { listCertificates } from '@/services/certificateService';
 import { listAudit } from '@/services/auditService';
 import { relativeTime } from '@/utils/time';
 import Skeleton from '@/components/ui/Skeleton';
+import { Badge } from '@/components/ui/badge';
+import { auditCategoryTone, environmentTone } from '@/lib/badgeTones';
 
 const ROLE_RANK = { super_admin: 4, admin: 3, manager: 2, member: 1 };
 function isAtLeast(user, role) {
   return (ROLE_RANK[user?.role] || 0) >= (ROLE_RANK[role] || 0);
 }
-
-// Colour labels per environment
-const ENV_COLORS = {
-  prod: 'text-red-600 dark:text-red-400',
-  staging: 'text-amber-600 dark:text-amber-400',
-  dev: 'text-blue-600 dark:text-blue-400',
-  demo: 'text-purple-600 dark:text-purple-400',
-};
 
 // Accent palette per card — icon tile + hover ring color.
 const STAT_ACCENTS = {
@@ -108,23 +102,13 @@ function StatCard({
   );
 }
 
-// Badge for audit action verbs
-const ACTION_BADGE_CLS = {
-  auth: 'bg-blue-500/10 text-blue-600 dark:text-blue-400 border-blue-500/20',
-  user: 'bg-purple-500/10 text-purple-600 dark:text-purple-400 border-purple-500/20',
-  server: 'bg-teal-500/10 text-teal-600 dark:text-teal-400 border-teal-500/20',
-  access_request: 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/20',
-  cert: 'bg-rose-500/10 text-rose-600 dark:text-rose-400 border-rose-500/20',
-  session: 'bg-slate-500/10 text-slate-600 dark:text-slate-400 border-slate-500/20',
-};
-
+// Badge for audit action verbs — reuses the shared audit category tone map.
 function ActionBadge({ action }) {
   const prefix = (action || '').split('.')[0];
-  const cls = ACTION_BADGE_CLS[prefix] || 'bg-muted text-foreground border-border';
   return (
-    <span className={`inline-flex shrink-0 items-center rounded-full border px-2 py-0.5 text-xs font-medium ${cls}`}>
+    <Badge tone={auditCategoryTone(prefix)} className="shrink-0">
       {action}
-    </span>
+    </Badge>
   );
 }
 
@@ -318,15 +302,10 @@ function Dashboard() {
                 {Object.entries(byEnv)
                   .filter(([, v]) => v > 0)
                   .map(([env, count]) => (
-                    <span
-                      key={env}
-                      className={`inline-flex items-center gap-1 rounded-full border border-border bg-background/60 px-2 py-0.5 text-[10px] font-medium ${
-                        ENV_COLORS[env] || 'text-muted-foreground'
-                      }`}
-                    >
+                    <Badge key={env} tone={environmentTone(env).tone} uppercase>
                       {env}
-                      <span className="text-foreground tabular-nums">{count}</span>
-                    </span>
+                      <span className="normal-case tracking-normal text-foreground tabular-nums">{count}</span>
+                    </Badge>
                   ))}
               </div>
             ) : null

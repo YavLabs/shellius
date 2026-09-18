@@ -8,7 +8,9 @@ import {
   ScrollText,
   Search,
 } from 'lucide-react';
-import Badge from '@/components/shared/Badge';
+import { Badge } from '@/components/ui/badge';
+import { auditCategoryTone } from '@/lib/badgeTones';
+import UserCell from '@/components/shared/UserCell';
 import DataTable from '@/components/shared/DataTable';
 import PageHeader from '@/components/common/PageHeader';
 import { Button } from '@/components/ui/button';
@@ -32,32 +34,26 @@ const ACTION_CATEGORIES = {
   auth: {
     label: 'Auth',
     actions: ['auth.login', 'auth.logout', 'auth.sso', 'auth.device_approve'],
-    badgeClass: 'bg-blue-500/10 text-blue-600 dark:text-blue-400 border-blue-500/20',
   },
   user: {
     label: 'User',
     actions: ['user.create', 'user.update', 'user.delete'],
-    badgeClass: 'bg-purple-500/10 text-purple-600 dark:text-purple-400 border-purple-500/20',
   },
   group: {
     label: 'Group',
     actions: ['group.create', 'group.update', 'group.delete'],
-    badgeClass: 'bg-purple-500/10 text-purple-600 dark:text-purple-400 border-purple-500/20',
   },
   server: {
     label: 'Server',
     actions: ['server.create', 'server.update', 'server.delete', 'server.health_check'],
-    badgeClass: 'bg-teal-500/10 text-teal-600 dark:text-teal-400 border-teal-500/20',
   },
   customer: {
     label: 'Customer',
     actions: ['customer.create', 'customer.update', 'customer.delete'],
-    badgeClass: 'bg-teal-500/10 text-teal-600 dark:text-teal-400 border-teal-500/20',
   },
   policy: {
     label: 'Policy',
     actions: ['policy.create', 'policy.update', 'policy.delete'],
-    badgeClass: 'bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-500/20',
   },
   access_request: {
     label: 'Access Request',
@@ -68,49 +64,39 @@ const ACTION_CATEGORIES = {
       'access_request.expire',
       'access_request.revoke',
     ],
-    badgeClass: 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/20',
   },
   cert: {
     label: 'Certificate',
     actions: ['cert.issue', 'cert.revoke'],
-    badgeClass: 'bg-rose-500/10 text-rose-600 dark:text-rose-400 border-rose-500/20',
   },
   ca: {
     label: 'CA',
     actions: ['ca.generate', 'ca.rotate'],
-    badgeClass: 'bg-rose-500/10 text-rose-600 dark:text-rose-400 border-rose-500/20',
   },
   session: {
     label: 'Session',
     actions: ['session.start', 'session.end', 'session.terminate'],
-    badgeClass: 'bg-slate-500/10 text-slate-600 dark:text-slate-400 border-slate-500/20',
   },
   org: {
     label: 'Org',
     actions: ['org.update'],
-    badgeClass: 'bg-gray-500/10 text-gray-600 dark:text-gray-400 border-gray-500/20',
   },
   connector: {
     label: 'Connector',
     actions: ['connector.create', 'connector.sync'],
-    badgeClass: 'bg-gray-500/10 text-gray-600 dark:text-gray-400 border-gray-500/20',
   },
 };
 
-const ACTION_BADGE_MAP = {};
-for (const cat of Object.values(ACTION_CATEGORIES)) {
+const ACTION_CATEGORY_MAP = {};
+for (const [key, cat] of Object.entries(ACTION_CATEGORIES)) {
   for (const action of cat.actions) {
-    ACTION_BADGE_MAP[action] = cat.badgeClass;
+    ACTION_CATEGORY_MAP[action] = key;
   }
 }
 
 function ActionBadge({ action }) {
-  const badgeClass = ACTION_BADGE_MAP[action] || 'bg-muted text-foreground border-border';
-  return (
-    <span className={`inline-flex items-center rounded-full border px-2 py-0.5 text-xs font-medium ${badgeClass}`}>
-      {action}
-    </span>
-  );
+  const category = ACTION_CATEGORY_MAP[action];
+  return <Badge tone={auditCategoryTone(category)}>{action}</Badge>;
 }
 
 const ROLE_RANK = { super_admin: 4, admin: 3, manager: 2, member: 1 };
@@ -241,9 +227,10 @@ function AuditLog() {
       key: 'actor',
       label: 'Actor',
       render: (item) => (
-        <span className="text-xs text-foreground">
-          {item.actorName || (item.actorId ? 'Unknown user' : <span className="italic text-muted-foreground">system</span>)}
-        </span>
+        <UserCell
+          user={item.actorId ? { name: item.actorName, email: item.actorEmail, avatarUrl: item.actorAvatarUrl } : null}
+          fallback="System"
+        />
       ),
     },
     {
@@ -468,9 +455,10 @@ function AuditLog() {
                           <ActionBadge action={item.action} />
                         </td>
                         <td className="px-4 py-3">
-                          <span className="text-xs text-foreground">
-                            {item.actorName || (item.actorId ? 'Unknown user' : <span className="italic text-muted-foreground">system</span>)}
-                          </span>
+                          <UserCell
+                            user={item.actorId ? { name: item.actorName, email: item.actorEmail, avatarUrl: item.actorAvatarUrl } : null}
+                            fallback="System"
+                          />
                         </td>
                         <td className="px-4 py-3">
                           <span className="text-xs text-foreground">

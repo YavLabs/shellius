@@ -3,7 +3,9 @@ import { useNavigate, useParams } from 'react-router-dom';
 import { ArrowLeft, Pencil, Trash2, Plus, X, UsersRound, Search } from 'lucide-react';
 import Modal from '@/components/shared/Modal';
 import ConfirmDialog from '@/components/shared/ConfirmDialog';
-import Badge from '@/components/shared/Badge';
+import { Badge } from '@/components/ui/badge';
+import { roleTone } from '@/lib/badgeTones';
+import UserCell from '@/components/shared/UserCell';
 import PageHeader from '@/components/common/PageHeader';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -115,17 +117,9 @@ function GroupDetail() {
               const u = m.user || m;
               return (
                 <li key={u.id} className="flex items-center justify-between px-5 py-3">
+                  <UserCell user={u} />
                   <div className="flex items-center gap-3">
-                    <div className="flex h-9 w-9 items-center justify-center rounded-full bg-primary text-xs font-medium text-primary-foreground">
-                      {u.name?.[0]?.toUpperCase() || 'U'}
-                    </div>
-                    <div>
-                      <p className="text-sm font-medium text-foreground">{u.name}</p>
-                      <p className="text-xs text-muted-foreground">{u.email}</p>
-                    </div>
-                  </div>
-                  <div className="flex items-center gap-3">
-                    {u.role && <Badge variant="info">{u.role}</Badge>}
+                    {u.role && <Badge tone={roleTone(u.role).tone}>{roleTone(u.role).label}</Badge>}
                     <Button
                       variant="ghost"
                       size="icon"
@@ -312,10 +306,7 @@ function AddMemberModal({ open, groupId, existingIds, onClose, onAdded }) {
                 const isMember = existingIds.includes(u.id);
                 return (
                   <li key={u.id} className="flex items-center justify-between px-4 py-2.5">
-                    <div>
-                      <p className="text-sm font-medium text-foreground">{u.name}</p>
-                      <p className="text-xs text-muted-foreground">{u.email}</p>
-                    </div>
+                    <UserCell user={u} />
                     <Button
                       size="sm"
                       onClick={() => handleAdd(u)}

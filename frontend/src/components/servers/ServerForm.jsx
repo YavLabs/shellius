@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
-import { X, ChevronDown, ChevronRight, Info, ShieldCheck, KeyRound } from 'lucide-react';
+import { Badge } from '@/components/ui/badge';
+import { ChevronDown, ChevronRight, Info, ShieldCheck, KeyRound } from 'lucide-react';
 import { listCustomers } from '@/services/customerService';
 import { listCredentials } from '@/services/keystoreService';
 import PrivateIPWarning from './PrivateIPWarning';
@@ -539,19 +540,9 @@ function ServerForm({ server, customerId: initialCustomerId, onSubmit, onCancel 
         <h4 className={sectionCls}>Labels</h4>
         <div className="flex flex-wrap gap-2">
           {labels.map((l) => (
-            <span
-              key={l}
-              className="inline-flex items-center gap-1 rounded-full bg-accent px-2.5 py-1 text-xs text-foreground"
-            >
+            <Badge key={l} onRemove={() => removeLabel(l)} removeLabel={`Remove label ${l}`}>
               {l}
-              <button
-                type="button"
-                onClick={() => removeLabel(l)}
-                className="text-muted-foreground hover:text-destructive"
-              >
-                <X className="h-3 w-3" />
-              </button>
-            </span>
+            </Badge>
           ))}
         </div>
         <input

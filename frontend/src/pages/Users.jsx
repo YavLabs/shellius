@@ -17,7 +17,9 @@ import {
   LogOut,
 } from 'lucide-react';
 import DataTable from '@/components/shared/DataTable';
-import Badge from '@/components/shared/Badge';
+import { Badge } from '@/components/ui/badge';
+import { roleTone, statusTone } from '@/lib/badgeTones';
+import UserCell from '@/components/shared/UserCell';
 import Modal from '@/components/shared/Modal';
 import ConfirmDialog from '@/components/shared/ConfirmDialog';
 import DeleteUserDialog from '@/components/users/DeleteUserDialog';
@@ -42,25 +44,6 @@ import {
 
 const ROLES = ['super_admin', 'admin', 'manager', 'member'];
 const STATUSES = ['active', 'invited', 'suspended', 'deactivated'];
-
-const roleVariant = (role) => {
-  switch (role) {
-    case 'super_admin': return 'danger';
-    case 'admin': return 'info';
-    case 'manager': return 'warning';
-    default: return 'default';
-  }
-};
-
-const statusVariant = (status) => {
-  switch (status) {
-    case 'active': return 'success';
-    case 'invited': return 'info';
-    case 'suspended': return 'warning';
-    case 'deactivated': return 'danger';
-    default: return 'default';
-  }
-};
 
 function isLocked(u) {
   return !!u.lockedUntil && new Date(u.lockedUntil).getTime() > Date.now();
@@ -313,20 +296,15 @@ function Users() {
       key: 'name',
       label: 'Name',
       sortable: true,
-      render: (r) => <span className="font-medium">{r.name}</span>,
-    },
-    {
-      key: 'email',
-      label: 'Email',
-      sortable: true,
-      render: (r) => <span className="text-muted-foreground">{r.email}</span>,
+      searchAccessor: (r) => `${r.name || ''} ${r.email || ''}`,
+      render: (r) => <UserCell user={r} />,
     },
     {
       key: 'role',
       label: 'Role',
       sortable: true,
       searchAccessor: (r) => r.role || '',
-      render: (r) => <Badge variant={roleVariant(r.role)}>{formatLabel(r.role)}</Badge>,
+      render: (r) => <Badge tone={roleTone(r.role).tone}>{formatLabel(r.role)}</Badge>,
     },
     {
       key: 'status',
@@ -335,10 +313,10 @@ function Users() {
       searchAccessor: (r) => r.status || '',
       render: (r) => (
         <div className="flex flex-wrap items-center gap-1.5">
-          <Badge variant={statusVariant(r.status)}>{formatLabel(r.status)}</Badge>
+          <Badge tone={statusTone(r.status).tone}>{formatLabel(r.status)}</Badge>
           {isLocked(r) && (
-            <Badge variant="danger" className="gap-1">
-              <Lock className="h-3 w-3" /> Locked
+            <Badge tone="danger" icon={Lock}>
+              Locked
             </Badge>
           )}
         </div>

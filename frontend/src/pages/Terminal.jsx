@@ -4,6 +4,7 @@ import { ArrowLeft, Monitor, Server, User, Zap } from 'lucide-react';
 import WebTerminal from '@/components/terminal/WebTerminal';
 import RdpTerminal from '@/components/terminal/RdpTerminal';
 import EnvironmentBadge from '@/components/shared/EnvironmentBadge';
+import { Badge } from '@/components/ui/badge';
 import { getAccessRequest } from '@/services/accessRequestService';
 
 function Terminal() {
@@ -86,15 +87,11 @@ function Terminal() {
               <ProtocolIcon className="h-4 w-4 text-muted-foreground" />
               <span className="text-sm font-semibold text-foreground">{serverName}</span>
               {environment && <EnvironmentBadge environment={environment} />}
-              {isRdp && (
-                <span className="rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide bg-blue-500/10 text-blue-600 dark:text-blue-400 border border-blue-500/20">
-                  RDP
-                </span>
-              )}
+              {isRdp && <Badge tone="info">RDP</Badge>}
               {ticket && (
-                <span className="flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide bg-amber-500/10 text-amber-600 dark:text-amber-400 border border-amber-500/20">
-                  <Zap className="h-2.5 w-2.5" /> Quick Connect
-                </span>
+                <Badge tone="warning" icon={Zap}>
+                  Quick Connect
+                </Badge>
               )}
               {userName && (
                 <>

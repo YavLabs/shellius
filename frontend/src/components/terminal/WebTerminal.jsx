@@ -5,6 +5,7 @@ import { FitAddon } from '@xterm/addon-fit';
 import { WebLinksAddon } from '@xterm/addon-web-links';
 import { Circle, Loader, RefreshCw, X, Zap, Save } from 'lucide-react';
 import { useAuth } from '@/context/AuthContext';
+import { Badge } from '@/components/ui/badge';
 import SaveServerModal from '@/components/quickConnect/SaveServerModal';
 import '@xterm/xterm/css/xterm.css';
 
@@ -329,9 +330,9 @@ function WebTerminal({ requestId, ticket, label, principal, onClose }) {
         <div className="flex items-center gap-3">
           <StatusIndicator status={status} />
           {isQuickConnect && (
-            <span className="flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide bg-amber-500/10 text-amber-400 border border-amber-500/20">
-              <Zap className="h-2.5 w-2.5" /> Quick Connect
-            </span>
+            <Badge tone="warning" icon={Zap}>
+              Quick Connect
+            </Badge>
           )}
           {hostKey?.fingerprint && (
             <span className="font-mono text-[11px] text-muted-foreground" title={`Host key (${hostKey.algorithm || 'unknown'}) — ${hostKey.status}`}>

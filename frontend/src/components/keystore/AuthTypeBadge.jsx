@@ -1,15 +1,11 @@
 import { Badge } from '@/components/ui/badge';
-
-const LABELS = {
-  password: 'Password',
-  key: 'Private key',
-  key_password: 'Key + password',
-};
+import { authTypeTone } from '@/lib/badgeTones';
 
 function AuthTypeBadge({ authType, className }) {
+  const { tone, label } = authTypeTone(authType);
   return (
-    <Badge variant="secondary" className={className}>
-      {LABELS[authType] || authType}
+    <Badge tone={tone} className={className}>
+      {label}
     </Badge>
   );
 }

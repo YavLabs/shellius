@@ -11,6 +11,8 @@ import Modal from '@/components/shared/Modal';
 import ConfirmDialog from '@/components/shared/ConfirmDialog';
 import CertStatusBadge from '@/components/shared/CertStatusBadge';
 import EnvironmentBadge from '@/components/shared/EnvironmentBadge';
+import UserCell from '@/components/shared/UserCell';
+import { Badge } from '@/components/ui/badge';
 import PageHeader from '@/components/common/PageHeader';
 import { Button } from '@/components/ui/button';
 import SearchableSelect from '@/components/ui/SearchableSelect';
@@ -49,16 +51,16 @@ function ExpiryPill({ validBefore }) {
   if (ms === null) return null;
   if (ms <= 0) {
     return (
-      <span className="ml-1 inline-flex items-center rounded-full bg-destructive/10 px-2 py-0.5 text-[10px] font-semibold text-destructive border border-destructive/30">
+      <Badge tone="danger" className="ml-1">
         Expired
-      </span>
+      </Badge>
     );
   }
   if (ms < ONE_DAY_MS) {
     return (
-      <span className="ml-1 inline-flex items-center rounded-full bg-amber-500/15 px-2 py-0.5 text-[10px] font-semibold text-amber-700 dark:text-amber-300 border border-amber-500/30">
+      <Badge tone="warning" className="ml-1">
         Expiring soon
-      </span>
+      </Badge>
     );
   }
   return null;
@@ -83,7 +85,10 @@ function CertDetailModal({ cert, open, onClose, onDownload }) {
       <dl>
         <DetailRow label="Serial" value={cert.serial} />
         <DetailRow label="Status" value={<CertStatusBadge status={cert.status} />} />
-        <DetailRow label="Issued To" value={cert.issuedTo?.name || cert.issuedTo?.email || cert.userId} />
+        <DetailRow
+          label="Issued To"
+          value={cert.issuedTo ? <UserCell user={cert.issuedTo} /> : cert.userId}
+        />
         <DetailRow
           label="Issued For"
           value={
@@ -113,12 +118,7 @@ function CertDetailModal({ cert, open, onClose, onDownload }) {
         {cert.revokedAt && (
           <DetailRow
             label="Revoked By"
-            value={
-              cert.revokedBy?.name ||
-              cert.revokedBy?.email || (
-                <span className="italic text-muted-foreground">Unknown</span>
-              )
-            }
+            value={cert.revokedBy ? <UserCell user={cert.revokedBy} /> : 'Unknown'}
           />
         )}
         {cert.extensions && Object.keys(cert.extensions).length > 0 && (
@@ -237,12 +237,7 @@ function Certificates() {
       label: 'Issued To',
       sortable: true,
       searchAccessor: (r) => `${r.issuedTo?.name || ''} ${r.issuedTo?.email || ''}`,
-      render: (r) => (
-        <div>
-          <p className="text-sm font-medium text-foreground">{r.issuedTo?.name || '-'}</p>
-          <p className="text-xs text-muted-foreground">{r.issuedTo?.email || r.userId}</p>
-        </div>
-      ),
+      render: (r) => <UserCell user={r.issuedTo} subtitle={r.issuedTo?.email || r.userId} />,
     },
     {
       key: 'server',

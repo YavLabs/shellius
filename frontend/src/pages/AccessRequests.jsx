@@ -16,6 +16,7 @@ import DataTable from '@/components/shared/DataTable';
 import ServerName, { serverSearchString } from '@/components/shared/ServerName';
 import Badge from '@/components/shared/Badge';
 import EnvironmentBadge from '@/components/shared/EnvironmentBadge';
+import UserCell from '@/components/shared/UserCell';
 import Modal from '@/components/shared/Modal';
 import RequestForm from '@/components/access-requests/RequestForm';
 import ApprovalCard from '@/components/access-requests/ApprovalCard';
@@ -155,11 +156,11 @@ function RequestDetailModal({ requestId, open, onClose, onRefresh, currentUser }
             <DetailRow label="Status" value={<StatusBadge status={request.status} />} />
             <DetailRow
               label="Requester"
-              value={request.requester?.name || request.requester?.email || request.requesterId}
+              value={request.requester ? <UserCell user={request.requester} /> : request.requesterId}
             />
             <DetailRow
               label="Reviewer"
-              value={request.reviewer?.name || request.reviewer?.email || request.reviewerId || '-'}
+              value={request.reviewer ? <UserCell user={request.reviewer} /> : request.reviewerId || '-'}
             />
             <DetailRow label="Reason" value={request.reason} />
             <DetailRow label="Requested Duration" value={formatDuration(request.requestedDuration)} />
@@ -353,11 +354,7 @@ function AccessRequests() {
           label: 'Requester',
           sortable: true,
           searchAccessor: (r) => r.requester?.name || r.requester?.email || '',
-          render: (r) => (
-            <span className="text-sm text-foreground">
-              {r.requester?.name || r.requester?.email || r.requesterId}
-            </span>
-          ),
+          render: (r) => <UserCell user={r.requester} fallback={r.requesterId || 'Unknown user'} />,
         }]
       : []),
     ...(activeTab === 'mine'

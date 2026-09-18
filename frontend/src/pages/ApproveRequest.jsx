@@ -2,6 +2,8 @@ import { useState, useEffect } from 'react';
 import { useParams, useSearchParams, Link } from 'react-router-dom';
 import { Loader2, CheckCircle2, XCircle, ShieldCheck } from 'lucide-react';
 import { BrandMark } from '@/components/common/BrandLogo';
+import EnvironmentBadge from '@/components/shared/EnvironmentBadge';
+import UserCell from '@/components/shared/UserCell';
 import { getApprovalRequest, submitApprovalDecision } from '@/services/approvalService';
 
 function fmtDuration(seconds) {
@@ -127,22 +129,16 @@ function ApproveRequest() {
                   </div>
 
                   <div className="rounded-md border border-border bg-muted/30 px-4 py-3 text-sm space-y-1.5">
-                    <div>
+                    <div className="flex items-center gap-2">
                       <span className="text-muted-foreground">Requester:</span>{' '}
-                      <span className="font-medium text-foreground">
-                        {request.requester?.name || request.requester?.email || 'Unknown'}
-                      </span>
+                      <UserCell user={request.requester} fallback="Unknown" />
                     </div>
                     <div>
                       <span className="text-muted-foreground">Server:</span>{' '}
                       <span className="font-medium text-foreground">
                         {request.server?.displayName || request.server?.hostname}
                       </span>{' '}
-                      {env && (
-                        <span className="ml-1 inline-block rounded bg-amber-500/15 px-2 py-0.5 text-[10px] font-semibold uppercase text-amber-700 dark:text-amber-400">
-                          {env}
-                        </span>
-                      )}
+                      {env && <EnvironmentBadge environment={env} className="ml-1" />}
                     </div>
                     <div>
                       <span className="text-muted-foreground">Login as:</span>{' '}

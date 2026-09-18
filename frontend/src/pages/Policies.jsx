@@ -11,7 +11,8 @@ import DataTable from '@/components/shared/DataTable';
 import ConfirmDialog from '@/components/shared/ConfirmDialog';
 import DeletePolicyDialog from '@/components/policies/DeletePolicyDialog';
 import EnvironmentBadge from '@/components/shared/EnvironmentBadge';
-import Badge from '@/components/shared/Badge';
+import { Badge } from '@/components/ui/badge';
+import { policyEffectTone } from '@/lib/badgeTones';
 import PolicyForm from '@/components/policies/PolicyForm';
 import PolicyEvaluator from '@/components/policies/PolicyEvaluator';
 import PageHeader from '@/components/common/PageHeader';
@@ -28,8 +29,8 @@ function isAtLeast(user, role) {
 }
 
 function EffectBadge({ effect }) {
-  if (effect === 'ALLOW') return <Badge variant="success">ALLOW</Badge>;
-  return <Badge variant="danger">DENY</Badge>;
+  const { tone, label } = policyEffectTone(effect);
+  return <Badge tone={tone}>{label}</Badge>;
 }
 
 function Policies() {
@@ -240,7 +241,7 @@ function Policies() {
       label: 'Status',
       searchAccessor: (r) => (r.isActive ? 'active' : 'inactive'),
       render: (r) =>
-        r.isActive ? <Badge variant="success">Active</Badge> : <Badge variant="default">Inactive</Badge>,
+        r.isActive ? <Badge tone="success">Active</Badge> : <Badge tone="neutral">Inactive</Badge>,
     },
     {
       key: 'updatedAt',

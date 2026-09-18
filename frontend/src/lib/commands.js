@@ -16,6 +16,7 @@ import {
   Send,
   Zap,
   Command as CommandIcon,
+  Keyboard,
 } from 'lucide-react';
 import { roleAtLeast } from '@/lib/permissions';
 
@@ -37,6 +38,7 @@ export const QUICK_ACTIONS = [
     icon: Building2,
     minRole: 'manager',
     href: '/customers?action=new',
+    shortcutHint: 'c c',
   },
   {
     id: 'new-server',
@@ -45,6 +47,7 @@ export const QUICK_ACTIONS = [
     icon: Server,
     minRole: 'manager',
     href: '/servers?action=new',
+    shortcutHint: 'c s',
   },
   {
     id: 'new-identity',
@@ -53,6 +56,7 @@ export const QUICK_ACTIONS = [
     icon: UserPlus,
     minRole: 'admin',
     href: '/keystore?tab=identities&action=new',
+    shortcutHint: 'c i',
   },
   {
     id: 'generate-ssh-key',
@@ -61,6 +65,7 @@ export const QUICK_ACTIONS = [
     icon: KeySquare,
     minRole: 'admin',
     href: '/keystore?tab=keys&action=generate',
+    shortcutHint: 'c k',
   },
   {
     id: 'import-ssh-key',
@@ -77,6 +82,7 @@ export const QUICK_ACTIONS = [
     icon: Shield,
     minRole: 'admin',
     href: '/policies?action=new',
+    shortcutHint: 'c p',
   },
   {
     id: 'invite-user',
@@ -85,6 +91,7 @@ export const QUICK_ACTIONS = [
     icon: Users,
     minRole: 'admin',
     href: '/users?action=invite',
+    shortcutHint: 'c u',
   },
   {
     id: 'new-access-request',
@@ -93,6 +100,7 @@ export const QUICK_ACTIONS = [
     icon: KeyRound,
     minRole: 'member',
     href: '/access-requests?action=new',
+    shortcutHint: 'c r',
   },
   {
     id: 'quick-connect',
@@ -126,6 +134,15 @@ export const QUICK_ACTIONS = [
     icon: CommandIcon,
     minRole: 'member',
     action: 'command-palette',
+  },
+  {
+    id: 'shortcuts-help',
+    label: 'Keyboard shortcuts',
+    group: 'Operate',
+    icon: Keyboard,
+    minRole: 'member',
+    action: 'shortcuts-help',
+    shortcutHint: '?',
   },
 ];
 
@@ -165,3 +182,64 @@ export function matchesQuery(label, query) {
   if (!query) return true;
   return label.toLowerCase().includes(query.trim().toLowerCase());
 }
+
+/**
+ * SEQUENCES — single source of truth for every "press key, then key" chord
+ * (hooks/useKeyboardShortcuts.js is generic and just walks this list; it
+ * knows nothing about routes or Quick Actions itself). Each entry:
+ *
+ *   keys      [firstKey, secondKey] — both lowercase, no modifiers
+ *   label     human label (shown in the Quick Actions menu / palette / help)
+ *   minRole   optional role gate (roleAtLeast)
+ *   quickConnect  true if gated by the org's Quick Connect setting instead
+ *   to        route to navigate to
+ *   action    'quick-connect' | 'command-palette' | 'shortcuts-help' — handled
+ *             by the caller instead of navigating
+ */
+export const NAV_SEQUENCES = [
+  { keys: ['g', 'd'], label: 'Go to Dashboard', to: '/dashboard' },
+  { keys: ['g', 's'], label: 'Go to Servers', to: '/servers' },
+  { keys: ['g', 'c'], label: 'Go to Customers', to: '/customers' },
+  { keys: ['g', 'a'], label: 'Go to Access Requests', to: '/access-requests' },
+  { keys: ['g', 'k'], label: 'Go to Keystore', to: '/keystore', minRole: 'manager' },
+  { keys: ['g', 'p'], label: 'Go to Policies', to: '/policies', minRole: 'admin' },
+  { keys: ['g', 'e'], label: 'Go to Certificates', to: '/certificates', minRole: 'admin' },
+  { keys: ['g', 'i'], label: 'Go to Sessions', to: '/sessions', minRole: 'manager' },
+  { keys: ['g', 'l'], label: 'Go to Audit Log', to: '/audit-log', minRole: 'admin' },
+  { keys: ['g', 'u'], label: 'Go to Users', to: '/users', minRole: 'admin' },
+  { keys: ['g', 'g'], label: 'Go to Groups', to: '/groups', minRole: 'admin' },
+  { keys: ['g', 'n'], label: 'Go to Notifications', to: '/notifications' },
+  { keys: ['g', 'q'], label: 'Open Quick Connect', action: 'quick-connect', quickConnect: true },
+];
+
+export const CREATE_SEQUENCES = [
+  { keys: ['c', 's'], label: 'New server', to: '/servers?action=new', minRole: 'manager' },
+  { keys: ['c', 'c'], label: 'New customer', to: '/customers?action=new', minRole: 'manager' },
+  { keys: ['c', 'i'], label: 'New identity', to: '/keystore?tab=identities&action=new', minRole: 'admin' },
+  { keys: ['c', 'k'], label: 'Generate SSH key', to: '/keystore?tab=keys&action=generate', minRole: 'admin' },
+  { keys: ['c', 'u'], label: 'Invite user', to: '/users?action=invite', minRole: 'admin' },
+  { keys: ['c', 'p'], label: 'New policy', to: '/policies?action=new', minRole: 'admin' },
+  { keys: ['c', 'r'], label: 'New access request', to: '/access-requests?action=new', minRole: 'member' },
+];
+
+export const SEQUENCES = [...NAV_SEQUENCES, ...CREATE_SEQUENCES];
+
+export function isSequenceVisible(seq, user, quickConnectAllowed) {
+  if (seq.quickConnect) return !!quickConnectAllowed;
+  if (!seq.minRole) return true;
+  return roleAtLeast(user, seq.minRole);
+}
+
+export function sequenceLabel(keys) {
+  return keys.join(' then ');
+}
+
+/**
+ * GENERAL_SHORTCUTS — single-key / modifier shortcuts not part of a 2-key
+ * sequence, shown in the Keyboard Shortcuts help dialog.
+ */
+export const GENERAL_SHORTCUTS = [
+  { keys: ['Mod', 'K'], label: 'Open command palette' },
+  { keys: ['/'], label: 'Open command palette' },
+  { keys: ['?'], label: 'Show keyboard shortcuts' },
+];

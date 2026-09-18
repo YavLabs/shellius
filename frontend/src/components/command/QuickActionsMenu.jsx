@@ -45,6 +45,10 @@ function QuickActionsMenu() {
       openPalette();
       return;
     }
+    if (action.action === 'shortcuts-help') {
+      window.dispatchEvent(new CustomEvent('shellius:open-shortcuts'));
+      return;
+    }
     if (action.href) navigate(action.href);
   };
 
@@ -66,6 +70,7 @@ function QuickActionsMenu() {
                 <DropdownMenuItem key={a.id} onSelect={() => run(a)}>
                   <Icon className="mr-2 h-4 w-4" />
                   {a.label}
+                  {a.shortcutHint && <DropdownMenuShortcut>{a.shortcutHint}</DropdownMenuShortcut>}
                 </DropdownMenuItem>
               );
             })}

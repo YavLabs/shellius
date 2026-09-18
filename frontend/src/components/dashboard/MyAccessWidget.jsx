@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Shield, ShieldAlert, Server, ChevronRight } from 'lucide-react';
 import EnvironmentBadge from '@/components/shared/EnvironmentBadge';
+import { Badge } from '@/components/ui/badge';
 import { getMyAccess } from '@/services/policyService';
 
 function formatMaxTtl(seconds) {
@@ -50,15 +51,13 @@ function AccessRow({ entry }) {
       {/* Right: access label + ttl + chevron — single centered row */}
       <div className="flex shrink-0 items-center gap-3">
         {requiresApproval ? (
-          <span className="inline-flex items-center gap-1 rounded-full border border-amber-500/30 bg-amber-500/5 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-amber-700 dark:text-amber-400">
-            <ShieldAlert className="h-3 w-3" />
+          <Badge tone="warning" icon={ShieldAlert}>
             Needs approval
-          </span>
+          </Badge>
         ) : (
-          <span className="inline-flex items-center gap-1 rounded-full border border-emerald-500/30 bg-emerald-500/5 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-emerald-700 dark:text-emerald-400">
-            <Shield className="h-3 w-3" />
+          <Badge tone="success" icon={Shield}>
             Direct access
-          </span>
+          </Badge>
         )}
         {formatMaxTtl(entry.maxTtl) !== '-' && (
           <span className="whitespace-nowrap text-xs text-muted-foreground">

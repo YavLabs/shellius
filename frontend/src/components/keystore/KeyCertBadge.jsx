@@ -13,15 +13,8 @@ function KeyCertBadge({ certificate }) {
     <TooltipProvider delayDuration={200}>
       <Tooltip>
         <TooltipTrigger asChild>
-          <Badge
-            variant="outline"
-            className={
-              certificate.expired
-                ? 'gap-1 border-destructive/40 text-destructive'
-                : 'gap-1 border-emerald-500/40 text-emerald-600 dark:text-emerald-400'
-            }
-          >
-            <ShieldCheck className="h-3 w-3" /> Cert
+          <Badge tone={certificate.expired ? 'danger' : 'success'} variant="outline" icon={ShieldCheck}>
+            Cert
           </Badge>
         </TooltipTrigger>
         <TooltipContent className="max-w-xs text-xs">

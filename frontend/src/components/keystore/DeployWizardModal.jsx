@@ -5,6 +5,8 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import SearchableSelect from '@/components/ui/SearchableSelect';
 import EnvironmentBadge from '@/components/shared/EnvironmentBadge';
+import { Badge } from '@/components/ui/badge';
+import { statusTone } from '@/lib/badgeTones';
 import { listKeys, listCredentials, createDeployments, listDeployments } from '@/services/keystoreService';
 import { listServers } from '@/services/serverService';
 
@@ -15,13 +17,6 @@ const ACTIONS = [
 ];
 
 const ENVIRONMENTS = ['demo', 'dev', 'staging', 'prod'];
-
-const STATUS_META = {
-  pending: { label: 'Pending', cls: 'bg-muted text-muted-foreground' },
-  running: { label: 'Running', cls: 'bg-blue-500/15 text-blue-600 dark:text-blue-400' },
-  success: { label: 'Success', cls: 'bg-emerald-500/15 text-emerald-600 dark:text-emerald-400' },
-  failed: { label: 'Failed', cls: 'bg-destructive/15 text-destructive' },
-};
 
 /**
  * DeployWizardModal — reusable deploy/remove/rotate wizard. Launched from the
@@ -306,9 +301,9 @@ function DeployWizardModal({
                             className="rounded border-border accent-primary"
                           />
                           <span className="truncate">{s.displayName || s.hostname}</span>
-                          <span className="shrink-0 rounded bg-muted px-1.5 py-0.5 text-[10px] uppercase text-muted-foreground">
-                            {s.authMode === 'credential' ? 'identity' : 'certificate'}
-                          </span>
+                          <Badge tone="neutral" className="shrink-0">
+                            {s.authMode === 'credential' ? 'Identity' : 'Certificate'}
+                          </Badge>
                         </span>
                         <EnvironmentBadge environment={s.environment} />
                       </label>
@@ -397,13 +392,11 @@ function DeployWizardModal({
             <div className="max-h-72 overflow-y-auto rounded-md border border-border">
               <ul className="divide-y divide-border">
                 {deployments.map((d) => {
-                  const meta = STATUS_META[d.status] || STATUS_META.pending;
+                  const meta = statusTone(d.status);
                   return (
                     <li key={d.id} className="flex items-center justify-between gap-2 px-3 py-2 text-sm">
                       <span className="truncate">{d.server?.displayName || d.server?.hostname}</span>
-                      <span className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-medium ${meta.cls}`}>
-                        {meta.label}
-                      </span>
+                      <Badge tone={meta.tone} className="shrink-0">{meta.label}</Badge>
                     </li>
                   );
                 })}

@@ -28,7 +28,9 @@ import {
   CommandShortcut,
 } from '@/components/ui/command';
 import EnvironmentBadge from '@/components/shared/EnvironmentBadge';
-import Badge from '@/components/shared/Badge';
+import { Badge } from '@/components/ui/badge';
+import { roleTone, protocolTone } from '@/lib/badgeTones';
+import Avatar from '@/components/ui/Avatar';
 import ConnectModal from '@/components/servers/ConnectModal';
 import RequestForm from '@/components/access-requests/RequestForm';
 import { useAuth } from '@/context/AuthContext';
@@ -53,19 +55,6 @@ const GROUP_META = {
   policies: { label: 'Policies', icon: Shield },
 };
 const RESULT_ORDER = ['servers', 'customers', 'users', 'identities', 'keys', 'policies'];
-
-const roleVariant = (role) => {
-  switch (role) {
-    case 'super_admin':
-      return 'danger';
-    case 'admin':
-      return 'info';
-    case 'manager':
-      return 'warning';
-    default:
-      return 'default';
-  }
-};
 
 function HighlightedText({ text, query }) {
   if (!query || !text) return <>{text}</>;
@@ -245,6 +234,11 @@ function CommandPalette() {
       if (action.action === 'quick-connect') {
         closeAll();
         openQuickConnect();
+        return;
+      }
+      if (action.action === 'shortcuts-help') {
+        closeAll();
+        window.dispatchEvent(new CustomEvent('shellius:open-shortcuts'));
         return;
       }
       if (action.href) goTo(action.href);
@@ -462,7 +456,11 @@ function CommandPalette() {
                           const actions = isHighlighted ? secondaryActionsFor(type, item) : [];
                           return (
                             <CommandItem key={key} value={key} onSelect={() => openResult(type, item)}>
-                              <GroupIcon className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                              {type === 'users' ? (
+                                <Avatar name={item.title} email={item.subtitle} avatarUrl={item.meta?.avatarUrl} size="xs" />
+                              ) : (
+                                <GroupIcon className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                              )}
                               <span className="min-w-0 flex-1">
                                 <span className="flex items-center gap-1.5 truncate text-sm">
                                   <HighlightedText text={item.title} query={query} />
@@ -470,13 +468,13 @@ function CommandPalette() {
                                     <EnvironmentBadge environment={item.meta.environment} />
                                   )}
                                   {type === 'servers' && item.meta?.protocol && (
-                                    <span className="text-[10px] uppercase text-muted-foreground">
-                                      {item.meta.protocol}
-                                    </span>
+                                    <Badge tone={protocolTone(item.meta.protocol).tone}>
+                                      {protocolTone(item.meta.protocol).label}
+                                    </Badge>
                                   )}
                                   {type === 'users' && item.meta?.role && (
-                                    <Badge variant={roleVariant(item.meta.role)} className="text-[10px]">
-                                      {item.meta.role}
+                                    <Badge tone={roleTone(item.meta.role).tone}>
+                                      {roleTone(item.meta.role).label}
                                     </Badge>
                                   )}
                                   {type === 'keys' && item.meta?.fingerprint && (

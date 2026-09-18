@@ -1,15 +1,64 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { User, Download, Trash2, Loader2 } from 'lucide-react';
+import { User, Download, Trash2, Loader2, Upload, X } from 'lucide-react';
 import { useAuth } from '@/context/AuthContext';
 import PageHeader from '@/components/common/PageHeader';
 import ConfirmDialog from '@/components/shared/ConfirmDialog';
 import Skeleton from '@/components/ui/Skeleton';
+import Avatar from '@/components/ui/Avatar';
 import PasswordCard from '@/components/profile/PasswordCard';
 import MfaCard from '@/components/profile/MfaCard';
 import SessionsCard from '@/components/profile/SessionsCard';
 import SignInMethodsCard from '@/components/profile/SignInMethodsCard';
-import { getMe, updateMe, exportMyData, deleteMyAccount } from '@/services/userService';
+import {
+  getMe,
+  updateMe,
+  exportMyData,
+  deleteMyAccount,
+  uploadMyAvatar,
+  removeMyAvatar,
+} from '@/services/userService';
+
+const AVATAR_OUTPUT_SIZE = 128;
+const AVATAR_MAX_INPUT_BYTES = 5 * 1024 * 1024; // 5MB
+const AVATAR_ACCEPT_TYPES = ['image/png', 'image/jpeg', 'image/webp'];
+
+/**
+ * Center-crop + resize an image file to a square AVATAR_OUTPUT_SIZE webp
+ * data URL, entirely client-side. Rejects files over the size limit or of
+ * an unsupported type before ever touching the canvas.
+ */
+function cropAndResizeToAvatar(file) {
+  return new Promise((resolve, reject) => {
+    if (!AVATAR_ACCEPT_TYPES.includes(file.type)) {
+      reject(new Error('Please choose a PNG, JPEG, or WEBP image.'));
+      return;
+    }
+    if (file.size > AVATAR_MAX_INPUT_BYTES) {
+      reject(new Error('Image is too large. Please choose a file under 5MB.'));
+      return;
+    }
+    const reader = new FileReader();
+    reader.onerror = () => reject(new Error('Failed to read the selected file.'));
+    reader.onload = () => {
+      const img = new Image();
+      img.onerror = () => reject(new Error('Failed to load the selected image.'));
+      img.onload = () => {
+        const side = Math.min(img.width, img.height);
+        const sx = (img.width - side) / 2;
+        const sy = (img.height - side) / 2;
+        const canvas = document.createElement('canvas');
+        canvas.width = AVATAR_OUTPUT_SIZE;
+        canvas.height = AVATAR_OUTPUT_SIZE;
+        const ctx = canvas.getContext('2d');
+        ctx.drawImage(img, sx, sy, side, side, 0, 0, AVATAR_OUTPUT_SIZE, AVATAR_OUTPUT_SIZE);
+        resolve(canvas.toDataURL('image/webp', 0.9));
+      };
+      img.src = reader.result;
+    };
+    reader.readAsDataURL(file);
+  });
+}
 
 function SectionCard({ title, description, children, className = '' }) {
   return (
@@ -35,12 +84,18 @@ function InfoRow({ label, value }) {
 }
 
 function Profile() {
-  const { user: authUser, logout } = useAuth();
+  const { user: authUser, logout, refreshUser } = useAuth();
   const navigate = useNavigate();
 
   const [profile, setProfile] = useState(null);
   const [loadError, setLoadError] = useState('');
   const [loadingProfile, setLoadingProfile] = useState(true);
+
+  // Avatar upload
+  const fileInputRef = useRef(null);
+  const [avatarSaving, setAvatarSaving] = useState(false);
+  const [avatarError, setAvatarError] = useState('');
+  const [avatarDragOver, setAvatarDragOver] = useState(false);
 
   // Name edit
   const [name, setName] = useState('');
@@ -89,6 +144,37 @@ function Profile() {
     }
   };
 
+  const handleAvatarFile = async (file) => {
+    if (!file) return;
+    setAvatarError('');
+    setAvatarSaving(true);
+    try {
+      const dataUrl = await cropAndResizeToAvatar(file);
+      const updated = await uploadMyAvatar(dataUrl);
+      setProfile((prev) => ({ ...prev, ...updated }));
+      await refreshUser?.();
+    } catch (err) {
+      setAvatarError(err.message || err.response?.data?.error?.message || 'Failed to upload photo.');
+    } finally {
+      setAvatarSaving(false);
+      if (fileInputRef.current) fileInputRef.current.value = '';
+    }
+  };
+
+  const handleAvatarRemove = async () => {
+    setAvatarError('');
+    setAvatarSaving(true);
+    try {
+      const updated = await removeMyAvatar();
+      setProfile((prev) => ({ ...prev, ...updated, avatarUrl: null }));
+      await refreshUser?.();
+    } catch (err) {
+      setAvatarError(err.response?.data?.error?.message || err.message || 'Failed to remove photo.');
+    } finally {
+      setAvatarSaving(false);
+    }
+  };
+
   const handleExport = async () => {
     setExportError('');
     setExporting(true);
@@ -118,13 +204,6 @@ function Profile() {
       setShowDeleteConfirm(false);
     }
   };
-
-  const initials = (profile?.name || authUser?.name || profile?.email || 'U')
-    .split(' ')
-    .filter(Boolean)
-    .slice(0, 2)
-    .map((w) => w[0].toUpperCase())
-    .join('');
 
   // /auth/me (authUser) is the source of truth for hasPassword/ssoProvider
   // post-hardening; fall back to the older /users/me heuristic if a field is
@@ -166,22 +245,69 @@ function Profile() {
       <div className="grid gap-5 md:grid-cols-2">
         {/* Profile section */}
         <SectionCard title="Profile" description="Your personal information and account details.">
-          <div className="flex items-center gap-4 mb-6">
-            {(profile?.avatarUrl || authUser?.avatarUrl) ? (
-              <img
-                src={profile?.avatarUrl || authUser?.avatarUrl}
-                alt={profile?.name || 'Avatar'}
-                referrerPolicy="no-referrer"
-                className="h-16 w-16 shrink-0 rounded-full object-cover"
+          <div className="mb-6 flex items-center gap-4">
+            <div
+              className={`relative flex h-16 w-16 shrink-0 items-center justify-center rounded-full transition-colors ${
+                avatarDragOver ? 'ring-2 ring-primary ring-offset-2 ring-offset-background' : ''
+              }`}
+              onDragOver={(e) => {
+                e.preventDefault();
+                setAvatarDragOver(true);
+              }}
+              onDragLeave={() => setAvatarDragOver(false)}
+              onDrop={(e) => {
+                e.preventDefault();
+                setAvatarDragOver(false);
+                handleAvatarFile(e.dataTransfer.files?.[0]);
+              }}
+            >
+              <Avatar
+                name={profile?.name || authUser?.name}
+                email={profile?.email || authUser?.email}
+                avatarUrl={profile?.avatarUrl || authUser?.avatarUrl}
+                size="xl"
               />
-            ) : (
-              <div className="flex h-16 w-16 shrink-0 items-center justify-center rounded-full bg-primary text-lg font-semibold text-primary-foreground select-none">
-                {initials}
-              </div>
-            )}
-            <div>
+              {avatarSaving && (
+                <span className="absolute inset-0 flex items-center justify-center rounded-full bg-background/70">
+                  <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+                </span>
+              )}
+            </div>
+            <div className="min-w-0 flex-1">
               <p className="font-medium text-foreground">{profile?.name || 'No name set'}</p>
               <p className="text-sm text-muted-foreground">{profile?.email}</p>
+              <div className="mt-2 flex items-center gap-3">
+                <button
+                  type="button"
+                  onClick={() => fileInputRef.current?.click()}
+                  disabled={avatarSaving}
+                  className="flex items-center gap-1.5 text-xs font-medium text-primary hover:underline disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  <Upload className="h-3.5 w-3.5" />
+                  Upload photo
+                </button>
+                {(profile?.avatarUrl || authUser?.avatarUrl) && (
+                  <button
+                    type="button"
+                    onClick={handleAvatarRemove}
+                    disabled={avatarSaving}
+                    className="flex items-center gap-1.5 text-xs font-medium text-muted-foreground hover:text-destructive disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    <X className="h-3.5 w-3.5" />
+                    Remove
+                  </button>
+                )}
+              </div>
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept="image/png,image/jpeg,image/webp"
+                className="hidden"
+                onChange={(e) => handleAvatarFile(e.target.files?.[0])}
+              />
+              {avatarError && (
+                <p className="mt-1.5 text-xs text-destructive" role="alert">{avatarError}</p>
+              )}
             </div>
           </div>
 

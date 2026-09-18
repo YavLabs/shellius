@@ -2,16 +2,11 @@ import { useCallback, useEffect, useImperativeHandle, useRef, useState, forwardR
 import { ChevronDown, ChevronRight, RefreshCw, History } from 'lucide-react';
 import EmptyState from '@/components/ui/EmptyState';
 import { Badge } from '@/components/ui/badge';
+import Avatar from '@/components/ui/Avatar';
+import { statusTone } from '@/lib/badgeTones';
 import DeployWizardModal from './DeployWizardModal';
 import { listDeploymentBatches, listDeployments, retryDeployment } from '@/services/keystoreService';
 import { formatDateTime, relativeTime } from '@/utils/time';
-
-const STATUS_META = {
-  pending: { label: 'Pending', cls: 'bg-muted text-muted-foreground' },
-  running: { label: 'Running', cls: 'bg-blue-500/15 text-blue-600 dark:text-blue-400' },
-  success: { label: 'Success', cls: 'bg-emerald-500/15 text-emerald-600 dark:text-emerald-400' },
-  failed: { label: 'Failed', cls: 'bg-destructive/15 text-destructive' },
-};
 
 const ACTION_LABEL = { deploy: 'Deploy', remove: 'Remove', rotate: 'Rotate' };
 
@@ -29,7 +24,7 @@ function ProgressBar({ counts }) {
 
 function DeploymentRow({ deployment, canRetry, onRetry }) {
   const [open, setOpen] = useState(false);
-  const meta = STATUS_META[deployment.status] || STATUS_META.pending;
+  const meta = statusTone(deployment.status);
   const hasDetail = deployment.error || deployment.output;
 
   return (
@@ -47,7 +42,7 @@ function DeploymentRow({ deployment, canRetry, onRetry }) {
           )}
           <span className="truncate text-foreground">{deployment.server?.displayName || deployment.server?.hostname}</span>
         </button>
-        <span className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-medium ${meta.cls}`}>{meta.label}</span>
+        <Badge tone={meta.tone} className="shrink-0">{meta.label}</Badge>
         {canRetry && deployment.status === 'failed' && (
           <button
             type="button"
@@ -130,9 +125,10 @@ function BatchRow({ batch, canRetry, onChanged, defaultOpen, highlighted, rowRef
         {open ? <ChevronDown className="h-4 w-4 shrink-0 text-muted-foreground" /> : <ChevronRight className="h-4 w-4 shrink-0 text-muted-foreground" />}
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-2">
-            <Badge variant="secondary">{ACTION_LABEL[batch.action] || batch.action}</Badge>
+            <Badge tone="neutral">{ACTION_LABEL[batch.action] || batch.action}</Badge>
             <span className="truncate text-sm font-medium text-foreground">{batch.sshKey?.name}</span>
-            <span className="text-xs text-muted-foreground">
+            <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
+              <Avatar name={batch.deployedBy?.name} email={batch.deployedBy?.email} avatarUrl={batch.deployedBy?.avatarUrl} size="xs" />
               by {batch.deployedBy?.name || 'system'} · {relativeTime(batch.createdAt)}
             </span>
           </div>

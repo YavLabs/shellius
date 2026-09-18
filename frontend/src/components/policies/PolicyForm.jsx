@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
-import { X, Plus, FlaskConical, Info, CheckCircle2, XCircle, Zap, Siren, Key, Check } from 'lucide-react';
+import { Badge } from '@/components/ui/badge';
+import { Plus, FlaskConical, Info, CheckCircle2, XCircle, Zap, Siren, Key, Check } from 'lucide-react';
 import Modal from '@/components/shared/Modal';
 import EnvironmentBadge from '@/components/shared/EnvironmentBadge';
 import { listCustomers } from '@/services/customerService';
@@ -135,16 +136,9 @@ const errorCls = 'text-xs text-destructive mt-1';
 
 function Chip({ label, onRemove }) {
   return (
-    <span className="inline-flex items-center gap-1 rounded-full bg-accent px-2.5 py-0.5 text-xs font-medium text-foreground">
+    <Badge onRemove={onRemove} removeLabel={`Remove ${label}`}>
       {label}
-      <button
-        type="button"
-        onClick={onRemove}
-        className="ml-0.5 text-muted-foreground hover:text-foreground"
-      >
-        <X className="h-3 w-3" />
-      </button>
-    </span>
+    </Badge>
   );
 }
 

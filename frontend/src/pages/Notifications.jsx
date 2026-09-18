@@ -2,7 +2,8 @@ import { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Bell, CheckCheck } from 'lucide-react';
 import DataTable from '@/components/shared/DataTable';
-import Badge from '@/components/shared/Badge';
+import { Badge } from '@/components/ui/badge';
+import { formatLabel } from '@/utils/format';
 import PageHeader from '@/components/common/PageHeader';
 import { Button } from '@/components/ui/button';
 import SearchableSelect from '@/components/ui/SearchableSelect';
@@ -102,8 +103,8 @@ function Notifications() {
       sortable: true,
       searchAccessor: (n) => n.type || '',
       render: (n) => (
-        <Badge variant="outline" className="text-[10px] uppercase">
-          {n.type || 'info'}
+        <Badge tone="info" variant="outline">
+          {formatLabel(n.type || 'info')}
         </Badge>
       ),
     },

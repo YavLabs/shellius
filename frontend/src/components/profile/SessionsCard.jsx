@@ -3,6 +3,7 @@ import { Laptop, Terminal as TerminalIcon, Smartphone, Loader2, LogOut } from 'l
 import { Button } from '@/components/ui/button';
 import ConfirmDialog from '@/components/shared/ConfirmDialog';
 import Skeleton from '@/components/ui/Skeleton';
+import { Badge } from '@/components/ui/badge';
 import { listAuthSessions, revokeAuthSession, revokeOtherAuthSessions } from '@/services/authSessionService';
 import { describeSession } from '@/utils/userAgent';
 import { relativeTime, formatDateTime } from '@/utils/time';
@@ -119,11 +120,7 @@ export default function SessionsCard() {
                   <div className="min-w-0">
                     <p className="flex items-center gap-2 text-sm font-medium text-foreground">
                       <span className="truncate">{desc.label}</span>
-                      {s.current && (
-                        <span className="shrink-0 rounded-full bg-emerald-500/10 px-2 py-0.5 text-[10px] font-medium text-emerald-600 dark:text-emerald-400">
-                          This device
-                        </span>
-                      )}
+                      {s.current && <Badge tone="success">This device</Badge>}
                     </p>
                     <p className="text-xs text-muted-foreground">
                       {s.ipAddress || 'Unknown IP'} &middot; Started {formatDateTime(s.createdAt)} &middot; Last

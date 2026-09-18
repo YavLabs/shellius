@@ -4,6 +4,7 @@ import DataTable from '@/components/shared/DataTable';
 import ConfirmDialog from '@/components/shared/ConfirmDialog';
 import EmptyState from '@/components/ui/EmptyState';
 import { Badge } from '@/components/ui/badge';
+import { keySourceTone } from '@/lib/badgeTones';
 import KeyCertBadge from './KeyCertBadge';
 import GenerateKeyModal from './GenerateKeyModal';
 import ImportKeyModal from './ImportKeyModal';
@@ -13,7 +14,6 @@ import DeployWizardModal from './DeployWizardModal';
 import { listKeys, deleteKey } from '@/services/keystoreService';
 import { formatDateTime } from '@/utils/time';
 
-const SOURCE_LABEL = { generated: 'Generated', imported: 'Imported' };
 const FORMAT_LABEL = {
   openssh: 'OpenSSH',
   pkcs1: 'PKCS#1',
@@ -149,7 +149,7 @@ const SshKeysTab = forwardRef(function SshKeysTab({ canManage }, ref) {
       hideBelow: 'md',
       render: (r) => (
         <div className="flex flex-col gap-1">
-          <Badge variant="secondary">{SOURCE_LABEL[r.source] || r.source}</Badge>
+          <Badge tone={keySourceTone(r.source).tone}>{keySourceTone(r.source).label}</Badge>
           {r.originalFormat && (
             <span className="text-[10px] text-muted-foreground">
               {FORMAT_LABEL[r.originalFormat] || r.originalFormat}

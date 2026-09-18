@@ -12,6 +12,7 @@ import {
 } from 'lucide-react';
 import { useAuth } from '@/context/AuthContext';
 import { useTheme } from '@/context/ThemeContext';
+import Avatar from '@/components/ui/Avatar';
 
 /**
  * UserMenu — the shared dropdown that opens from the topbar avatar
@@ -92,14 +93,7 @@ function UserMenu({ trigger, align = 'right', verticalAlign = 'below' }) {
         >
           {/* User identity header */}
           <div className="flex items-center gap-2.5 border-b border-border px-3 py-2">
-            {user?.avatarUrl && (
-              <img
-                src={user.avatarUrl}
-                alt=""
-                referrerPolicy="no-referrer"
-                className="h-8 w-8 shrink-0 rounded-full object-cover"
-              />
-            )}
+            <Avatar name={user?.name} email={user?.email} avatarUrl={user?.avatarUrl} size="sm" />
             <div className="min-w-0">
               <p className="truncate text-sm font-medium text-foreground">
                 {user?.name || 'User'}
