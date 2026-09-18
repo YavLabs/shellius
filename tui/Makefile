@@ -3,9 +3,11 @@ MODULE   := github.com/shellius/tui
 CMD      := ./cmd/shellius
 BINDIR   := bin
 
-# Version stamping — override any of these on the command line:
-#   make build VERSION=v0.3.0
-VERSION   ?= dev
+# Version stamping. Default reads the repo-root VERSION file (kept in sync
+# with backend/frontend package.json by `node scripts/version.mjs sync`);
+# override on the command line for a specific TUI release, e.g.:
+#   make build VERSION=1.1.0
+VERSION   ?= $(shell cat $(CURDIR)/../VERSION 2>/dev/null || echo dev)
 COMMIT    ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo unknown)
 BUILD_TIME ?= $(shell date -u +%Y-%m-%dT%H:%M:%SZ)
 

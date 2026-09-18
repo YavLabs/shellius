@@ -66,6 +66,9 @@ services:
     build:
       context: .
       dockerfile: docker/Dockerfile.backend
+      args:
+        APP_VERSION: ${APP_VERSION:-dev}
+        GIT_SHA: ${GIT_SHA:-local}
     ports:
       - "3001:3001"
     env_file: .env
@@ -93,6 +96,9 @@ services:
     build:
       context: .
       dockerfile: docker/Dockerfile.frontend
+      args:
+        APP_VERSION: ${APP_VERSION:-dev}
+        GIT_SHA: ${GIT_SHA:-local}
     ports:
       - "80:80"
     depends_on:
