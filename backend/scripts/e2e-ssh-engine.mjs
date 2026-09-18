@@ -23,7 +23,8 @@
  *      linuxserver/openssh-server image's single-user sandbox silently
  *      refuses pubkey auth for any account other than its designated one.
  *
- * See the final report for the exact commands used to build this fixture.
+ * Normally run via scripts/e2e-ssh.sh (npm run test:e2e:ssh), which builds
+ * all fixtures and containers from scratch and tears them down afterwards.
  */
 
 import fs from 'fs';
@@ -49,6 +50,23 @@ const FIXTURE_DIR = process.env.SSH_E2E_FIXTURE_DIR || path.join(os.tmpdir(), 's
 const CA_KEY_PATH = process.env.SSH_E2E_CA_KEY || path.join(FIXTURE_DIR, 'ca_key');
 const USER_KEY_PATH = process.env.SSH_E2E_USER_KEY || path.join(FIXTURE_DIR, 'user_key');
 const USER_PUB_PATH = `${USER_KEY_PATH}.pub`;
+
+// ── RSA/ECDSA certificate-auth fixtures (Revision 2) ────────────────────────
+// Same PORT/container (shellius-e2e-cert) additionally trusts a second, RSA
+// CA (RSA_CA_KEY) — proves cert auth works when signed by either CA type —
+// and has RSA/ECDSA user keys authorized. CERT256_PORT points at a second
+// container whose sshd_config restricts `PubkeyAcceptedAlgorithms` to
+// `rsa-sha2-256-cert-v01@openssh.com` only, trusting just the RSA CA — this
+// is what actually proves rsa-sha2-256 negotiation (not just a lucky 512
+// success) rather than a hardcoded/forced digest.
+const RSA_CA_KEY_PATH = process.env.SSH_E2E_RSA_CA_KEY || path.join(FIXTURE_DIR, 'rsa_ca_key');
+const RSA_USER_KEY_PATH = process.env.SSH_E2E_RSA_USER_KEY || path.join(FIXTURE_DIR, 'rsa_user_key');
+const RSA_USER_PUB_PATH = `${RSA_USER_KEY_PATH}.pub`;
+const CERT256_PORT = parseInt(process.env.SSH_E2E_CERT256_PORT || '52225', 10);
+const ECDSA_BITS = [256, 384, 521];
+function ecdsaKeyPath(bits) {
+  return process.env[`SSH_E2E_ECDSA_${bits}_KEY`] || path.join(FIXTURE_DIR, `ecdsa_${bits}_key`);
+}
 
 let pass = 0;
 let fail = 0;
@@ -113,6 +131,83 @@ async function main() {
     client.end();
     assert(result.code === 0 && /shellius-e2e-key-ok/.test(result.stdout), 'plain key auth failed');
   });
+
+  // ── 2b. RSA certificate auth — proper rsa-sha2-512/256 negotiation ─────
+  // (Revision 2: sshConnect.js no longer forces rsa-sha2-512 unconditionally
+  // — it queues both variants, best-effort-orders them by the server's
+  // EXT_INFO server-sig-algs, and falls back to trying both on
+  // USERAUTH_FAILURE.)
+  if (fs.existsSync(RSA_CA_KEY_PATH) && fs.existsSync(RSA_USER_KEY_PATH)) {
+    const rsaPrivateKey = fs.readFileSync(RSA_USER_KEY_PATH, 'utf8');
+
+    const signRsaCert = (caKeyPath, label) => {
+      execFileSync('ssh-keygen', [
+        '-s', caKeyPath, '-I', `shellius-e2e-rsa-${label}-${Date.now()}`,
+        '-n', USER, '-V', '+5m', RSA_USER_PUB_PATH,
+      ], { stdio: 'pipe' });
+      const p = RSA_USER_PUB_PATH.replace(/\.pub$/, '-cert.pub');
+      return fs.readFileSync(p, 'utf8');
+    };
+
+    await t('RSA certificate auth, signed by an ed25519 CA (default/unrestricted server)', async () => {
+      const certificate = signRsaCert(CA_KEY_PATH, 'ed25519ca');
+      const { client } = await sshConnect.connectSsh({
+        host: HOST, port: PORT, username: USER, privateKey: rsaPrivateKey, certificate, readyTimeout: 10000,
+      });
+      const result = await sshConnect.execCommand(client, 'echo shellius-e2e-rsa-ed25519ca-ok');
+      client.end();
+      assert(result.code === 0 && /shellius-e2e-rsa-ed25519ca-ok/.test(result.stdout), 'RSA cert (ed25519 CA) auth failed');
+    });
+
+    if (fs.existsSync(`${RSA_CA_KEY_PATH}.pub`) || fs.existsSync(RSA_CA_KEY_PATH)) {
+      await t('RSA certificate auth, signed by an RSA CA (default/unrestricted server)', async () => {
+        const certificate = signRsaCert(RSA_CA_KEY_PATH, 'rsaca');
+        const { client } = await sshConnect.connectSsh({
+          host: HOST, port: PORT, username: USER, privateKey: rsaPrivateKey, certificate, readyTimeout: 10000,
+        });
+        const result = await sshConnect.execCommand(client, 'echo shellius-e2e-rsa-rsaca-ok');
+        client.end();
+        assert(result.code === 0 && /shellius-e2e-rsa-rsaca-ok/.test(result.stdout), 'RSA cert (RSA CA) auth failed');
+      });
+
+      await t('RSA certificate auth negotiates rsa-sha2-256 against a server restricted to it', async () => {
+        const certificate = signRsaCert(RSA_CA_KEY_PATH, 'rsaca-256');
+        const { client } = await sshConnect.connectSsh({
+          host: HOST, port: CERT256_PORT, username: USER, privateKey: rsaPrivateKey, certificate, readyTimeout: 10000,
+        });
+        const result = await sshConnect.execCommand(client, 'echo shellius-e2e-rsa-256-ok');
+        client.end();
+        assert(result.code === 0 && /shellius-e2e-rsa-256-ok/.test(result.stdout), 'RSA cert rsa-sha2-256-only negotiation failed');
+      });
+    } else {
+      console.log('  (skip RSA-CA-signed cases: RSA CA fixture not found)');
+    }
+  } else {
+    console.log('- RSA certificate auth ... SKIP (fixture missing: set SSH_E2E_RSA_CA_KEY / SSH_E2E_RSA_USER_KEY)');
+  }
+
+  // ── 2c. ECDSA certificate auth (nistp256/384/521) ──────────────────────
+  for (const bits of ECDSA_BITS) {
+    const keyPath = ecdsaKeyPath(bits);
+    if (!fs.existsSync(keyPath)) {
+      console.log(`- ECDSA nistp${bits} certificate auth ... SKIP (fixture missing: ${keyPath})`);
+      continue;
+    }
+    await t(`ECDSA nistp${bits} certificate auth`, async () => {
+      const ecdsaPrivateKey = fs.readFileSync(keyPath, 'utf8');
+      execFileSync('ssh-keygen', [
+        '-s', CA_KEY_PATH, '-I', `shellius-e2e-ecdsa-${bits}-${Date.now()}`,
+        '-n', USER, '-V', '+5m', `${keyPath}.pub`,
+      ], { stdio: 'pipe' });
+      const certificate = fs.readFileSync(`${keyPath}`.replace(/$/, '') + '-cert.pub', 'utf8');
+      const { client } = await sshConnect.connectSsh({
+        host: HOST, port: PORT, username: USER, privateKey: ecdsaPrivateKey, certificate, readyTimeout: 10000,
+      });
+      const result = await sshConnect.execCommand(client, `echo shellius-e2e-ecdsa-${bits}-ok`);
+      client.end();
+      assert(result.code === 0 && new RegExp(`shellius-e2e-ecdsa-${bits}-ok`).test(result.stdout), `ECDSA nistp${bits} cert auth failed`);
+    });
+  }
 
   // ── 3. password login ────────────────────────────────────────────────
   await t('password auth', async () => {

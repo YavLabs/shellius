@@ -65,18 +65,34 @@ const CERT_MARKER = Symbol('shellius:sshCertAuth');
 // Map OpenSSH certificate key-type names to the base (non-cert) signature
 // algorithm to use for the signature blob, and (for RSA) a forced digest.
 // ed25519 and ecdsa reuse the same signing path plain (non-cert) key auth
-// already uses correctly in ssh2 — only the wire algorithm *names* differ.
-// RSA has no server-negotiated rsa-sha2-*/ssh-rsa fallback available to us at
-// this layer (that negotiation lives in ssh2's private client.js closure), so
-// we force the modern rsa-sha2-512 digest, which is what current OpenSSH
-// servers expect for certificate auth.
+// already uses correctly in ssh2 (DER→SSH signature conversion via
+// convertSignature keyed on this same base algorithm name) — only the wire
+// algorithm *names* differ between cert and plain-key auth.
 const CERT_BASE_ALGO = {
   'ssh-ed25519-cert-v01@openssh.com': { base: 'ssh-ed25519', hash: null },
-  'ssh-rsa-cert-v01@openssh.com': { base: 'rsa-sha2-512', hash: 'sha512' },
   'ecdsa-sha2-nistp256-cert-v01@openssh.com': { base: 'ecdsa-sha2-nistp256', hash: null },
   'ecdsa-sha2-nistp384-cert-v01@openssh.com': { base: 'ecdsa-sha2-nistp384', hash: null },
   'ecdsa-sha2-nistp521-cert-v01@openssh.com': { base: 'ecdsa-sha2-nistp521', hash: null },
 };
+
+// RSA certs have no single correct signature algorithm: modern OpenSSH
+// servers require RFC8332 rsa-sha2-256/512 (legacy ssh-rsa/SHA-1 is refused
+// for cert auth by current sshd), and either digest may be required
+// depending on the server's `PubkeyAcceptedAlgorithms`. ssh2 negotiates this
+// itself for plain (non-cert) key auth using the server's `server-sig-algs`
+// EXT_INFO extension (RFC8308) — a value that lives in a private closure
+// inside Client#connect() with no public accessor. We best-effort capture it
+// (see attachServerSigAlgsCapture below) to order these two variants by the
+// server's stated preference; if that capture fails for any reason (ssh2
+// internals changed, server omits EXT_INFO, capture timing lost the race),
+// we still try both — 512 first, then 256 — via the normal auth-queue retry
+// path (a USERAUTH_FAILURE that still lists 'publickey' in authsLeft means
+// the *method* is fine and only that specific signature was rejected).
+const RSA_CERT_TYPE = 'ssh-rsa-cert-v01@openssh.com';
+const RSA_SIG_VARIANTS = [
+  { base: 'rsa-sha2-512', hash: 'sha512' },
+  { base: 'rsa-sha2-256', hash: 'sha256' },
+];
 
 let installCertAuthPatch;
 let parseSsh2Key; // ssh2's own key parser — required so signing/prototype methods line up
@@ -135,13 +151,33 @@ let parseSsh2Key; // ssh2's own key parser — required so signing/prototype met
 
       const certAlgoName = parsed.type; // e.g. ssh-ed25519-cert-v01@openssh.com
       const sigAlgoName = marker.baseAlgo; // e.g. ssh-ed25519
-      const pubKeyBlob = parsed.getPublicSSH(); // cert wire blob
+      const pubKeyBlob = parsed.getPublicSSH(); // cert wire blob (its own internal
+      // type field is ALWAYS "ssh-rsa-cert-v01@openssh.com" for RSA — OpenSSH
+      // only defines one wire cert format for RSA — regardless of which
+      // signature digest is used.
+
+      // RSA certs are the one case where the *negotiated userauth algorithm
+      // name* (this function's `keyAlgo` parameter / the USERAUTH_REQUEST
+      // "public key algorithm name" field) is NOT simply the cert's own type
+      // (`certAlgoName` = "ssh-rsa-cert-v01@openssh.com"): RFC8332 defines
+      // sibling names `rsa-sha2-256-cert-v01@openssh.com` /
+      // `rsa-sha2-512-cert-v01@openssh.com` that tell the server which
+      // digest to expect for the *same* cert blob. Modern sshd's default
+      // PubkeyAcceptedAlgorithms drops the legacy ssh-rsa-cert-v01 (SHA-1)
+      // name entirely, so sending that as `keyAlgo` gets an outright
+      // USERAUTH_FAILURE even before a signature is attempted — we must
+      // advertise the rsa-sha2-* cert name instead. ed25519/ecdsa have no
+      // such split: their cert type name IS the (only) algorithm name.
+      const rsaSha2CertName = sigAlgoName && sigAlgoName.startsWith('rsa-sha2-')
+        ? `${sigAlgoName}-cert-v01@openssh.com`
+        : null;
+      const negotiatedAlgoName = rsaSha2CertName || certAlgoName;
 
       if (typeof keyAlgo === 'function') {
         cbSign = keyAlgo;
         keyAlgo = undefined;
       }
-      if (!keyAlgo) keyAlgo = certAlgoName;
+      if (!keyAlgo) keyAlgo = negotiatedAlgoName;
 
       const userLen = Buffer.byteLength(username);
       const algoLen = Buffer.byteLength(keyAlgo);
@@ -240,7 +276,8 @@ function parseCertificateText(certText) {
   const parts = trimmed.split(/\s+/);
   if (parts.length < 2) throw new ApiError(400, 'Malformed certificate text');
   const [algoName, b64] = parts;
-  if (!CERT_BASE_ALGO[algoName]) {
+  const isRsaCert = algoName === RSA_CERT_TYPE;
+  if (!CERT_BASE_ALGO[algoName] && !isRsaCert) {
     throw new ApiError(400, `Unsupported certificate type: ${algoName}`, { code: 'CERT_UNSUPPORTED_TYPE' });
   }
   let blob;
@@ -250,7 +287,10 @@ function parseCertificateText(certText) {
     throw new ApiError(400, 'Malformed certificate text');
   }
   if (!blob.length) throw new ApiError(400, 'Malformed certificate text');
-  return { algoName, blob, baseInfo: CERT_BASE_ALGO[algoName] };
+  // Default baseInfo for RSA is the first (preferred) variant; buildAuthQueue
+  // overrides it per-attempt when it queues both rsa-sha2-512/256 attempts.
+  const baseInfo = isRsaCert ? RSA_SIG_VARIANTS[0] : CERT_BASE_ALGO[algoName];
+  return { algoName, blob, baseInfo, isRsaCert };
 }
 
 /**
@@ -269,9 +309,13 @@ function parseCertificateText(certText) {
  * @param {string|Buffer} privateKey  - OpenSSH/PEM/PPK private key text
  * @param {string} [passphrase]
  * @param {string} certificate        - OpenSSH certificate text
+ * @param {{base:string,hash:string|null}} [baseInfoOverride] - force a
+ *   specific signature variant (used for RSA certs, where both
+ *   rsa-sha2-512/256 are queued as separate auth attempts — see
+ *   buildAuthQueue). Defaults to the certificate type's one true algorithm.
  * @returns {object} ssh2-compatible parsed key, usable as connect().privateKey
  */
-function buildCertifiedKey(privateKey, passphrase, certificate) {
+function buildCertifiedKey(privateKey, passphrase, certificate, baseInfoOverride) {
   const parsedKey = parseSsh2Key(privateKey, passphrase);
   if (parsedKey instanceof Error) {
     const msg = /passphrase/i.test(parsedKey.message || '')
@@ -283,7 +327,8 @@ function buildCertifiedKey(privateKey, passphrase, certificate) {
     throw new ApiError(400, 'certificate auth requires a private key, not a public key');
   }
 
-  const { algoName, blob, baseInfo } = parseCertificateText(certificate);
+  const { algoName, blob, baseInfo: defaultBaseInfo } = parseCertificateText(certificate);
+  const baseInfo = baseInfoOverride || defaultBaseInfo;
 
   const wrapper = Object.create(parsedKey);
   wrapper.type = algoName;
@@ -427,7 +472,25 @@ export async function resolveTarget(host) {
 export function buildAuthQueue({ username, password, privateKey, passphrase, certificate }) {
   const queue = [];
   if (certificate && privateKey) {
-    queue.push({ type: 'publickey', username, key: buildCertifiedKey(privateKey, passphrase, certificate) });
+    const { isRsaCert } = parseCertificateText(certificate);
+    if (isRsaCert) {
+      // Queue BOTH rsa-sha2-512 and rsa-sha2-256 as separate publickey
+      // attempts (512 first by default). connectSsh() reorders these two
+      // entries by the server's EXT_INFO server-sig-algs preference once
+      // known (best-effort); either way, a USERAUTH_FAILURE that still
+      // lists 'publickey' after the first attempt naturally advances to the
+      // second — see pickNextAuth.
+      for (const variant of RSA_SIG_VARIANTS) {
+        queue.push({
+          type: 'publickey',
+          username,
+          key: buildCertifiedKey(privateKey, passphrase, certificate, variant),
+          rsaCertAlgo: variant.base,
+        });
+      }
+    } else {
+      queue.push({ type: 'publickey', username, key: buildCertifiedKey(privateKey, passphrase, certificate) });
+    }
   }
   if (privateKey) {
     queue.push({ type: 'publickey', username, key: privateKey, passphrase });
@@ -462,6 +525,76 @@ export function pickNextAuth(queue, authsLeft) {
     return next;
   }
   return false;
+}
+
+/**
+ * Reorder the (still-queued, not-yet-attempted) RSA-cert auth-queue entries
+ * — tagged `rsaCertAlgo` by buildAuthQueue — so the one matching the
+ * server's advertised `server-sig-algs` preference (RFC8308 EXT_INFO, when
+ * captured — see attachServerSigAlgsCapture) is tried first. Every other
+ * queue entry (plain key, password, keyboard-interactive, and any RSA
+ * variant the server didn't list) keeps its original relative position.
+ * Pure/idempotent — mutates `queue` in place; safe to call unconditionally.
+ *
+ * @param {Array<object>} queue
+ * @param {string[]|null|undefined} serverSigAlgs
+ */
+export function reorderRsaCertAttempts(queue, serverSigAlgs) {
+  if (!Array.isArray(serverSigAlgs) || serverSigAlgs.length === 0) return;
+
+  const slots = [];
+  const entries = [];
+  queue.forEach((entry, index) => {
+    if (entry && entry.rsaCertAlgo) {
+      slots.push(index);
+      entries.push(entry);
+    }
+  });
+  if (entries.length < 2) return;
+
+  const rank = (algo) => {
+    const idx = serverSigAlgs.indexOf(algo);
+    return idx === -1 ? Number.MAX_SAFE_INTEGER : idx;
+  };
+  entries.sort((a, b) => rank(a.rsaCertAlgo) - rank(b.rsaCertAlgo));
+  slots.forEach((queueIndex, i) => {
+    queue[queueIndex] = entries[i];
+  });
+}
+
+/**
+ * Best-effort: wrap the EXT_INFO message handler ssh2 installs on this
+ * connection's Protocol instance (`conn._protocol._handlers.EXT_INFO`) so we
+ * can also read the `server-sig-algs` extension (RFC8308) it already parses
+ * internally for plain-key auth negotiation, but keeps in a private closure
+ * with no public accessor. Only wraps this one connection's handler function
+ * (no Protocol.prototype patching, no cross-connection state) — if ssh2's
+ * internals don't match the expected shape, this silently does nothing and
+ * RSA cert auth falls back to trying both rsa-sha2-512 and rsa-sha2-256 (see
+ * reorderRsaCertAttempts / buildAuthQueue).
+ *
+ * @param {import('ssh2').Client} conn
+ * @param {{ serverSigAlgs: string[]|null }} state - mutated when captured
+ */
+function attachServerSigAlgsCapture(conn, state) {
+  try {
+    const handlers = conn && conn._protocol && conn._protocol._handlers;
+    const original = handlers && handlers.EXT_INFO;
+    if (typeof original !== 'function') return;
+    handlers.EXT_INFO = (p, exts) => {
+      try {
+        if (Array.isArray(exts)) {
+          const ext = exts.find((e) => e && e.name === 'server-sig-algs');
+          if (ext && Array.isArray(ext.algs)) state.serverSigAlgs = ext.algs;
+        }
+      } catch {
+        // best-effort only
+      }
+      return original(p, exts);
+    };
+  } catch {
+    // best-effort only — RSA cert auth still works via the try-both fallback.
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -523,7 +656,22 @@ export function connectSsh({
     return Promise.reject(err instanceof ApiError ? err : new ApiError(400, err.message));
   }
 
-  const authHandler = (authsLeft) => pickNextAuth(queue, authsLeft);
+  // Best-effort capture of the server's `server-sig-algs` EXT_INFO extension
+  // (see attachServerSigAlgsCapture) — reorders any queued RSA-cert auth
+  // attempts to try the server-preferred rsa-sha2-256/512 variant first. Only
+  // applied once, before the first auth attempt is popped; if the capture
+  // never fires (no EXT_INFO, or ssh2 internals didn't match), both variants
+  // are still tried in the default (512-first) order via the normal
+  // USERAUTH_FAILURE retry path.
+  const extInfoState = { serverSigAlgs: null };
+  let rsaOrderApplied = false;
+  const authHandler = (authsLeft) => {
+    if (!rsaOrderApplied) {
+      rsaOrderApplied = true;
+      reorderRsaCertAttempts(queue, extInfoState.serverSigAlgs);
+    }
+    return pickNextAuth(queue, authsLeft);
+  };
 
   return new Promise((resolve, reject) => {
     const conn = new Client();
@@ -591,6 +739,7 @@ export function connectSsh({
 
     try {
       conn.connect(connectOpts);
+      attachServerSigAlgsCapture(conn, extInfoState);
     } catch (err) {
       fail(mapSshError(err, host, port));
     }
@@ -777,4 +926,5 @@ export default {
   classifyIp,
   buildAuthQueue,
   pickNextAuth,
+  reorderRsaCertAttempts,
 };

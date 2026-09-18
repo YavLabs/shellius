@@ -193,6 +193,14 @@ publickey → password → keyboard-interactive (answering password prompts).
 Servers that require *both* a key and a password (`AuthenticationMethods
 publickey,password`) work via SSH partial success.
 
+Certificate key types: ed25519, RSA (signed by an RSA or ed25519 CA) and
+ECDSA nistp256/384/521. RSA certificates use the RFC 8332 names
+`rsa-sha2-512-cert-v01@openssh.com` / `rsa-sha2-256-cert-v01@openssh.com`
+(the legacy SHA-1 `ssh-rsa-cert-v01` is never offered): 512 is tried first,
+reordered by the server's `server-sig-algs` when advertised, with an automatic
+fallback to 256. Verified end-to-end by `npm run test:e2e:ssh` (self-contained:
+builds CAs, keys and three disposable sshd containers, then cleans up).
+
 Target guard (Quick Connect, credential test, save-as-server): the host is
 resolved once; loopback, link-local (incl. `169.254.169.254`), unspecified and
 multicast addresses are refused (`TARGET_NOT_ALLOWED`); the connection is made
