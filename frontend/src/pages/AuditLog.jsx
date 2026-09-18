@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { Fragment, useState, useEffect, useCallback } from 'react';
 import {
   ChevronDown,
   ChevronUp,
@@ -441,9 +441,8 @@ function AuditLog() {
                 items.map((item) => {
                   const isExpanded = expandedRow === item.id;
                   return (
-                    <>
+                    <Fragment key={item.id}>
                       <tr
-                        key={item.id}
                         onClick={() => setExpandedRow(isExpanded ? null : item.id)}
                         className="border-b border-border cursor-pointer transition-colors hover:bg-accent/30 last:border-0"
                       >
@@ -514,7 +513,7 @@ function AuditLog() {
                           </td>
                         </tr>
                       )}
-                    </>
+                    </Fragment>
                   );
                 })
               )}
