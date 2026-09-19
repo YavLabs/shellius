@@ -189,7 +189,12 @@ router.post(
       throw new ApiError(401, 'MFA session expired — sign in again', { code: 'MFA_CHALLENGE_EXPIRED' });
     }
     const user = await prisma.user.findUnique({ where: { id: payload.userId } });
-    if (user && user.mfaEmailEnabled) await mfaService.sendEmailOtp(user, payload.jti);
+    if (user && user.mfaEmailEnabled) {
+      const sent = await mfaService.sendEmailOtp(user, payload.jti);
+      if (!sent) {
+        throw new ApiError(429, 'Too many code requests — please wait and try again', { code: 'MFA_TOO_MANY_ATTEMPTS' });
+      }
+    }
     res.json({ success: true, data: { sent: true } });
   })
 );

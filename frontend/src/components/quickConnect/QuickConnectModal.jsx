@@ -174,6 +174,12 @@ function QuickConnectModal({ open, onClose, prefill }) {
     return !!credentialId; // username may be inferred from identity
   }, [host, authTab, username, password, privateKey, credentialId]);
 
+  // Axios timeouts carry no server message — say what happened instead.
+  const errorMessage = (err, fallback) =>
+    err.code === 'ECONNABORTED'
+      ? 'The server took too long to respond. Check that the host is reachable, then try again.'
+      : err.response?.data?.error?.message || err.message || fallback;
+
   const doConnect = async () => {
     setError(null);
     setConnecting(true);
@@ -213,7 +219,7 @@ function QuickConnectModal({ open, onClose, prefill }) {
             "This address can't be targeted — loopback, link-local and cloud metadata addresses are blocked.",
         });
       } else {
-        setError({ message: err.response?.data?.error?.message || err.message || 'Failed to connect' });
+        setError({ message: errorMessage(err, 'Failed to connect') });
       }
     } finally {
       setConnecting(false);
@@ -249,7 +255,7 @@ function QuickConnectModal({ open, onClose, prefill }) {
         onClose();
       }
     } catch (err) {
-      setError({ message: err.response?.data?.error?.message || err.message || 'Failed to save server' });
+      setError({ message: errorMessage(err, 'Failed to save server') });
     } finally {
       setSaving(false);
     }
@@ -277,7 +283,7 @@ function QuickConnectModal({ open, onClose, prefill }) {
         onClose();
       }
     } catch (err) {
-      setError({ message: err.response?.data?.error?.message || err.message || 'Failed to save to My hosts' });
+      setError({ message: errorMessage(err, 'Failed to save to My hosts') });
     } finally {
       setSavingHost(false);
     }
@@ -544,7 +550,7 @@ function QuickConnectModal({ open, onClose, prefill }) {
               <div>
                 <label className="flex cursor-pointer items-center gap-2 text-sm text-foreground">
                   <Checkbox checked={hostAlsoSaveIdentity} onChange={(e) => setHostAlsoSaveIdentity(e.target.checked)} />
-                  Also save this {authTab === 'key' ? 'key' : 'password'} as a private identity
+                  Also save this {authTab === 'password' ? 'password' : keyAlsoPassword ? 'key and password' : 'key'} as a private identity
                 </label>
                 {hostAlsoSaveIdentity && (
                   <input

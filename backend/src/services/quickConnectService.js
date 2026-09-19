@@ -107,6 +107,38 @@ export async function updateSettings(orgId, { enabled }, actorId) {
 // Prod guard
 // ---------------------------------------------------------------------------
 
+// Prod hostnames are resolved with a time limit and cached briefly: a
+// lookup that times out or fails is tolerated like any DNS failure (the
+// exact ipAddress/hostname match above still applies).
+const PROD_DNS_TIMEOUT_MS = 2000;
+const PROD_DNS_TTL_MS = 5 * 60 * 1000;
+const PROD_DNS_NEGATIVE_TTL_MS = 60 * 1000;
+const prodDnsCache = new Map(); // hostname -> { ips, expires }
+
+async function resolveProdHostname(hostname) {
+  const cached = prodDnsCache.get(hostname);
+  if (cached && cached.expires > Date.now()) return cached.ips;
+  let ips = [];
+  let timer;
+  try {
+    const records = await Promise.race([
+      dns.lookup(hostname, { all: true, verbatim: true }),
+      new Promise((_, reject) => {
+        timer = setTimeout(() => reject(new Error(`timed out after ${PROD_DNS_TIMEOUT_MS}ms`)), PROD_DNS_TIMEOUT_MS);
+        timer.unref?.();
+      }),
+    ]);
+    ips = records.map((r) => r.address);
+  } catch (err) {
+    logger.debug('quickConnectService: prod guard DNS lookup failed (tolerated)', { hostname, error: err.message });
+  } finally {
+    clearTimeout(timer);
+  }
+  const ttl = ips.length ? PROD_DNS_TTL_MS : PROD_DNS_NEGATIVE_TTL_MS;
+  prodDnsCache.set(hostname, { ips, expires: Date.now() + ttl });
+  return ips;
+}
+
 /**
  * Refuse a target that matches a saved prod server — by the exact
  * string (ipAddress/hostname, as before) AND by resolved IP, so
@@ -141,31 +173,26 @@ export async function assertNotProdHost(orgId, host, resolvedIps = []) {
 
   if (resolvedSet.size === 0) return;
 
-  // Cache resolved IPs per prod server's own ipAddress/hostname for the life
-  // of this single guard call (a batch import could otherwise re-resolve the
-  // same prod hostnames repeatedly).
-  const dnsCache = new Map();
-  const resolveHostname = async (hostname) => {
-    if (dnsCache.has(hostname)) return dnsCache.get(hostname);
-    let ips = [];
-    try {
-      const records = await dns.lookup(hostname, { all: true, verbatim: true });
-      ips = records.map((r) => r.address);
-    } catch (err) {
-      logger.debug('quickConnectService: prod guard DNS lookup failed (tolerated)', { hostname, error: err.message });
-    }
-    dnsCache.set(hostname, ips);
-    return ips;
-  };
+  const ipMatch = prodServers.find((srv) => srv.ipAddress && resolvedSet.has(srv.ipAddress));
+  if (ipMatch) {
+    throw new ApiError(
+      403,
+      'This host resolves to a production server — use the access request flow instead of Quick Connect.',
+      { code: 'PROD_HOST_REQUIRES_APPROVAL', details: { serverId: ipMatch.id } }
+    );
+  }
+
+  // Resolve every prod hostname up front, in parallel and time-boxed (see
+  // resolveProdHostname), instead of one lookup per server in sequence — a
+  // slow resolver would otherwise stall the request with no error.
+  const hostnames = [...new Set(prodServers.map((srv) => srv.hostname).filter((h) => h && !net.isIP(h)))];
+  const resolvedByHostname = new Map(
+    await Promise.all(hostnames.map(async (h) => [h, await resolveProdHostname(h)]))
+  );
+  const resolveHostname = async (hostname) =>
+    net.isIP(hostname) ? [hostname] : resolvedByHostname.get(hostname) || [];
 
   for (const server of prodServers) {
-    if (server.ipAddress && resolvedSet.has(server.ipAddress)) {
-      throw new ApiError(
-        403,
-        'This host resolves to a production server — use the access request flow instead of Quick Connect.',
-        { code: 'PROD_HOST_REQUIRES_APPROVAL', details: { serverId: server.id } }
-      );
-    }
     if (server.hostname) {
       const prodIps = await resolveHostname(server.hostname);
       if (prodIps.some((ip) => resolvedSet.has(ip))) {

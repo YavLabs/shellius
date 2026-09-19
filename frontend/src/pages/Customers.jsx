@@ -78,10 +78,11 @@ function Customers() {
       render: (c) => (
         <button
           onClick={() => navigate(`/customers/${c.id}`)}
-          className="flex items-center gap-2 font-medium text-foreground hover:text-primary"
+          className="flex items-start gap-2 text-left font-medium text-foreground hover:text-primary"
         >
-          <Building2 className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
-          {c.name}
+          {/* Long names wrap left-aligned; the icon stays on the first line. */}
+          <Building2 className="mt-[3px] h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+          <span className="min-w-0 break-words">{c.name}</span>
         </button>
       ),
     },

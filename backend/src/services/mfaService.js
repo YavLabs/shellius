@@ -139,11 +139,23 @@ async function dispatchEmailOtp(user) {
       expiresAt: new Date(Date.now() + EMAIL_OTP_TTL_MS),
     },
   });
+  // sendMail reports "not delivered" (no SMTP configured, or the server
+  // refused it) without throwing — check it, so the user is told instead of
+  // waiting for a code that will never arrive. The mailer logs the reason.
+  let result;
   try {
     const tpl = renderTemplate('mfaOtp', { recipientName: user.name, code, minutes: 10 });
-    await sendMail({ orgId: user.orgId, to: user.email, subject: tpl.subject, html: tpl.html, text: tpl.text });
+    result = await sendMail({ orgId: user.orgId, to: user.email, subject: tpl.subject, html: tpl.html, text: tpl.text });
   } catch (err) {
     logger.warn('mfaService: failed to send email OTP', { error: err.message });
+    result = { delivered: false };
+  }
+  if (!result?.delivered) {
+    await prisma.userToken.deleteMany({ where: { userId: user.id, type: EMAIL_OTP_TYPE } });
+    logger.warn('mfaService: email OTP not delivered', { userId: user.id, transport: result?.transport });
+    throw new ApiError(503, "We couldn't send the email. Use another sign-in method, or ask an administrator to check the email (SMTP) settings.", {
+      code: 'EMAIL_NOT_DELIVERED',
+    });
   }
 }
 

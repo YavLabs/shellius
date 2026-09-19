@@ -107,7 +107,7 @@ function MfaSetup() {
         </div>
 
         <div className="rounded-lg border border-border bg-card p-6 shadow-sm space-y-4">
-          <div className="rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-sm text-amber-700 dark:text-amber-300">
+          <div className="rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-center text-sm text-amber-700 dark:text-amber-300">
             {user?.orgName ? `${user.orgName} requires` : 'Your organization requires'} two-factor
             authentication. You won&apos;t be able to use Shellius until you finish setting up a
             method below.
@@ -116,12 +116,12 @@ function MfaSetup() {
           {loading ? (
             <div className="h-24 animate-pulse rounded bg-muted" />
           ) : loadError ? (
-            <div className="rounded-md border border-destructive/50 bg-destructive/10 px-3 py-2 text-sm text-destructive">
+            <div className="rounded-md border border-destructive/50 bg-destructive/10 px-3 py-2 text-center text-sm text-destructive">
               {loadError}
             </div>
           ) : enrolled ? (
             <div className="space-y-4">
-              <div className="flex items-center gap-2 text-sm text-emerald-600 dark:text-emerald-400">
+              <div className="flex items-center justify-center gap-2 text-sm text-emerald-600 dark:text-emerald-400">
                 <ShieldCheck className="h-5 w-5" />
                 Two-factor authentication is enabled.
               </div>
@@ -132,7 +132,7 @@ function MfaSetup() {
               </Button>
             </div>
           ) : enroll ? (
-            <TotpEnrollPanel enroll={enroll} onConfirm={finishTotp} busy={busy} error={totpError} />
+            <TotpEnrollPanel enroll={enroll} onConfirm={finishTotp} busy={busy} error={totpError} layout="stacked" />
           ) : (
             <div className="space-y-3">
               {policy?.allowTotp && (
@@ -145,9 +145,9 @@ function MfaSetup() {
                   Use email codes instead
                 </Button>
               )}
-              {emailError && <p className="text-xs text-destructive">{emailError}</p>}
+              {emailError && <p className="text-center text-xs text-destructive">{emailError}</p>}
               {!policy?.allowTotp && !policy?.allowEmailOtp && (
-                <p className="text-sm text-muted-foreground">
+                <p className="text-center text-sm text-muted-foreground">
                   No verification methods are currently available. Contact your administrator.
                 </p>
               )}

@@ -422,6 +422,8 @@ export function classifyIp(ip) {
  *   actually connect to (first resolved address); `addresses` is every
  *   resolved address, all of which were checked.
  */
+const TARGET_DNS_TIMEOUT_MS = 8000;
+
 export async function resolveTarget(host) {
   if (!host || typeof host !== 'string') {
     throw new ApiError(400, 'host is required');
@@ -431,10 +433,21 @@ export async function resolveTarget(host) {
   if (net.isIP(host)) {
     records = [{ address: host }];
   } else {
+    // Time-boxed: a resolver that never answers should fail the request with
+    // a clear error, not leave it hanging.
+    let timer;
     try {
-      records = await dns.lookup(host, { all: true, verbatim: true });
+      records = await Promise.race([
+        dns.lookup(host, { all: true, verbatim: true }),
+        new Promise((_, reject) => {
+          timer = setTimeout(() => reject(new Error('DNS lookup timed out')), TARGET_DNS_TIMEOUT_MS);
+          timer.unref?.();
+        }),
+      ]);
     } catch (err) {
       throw new ApiError(400, `Could not resolve host "${host}": ${err.message}`, { code: 'DNS_RESOLUTION_FAILED' });
+    } finally {
+      clearTimeout(timer);
     }
   }
 

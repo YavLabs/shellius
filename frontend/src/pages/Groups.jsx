@@ -51,10 +51,11 @@ function Groups() {
       render: (g) => (
         <button
           onClick={() => navigate(`/groups/${g.id}`)}
-          className="flex items-center gap-2 font-medium text-foreground hover:text-primary"
+          className="flex items-start gap-2 text-left font-medium text-foreground hover:text-primary"
         >
-          <UsersRound className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
-          {g.name}
+          {/* Long names wrap left-aligned; the icon stays on the first line. */}
+          <UsersRound className="mt-[3px] h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+          <span className="min-w-0 break-words">{g.name}</span>
         </button>
       ),
     },
