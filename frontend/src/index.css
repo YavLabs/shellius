@@ -553,10 +553,10 @@
   opacity: var(--od, 0.07);
 }
 /* Four columns, no overlap; the middle two are fainter (behind the form). */
-.term-pane-1 { left: 1%; --dur: 110s; }
-.term-pane-2 { left: 26%; --dur: 140s; --o: 0.045; --od: 0.04; }
-.term-pane-3 { left: 51%; --dur: 125s; --o: 0.045; --od: 0.04; }
-.term-pane-4 { left: 76%; --dur: 100s; }
+.term-pane-1 { left: 1%; --dur: 300s; }
+.term-pane-2 { left: 26%; --dur: 380s; --o: 0.045; --od: 0.04; }
+.term-pane-3 { left: 51%; --dur: 340s; --o: 0.045; --od: 0.04; }
+.term-pane-4 { left: 76%; --dur: 280s; }
 .term-scroll {
   animation: term-up var(--dur, 120s) linear infinite;
   white-space: nowrap;
