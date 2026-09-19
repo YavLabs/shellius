@@ -1,7 +1,9 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
+import { Input } from '@/components/ui/input';
 import {
   AlertTriangle,
+  ArrowRight,
   ArrowUpRight,
   Check,
   Clock,
@@ -13,6 +15,7 @@ import {
   MoreHorizontal,
   PlugZap,
   Save,
+  Search,
   Server,
   Square,
   SquareTerminal,
@@ -42,7 +45,15 @@ import { isServerOnboarded } from '@/lib/serverStatus';
 import { relativeTime } from '@/utils/time';
 import { cn } from '@/lib/utils';
 
-const RECENT_LIMIT = 8;
+// Widget (dashboard) shows a few per group and links to the full page.
+const WIDGET_ACTIVE_LIMIT = 3;
+const WIDGET_RECENT_LIMIT = 4;
+const PAGE_FETCH_LIMIT = 50;
+const KIND_FILTERS = [
+  { id: 'all', label: 'All' },
+  { id: 'server', label: 'Servers' },
+  { id: 'qc', label: 'Quick Connect' },
+];
 
 const QC_AUTH = {
   password: { tone: 'neutral', label: 'Password' },
@@ -80,13 +91,20 @@ function RowMenu({ label, children }) {
   );
 }
 
-function SectionHeader({ icon: Icon, title, hint, count }) {
+function SectionHeader({ icon: Icon, title, hint, count, viewAllTo }) {
   return (
     <div className="mb-1 mt-1 flex items-center gap-1.5 text-[11px] font-medium text-muted-foreground">
       <Icon className="h-3.5 w-3.5" aria-hidden="true" />
       <span>{title}</span>
       {typeof count === 'number' && <span className="tabular-nums text-muted-foreground/70">{count}</span>}
-      {hint && <span className="ml-auto font-normal text-muted-foreground/70">{hint}</span>}
+      <span className="ml-auto flex items-center gap-3">
+        {hint && <span className="font-normal text-muted-foreground/70">{hint}</span>}
+        {viewAllTo && (
+          <Link to={viewAllTo} className="inline-flex items-center gap-0.5 font-medium text-primary hover:underline">
+            View all{typeof count === 'number' ? ` (${count})` : ''} <ArrowRight className="h-3 w-3" />
+          </Link>
+        )}
+      </span>
     </div>
   );
 }
@@ -126,7 +144,8 @@ function Row({ icon: Icon, iconTone = 'text-muted-foreground', dot, title, badge
  *
  * Everything is your own data only (both APIs are user-scoped).
  */
-function RecentConnectionsWidget() {
+export function RecentConnections({ variant = 'widget' }) {
+  const isPage = variant === 'page';
   const navigate = useNavigate();
   const { allowed: qcAllowed, openQuickConnect } = useQuickConnect();
   const workspace = useTerminalWorkspace();
@@ -143,18 +162,22 @@ function RecentConnectionsWidget() {
   const [copiedId, setCopiedId] = useState('');
   const [endTarget, setEndTarget] = useState(null);
   const [confirmClear, setConfirmClear] = useState(false);
+  // Page-only filters.
+  const [query, setQuery] = useState('');
+  const [kind, setKind] = useState('all');
+  const [days, setDays] = useState(7);
 
   const load = useCallback(async () => {
     setLoading(true);
     const [srv, hist] = await Promise.all([
-      getRecentServers({ days: 7, limit: RECENT_LIMIT }).catch(() => []),
-      qcAllowed ? getHistory({ limit: RECENT_LIMIT }).catch(() => []) : Promise.resolve([]),
+      getRecentServers({ days: isPage ? days : 7, limit: isPage ? PAGE_FETCH_LIMIT : WIDGET_RECENT_LIMIT * 2 }).catch(() => []),
+      qcAllowed ? getHistory({ limit: isPage ? PAGE_FETCH_LIMIT : WIDGET_RECENT_LIMIT * 2 }).catch(() => []) : Promise.resolve([]),
     ]);
     setServers(srv);
     setHistory(hist);
     setIntents(await getAccessIntents(srv.map((r) => r.server.id)).catch(() => ({})));
     setLoading(false);
-  }, [qcAllowed]);
+  }, [qcAllowed, isPage, days]);
 
   useEffect(() => {
     load();
@@ -178,10 +201,29 @@ function RecentConnectionsWidget() {
       ...servers.map((r) => ({ kind: 'server', key: `s:${r.server.id}`, at: r.lastConnectedAt, ...r })),
       ...history.map((h) => ({ kind: 'qc', key: `q:${h.id}`, at: h.lastConnectedAt, item: h })),
     ];
-    return rows.sort((a, b) => new Date(b.at) - new Date(a.at)).slice(0, RECENT_LIMIT);
+    return rows.sort((a, b) => new Date(b.at) - new Date(a.at));
   }, [servers, history]);
 
-  const active = liveSessions || [];
+  const allActive = liveSessions || [];
+
+  // Page: filter by text and type. Widget: first few of each group.
+  const q = query.trim().toLowerCase();
+  const matches = (...vals) => !q || vals.filter(Boolean).some((v) => String(v).toLowerCase().includes(q));
+  const active = isPage
+    ? allActive.filter(
+        (s) => kind !== 'qc' || s.authMethod === 'quick_connect'
+      ).filter((s) => kind !== 'server' || s.authMethod !== 'quick_connect')
+        .filter((s) => matches(s.label, s.host, s.username, s.server?.displayName, s.server?.hostname))
+    : allActive.slice(0, WIDGET_ACTIVE_LIMIT);
+  const recentFiltered = isPage
+    ? recent
+        .filter((r) => kind === 'all' || r.kind === kind)
+        .filter((r) =>
+          r.kind === 'server'
+            ? matches(r.server.displayName, r.server.hostname, r.server.ipAddress, r.server.environment)
+            : matches(r.item.host, r.item.username, r.item.server?.displayName, r.item.credential?.name)
+        )
+    : recent.slice(0, WIDGET_RECENT_LIMIT);
 
   // ── Actions ────────────────────────────────────────────────────────────────
   const withBusy = async (id, fn) => {
@@ -266,15 +308,51 @@ function RecentConnectionsWidget() {
   };
 
   // ── Render ─────────────────────────────────────────────────────────────────
-  const empty = !loading && active.length === 0 && recent.length === 0;
+  const empty = !loading && allActive.length === 0 && recent.length === 0;
+  const noMatches = isPage && !empty && !loading && active.length === 0 && recentFiltered.length === 0;
 
   return (
-    <div className="flex h-full flex-col rounded-lg border border-border bg-card p-5">
-      <div className="mb-3 flex items-start justify-between gap-2">
-        <div>
-          <h2 className="text-sm font-semibold text-foreground">Recent connections</h2>
-          <p className="mt-0.5 text-xs text-muted-foreground">Active sessions and the last 7 days</p>
-        </div>
+    <div className={cn('flex flex-col rounded-lg border border-border bg-card p-5', !isPage && 'h-full')}>
+      <div className="mb-3 flex flex-wrap items-start justify-between gap-2">
+        {isPage ? (
+          <div className="flex min-w-0 flex-1 flex-wrap items-center gap-2">
+            <div className="relative w-full max-w-xs">
+              <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
+              <Input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search servers, hosts, users…" className="h-8 pl-8 text-sm" />
+            </div>
+            <div className="inline-flex rounded-md border border-border p-0.5" role="group" aria-label="Type">
+              {KIND_FILTERS.filter((f) => f.id !== 'qc' || qcAllowed).map((f) => (
+                <button
+                  key={f.id}
+                  type="button"
+                  aria-pressed={kind === f.id}
+                  onClick={() => setKind(f.id)}
+                  className={cn('h-7 rounded px-2.5 text-xs font-medium', kind === f.id ? 'bg-accent text-foreground' : 'text-muted-foreground hover:text-foreground')}
+                >
+                  {f.label}
+                </button>
+              ))}
+            </div>
+            <div className="inline-flex rounded-md border border-border p-0.5" role="group" aria-label="Time range">
+              {[7, 30].map((d) => (
+                <button
+                  key={d}
+                  type="button"
+                  aria-pressed={days === d}
+                  onClick={() => setDays(d)}
+                  className={cn('h-7 rounded px-2.5 text-xs font-medium', days === d ? 'bg-accent text-foreground' : 'text-muted-foreground hover:text-foreground')}
+                >
+                  {d} days
+                </button>
+              ))}
+            </div>
+          </div>
+        ) : (
+          <div>
+            <h2 className="text-sm font-semibold text-foreground">Recent connections</h2>
+            <p className="mt-0.5 text-xs text-muted-foreground">Active sessions and the last 7 days</p>
+          </div>
+        )}
         <div className="flex shrink-0 items-center gap-1.5">
           {qcAllowed && (
             <button
@@ -337,11 +415,18 @@ function RecentConnectionsWidget() {
         </div>
       )}
 
-      <div className="min-h-0 flex-1 space-y-3 overflow-y-auto">
+      {noMatches && <p className="py-8 text-center text-sm text-muted-foreground">No connections match these filters.</p>}
+
+      <div className={cn('min-h-0 flex-1 space-y-3', !isPage && 'overflow-y-auto')}>
         {/* ── Active now ─────────────────────────────────────────────── */}
         {active.length > 0 && (
-          <section aria-label="Active sessions">
-            <SectionHeader icon={PlugZap} title="Active now" count={active.length} />
+          <section aria-label="Active sessions" id={isPage ? 'active' : undefined}>
+            <SectionHeader
+              icon={PlugZap}
+              title="Active now"
+              count={isPage ? active.length : allActive.length}
+              viewAllTo={!isPage && allActive.length > WIDGET_ACTIVE_LIMIT ? '/connections#active' : null}
+            />
             <ul>
               {active.map((s) => {
                 const place = placeOf.get(s.id);
@@ -390,11 +475,18 @@ function RecentConnectionsWidget() {
         )}
 
         {/* ── Recent ─────────────────────────────────────────────────── */}
-        {recent.length > 0 && (
-          <section aria-label="Recent connections">
-            <SectionHeader icon={History} title="Recent" hint="Last 7 days" />
+        {recentFiltered.length > 0 && (
+          <section aria-label="Recent connections" id={isPage ? 'recent' : undefined}>
+            <SectionHeader
+              icon={History}
+              title="Recent"
+              // Widget fetches only a few, so it can't know the true total.
+              count={isPage ? recentFiltered.length : undefined}
+              hint={isPage ? (days === 30 && qcAllowed ? 'Last 30 days · Quick Connect history is kept 7 days' : `Last ${days} days`) : 'Last 7 days'}
+              viewAllTo={!isPage && recent.length > WIDGET_RECENT_LIMIT ? '/connections#recent' : null}
+            />
             <ul>
-              {recent.map((r) => {
+              {recentFiltered.map((r) => {
                 if (r.kind === 'server') {
                   const { server } = r;
                   const intent = intents[server.id];
@@ -544,6 +636,10 @@ function RecentConnectionsWidget() {
       <SaveServerModal open={!!saveTarget} onClose={() => setSaveTarget(null)} connection={saveTarget} onSaved={() => setSaveTarget(null)} />
     </div>
   );
+}
+
+function RecentConnectionsWidget() {
+  return <RecentConnections variant="widget" />;
 }
 
 export default RecentConnectionsWidget;

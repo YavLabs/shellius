@@ -320,7 +320,7 @@ export async function listRecentServersForUser(orgId, userId, { days = 7, limit 
     _max: { startedAt: true },
     _count: { _all: true },
     orderBy: { _max: { startedAt: 'desc' } },
-    take: Math.min(Math.max(limit, 1), 20),
+    take: Math.min(Math.max(limit, 1), 50),
   });
   if (rows.length === 0) return [];
   const servers = await prisma.server.findMany({

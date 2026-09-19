@@ -1,4 +1,4 @@
-import {
+import { Cable,
   LayoutDashboard,
   Building2,
   Server,
@@ -161,6 +161,7 @@ export const NAV_ITEMS = [
   { id: 'policies', label: 'Policies', icon: Shield, to: '/policies', minRole: 'admin' },
   { id: 'certificates', label: 'Certificates', icon: FileKey, to: '/certificates', minRole: 'admin' },
   { id: 'keystore', label: 'Keystore', icon: KeySquare, to: '/keystore', minRole: 'manager' },
+  { id: 'connections', label: 'Recent connections', icon: Cable, to: '/connections', minRole: 'member' },
   { id: 'sessions', label: 'Sessions', icon: Terminal, to: '/sessions', minRole: 'manager' },
   { id: 'audit-log', label: 'Audit log', icon: ScrollText, to: '/audit-log', minRole: 'admin' },
   { id: 'notifications', label: 'Notifications', icon: Bell, to: '/notifications', minRole: 'member' },

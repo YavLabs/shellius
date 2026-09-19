@@ -17,6 +17,10 @@ Tracked here as work lands on `main`; moved into a dated section on release
   - **Recent (last 7 days):** servers you connected to and your Quick Connects in one list. Server
     rows show what your access allows now: Connect, Pending, or Request access.
   - New `GET /api/terminal/recent-servers` (your own sessions only).
+  - The widget shows at most 3 active and 4 recent connections, with **View all** links to a new
+    **Recent connections page** (`/connections`). The page has every item, search, an All /
+    Servers / Quick Connect filter and a 7- or 30-day range, so the widget no longer grows and
+    leaves empty space beside Quick actions. The page is also in the command palette.
 - Dashboard: redesigned **Quick actions**. Quick connect and New access request are prominent
   tiles; other actions are compact grouped rows with shortcuts on hover; the command palette and
   shortcut list are in the footer.
