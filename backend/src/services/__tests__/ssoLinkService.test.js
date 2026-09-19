@@ -450,24 +450,33 @@ describe('ssoRequired', () => {
     const member = await createTestUser(ssoOrg.id, { role: 'member', email: `${uniq('m')}@example.com` });
     const owner = await createTestUser(ssoOrg.id, { role: 'super_admin', email: `${uniq('o')}@example.com` });
 
-    await expect(authService.login(member.email, member._plainPassword, '127.0.0.1', 'jest')).rejects.toMatchObject({
-      statusCode: 403,
-      code: 'SSO_REQUIRED',
-    });
+    const blocked = await authService.login(member.email, member._plainPassword, '127.0.0.1', 'jest').catch((e) => e);
+    expect(blocked).toMatchObject({ statusCode: 401, code: 'SSO_REQUIRED' });
     // Wrong password gives the same answer — the password is never checked.
     await expect(authService.login(member.email, 'wrong-password-1', '127.0.0.1', 'jest')).rejects.toMatchObject({
       code: 'SSO_REQUIRED',
     });
     expect(await orgService.passwordSignInBlocked(member)).toBe(true);
 
+    // An exempt admin with a WRONG password gets exactly the same answer as a
+    // blocked account, so failures never reveal who is exempt.
+    const exemptWrong = await authService.login(owner.email, 'wrong-password-1', '127.0.0.1', 'jest').catch((e) => e);
+    expect(exemptWrong).toMatchObject({ statusCode: 401, code: 'SSO_REQUIRED' });
+    expect(exemptWrong.message).toBe(blocked.message);
+    await prisma.user.update({ where: { id: owner.id }, data: { failedLoginCount: 0, lockedUntil: null } });
+
     const session = await authService.login(owner.email, owner._plainPassword, '127.0.0.1', 'jest');
     expect(session.accessToken).toBeDefined();
     expect(await orgService.passwordSignInBlocked(owner)).toBe(false);
 
+    // The email-first step answers identically for blocked, exempt and
+    // unknown addresses — it can't be used to find the exempt admins.
     const memberState = await authService.getLoginState(member.email, ssoOrg.id);
-    expect(memberState).toMatchObject({ hasPassword: false, ssoRequired: true });
     const ownerState = await authService.getLoginState(owner.email, ssoOrg.id);
-    expect(ownerState).toMatchObject({ hasPassword: true, ssoRequired: false });
+    const unknownState = await authService.getLoginState(`${uniq('nobody')}@example.com`, ssoOrg.id);
+    expect(memberState).toEqual({ hasPassword: false, ssoLinked: false, ssoRequired: true });
+    expect(ownerState).toEqual(memberState);
+    expect(unknownState).toEqual(memberState);
 
     // Set-password is refused too.
     const ssoOnly = await createTestUser(ssoOrg.id, { passwordHash: null });

@@ -32,6 +32,7 @@ Tracked here as work lands on `main`; moved into a dated section on release
 ### Security
 
 - An identity provider account with the same email can no longer take over a Shellius account without the account's password, two-factor code or an emailed approval. Wrong passwords on the confirm page count toward the account lockout.
+- When single sign-on is required, the sign-in page answers the same for every email address, and a failed password sign-in gives the same message whether the password was wrong or the account can't use one. Administrators allowed a password use "Sign in with a password instead". Neither step reveals which accounts are exempt.
 - Linking and unlinking SSO accounts are recorded in the audit log as their own events (`auth.identity.linked`, `auth.identity.unlinked`), with how it happened.
 
 ## [1.4.1] - 2026-09-19

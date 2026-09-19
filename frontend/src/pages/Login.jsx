@@ -263,10 +263,11 @@ function Login() {
       } else if (err.code === 'ACCOUNT_DISABLED') {
         setError('This account has been disabled. Contact your administrator.');
       } else if (err.code === 'SSO_REQUIRED') {
+        // Same answer whether the password was wrong or the account can't
+        // use one (the server doesn't say which) — stay here and explain.
         setPassword('');
         setSsoReason('required');
-        if (ssoStatus.enabled) setStep('sso');
-        setError('Your organization signs in with single sign-on.');
+        setError(err.message || 'Your organization signs in with single sign-on.');
       } else {
         setError(err.message || 'Login failed');
       }
@@ -382,6 +383,17 @@ function Login() {
               verb={ssoReason === 'single' ? 'Continue with' : 'Sign in with'}
             />
             {error && ssoReason !== 'required' && notice('error', error)}
+            {ssoReason === 'required' && (
+              // Shown to everyone in a require-SSO org (the server never says
+              // who is exempt); only accounts allowed a password get in.
+              <button
+                type="button"
+                onClick={() => { setError(''); setStep('password'); }}
+                className="block w-full text-center text-sm text-muted-foreground hover:text-foreground"
+              >
+                Sign in with a password instead
+              </button>
+            )}
             <button type="button" onClick={resetToEmail} className="block w-full text-center text-sm text-muted-foreground hover:text-foreground">
               Use a different email
             </button>

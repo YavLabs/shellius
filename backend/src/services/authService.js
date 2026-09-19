@@ -49,6 +49,26 @@ function invalidCredentials() {
 }
 
 /** Password sign-in refused because the org requires single sign-on. */
+/**
+ * Every failed password sign-in in an organization that requires SSO gets
+ * this one error — whether the password was wrong or the account may not use
+ * one — so the response never reveals which accounts are exempt (hold
+ * settings.sso). Lockout behaves the same for both.
+ */
+function lockedError(user) {
+  const retryAfterSeconds = Math.max(1, Math.ceil((user.lockedUntil.getTime() - Date.now()) / 1000));
+  return new ApiError(423, 'Account is locked due to too many failed sign-in attempts', {
+    code: 'ACCOUNT_LOCKED',
+    details: { retryAfterSeconds },
+  });
+}
+
+export function ssoRequiredLoginError() {
+  return new ApiError(401, "Password sign-in didn't work. Your organization signs in with single sign-on — use your SSO provider. If you're allowed to use a password, check it and try again.", {
+    code: 'SSO_REQUIRED',
+  });
+}
+
 export function ssoRequiredError() {
   return new ApiError(403, 'Your organization signs in with single sign-on. Use your SSO provider to sign in.', {
     code: 'SSO_REQUIRED',
@@ -316,6 +336,10 @@ export async function login(email, password, ipAddress, userAgent) {
   }
   if (withPassword.length === 0) {
     await dummyCompare(password);
+    if (ssoBlocked.lockedUntil && ssoBlocked.lockedUntil > new Date()) {
+      throw lockedError(ssoBlocked);
+    }
+    await recordFailedLogin(ssoBlocked, ipAddress, userAgent);
     await auditLog({
       orgId: ssoBlocked.orgId,
       actorId: null,
@@ -326,7 +350,7 @@ export async function login(email, password, ipAddress, userAgent) {
       ipAddress,
       userAgent,
     });
-    throw ssoRequiredError();
+    throw ssoRequiredLoginError();
   }
 
   let matched = null;
@@ -345,16 +369,7 @@ export async function login(email, password, ipAddress, userAgent) {
   }
 
   if (!matched) {
-    if (lockedCandidate) {
-      const retryAfterSeconds = Math.max(
-        1,
-        Math.ceil((lockedCandidate.lockedUntil.getTime() - Date.now()) / 1000)
-      );
-      throw new ApiError(423, 'Account is locked due to too many failed sign-in attempts', {
-        code: 'ACCOUNT_LOCKED',
-        details: { retryAfterSeconds },
-      });
-    }
+    if (lockedCandidate) throw lockedError(lockedCandidate);
 
     await Promise.all(withPassword.map((c) => recordFailedLogin(c, ipAddress, userAgent)));
     const primary = withPassword[0];
@@ -368,6 +383,8 @@ export async function login(email, password, ipAddress, userAgent) {
       ipAddress,
       userAgent,
     });
+    // Same answer as a blocked account (see ssoRequiredLoginError).
+    if (await isSsoRequired(primary.orgId)) throw ssoRequiredLoginError();
     throw invalidCredentials();
   }
 
@@ -462,6 +479,11 @@ export async function getLoginState(email, orgId = null) {
   // for unknown emails too so the response doesn't reveal whether the
   // account exists.
   const orgSsoRequired = orgId ? await isSsoRequired(orgId) : false;
+  // Require-SSO org: identical answer for every address (known, unknown,
+  // exempt or not) so this endpoint can't be used to find the exempt
+  // administrators. They use "Sign in with a password instead" on the SSO
+  // screen; login() still enforces the exemption.
+  if (orgSsoRequired) return { hasPassword: false, ssoLinked: false, ssoRequired: true };
   if (users.length === 0) {
     return { hasPassword: false, ssoLinked: false, ssoRequired: orgSsoRequired };
   }
