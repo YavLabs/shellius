@@ -1,7 +1,6 @@
 import { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import { Mail, User, Lock, Eye, EyeOff, Loader2 } from 'lucide-react';
-import { BrandMark } from '@/components/common/BrandLogo';
 import { getRegistrationStatus, register } from '@/services/registrationService';
 import AuthShell from '@/components/auth/AuthShell';
 import { Checkbox } from '@/components/ui/checkbox';
@@ -72,9 +71,6 @@ function Register() {
     <AuthShell>
       <div className="w-full max-w-sm">
         <div className="mb-8 text-center">
-          <div className="mx-auto mb-4 flex justify-center">
-            <BrandMark size="lg" />
-          </div>
           <h1 className="text-2xl font-bold tracking-tight text-foreground">
             {import.meta.env.VITE_BRAND_NAME || 'Shellius'}
           </h1>

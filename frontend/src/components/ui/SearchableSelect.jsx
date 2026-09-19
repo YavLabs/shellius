@@ -143,7 +143,7 @@ export default function SearchableSelect({
           type="button"
           id={id}
           disabled={disabled}
-          className={`flex h-9 w-full items-center justify-between gap-2 rounded-md border border-input bg-background px-3 text-left text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-ring disabled:cursor-not-allowed disabled:opacity-50`}
+          className={`field-soft flex h-9 w-full items-center justify-between gap-2 rounded-md border border-input bg-background px-3 text-left text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-ring disabled:cursor-not-allowed disabled:opacity-50`}
         >
           <span className="flex min-w-0 flex-1 items-center">{triggerLabel()}</span>
           <span className="flex items-center gap-1">

@@ -1,7 +1,6 @@
 import { useEffect, useState, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Loader2, ShieldCheck } from 'lucide-react';
-import { BrandMark } from '@/components/common/BrandLogo';
 import { Button } from '@/components/ui/button';
 import TotpEnrollPanel from '@/components/mfa/TotpEnrollPanel';
 import BackupCodesPanel from '@/components/mfa/BackupCodesPanel';
@@ -104,9 +103,6 @@ function MfaSetup() {
     <AuthShell>
       <div className="w-full max-w-sm">
         <div className="mb-8 text-center">
-          <div className="mx-auto mb-4 flex justify-center">
-            <BrandMark size="lg" />
-          </div>
           <h1 className="text-2xl font-bold tracking-tight text-foreground">
             {import.meta.env.VITE_BRAND_NAME || 'Shellius'}
           </h1>

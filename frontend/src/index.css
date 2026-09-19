@@ -133,3 +133,156 @@
     mask-image: radial-gradient(ellipse 70% 60% at 50% 40%, #000 35%, transparent 100%);
   }
 }
+
+/* ---------------------------------------------------------------------------
+   Soft fields (exploration, temp/fey-auth-ui) — every text-like field that
+   uses the standard `border-input` look gets a filled, borderless-feeling
+   surface with a quiet focus halo instead of the hard ring. Specificity is
+   deliberately above single Tailwind utilities so it applies app-wide
+   without touching each component.
+   --------------------------------------------------------------------------- */
+@layer base {
+  :root {
+    --field: 240 5% 96.5%;
+    --field-border: 240 6% 90%;
+  }
+  .dark {
+    --field: 240 5% 12.5%;
+    --field-border: 240 4% 17%;
+  }
+}
+
+@layer components {
+  :is(input:not([type='checkbox']):not([type='radio']):not([type='range']):not([type='file']), textarea, select).border-input {
+    background-color: hsl(var(--field));
+    border-color: hsl(var(--field-border));
+    border-radius: 0.625rem;
+    transition: border-color 150ms, box-shadow 150ms, background-color 150ms;
+  }
+  :is(input:not([type='checkbox']):not([type='radio']):not([type='range']):not([type='file']), textarea, select).border-input:hover {
+    border-color: hsl(var(--foreground) / 0.16);
+  }
+  :is(input:not([type='checkbox']):not([type='radio']):not([type='range']):not([type='file']), textarea, select).border-input:focus,
+  :is(input:not([type='checkbox']):not([type='radio']):not([type='range']):not([type='file']), textarea, select).border-input:focus-visible {
+    outline: none;
+    border-color: hsl(var(--foreground) / 0.28);
+    box-shadow: 0 0 0 4px hsl(var(--foreground) / 0.06);
+  }
+  /* Same surface for field-like controls that aren't inputs (select
+     triggers, chip inputs). */
+  .field-soft.border-input {
+    background-color: hsl(var(--field));
+    border-color: hsl(var(--field-border));
+    border-radius: 0.625rem;
+    transition: border-color 150ms, box-shadow 150ms, background-color 150ms;
+  }
+  .field-soft.border-input:hover {
+    border-color: hsl(var(--foreground) / 0.16);
+  }
+  .field-soft.border-input:is(:focus, :focus-visible, :focus-within) {
+    outline: none;
+    border-color: hsl(var(--foreground) / 0.28);
+    box-shadow: 0 0 0 4px hsl(var(--foreground) / 0.06);
+  }
+  :is(input, textarea).border-input[readonly] {
+    background-color: hsl(var(--field) / 0.6);
+  }
+}
+
+/* ---------------------------------------------------------------------------
+   Auth pages (Fey-style): near-black canvas, a soft coloured aura behind the
+   form, gradient headline, cards flattened so the form floats, pill fields
+   and pill buttons. Scoped to `.auth-fey` (AuthShell).
+   --------------------------------------------------------------------------- */
+@layer components {
+  .auth-fey {
+    --auth-canvas: 0 0% 99%;
+    background-color: hsl(var(--auth-canvas));
+  }
+  .dark .auth-fey {
+    --auth-canvas: 240 8% 3.5%;
+  }
+
+  .auth-aura {
+    position: absolute;
+    left: 50%;
+    top: 44%;
+    width: min(760px, 140vw);
+    height: min(560px, 105vw);
+    transform: translate(-50%, -50%);
+    pointer-events: none;
+  }
+  /* coloured halo — a ring, masked so the middle stays neutral */
+  .auth-aura::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    border-radius: 9999px;
+    background: conic-gradient(from 200deg, #ff4d5e, #9d5cff, #4f6bff, #2fa8ff, #ff9150, #ff4d5e);
+    -webkit-mask-image: radial-gradient(closest-side, transparent 38%, #000 72%, transparent 100%);
+    mask-image: radial-gradient(closest-side, transparent 38%, #000 72%, transparent 100%);
+    filter: blur(60px);
+    opacity: 0.1;
+  }
+  /* soft grey lift behind the form */
+  .auth-aura::after {
+    content: '';
+    position: absolute;
+    inset: 16% 20%;
+    border-radius: 9999px;
+    background: radial-gradient(closest-side, hsl(var(--foreground) / 0.05), transparent);
+    filter: blur(30px);
+  }
+  .dark .auth-aura::before {
+    opacity: 0.16;
+  }
+
+  .auth-fey main h1 {
+    background-image: linear-gradient(90deg, #6d5bd0, #b0578f 55%, #c9743a);
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+    letter-spacing: -0.02em;
+  }
+  .dark .auth-fey main h1 {
+    background-image: linear-gradient(90deg, #b8a8ff, #e3b3dc 50%, #f5c6a0);
+  }
+
+  /* The form floats — no card chrome. */
+  .auth-fey main .bg-card.border {
+    background-color: transparent;
+    border-color: transparent;
+    box-shadow: none;
+    padding-left: 0;
+    padding-right: 0;
+  }
+
+  /* Pill fields and buttons. */
+  .auth-fey :is(input:not([type='checkbox']):not([type='radio'])).border-input {
+    height: 2.75rem;
+    border-radius: 9999px;
+    padding-left: 1.125rem;
+  }
+  .auth-fey :is(input:not([type='checkbox']):not([type='radio'])).border-input.pl-9 {
+    padding-left: 2.5rem;
+  }
+  .auth-fey main :is(button, a).bg-primary {
+    height: 2.75rem;
+    border-radius: 9999px;
+  }
+  .auth-fey main :is(button, a).border-input {
+    border-radius: 9999px;
+  }
+  .auth-fey main label {
+    font-weight: 400;
+    color: hsl(var(--muted-foreground));
+  }
+}
+
+/* Hairline that fades out at both ends (auth footer divider). */
+@layer utilities {
+  .hairline-fade {
+    height: 1px;
+    background: linear-gradient(90deg, transparent, hsl(var(--foreground) / 0.12), transparent);
+  }
+}

@@ -1,7 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { Loader2, Check, X } from 'lucide-react';
-import { BrandMark } from '@/components/common/BrandLogo';
 import api from '@/services/api';
 import { useAuth } from '@/context/AuthContext';
 import AuthShell from '@/components/auth/AuthShell';
@@ -36,9 +35,6 @@ function Device() {
     <AuthShell>
       <div className="w-full max-w-sm">
         <div className="mb-8 text-center">
-          <div className="mx-auto mb-4 flex justify-center">
-            <BrandMark size="lg" />
-          </div>
           <h1 className="text-2xl font-bold tracking-tight text-foreground">Device login</h1>
           <p className="mt-1 text-sm text-muted-foreground">
             Confirm the code shown in your terminal

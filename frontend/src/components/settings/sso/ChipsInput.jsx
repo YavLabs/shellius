@@ -48,7 +48,7 @@ export default function ChipsInput({
 
   return (
     <div>
-      <div className="flex min-h-9 flex-wrap items-center gap-1.5 rounded-md border border-input bg-background px-2 py-1.5">
+      <div className="field-soft flex min-h-9 flex-wrap items-center gap-1.5 rounded-md border border-input bg-background px-2 py-1.5">
         {values.map((v) => (
           <Badge
             key={v}
