@@ -505,11 +505,14 @@ function TerminalTabBar({ tabs, activeTabId, onSelect, workspace, onNewConnectio
 
   return (
     <TooltipProvider delayDuration={300}>
+      {/* Only the tab strip scrolls; the toolbar sits outside it so its
+          badges aren't clipped by the strip's overflow. */}
+      <div className="flex h-9 shrink-0 items-center gap-1.5">
       <div
         role="tablist"
         aria-label="Open terminals"
         ref={scrollRef}
-        className="no-scrollbar flex h-9 shrink-0 items-center gap-1.5 overflow-x-auto overflow-y-hidden"
+        className="no-scrollbar flex h-full min-w-0 flex-1 items-center gap-1.5 overflow-x-auto overflow-y-hidden"
       >
         {items.map((item, index) =>
           item.type === 'workspace' ? (
@@ -546,8 +549,7 @@ function TerminalTabBar({ tabs, activeTabId, onSelect, workspace, onNewConnectio
         >
           <Plus className="h-4 w-4" />
         </button>
-
-        <div className="flex-1" />
+      </div>
 
         {tabs.length > 0 && (
           <div className="flex shrink-0 items-center gap-1">
