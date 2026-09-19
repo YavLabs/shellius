@@ -2,7 +2,7 @@ import prisma from '../config/db.js';
 import ApiError from '../utils/ApiError.js';
 import logger from '../utils/logger.js';
 
-import { getSystemRole, permissionsOfRole } from './roleService.js';
+import { getSystemRole, permissionsOfRole, permissionsForUser, hasPermission } from './roleService.js';
 import { normalizePermissions } from '../config/permissions.js';
 
 // Settings have their own permission-gated routes; PUT /api/org must not be a
@@ -65,8 +65,47 @@ export async function isVaultEnabled(orgId) {
   return vaultEnabledFromSettings(org?.settings);
 }
 
+// ---------------------------------------------------------------------------
+// Require single sign-on (docs/auth-hardening.md "Require single sign-on")
+//
+// Organization.settings.access.ssoRequired — default off. On: password
+// sign-in, password reset and setting a password are refused for everyone
+// EXCEPT users whose role holds `settings.sso` (the people who can fix the
+// IdP configuration), so a broken identity provider can't lock the org out.
+// ---------------------------------------------------------------------------
+
+/** The permission that exempts a user from `ssoRequired`. */
+export const SSO_REQUIRED_EXEMPT_PERMISSION = 'settings.sso';
+
+export function ssoRequiredFromSettings(settings) {
+  return accessSettingsOf(settings).ssoRequired === true;
+}
+
+export async function isSsoRequired(orgId) {
+  const org = await prisma.organization.findUnique({ where: { id: orgId }, select: { settings: true } });
+  return ssoRequiredFromSettings(org?.settings);
+}
+
 /**
- * @returns {Promise<{ prodBypassEnabled: boolean, rolesWithBypass: {id,name,key,isSystem}[], prodApprovalBypassMinRole: string }>}
+ * Is password sign-in (login, reset, set) refused for this user because the
+ * org requires SSO and their role doesn't exempt them?
+ * @param {object} user - User row (orgId, role, roleId; assignedRole optional)
+ */
+export async function passwordSignInBlocked(user) {
+  if (!user?.orgId) return false;
+  if (!(await isSsoRequired(user.orgId))) return false;
+  const assignedRole =
+    user.assignedRole !== undefined
+      ? user.assignedRole
+      : user.roleId
+        ? await prisma.role.findFirst({ where: { id: user.roleId, orgId: user.orgId } })
+        : null;
+  const perms = permissionsForUser({ ...user, assignedRole });
+  return !hasPermission(perms, SSO_REQUIRED_EXEMPT_PERMISSION);
+}
+
+/**
+ * @returns {Promise<{ prodBypassEnabled: boolean, rolesWithBypass: {id,name,key,isSystem}[], prodApprovalBypassMinRole: string, personalVaultEnabled: boolean, ssoRequired: boolean, rolesExemptFromSso: object[], ssoProvidersActive: number }>}
  */
 export async function getAccessSettings(orgId) {
   const prodBypassEnabled = await isProdBypassEnabled(orgId);
@@ -78,14 +117,60 @@ export async function getAccessSettings(orgId) {
   const adminHas = rolesWithBypass.some((r) => r.isSystem && r.key === 'admin');
   const prodApprovalBypassMinRole = !prodBypassEnabled ? 'none' : adminHas ? 'admin' : 'super_admin';
   const personalVaultEnabled = await isVaultEnabled(orgId);
-  return { prodBypassEnabled, rolesWithBypass, prodApprovalBypassMinRole, personalVaultEnabled };
+  const ssoRequired = await isSsoRequired(orgId);
+  const rolesExemptFromSso = roles
+    .filter((r) => permissionsOfRole(r).includes(SSO_REQUIRED_EXEMPT_PERMISSION))
+    .map(({ id, key, name, isSystem }) => ({ id, key, name, isSystem }));
+  const ssoProvidersActive = await prisma.ssoConfig.count({ where: { orgId, isActive: true } });
+  return {
+    prodBypassEnabled,
+    rolesWithBypass,
+    prodApprovalBypassMinRole,
+    personalVaultEnabled,
+    ssoRequired,
+    rolesExemptFromSso,
+    ssoProvidersActive,
+  };
+}
+
+async function updateSsoRequired(orgId, value) {
+  if (typeof value !== 'boolean') throw new ApiError(400, 'ssoRequired must be true or false');
+  const org = await prisma.organization.findUnique({ where: { id: orgId }, select: { settings: true } });
+  if (!org) throw new ApiError(404, 'Organization not found');
+  if (value) {
+    // Turning it on with no working provider would leave every non-exempt
+    // user with no way in at all.
+    const active = await prisma.ssoConfig.count({ where: { orgId, isActive: true } });
+    if (active === 0) {
+      throw new ApiError(409, 'Add and enable a single sign-on provider before requiring it', {
+        code: 'SSO_NOT_CONFIGURED',
+      });
+    }
+  }
+  const current = org.settings && typeof org.settings === 'object' ? org.settings : {};
+  const access = accessSettingsOf(current);
+  await prisma.organization.update({
+    where: { id: orgId },
+    data: { settings: { ...current, access: { ...access, ssoRequired: value } } },
+  });
+  logger.info('orgService.updateAccessSettings: require-SSO switch updated', { orgId, ssoRequired: value });
 }
 
 /**
  * @param {string} orgId
- * @param {{ prodBypassEnabled?: boolean, prodApprovalBypassMinRole?: string, personalVaultEnabled?: boolean }} data
+ * @param {{ prodBypassEnabled?: boolean, prodApprovalBypassMinRole?: string, personalVaultEnabled?: boolean, ssoRequired?: boolean }} data
  */
 export async function updateAccessSettings(orgId, data) {
+  if (data.ssoRequired !== undefined) {
+    await updateSsoRequired(orgId, data.ssoRequired);
+    if (
+      data.personalVaultEnabled === undefined &&
+      data.prodBypassEnabled === undefined &&
+      data.prodApprovalBypassMinRole === undefined
+    ) {
+      return getAccessSettings(orgId);
+    }
+  }
   if (data.personalVaultEnabled !== undefined) {
     if (typeof data.personalVaultEnabled !== 'boolean') throw new ApiError(400, 'personalVaultEnabled must be true or false');
     const org = await prisma.organization.findUnique({ where: { id: orgId }, select: { settings: true } });

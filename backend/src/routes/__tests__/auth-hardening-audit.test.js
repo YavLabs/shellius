@@ -67,10 +67,30 @@ describe('SSO callback — PKCE, nonce, state cookie, SSRF guard, jose verificat
     // path (no nonce — GitHub is OAuth2, not OIDC) before reaching the OIDC
     // branch, so the window needs to be wide enough to cover both.
     const block = ssoRouteSrc.slice(idx, idx + 2200);
-    expect(block).toContain('generatePkce');
-    expect(block).toContain('code_challenge_method');
-    expect(block).toContain("'S256'");
-    expect(block).toContain('nonce');
+    // The authorize URL is built by beginAuthorize(), shared with the
+    // Profile "connect" flow (POST /connect/start).
+    expect(block).toContain('beginAuthorize');
+    const helperIdx = ssoRouteSrc.indexOf('async function beginAuthorize');
+    expect(helperIdx).toBeGreaterThan(-1);
+    const helper = ssoRouteSrc.slice(helperIdx, helperIdx + 2200);
+    expect(helper).toContain('generatePkce');
+    expect(helper).toContain('code_challenge_method');
+    expect(helper).toContain("'S256'");
+    expect(helper).toContain('nonce');
+  });
+
+  test('POST /connect/start is authenticated and binds the state to the signed-in user', () => {
+    const idx = ssoRouteSrc.indexOf("'/connect/start'");
+    expect(idx).toBeGreaterThan(-1);
+    const block = ssoRouteSrc.slice(idx, idx + 1200);
+    expect(block).toContain('authenticate');
+    expect(block).toContain("mode: 'connect', userId: req.user.userId");
+  });
+
+  test('legacy start handler still delegates PKCE/nonce generation', () => {
+    const idx = ssoRouteSrc.indexOf("router.get(\n  '/:orgSlug',");
+    const block = ssoRouteSrc.slice(idx, idx + 2200);
+    expect(block).not.toContain('generatePkce');
   });
 
   test('binds state to the browser with an HttpOnly cookie', () => {
@@ -118,7 +138,7 @@ describe('SSO callback — PKCE, nonce, state cookie, SSRF guard, jose verificat
     // shared finishSsoCallback() for reconciliation + the one-time exchange
     // code, so the OIDC and GitHub paths can't diverge on this guarantee.
     const tailIdx = ssoRouteSrc.indexOf('async function finishSsoCallback');
-    const tailBlock = ssoRouteSrc.slice(tailIdx, tailIdx + 1200);
+    const tailBlock = ssoRouteSrc.slice(tailIdx, tailIdx + 3500);
     expect(tailBlock).toContain('oneTimeCode');
     expect(tailBlock).toContain('saveExchangeCode');
     expect(block).toContain('finishSsoCallback');
@@ -196,5 +216,56 @@ describe('authenticate middleware — enforced-MFA allowlist', () => {
   test('loads the user and rejects non-active / stale-session tokens with SESSION_REVOKED', () => {
     expect(authMiddlewareSrc).toContain('SESSION_REVOKED');
     expect(authMiddlewareSrc).toContain('sessionsValidFrom');
+  });
+});
+
+describe('SSO account linking (docs/auth-hardening.md "Linking SSO accounts")', () => {
+  test('confirm-link and its code/info endpoints are rate-limited and Joi-validated', () => {
+    for (const path of ["'/confirm-link'", "'/confirm-link/send-code'", "'/link/info'", "'/link/cancel'"]) {
+      const idx = ssoRouteSrc.indexOf(path);
+      expect(idx).toBeGreaterThan(-1);
+      const block = ssoRouteSrc.slice(idx, idx + 200);
+      expect(block).toContain('authLimiter');
+      expect(block).toContain('validate(');
+    }
+    for (const path of ["'/link/approve'", "'/link/approve-info'"]) {
+      const idx = ssoRouteSrc.indexOf(path);
+      expect(idx).toBeGreaterThan(-1);
+      expect(ssoRouteSrc.slice(idx, idx + 200)).toContain('tokenActionLimiter');
+    }
+  });
+
+  test('the callback hands email matches needing confirmation to a pending link, never a session', () => {
+    const idx = ssoRouteSrc.indexOf('async function finishSsoCallback');
+    const block = ssoRouteSrc.slice(idx, idx + 2500);
+    const pendingIdx = block.indexOf('user.pendingLink');
+    expect(pendingIdx).toBeGreaterThan(-1);
+    expect(block.indexOf('saveExchangeCode')).toBeGreaterThan(pendingIdx);
+    expect(block).toContain('/sso/link#');
+  });
+
+  test('self-service unlink uses the ACTIONS catalogue (no raw audit strings)', () => {
+    expect(authRouteSrc).not.toContain("'auth.identity.unlinked'");
+    const idx = authRouteSrc.indexOf("'/identities/:id'");
+    const block = authRouteSrc.slice(idx, idx + 600);
+    expect(block).toContain('ssoLinkService.unlinkOwnIdentity');
+  });
+
+  test('POST /password/set is authenticated, rate-limited and uses the registration password rules', () => {
+    const idx = authRouteSrc.indexOf("'/password/set',");
+    const block = authRouteSrc.slice(idx, idx + 400);
+    expect(block).toContain('authenticate');
+    expect(block).toContain('setPasswordLimiter');
+    expect(block).toContain('validate(setPasswordSchema)');
+    const schemaIdx = authRouteSrc.indexOf('const setPasswordSchema');
+    expect(authRouteSrc.slice(schemaIdx, schemaIdx + 200)).toContain('strongPasswordSchema');
+  });
+
+  test('admin identity endpoints require users.manage_identities', () => {
+    for (const path of ["'/:id/identities'", "'/:id/identities/:identityId'"]) {
+      const idx = usersRouteSrc.indexOf(path);
+      expect(idx).toBeGreaterThan(-1);
+      expect(usersRouteSrc.slice(idx, idx + 120)).toContain("requirePermission('users.manage_identities')");
+    }
   });
 });

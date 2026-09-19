@@ -24,6 +24,16 @@ export const ACTIONS = {
     device_approve: 'auth.device_approve',
     refresh_reuse: 'auth.refresh_reuse',
     mfa_failed: 'auth.mfa_failed',
+    // SSO account linking (docs/auth-hardening.md "Linking SSO accounts").
+    // metadata.method: auto | confirmed | email_approved | connect (linked)
+    // or self | admin (unlinked).
+    identity_linked: 'auth.identity.linked',
+    identity_unlinked: 'auth.identity.unlinked',
+    identity_link_pending: 'auth.identity.link_pending',
+    identity_link_failed: 'auth.identity.link_failed',
+    identity_connect_started: 'auth.identity.connect_started',
+    password_set: 'auth.password.set',
+    sso_required_blocked: 'auth.sso_required_blocked',
   },
   user: {
     create: 'user.create',

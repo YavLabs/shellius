@@ -54,6 +54,7 @@ users.suspend,Users,Suspend users,Suspend or reactivate users (signs them out ev
 users.reset_credentials,Users,Reset passwords & lockouts,Send password-reset links and clear login lockouts.,yes,N,N,Y,Y,N,N,Y,Y,,POST /api/users/:id/password-reset; POST /api/users/:id/unlock,F-02
 users.revoke_sessions,Users,Sign users out,Sign a user out of every browser and CLI session.,,N,N,Y,Y,N,N,Y,Y,,POST /api/users/:id/revoke-sessions,
 users.delete,Users,Delete users,Permanently delete users.,yes,N,N,N,Y,N,N,N,Y,,GET /api/users/:id/delete-impact; DELETE /api/users/:id,UI-2.3
+users.manage_identities,Users,Manage sign-in methods,"See whether a user has a password and which SSO accounts are linked to them, and unlink an SSO account. Only for users whose role you could assign; the last way to sign in can never be removed.",yes,-,-,-,-,N,N,Y,Y,new,GET /api/users/:id/identities; DELETE /api/users/:id/identities/:identityId,
 roles.view,Roles,View roles,See roles and their permissions.,,-,-,-,-,N,N,Y,Y,new,GET /api/roles; GET /api/roles/:id,
 roles.manage,Roles,Manage roles,"Create, edit and delete custom roles and edit built-in ones. You can only grant permissions you hold.",yes,-,-,-,-,N,N,Y,Y,new,POST /api/roles; PUT /api/roles/:id; DELETE /api/roles/:id; POST /api/roles/:id/reset,
 org.update,Organization & settings,Edit organization profile,"Change the organization name, domain and logo.",,N,N,Y,Y,N,N,Y,Y,,PUT /api/org,F-10 G3
