@@ -30,17 +30,21 @@ describe('route access', () => {
     expect(canAccessRoute(member, '/dashboard')).toBe(true);
     expect(canAccessRoute(member, '/terminals')).toBe(true);
     expect(canAccessRoute(member, '/servers/abc')).toBe(true);
-    expect(canAccessRoute(member, '/users')).toBe(false);
-    expect(canAccessRoute(member, '/settings')).toBe(false);
-    expect(canAccessRoute(custom, '/settings')).toBe(true); // any settings permission
-    expect(canAccessRoute(custom, '/roles/xyz')).toBe(true);
+    expect(canAccessRoute(member, '/admin')).toBe(false);
+    expect(canAccessRoute(member, '/admin/users')).toBe(false);
+    expect(canAccessRoute(custom, '/admin')).toBe(true); // any section's permission
+    expect(canAccessRoute(custom, '/admin/roles/xyz')).toBe(true);
+    expect(canAccessRoute(custom, '/admin/email?connected=1')).toBe(true);
+    expect(canAccessRoute(custom, '/admin/sso')).toBe(false); // each section checks its own
     expect(canAccessRoute(custom, '/policies?action=new')).toBe(false);
   });
 
   it('nav, quick actions and shortcuts follow the same rules', () => {
     const visible = NAV_ITEMS.filter((i) => isNavItemVisible(i, member)).map((i) => i.id);
     expect(visible).toContain('servers');
-    expect(visible).not.toContain('users');
+    expect(visible).not.toContain('admin-users');
+    const adminNav = NAV_ITEMS.filter((i) => isNavItemVisible(i, custom)).map((i) => i.id).filter((id) => id.startsWith('admin-'));
+    expect(adminNav).toEqual(['admin-users', 'admin-roles', 'admin-email']);
     const actions = QUICK_ACTIONS.filter((a) => isQuickActionVisible(a, member, false)).map((a) => a.id);
     expect(actions).toContain('new-access-request');
     expect(actions).not.toContain('new-server');

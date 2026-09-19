@@ -14,9 +14,9 @@ Tracked here as work lands on `main`; moved into a dated section on release
 - **Connect sign-in providers from Profile.** Sign-in methods lists every SSO provider the organization uses, with Connect for the ones you haven't linked and Disconnect for the ones you have. Connecting links the provider account to you, never to another account with the same email. An account already linked to another user is refused.
 - **Set a password.** People who sign in only with SSO can add a password from Profile. They confirm it's them with their two-factor code, or with a code emailed to them.
 - **Sign-in methods for administrators.** On Users, "Sign-in methods" shows whether a user has a password and which SSO accounts are linked, and can unlink one. It needs the new "Manage sign-in methods" permission (Admin and Super admin by default) and follows the same rule as editing users: you can't act on someone whose role has more permissions than yours.
-- **Require single sign-on** (Settings → Access). When on, password sign-in, password resets and adding a password are refused, except for roles with the "Single sign-on" permission, so an administrator can still sign in if the identity provider breaks. The sign-in page shows only the SSO buttons.
+- **Require single sign-on** (Administration → Access rules). When on, password sign-in, password resets and adding a password are refused, except for roles with the "Single sign-on" permission, so an administrator can still sign in if the identity provider breaks. The sign-in page shows only the SSO buttons.
 - Emails when an SSO account is linked to or unlinked from your account, and when a password is added.
-- **Email providers.** Settings → Email (was "Email server") can hold several ways to send email, and one is active at a time:
+- **Email providers.** Administration → Email (was Settings → "Email server") can hold several ways to send email, and one is active at a time:
   - SMTP, Google (Gmail API), Microsoft 365 (Microsoft Graph), SendGrid, Mailgun, Postmark and Resend.
   - Google: "Connect Google account" signs in once and only asks for permission to send email. Google Workspace service accounts (domain-wide delegation) work too. The OAuth client defaults to `SSO_GOOGLE_CLIENT_ID` / `SSO_GOOGLE_CLIENT_SECRET`.
   - Microsoft 365: an Entra ID app with the Mail.Send application permission sends from a chosen mailbox.
@@ -29,6 +29,7 @@ Tracked here as work lands on `main`; moved into a dated section on release
 
 ### Changed
 
+- Settings is now **Administration** (`/admin`), opened from the profile menu. Users, Roles and Groups moved out of the sidebar into it, next to the organization settings, grouped as People & access (Users, Roles, Groups), Authentication (Single sign-on, Two-factor, Access rules), Organization (General, Certificate authority, Quick Connect) and Integrations (Email, Storage). A search box finds a section by name or keyword (for example "smtp" or "okta"), and on phones the sections are a dropdown. Each section, the menu entry and the command palette entries ("Administration › Users", …) only appear with the matching permission. Switching sections asks before discarding unsaved changes. Old links keep working: `/settings` and `/settings?tab=…` redirect to the matching section, and `/users`, `/roles`, `/roles/:id`, `/groups` and `/groups/:id` redirect to `/admin/…`. Links in notifications, search results and the Google email-provider sign-in now point at the new pages.
 - The sidebar collapses automatically on the Terminals workspace and Administration. You can still expand it there; leaving restores your usual setting.
 - The Shellius logo files (`frontend/public/brand`) have outlined, evenly spaced lettering, so the gap between SHELL, the bar and US is gone and they look the same without the font installed.
 - Signing in with SSO for the first time no longer links the provider to an existing account with the same email straight away:

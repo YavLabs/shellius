@@ -124,7 +124,7 @@ curl -fsSL https://<your-shellius-host>/api/cli/install.sh | sh
 ```
 
 You'll also find a copy-paste-ready version with the correct host
-already filled in under **Settings → CLI / TUI** in the web UI.
+already filled in on the **Install CLI** page (profile menu) in the web UI.
 
 The script detects your OS (`darwin`/`linux`) and architecture
 (`amd64`/`arm64`), pulls the matching binary from the latest GitHub release,
@@ -220,8 +220,8 @@ shellius doctor
     └── history/      # 7-day pruned history
 ```
 
-The CLI install instructions are also available inside the web UI under
-**Settings → CLI / TUI** with copy-to-clipboard buttons for every command.
+The CLI install instructions are also available inside the web UI on the
+**Install CLI** page (profile menu) with copy-to-clipboard buttons for every command.
 
 ## Development Setup
 
@@ -270,7 +270,7 @@ cd tui && go test ./...
 
 Example files: [`.env.example`](.env.example) (dev) and [`.env.prod.example`](.env.prod.example) (production). The full reference table — every variable, whether it's required, its default, and which ones must be secrets — lives in **[`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md#3-environment-variables-reference)**.
 
-SSO provider credentials can also be configured per-organization through the Settings page and stored encrypted in the database, instead of (or alongside) env presets.
+SSO provider credentials can also be configured per-organization under Administration → Single sign-on and stored encrypted in the database, instead of (or alongside) env presets.
 
 ## Architecture
 
@@ -338,8 +338,8 @@ shellius/
 ├── frontend/
 │   └── src/
 │       ├── components/     # ui/ (shadcn), domain components, layout
-│       ├── pages/          # Dashboard, Servers, Customers, Users, Groups, Policies,
-│       │                   # Certificates, AccessRequests, Sessions, AuditLog, Settings,
+│       ├── pages/          # Dashboard, Servers, Customers, Policies, Certificates,
+│       │                   # AccessRequests, Sessions, AuditLog, Administration (Users, Roles, Groups, org settings),
 │       │                   # Login, Device, Terminal, NotFound
 │       ├── hooks/
 │       ├── context/        # AuthContext, ThemeContext, NotificationContext

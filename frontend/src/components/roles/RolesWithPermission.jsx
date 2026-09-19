@@ -33,7 +33,7 @@ function RolesWithPermission({ permission, roles: given, emptyText = 'No role ha
         canView ? (
           <Link
             key={r.id}
-            to={`/roles/${r.id}`}
+            to={`/admin/roles/${r.id}`}
             className="inline-flex h-6 items-center rounded-full border border-border bg-muted/40 px-2.5 text-xs font-medium text-foreground hover:border-primary/40 hover:bg-accent"
           >
             {r.name}

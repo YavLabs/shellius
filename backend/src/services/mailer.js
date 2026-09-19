@@ -4,7 +4,7 @@
  * Single entry point for outbound email. Resolution order, fresh on every
  * call (docs/email-delivery.md):
  *
- *   1. the org's active EmailProvider (Settings → Email)
+ *   1. the org's active EmailProvider (Administration → Email)
  *   2. SMTP_* environment variables              → transport 'env-smtp'
  *   3. log-only mode (nothing is sent)            → transport 'log'
  *

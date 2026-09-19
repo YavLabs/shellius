@@ -120,7 +120,7 @@ function Users() {
   const [actionMsg, setActionMsg] = useState('');
   const [searchParams, setSearchParams] = useSearchParams();
 
-  // Deep links: /users?action=invite opens the invite modal; ?highlight=<id>
+  // Deep links: /admin/users?action=invite opens the invite modal; ?highlight=<id>
   // opens that user's edit modal (no inline row-highlight affordance in
   // DataTable, so this is the closest equivalent).
   useEffect(() => {
@@ -429,7 +429,7 @@ function Users() {
   ];
 
   return (
-    <div className="space-y-6 p-6">
+    <div className="space-y-6">
       <PageHeader icon={UsersIcon} title="Users" subtitle="Manage user accounts, roles, and access." helpKey="users">
         {can('users.invite') && (
           <Button onClick={openCreate}>

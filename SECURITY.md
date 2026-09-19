@@ -34,7 +34,7 @@ When deploying Shellius:
 - Keep Docker images and dependencies up to date. Watch for advisories on `ssh2`, `prom-client`, `prisma`, and `guacd`.
 - Enable audit logging review -- the `AuditLog` table is immutable; ship it to a SIEM if you have one.
 - Configure SSO with enforced MFA where possible.
-- Rotate the SSH CA periodically via Settings -> CA Management -> Rotate. Existing certificates will continue to validate until their TTL expires.
+- Rotate the SSH CA periodically via Administration -> Certificate authority -> Rotate CA. Existing certificates will continue to validate until their TTL expires.
 - Backup PostgreSQL and the recordings volume (`scripts/backup-db.sh`, `scripts/backup-recordings.sh`).
 - Set `RECORDING_RETENTION_DAYS` according to your compliance requirements; the `sessionCleanup` job will prune older recordings hourly.
 - Protect the Prometheus `/api/metrics` endpoint by setting `METRICS_TOKEN` (callers must send `Authorization: Bearer <token>`).

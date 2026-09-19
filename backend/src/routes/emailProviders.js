@@ -61,9 +61,9 @@ const ctxOf = (req) => ({ userId: req.user.userId, ip: req.ip, userAgent: req.he
 // Google OAuth callback (unauthenticated browser redirect — see header)
 // ---------------------------------------------------------------------------
 
-function settingsRedirect(params) {
-  const qs = new URLSearchParams({ tab: 'email', ...params });
-  return `${config.publicBaseUrl.replace(/\/$/, '')}/settings?${qs.toString()}`;
+function adminEmailRedirect(params) {
+  const qs = new URLSearchParams(params);
+  return `${config.publicBaseUrl.replace(/\/$/, '')}/admin/email?${qs.toString()}`;
 }
 
 router.get(
@@ -82,7 +82,7 @@ router.get(
     } catch {
       result = { ok: false, error: 'server_error' };
     }
-    res.redirect(302, settingsRedirect(result.ok ? { connected: '1' } : { error: result.error }));
+    res.redirect(302, adminEmailRedirect(result.ok ? { connected: '1' } : { error: result.error }));
   })
 );
 

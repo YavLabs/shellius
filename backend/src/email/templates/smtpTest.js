@@ -4,7 +4,7 @@ import { renderLayout } from '../layout.js';
 /**
  * smtpTest email template.
  *
- * Sent from Settings → Notifications → "Send test email" so an admin can
+ * Sent from Administration → Email → "Send test email" so an admin can
  * confirm the SMTP configuration is reachable end-to-end and that the
  * styled HTML layout renders correctly in their inbox.
  *

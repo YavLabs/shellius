@@ -2,21 +2,24 @@ import { useState } from 'react';
 import { Copy, Check } from 'lucide-react';
 
 /**
- * Small UI primitives shared across Settings tabs. Split out of pages/Settings.jsx
- * so tab bodies (SsoTab, MfaTab, ...) can live in their own files without a
- * page → component → page import cycle.
+ * Small UI primitives shared across the Administration sections (SsoTab,
+ * MfaTab, EmailTab, ...). SectionCard is the card each section renders in:
+ * title, one-line description and the section's own actions.
  */
 
-export function SectionCard({ title, description, children }) {
+export function SectionCard({ title, description, actions, children }) {
   return (
     <div className="rounded-lg border border-border bg-card">
-      <div className="border-b border-border px-5 py-4">
-        <h2 className="text-base font-semibold text-foreground">{title}</h2>
-        {description && (
-          <p className="mt-0.5 text-sm text-muted-foreground">{description}</p>
-        )}
+      <div className="flex flex-col gap-3 border-b border-border px-4 py-4 sm:flex-row sm:items-start sm:justify-between sm:px-5">
+        <div className="min-w-0">
+          <h2 className="text-base font-semibold text-foreground">{title}</h2>
+          {description && (
+            <p className="mt-0.5 text-sm text-muted-foreground">{description}</p>
+          )}
+        </div>
+        {actions && <div className="flex shrink-0 flex-wrap items-center gap-2">{actions}</div>}
       </div>
-      <div className="px-5 py-4">{children}</div>
+      <div className="px-4 py-4 sm:px-5">{children}</div>
     </div>
   );
 }

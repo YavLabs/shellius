@@ -20,8 +20,8 @@ checks, search or the TUI, and nobody else can see them.
 | `vault.use` | every built-in role | Keep personal identities and SSH keys; use them in Quick Connect and My hosts; export your own keys. |
 | `vault.hosts` | every built-in role | Save personal hosts and connect to them. |
 
-Both are removable per role on the Roles page. The org switch
-`Organization.settings.vault.enabled` (Settings → Access, `org.access_settings`,
+Both are removable per role under Administration → Roles. The org switch
+`Organization.settings.vault.enabled` (Administration → Access rules, `org.access_settings`,
 default **on**) turns the whole feature off: while off, personal items are
 kept but can't be listed, created or used by anyone.
 

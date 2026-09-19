@@ -317,7 +317,7 @@ function MyHosts() {
         <EmptyState
           icon={ShieldOff}
           title="Personal vault is turned off"
-          description="Your organization has turned off personal identities, keys and My hosts. Ask an admin to turn it back on in Settings → Access. Anything you saved before is kept, just hidden until then."
+          description="Your organization has turned off personal identities, keys and My hosts. Ask an admin to turn it back on in Administration → Access rules. Anything you saved before is kept, just hidden until then."
         />
       </div>
     );

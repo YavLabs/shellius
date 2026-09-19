@@ -20,7 +20,7 @@ const RELATED_ROUTE = {
   Session: () => `/sessions`,
   Server: (id) => `/servers/${id}`,
   Customer: (id) => `/customers/${id}`,
-  User: () => `/users`,
+  User: () => `/admin/users`,
 };
 
 function Notifications() {

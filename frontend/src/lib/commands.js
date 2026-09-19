@@ -3,7 +3,6 @@ import { Cable,
   Building2,
   Server,
   Users,
-  UsersRound,
   Shield,
   KeyRound,
   FileKey,
@@ -18,10 +17,10 @@ import { Cable,
   Zap,
   Command as CommandIcon,
   Keyboard,
-  ShieldCheck,
   Lock,
 } from 'lucide-react';
 import { can, canAny } from '@/lib/permissions';
+import { ADMIN_PERMISSIONS, ADMIN_SECTIONS, canSeeSection, sectionKeyFromPath, sectionPath } from '@/lib/adminSections';
 
 /**
  * Single source of truth for "Quick actions" — used by both the Topbar
@@ -92,7 +91,7 @@ export const QUICK_ACTIONS = [
     group: 'Create',
     icon: Users,
     perm: 'users.invite',
-    href: '/users?action=invite',
+    href: '/admin/users?action=invite',
     shortcutHint: 'c u',
   },
   {
@@ -169,27 +168,23 @@ export const ROUTE_ACCESS = {
   '/my-hosts': { anyOf: ['vault.hosts'] },
   '/sessions': { anyOf: ['sessions.view_all'] },
   '/audit-log': { anyOf: ['audit.view'] },
-  '/users': { anyOf: ['users.view'] },
-  '/groups': { anyOf: ['groups.view'] },
-  '/roles': { anyOf: ['roles.view'] },
   '/bulk-import': { anyOf: ['import.run'] },
-  '/settings': {
-    anyOf: [
-      'org.update',
-      'org.access_settings',
-      'ca.view',
-      'settings.sso',
-      'settings.mfa',
-      'settings.smtp',
-      'settings.storage',
-      'quick_connect.settings',
-    ],
-  },
+  // Administration: any section's permission opens the page; each section
+  // (/admin/<key>) is checked on its own — see lib/adminSections.js.
+  '/admin': { anyOf: ADMIN_PERMISSIONS },
 };
 
-/** Can `user` open the page at `path` (first path segment decides)? */
+/**
+ * Can `user` open the page at `path`? The first path segment decides, except
+ * inside Administration, where /admin/<section> needs that section's own
+ * permission.
+ */
 export function canAccessRoute(user, path) {
   const base = '/' + String(path || '/').split(/[/?#]/)[1];
+  if (base === '/admin') {
+    const key = sectionKeyFromPath(path);
+    if (key) return canSeeSection(user, key);
+  }
   const rule = ROUTE_ACCESS[base];
   return !rule || canAny(user, ...rule.anyOf);
 }
@@ -212,10 +207,16 @@ export const NAV_ITEMS = [
   { id: 'sessions', label: 'Sessions', icon: Terminal, to: '/sessions' },
   { id: 'audit-log', label: 'Audit log', icon: ScrollText, to: '/audit-log' },
   { id: 'notifications', label: 'Notifications', icon: Bell, to: '/notifications' },
-  { id: 'users', label: 'Users', icon: Users, to: '/users' },
-  { id: 'roles', label: 'Roles', icon: ShieldCheck, to: '/roles' },
-  { id: 'groups', label: 'Groups', icon: UsersRound, to: '/groups' },
   { id: 'bulk-import', label: 'Bulk import', icon: Upload, to: '/bulk-import' },
+  // One entry per Administration section ("Administration › Users", …),
+  // each visible only with that section's permission.
+  ...ADMIN_SECTIONS.map((s) => ({
+    id: `admin-${s.key}`,
+    label: `Administration › ${s.label}`,
+    icon: s.icon,
+    to: sectionPath(s.key),
+    keywords: ['administration', 'admin', 'settings', ...(s.keywords || [])],
+  })),
 ];
 
 export function isQuickActionVisible(action, user, quickConnectAllowed) {
@@ -231,6 +232,12 @@ export function isNavItemVisible(item, user) {
 export function matchesQuery(label, query) {
   if (!query) return true;
   return label.toLowerCase().includes(query.trim().toLowerCase());
+}
+
+/** Palette match for a NAV_ITEMS entry: its label or any of its keywords. */
+export function matchesNavItem(item, query) {
+  if (!query || matchesQuery(item.label, query)) return true;
+  return (item.keywords || []).some((k) => matchesQuery(k, query));
 }
 
 /**
@@ -258,8 +265,8 @@ export const NAV_SEQUENCES = [
   { keys: ['g', 'e'], label: 'Go to certificates', to: '/certificates' },
   { keys: ['g', 'i'], label: 'Go to sessions', to: '/sessions' },
   { keys: ['g', 'l'], label: 'Go to audit log', to: '/audit-log' },
-  { keys: ['g', 'u'], label: 'Go to users', to: '/users' },
-  { keys: ['g', 'g'], label: 'Go to groups', to: '/groups' },
+  { keys: ['g', 'u'], label: 'Go to users', to: '/admin/users' },
+  { keys: ['g', 'g'], label: 'Go to groups', to: '/admin/groups' },
   { keys: ['g', 'n'], label: 'Go to notifications', to: '/notifications' },
   { keys: ['g', 'q'], label: 'Open quick connect', action: 'quick-connect', quickConnect: true },
 ];
@@ -269,7 +276,7 @@ export const CREATE_SEQUENCES = [
   { keys: ['c', 'c'], label: 'New customer', to: '/customers?action=new', perm: 'customers.create' },
   { keys: ['c', 'i'], label: 'New identity', to: '/keystore?tab=identities&action=new', perm: 'keystore.manage' },
   { keys: ['c', 'k'], label: 'Generate SSH key', to: '/keystore?tab=keys&action=generate', perm: 'keystore.manage' },
-  { keys: ['c', 'u'], label: 'Invite user', to: '/users?action=invite', perm: 'users.invite' },
+  { keys: ['c', 'u'], label: 'Invite user', to: '/admin/users?action=invite', perm: 'users.invite' },
   { keys: ['c', 'p'], label: 'New policy', to: '/policies?action=new', perm: 'policies.manage' },
   { keys: ['c', 'r'], label: 'New access request', to: '/access-requests?action=new', perm: 'access.request' },
   { keys: ['c', 'h'], label: 'Add host to My hosts', to: '/my-hosts?action=new', perm: 'vault.hosts' },

@@ -158,7 +158,7 @@ function ProviderCard({ provider, onEdit, onDelete, onActivate, onDeactivate, on
 }
 
 /**
- * Settings → Email. Providers the org can send through; exactly one (or
+ * Administration → Email. Providers the org can send through; exactly one (or
  * none) is active. With none active, email falls back to the server's
  * SMTP_* settings, or is not sent at all.
  */

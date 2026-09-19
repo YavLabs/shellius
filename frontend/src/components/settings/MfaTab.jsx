@@ -3,6 +3,9 @@ import { SectionCard } from './shared';
 import { Button } from '@/components/ui/button';
 import { getMfaConfig, saveMfaConfig } from '@/services/mfaService';
 import { SwitchField } from '@/components/ui/switch';
+import { useUnsavedChanges } from '@/components/admin/AdminFrameContext';
+
+const MFA_FIELDS = ['enabled', 'enforced', 'allowTotp', 'allowEmailOtp'];
 
 /**
  * MfaTab — org-wide MFA policy (super_admin only). "Enforced" is a hard
@@ -15,15 +18,20 @@ function MfaTab() {
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
   const [error, setError] = useState('');
+  const [baseline, setBaseline] = useState(null);
 
   useEffect(() => {
     getMfaConfig()
-      .then(setCfg)
+      .then((c) => {
+        setCfg(c);
+        setBaseline(c);
+      })
       .catch((e) => setError(e?.response?.data?.error?.message || e.message))
       .finally(() => setLoading(false));
   }, []);
 
   const set = (k, v) => setCfg((p) => ({ ...p, [k]: v }));
+  useUnsavedChanges(!!cfg && !!baseline && MFA_FIELDS.some((k) => !!cfg[k] !== !!baseline[k]));
 
   const save = async () => {
     setSaving(true);
@@ -37,6 +45,7 @@ function MfaTab() {
         allowEmailOtp: cfg.allowEmailOtp !== false,
       });
       setCfg(next);
+      setBaseline(next);
       setSaved(true);
       setTimeout(() => setSaved(false), 3000);
     } catch (e) {

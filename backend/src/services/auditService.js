@@ -462,7 +462,7 @@ async function enrichAuditItems(items, orgId) {
         case 'User': {
           const u = lookups.User?.get(rid);
           if (u) label = u.name || u.email || 'User';
-          link = '/users';
+          link = '/admin/users';
           break;
         }
         case 'Server': {
@@ -517,7 +517,7 @@ async function enrichAuditItems(items, orgId) {
         case 'Group': {
           const g = lookups.Group?.get(rid);
           if (g) label = g.name;
-          link = `/groups/${rid}`; // detail page exists
+          link = `/admin/groups/${rid}`; // detail page exists
           break;
         }
         case 'AccessPolicy': {

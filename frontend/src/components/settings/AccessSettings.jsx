@@ -84,7 +84,7 @@ function AccessSettings() {
 
   return (
     <SectionCard
-      title="Access"
+      title="Access rules"
       description="Organization-wide rules for production access, sign-in and the personal vault."
     >
       {loading ? (
@@ -128,7 +128,7 @@ function AccessSettings() {
             <div className="mb-2 flex items-center justify-between gap-2">
               <p className="text-sm font-medium text-foreground">Roles with “Production without approval”</p>
               {can('roles.view') && (
-                <Link to="/roles" className="text-xs font-medium text-primary hover:underline">
+                <Link to="/admin/roles" className="text-xs font-medium text-primary hover:underline">
                   Manage roles
                 </Link>
               )}

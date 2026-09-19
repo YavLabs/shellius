@@ -14,7 +14,7 @@ SAML 2.0 is on the roadmap but disabled in the current wizard.
 
 The same per-org / env-var precedence pattern as SMTP:
 
-1. **UI override** — set via Settings → SSO. Saved values win.
+1. **UI override** — set via Administration → Single sign-on (`/admin/sso`). Saved values win.
 2. **Environment defaults** — `SSO_*` env vars in `.env.prod`. Used to
    pre-fill the wizard the first time an admin opens it. Once saved
    in the UI, the env vars become a fallback only.
