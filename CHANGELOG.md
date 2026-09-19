@@ -9,6 +9,16 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 Tracked here as work lands on `main`; moved into a dated section on release
 (`node scripts/version.mjs bump <major|minor|patch>`).
 
+### Changed
+
+- **Phone layout for the app shell** (below 768px wide; tablets and desktop are unchanged):
+  - The top bar is one row: menu button, page title, search, notifications and your avatar. The menu button now sits inside the bar instead of floating over it. Quick actions, Quick connect and the theme menu moved out of the bar.
+  - A bottom navigation bar shows Home, Terminals, Servers and Access requests, or, when you can't open one of them, My hosts, Keystore, Sessions or Notifications instead. The "+" button in the middle opens a sheet with Quick connect first, then the same quick actions as the desktop menu, with the same permissions. The bar is hidden on the full-screen terminal and while the keyboard is open in the Terminals workspace.
+  - The footer is hidden. Its Privacy, Terms and EULA links and the version are at the bottom of the menu drawer, next to a Light / Dark / System switch. The account menu has the same switch.
+  - The notifications panel fits the screen width.
+- **Page headers on phones.** The title stays on one line with the help button at the end, the description goes under it, the main action (for example "Add server") is a full-width button, and the other actions (Refresh, Export, Edit, Delete, …) are in a "⋯" menu. Server and customer pages have a back button before the title and their details (hostname, environment, slug, server counts) under it.
+- **Administration on phones.** `/admin` shows the list of sections, grouped like a phone's Settings app, with a one-line description each and the search box on top. A section opens full width with "‹ Administration" to go back, instead of the dropdown. Going back still asks before discarding unsaved changes.
+
 ## [1.5.0] - 2026-09-19
 
 ### Added
