@@ -28,6 +28,9 @@ import { Badge } from '@/components/ui/badge';
 import { auditCategoryTone, environmentTone } from '@/lib/badgeTones';
 import { describeAuditEvent, auditSentence, auditCategoryLabel } from '@/lib/auditFormat';
 import Avatar from '@/components/ui/Avatar';
+import { useQuickConnect } from '@/context/QuickConnectContext';
+import { QUICK_ACTIONS, isQuickActionVisible } from '@/lib/commands';
+import { cn } from '@/lib/utils';
 
 
 // Badge for audit action verbs — reuses the shared audit category tone map.
@@ -63,6 +66,14 @@ function AuditRow({ item }) {
   );
 }
 
+// Static class names per card count (Tailwind can't see computed ones).
+const METRIC_COLS = {
+  1: '',
+  2: 'sm:grid-cols-2',
+  3: 'sm:grid-cols-2 lg:grid-cols-3',
+  4: 'sm:grid-cols-2 lg:grid-cols-4',
+};
+
 function Dashboard() {
   const navigate = useNavigate();
   const { user } = useAuth();
@@ -72,6 +83,7 @@ function Dashboard() {
   const allSessions = can(user, 'sessions.view_all');
   const allCerts = can(user, 'certificates.view_all');
   const { liveCount } = useTerminalWorkspace();
+  const { allowed: quickConnectAllowed } = useQuickConnect();
 
   const [statsLoading, setStatsLoading] = useState(true);
   const [serverStats, setServerStats] = useState({ total: 0, byEnv: {} });
@@ -134,6 +146,10 @@ function Dashboard() {
   }, [loadStats, loadAudit]);
 
   const { byEnv } = serverStats;
+  // Everything below renders only what this role can use, and each row's
+  // grid adapts to the cards actually present, so nothing leaves a hole.
+  const metricCount = 4;
+  const showQuickActions = QUICK_ACTIONS.some((a) => isQuickActionVisible(a, user, quickConnectAllowed));
 
   return (
     <div className="space-y-6 p-6">
@@ -144,8 +160,8 @@ function Dashboard() {
         subtitle="Overview of your infrastructure and access management."
       helpKey="dashboard" />
 
-      {/* Metric cards */}
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+      {/* Metric cards — the grid follows however many render (permissions). */}
+      <div className={cn('grid grid-cols-1 gap-4', METRIC_COLS[Math.min(metricCount, 4)])}>
         <MetricCard
           title="Total servers"
           value={serverStats.total}
@@ -230,19 +246,23 @@ function Dashboard() {
         />
       </div>
 
-      {/* Recent connections (wide: active sessions + last 7 days) + Quick actions (narrow) */}
-      <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
-        <div className="lg:col-span-2">
+      {/* Recent connections (wide) + Quick actions (narrow). Without any
+          quick action for this role, Recent connections takes the row. */}
+      <div className={cn('grid grid-cols-1 gap-4', showQuickActions && 'lg:grid-cols-3')}>
+        <div className={cn(showQuickActions && 'lg:col-span-2')}>
           <RecentConnectionsWidget />
         </div>
-        <div>
-          <QuickActionsWidget />
-        </div>
+        {showQuickActions && (
+          <div>
+            <QuickActionsWidget />
+          </div>
+        )}
       </div>
 
-      {/* Bottom row: MyAccess + Recent Activity */}
-      <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
-        <MyAccessWidget />
+      {/* Bottom row: My access + Recent activity (audit.view). Alone, My
+          access spans the row and lays its servers out in two columns. */}
+      <div className={cn('grid grid-cols-1 gap-4', isAdmin && 'lg:grid-cols-2')}>
+        <MyAccessWidget wide={!isAdmin} />
 
         {isAdmin && (
           <div className="flex flex-col rounded-lg border border-border bg-card p-5">

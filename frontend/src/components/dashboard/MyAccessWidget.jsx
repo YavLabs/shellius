@@ -4,6 +4,7 @@ import { Shield, ShieldAlert, Server, ChevronRight } from 'lucide-react';
 import EnvironmentBadge from '@/components/shared/EnvironmentBadge';
 import { Badge } from '@/components/ui/badge';
 import { getMyAccess } from '@/services/policyService';
+import { cn } from '@/lib/utils';
 
 function formatMaxTtl(seconds) {
   if (!seconds || seconds <= 0) return '-';
@@ -72,7 +73,7 @@ function AccessRow({ entry }) {
 
 const LIMIT = 10;
 
-function MyAccessWidget() {
+function MyAccessWidget({ wide = false }) {
   const [entries, setEntries] = useState([]);
   const [showAll, setShowAll] = useState(false);
   const [loading, setLoading] = useState(true);
@@ -151,6 +152,9 @@ function MyAccessWidget() {
 
       {!loading && !error && customerNames.length > 0 && (
         <div className="space-y-4">
+          {/* Expanded lists scroll inside the card instead of stretching the
+              page; full-width (wide) cards use two columns of customers. */}
+          <div className={cn(showAll && 'max-h-[640px] overflow-y-auto pr-1', wide ? 'grid grid-cols-1 gap-x-8 gap-y-4 lg:grid-cols-2' : 'space-y-4')}>
           {customerNames.map((customerName) => (
             <div key={customerName}>
               <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground mb-1">
@@ -163,6 +167,7 @@ function MyAccessWidget() {
               </div>
             </div>
           ))}
+          </div>
 
           {totalCount > LIMIT && (
             <button
