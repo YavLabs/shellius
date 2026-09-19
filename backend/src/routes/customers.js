@@ -4,7 +4,8 @@ import asyncHandler from '../utils/asyncHandler.js';
 import ApiError from '../utils/ApiError.js';
 import authenticate from '../middleware/auth.js';
 import tenant from '../middleware/tenant.js';
-import requireRole from '../middleware/rbac.js';
+import audit from '../middleware/audit.js';
+import { requirePermission } from '../middleware/rbac.js';
 import * as customerService from '../services/customerService.js';
 
 const router = express.Router();
@@ -34,7 +35,7 @@ router.use(authenticate, tenant);
 
 router.get(
   '/',
-  requireRole('super_admin', 'admin', 'manager', 'member'),
+  requirePermission('customers.view'),
   asyncHandler(async (req, res) => {
     const result = await customerService.listCustomers(req.orgId, req.query);
     res.json({ success: true, data: result });
@@ -43,7 +44,7 @@ router.get(
 
 router.get(
   '/:id',
-  requireRole('super_admin', 'admin', 'manager', 'member'),
+  requirePermission('customers.view'),
   asyncHandler(async (req, res) => {
     const customer = await customerService.getCustomer(req.orgId, req.params.id);
     res.json({ success: true, data: { customer } });
@@ -52,7 +53,7 @@ router.get(
 
 router.get(
   '/:id/stats',
-  requireRole('super_admin', 'admin', 'manager', 'member'),
+  requirePermission('customers.view'),
   asyncHandler(async (req, res) => {
     const stats = await customerService.getCustomerStats(req.orgId, req.params.id);
     res.json({ success: true, data: stats });
@@ -61,7 +62,8 @@ router.get(
 
 router.post(
   '/',
-  requireRole('super_admin', 'admin', 'manager'),
+  requirePermission('customers.create'),
+  audit('customer.create', 'Customer'),
   validate(createSchema),
   asyncHandler(async (req, res) => {
     const customer = await customerService.createCustomer(req.orgId, req.body);
@@ -71,7 +73,8 @@ router.post(
 
 router.put(
   '/:id',
-  requireRole('super_admin', 'admin', 'manager'),
+  requirePermission('customers.update'),
+  audit('customer.update', 'Customer'),
   validate(updateSchema),
   asyncHandler(async (req, res) => {
     const customer = await customerService.updateCustomer(req.orgId, req.params.id, req.body);
@@ -81,7 +84,7 @@ router.put(
 
 router.get(
   '/:id/delete-impact',
-  requireRole('super_admin', 'admin'),
+  requirePermission('customers.delete'),
   asyncHandler(async (req, res) => {
     const impact = await customerService.getDeleteImpact(req.orgId, req.params.id);
     res.json({ success: true, data: impact });
@@ -90,7 +93,8 @@ router.get(
 
 router.delete(
   '/:id',
-  requireRole('super_admin'),
+  requirePermission('customers.delete'),
+  audit('customer.delete', 'Customer'),
   asyncHandler(async (req, res) => {
     await customerService.deleteCustomer(req.orgId, req.params.id, req.body || {});
     res.json({ success: true, data: { success: true } });

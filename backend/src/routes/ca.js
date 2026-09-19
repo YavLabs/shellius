@@ -3,7 +3,7 @@ import asyncHandler from '../utils/asyncHandler.js';
 import ApiError from '../utils/ApiError.js';
 import authenticate from '../middleware/auth.js';
 import tenant from '../middleware/tenant.js';
-import requireRole from '../middleware/rbac.js';
+import { requirePermission } from '../middleware/rbac.js';
 import audit from '../middleware/audit.js';
 import * as caService from '../services/caService.js';
 import prisma from '../config/db.js';
@@ -15,7 +15,7 @@ router.use(authenticate, tenant);
 // GET /api/ca/public-key — admin+; returns active CA public key + fingerprint
 router.get(
   '/public-key',
-  requireRole('super_admin', 'admin'),
+  requirePermission('ca.view'),
   asyncHandler(async (req, res) => {
     const caKeyPair = await prisma.caKeyPair.findFirst({
       where: { orgId: req.orgId, isActive: true },
@@ -29,7 +29,7 @@ router.get(
 // GET /api/ca/status — admin+; returns CA metadata + cert count
 router.get(
   '/status',
-  requireRole('super_admin', 'admin'),
+  requirePermission('ca.view'),
   asyncHandler(async (req, res) => {
     const caKeyPair = await prisma.caKeyPair.findFirst({
       where: { orgId: req.orgId, isActive: true },
@@ -67,7 +67,7 @@ router.get(
 // POST /api/ca/rotate — super_admin only
 router.post(
   '/rotate',
-  requireRole('super_admin'),
+  requirePermission('ca.rotate'),
   audit('ca.rotate', 'CaKeyPair'),
   asyncHandler(async (req, res) => {
     const rawName = typeof req.body?.name === 'string' ? req.body.name.trim().slice(0, 100) : '';

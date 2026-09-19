@@ -1,29 +1,34 @@
 import prisma from '../config/db.js';
 import ApiError from '../utils/ApiError.js';
 import logger from '../utils/logger.js';
-import { getProdApprovalBypassRole } from './orgService.js';
+import { canBypassProdApproval } from './orgService.js';
+import { permissionsForUser } from './roleService.js';
 
 // ---------------------------------------------------------------------------
-// Production approval — role rank + bypass helper
+// Who is asking — permissions and the role keys ROLE subjects match on
 // ---------------------------------------------------------------------------
 //
-// See docs/auth-hardening.md Revision 2 "Production approval". The org's
-// `Organization.settings.access.prodApprovalBypassMinRole` ('admin' [default]
-// | 'super_admin' | 'none') controls which roles skip the manager-approval
-// step on prod servers. Below the bypass role, prod ALWAYS requires approval
-// — a policy's `autoApprove` flag is ignored for those requesters.
-const ROLE_RANK = { super_admin: 4, admin: 3, manager: 2, member: 1 };
+// Production approval (docs/rbac): a requester skips prod approval only when
+// their role holds `access.prod_bypass` AND the org's switch
+// (settings.access.prodBypassEnabled) is on. Below that, prod ALWAYS requires
+// approval — a policy's autoApprove flag is ignored.
 
 /**
- * @param {string|null} userRole
- * @param {'admin'|'super_admin'|'none'} bypassRole
- * @returns {boolean} true when this role bypasses prod approval
+ * Load the requester's effective permissions and the role keys their ROLE
+ * policy subjects match: the base tier (so a custom role based on Admin
+ * matches policies for `admin`) plus the custom role's own key.
  */
-function roleBypassesProd(userRole, bypassRole) {
-  if (bypassRole === 'none') return false;
-  const requiredRank = ROLE_RANK[bypassRole] ?? ROLE_RANK.admin;
-  const callerRank = ROLE_RANK[userRole] ?? 0;
-  return callerRank >= requiredRank;
+async function loadSubject(userId, orgId) {
+  const user = await prisma.user.findFirst({
+    where: { id: userId, orgId },
+    select: {
+      role: true,
+      assignedRole: { select: { id: true, key: true, isSystem: true, baseRole: true, permissions: true } },
+    },
+  });
+  if (!user) return { permissions: new Set(), roleKeys: [] };
+  const roleKeys = [...new Set([user.role, user.assignedRole?.key].filter(Boolean))];
+  return { permissions: new Set(permissionsForUser(user)), roleKeys, tier: user.role };
 }
 
 // ---------------------------------------------------------------------------
@@ -54,7 +59,7 @@ async function resolveUserGroupIds(userId, orgId) {
  * @param {string[]} userGroupIds
  * @returns {Promise<import('@prisma/client').AccessPolicy[]>}
  */
-async function loadMatchingPolicies(orgId, userId, userGroupIds, userRole) {
+async function loadMatchingPolicies(orgId, userId, userGroupIds, roleKeys) {
   // Build subject filter: USER match OR GROUP match OR ROLE match
   const subjectFilter = [
     { subjectType: 'USER', subjectId: userId },
@@ -62,8 +67,8 @@ async function loadMatchingPolicies(orgId, userId, userGroupIds, userRole) {
   if (userGroupIds.length > 0) {
     subjectFilter.push({ subjectType: 'GROUP', subjectId: { in: userGroupIds } });
   }
-  if (userRole) {
-    subjectFilter.push({ subjectType: 'ROLE', subjectId: userRole });
+  if (roleKeys?.length > 0) {
+    subjectFilter.push({ subjectType: 'ROLE', subjectId: { in: roleKeys } });
   }
 
   const policies = await prisma.accessPolicy.findMany({
@@ -190,38 +195,44 @@ export async function evaluate({ orgId, userId, serverId, requestedPrincipal, po
 
   const isProd = server.environment === 'prod';
 
-  // Step 1b: super_admin bypass. Off prod this is unconditional (full bypass,
-  // including DENY policies and principal checks — unchanged behaviour). On
-  // prod it only applies when the org's bypass role isn't 'none' — when it is,
-  // super_admin falls through to normal (Mode C) evaluation below, same as
-  // every other role, and always requires approval there.
-  const callerUser = await prisma.user.findUnique({ where: { id: userId }, select: { role: true } });
-  if (callerUser && callerUser.role === 'super_admin') {
-    if (!isProd) {
+  const subject = await loadSubject(userId, orgId);
+
+  // Step 1b: `access.bypass_policies` (super admins by default). Off prod the
+  // requester doesn't need a matching ALLOW policy, but DENY policies still
+  // apply. On prod it only helps when they may also skip prod approval;
+  // otherwise normal evaluation below forces approval like for anyone else.
+  if (subject.permissions.has('access.bypass_policies') && !policyId && !draftPolicy) {
+    const bypassProd = isProd && (await canBypassProdApproval(orgId, subject.permissions));
+    if (!isProd || bypassProd) {
+      const groupIds = await resolveUserGroupIds(userId, orgId);
+      const candidates = filterPolicies(
+        await loadMatchingPolicies(orgId, userId, groupIds, subject.roleKeys),
+        server,
+        serverId,
+        requestedPrincipal
+      );
+      const deny = candidates.find((p) => p.effect === 'DENY');
+      if (deny) {
+        return {
+          allowed: false,
+          requiresApproval: false,
+          autoApprove: false,
+          reason: `Denied by policy ${deny.name}`,
+          principals: [],
+          maxTtl: 0,
+          policyId: deny.id,
+        };
+      }
       return {
         allowed: true,
         requiresApproval: false,
         autoApprove: true,
         principals: requestedPrincipal ? [requestedPrincipal] : [],
         maxTtl: 24 * 60 * 60,
-        reason: 'super_admin bypass',
+        reason: isProd ? 'policy bypass (prod)' : 'policy bypass',
+        ...(isProd ? { prodBypass: true } : {}),
       };
     }
-    const bypassRole = await getProdApprovalBypassRole(orgId);
-    if (bypassRole !== 'none') {
-      return {
-        allowed: true,
-        requiresApproval: false,
-        autoApprove: true,
-        principals: requestedPrincipal ? [requestedPrincipal] : [],
-        maxTtl: 24 * 60 * 60,
-        reason: 'super_admin bypass (prod)',
-        prodBypass: true,
-      };
-    }
-    // bypassRole === 'none': everyone including super_admin needs approval —
-    // fall through to Mode C so the request still goes through normal policy
-    // matching (deny/allow/principals), with requiresApproval forced true below.
   }
 
   // ---------------------------------------------------------------------------
@@ -293,15 +304,11 @@ export async function evaluate({ orgId, userId, serverId, requestedPrincipal, po
   // Mode C: Org-wide evaluation (original behaviour)
   // ---------------------------------------------------------------------------
 
-  // Step 3: Resolve user's group memberships and role
-  const [userGroupIds, userRecord] = await Promise.all([
-    resolveUserGroupIds(userId, orgId),
-    prisma.user.findUnique({ where: { id: userId }, select: { role: true } }),
-  ]);
-  const userRole = userRecord?.role || null;
+  // Step 3: Resolve user's group memberships
+  const userGroupIds = await resolveUserGroupIds(userId, orgId);
 
   // Step 4: Load active policies where user, their groups, or their role are subjects
-  const rawPolicies = await loadMatchingPolicies(orgId, userId, userGroupIds, userRole);
+  const rawPolicies = await loadMatchingPolicies(orgId, userId, userGroupIds, subject.roleKeys);
 
   // Steps 5-9: Apply server/environment/label/serverIds/principal filters
   const matchingPolicies = filterPolicies(rawPolicies, server, serverId, requestedPrincipal);
@@ -345,16 +352,13 @@ export async function evaluate({ orgId, userId, serverId, requestedPrincipal, po
 
   const bestPolicy = allowPolicies[0];
 
-  // Production approval: gated by the requester's role vs. the org's bypass
-  // role (Organization.settings.access.prodApprovalBypassMinRole), NOT by the
-  // matched policy's autoApprove flag — autoApprove can no longer grant an
-  // unreviewed prod session to a requester below the bypass role. Non-prod
-  // still follows the policy's own requireApproval flag, unchanged.
+  // Production approval: gated by the requester's `access.prod_bypass`
+  // permission and the org switch, NOT by the matched policy's autoApprove
+  // flag — autoApprove can never grant an unreviewed prod session. Non-prod
+  // still follows the policy's own requireApproval flag.
   let requiresApproval;
-  let bypassRole;
   if (isProd) {
-    bypassRole = await getProdApprovalBypassRole(orgId);
-    requiresApproval = !roleBypassesProd(userRole, bypassRole);
+    requiresApproval = !(await canBypassProdApproval(orgId, subject.permissions));
   } else {
     requiresApproval = bestPolicy.requireApproval;
   }
@@ -367,7 +371,7 @@ export async function evaluate({ orgId, userId, serverId, requestedPrincipal, po
     policyName: bestPolicy.name,
     isProd,
     requiresApproval,
-    ...(isProd ? { prodApprovalBypassMinRole: bypassRole, userRole } : {}),
+    ...(isProd ? { tier: subject.tier } : {}),
   });
 
   return {
@@ -402,11 +406,8 @@ export async function findApproverPolicy({ orgId, userId, serverId, requestedPri
   const server = await prisma.server.findFirst({ where: { id: serverId, orgId } });
   if (!server) return null;
 
-  const [userGroupIds, userRecord] = await Promise.all([
-    resolveUserGroupIds(userId, orgId),
-    prisma.user.findUnique({ where: { id: userId }, select: { role: true } }),
-  ]);
-  const rawPolicies = await loadMatchingPolicies(orgId, userId, userGroupIds, userRecord?.role || null);
+  const [userGroupIds, subject] = await Promise.all([resolveUserGroupIds(userId, orgId), loadSubject(userId, orgId)]);
+  const rawPolicies = await loadMatchingPolicies(orgId, userId, userGroupIds, subject.roleKeys);
   const matching = filterPolicies(rawPolicies, server, serverId, requestedPrincipal);
   const allow = matching
     .filter((p) => p.effect === 'ALLOW')
@@ -513,8 +514,6 @@ export async function getById(orgId, id) {
   return policy;
 }
 
-const ROLE_LABELS = { super_admin: 'Super Admin', admin: 'Admin', manager: 'Manager', member: 'Member' };
-
 /**
  * Attach a human-readable `label` to each policy subject (USER → name/email,
  * GROUP → name, ROLE → role label) so the UI never has to render raw UUIDs.
@@ -523,29 +522,62 @@ const ROLE_LABELS = { super_admin: 'Super Admin', admin: 'Admin', manager: 'Mana
 async function enrichPolicySubjects(orgId, policies) {
   const userIds = new Set();
   const groupIds = new Set();
+  let hasRoles = false;
   for (const p of policies) {
     for (const s of p.subjects || []) {
       if (s.subjectType === 'USER') userIds.add(s.subjectId);
       else if (s.subjectType === 'GROUP') groupIds.add(s.subjectId);
+      else if (s.subjectType === 'ROLE') hasRoles = true;
     }
   }
-  const [users, groups] = await Promise.all([
+  const [users, groups, roles] = await Promise.all([
     userIds.size
       ? prisma.user.findMany({ where: { orgId, id: { in: [...userIds] } }, select: { id: true, name: true, email: true } })
       : [],
     groupIds.size
       ? prisma.group.findMany({ where: { orgId, id: { in: [...groupIds] } }, select: { id: true, name: true } })
       : [],
+    hasRoles ? prisma.role.findMany({ where: { orgId }, select: { key: true, name: true } }) : [],
   ]);
+  const roleMap = new Map(roles.map((r) => [r.key, r.name]));
   const userMap = new Map(users.map((u) => [u.id, u.name || u.email]));
   const groupMap = new Map(groups.map((g) => [g.id, g.name]));
   for (const p of policies) {
     for (const s of p.subjects || []) {
       if (s.subjectType === 'USER') s.label = userMap.get(s.subjectId) || '(unknown user)';
       else if (s.subjectType === 'GROUP') s.label = groupMap.get(s.subjectId) || '(unknown group)';
-      else if (s.subjectType === 'ROLE') s.label = ROLE_LABELS[s.subjectId] || s.subjectId;
+      else if (s.subjectType === 'ROLE') s.label = roleMap.get(s.subjectId) || `(deleted role ${s.subjectId})`;
     }
   }
+}
+
+/**
+ * Every reference a policy makes must exist in this org (G20): ROLE subjects
+ * and approverRoles are role keys (built-in or custom), USER/GROUP subjects,
+ * approverUserIds and approverGroupId are ids of this org's users/groups.
+ */
+async function assertPolicyRefs(orgId, { subjects, approverRoles, approverUserIds, approverGroupId }) {
+  const roleKeys = new Set([
+    ...(subjects || []).filter((x) => x.subjectType === 'ROLE').map((x) => x.subjectId),
+    ...(approverRoles || []),
+  ]);
+  const userIds = new Set([
+    ...(subjects || []).filter((x) => x.subjectType === 'USER').map((x) => x.subjectId),
+    ...(approverUserIds || []),
+  ]);
+  const groupIds = new Set([
+    ...(subjects || []).filter((x) => x.subjectType === 'GROUP').map((x) => x.subjectId),
+    ...(approverGroupId ? [approverGroupId] : []),
+  ]);
+  const [roles, users, groups] = await Promise.all([
+    roleKeys.size ? prisma.role.findMany({ where: { orgId, key: { in: [...roleKeys] } }, select: { key: true } }) : [],
+    userIds.size ? prisma.user.findMany({ where: { orgId, id: { in: [...userIds] } }, select: { id: true } }) : [],
+    groupIds.size ? prisma.group.findMany({ where: { orgId, id: { in: [...groupIds] } }, select: { id: true } }) : [],
+  ]);
+  const missingRole = [...roleKeys].find((k) => !roles.some((r) => r.key === k));
+  if (missingRole) throw new ApiError(400, `Unknown role "${missingRole}"`);
+  if (users.length !== userIds.size) throw new ApiError(400, 'One or more users are not in this organization');
+  if (groups.length !== groupIds.size) throw new ApiError(400, 'One or more groups are not in this organization');
 }
 
 /**
@@ -591,6 +623,7 @@ export async function create(orgId, data) {
     const customer = await prisma.customer.findFirst({ where: { id: customerId, orgId } });
     if (!customer) throw new ApiError(400, 'Customer not found in organization');
   }
+  await assertPolicyRefs(orgId, { subjects, approverRoles, approverUserIds, approverGroupId });
 
   const policy = await prisma.$transaction(async (tx) => {
     const created = await tx.accessPolicy.create({
@@ -682,6 +715,7 @@ export async function update(orgId, id, data) {
     const customer = await prisma.customer.findFirst({ where: { id: customerId, orgId } });
     if (!customer) throw new ApiError(400, 'Customer not found in organization');
   }
+  await assertPolicyRefs(orgId, { subjects, approverRoles, approverUserIds, approverGroupId });
 
   const updateData = {};
   if (customerId !== undefined) updateData.customerId = customerId || null;

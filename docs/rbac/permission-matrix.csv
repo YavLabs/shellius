@@ -53,7 +53,7 @@ users.reset_credentials,Users,Reset passwords & lockouts,Send password-reset lin
 users.revoke_sessions,Users,Sign users out,Sign a user out of every browser and CLI session.,,N,N,Y,Y,N,N,Y,Y,,POST /api/users/:id/revoke-sessions,
 users.delete,Users,Delete users,Permanently delete users.,yes,N,N,N,Y,N,N,N,Y,,GET /api/users/:id/delete-impact; DELETE /api/users/:id,UI-2.3
 roles.view,Roles,View roles,See roles and their permissions.,,-,-,-,-,N,N,Y,Y,new,GET /api/roles; GET /api/roles/:id,
-roles.manage,Roles,Manage roles,"Create, edit and delete custom roles and edit built-in ones. You can only grant permissions you hold.",yes,-,-,-,-,N,N,N,Y,new,POST /api/roles; PUT /api/roles/:id; DELETE /api/roles/:id; POST /api/roles/:id/reset,
+roles.manage,Roles,Manage roles,"Create, edit and delete custom roles and edit built-in ones. You can only grant permissions you hold.",yes,-,-,-,-,N,N,Y,Y,new,POST /api/roles; PUT /api/roles/:id; DELETE /api/roles/:id; POST /api/roles/:id/reset,
 org.update,Organization & settings,Edit organization profile,"Change the organization name, domain and logo.",,N,N,Y,Y,N,N,Y,Y,,PUT /api/org,F-10 G3
 org.access_settings,Organization & settings,Access settings,Change organization-wide access rules.,yes,N,N,N,Y,N,N,N,Y,,GET/PUT /api/org/access-settings,
 settings.sso,Organization & settings,Single sign-on,"Configure SSO providers, auto-provisioning and their default role.",yes,N,N,N,Y,N,N,N,Y,,/api/auth/sso/config*; /api/auth/sso/providers*,F-25

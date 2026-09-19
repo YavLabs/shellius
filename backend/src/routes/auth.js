@@ -342,6 +342,14 @@ router.post(
       req.params.token,
       inviteService.TOKEN_TYPES.INVITE
     );
+    // An invite activates a *pending* account only — it must never bring a
+    // suspended/deactivated user back or overwrite an active user's password
+    // (docs/rbac F-02 / F-11).
+    if (user.status !== 'invited') {
+      throw new ApiError(410, 'This invitation is no longer valid — ask your administrator for help', {
+        code: 'INVITE_NOT_PENDING',
+      });
+    }
 
     const passwordHash = await bcrypt.hash(req.body.password, config.bcryptRounds);
 

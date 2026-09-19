@@ -6,7 +6,7 @@ import asyncHandler from '../utils/asyncHandler.js';
 import ApiError from '../utils/ApiError.js';
 import authenticate from '../middleware/auth.js';
 import tenant from '../middleware/tenant.js';
-import requireRole from '../middleware/rbac.js';
+import { requirePermission, can } from '../middleware/rbac.js';
 import audit from '../middleware/audit.js';
 import config from '../config/index.js';
 import * as serverService from '../services/serverService.js';
@@ -108,11 +108,40 @@ const bulkUpdateSchema = Joi.object({
 
 router.use(authenticate, tenant);
 
+// ---------------------------------------------------------------------------
+// Field-level permissions on server writes (docs/rbac F-05):
+//   environment                        -> servers.change_environment
+//   authMode / credentialId / rdpPassword, and the address of a server that
+//   authenticates with a stored identity (re-pointing it would hand the
+//   stored secret to another host)     -> servers.manage_credentials
+// Only CHANGED values count, so an edit form that re-sends the current
+// environment still works for someone without those permissions.
+// ---------------------------------------------------------------------------
+function assertServerFieldPermissions(req, body, current = null) {
+  const changed = (field) =>
+    body[field] !== undefined && (!current || (body[field] ?? null) !== (current[field] ?? null));
+  const missing = [];
+  if (current ? changed('environment') : false) missing.push('servers.change_environment');
+  const credentialChange =
+    (current ? changed('authMode') : body.authMode === 'credential') ||
+    changed('credentialId') ||
+    (body.rdpPassword !== undefined && body.rdpPassword !== '' && body.rdpPassword !== null) ||
+    (current?.authMode === 'credential' && (changed('ipAddress') || changed('hostname') || changed('port')));
+  if (credentialChange) missing.push('servers.manage_credentials');
+  const lacking = missing.filter((p) => !can(req, p));
+  if (lacking.length > 0) {
+    throw new ApiError(403, 'You don’t have permission to change these server settings', {
+      code: 'PERMISSION_DENIED',
+      details: { missing: lacking },
+    });
+  }
+}
+
 router.get(
   '/',
-  // Members can browse the inventory read-only so they can request access /
-  // connect. Create / edit / delete remain admin-only below.
-  requireRole('super_admin', 'admin', 'manager', 'member'),
+  // Anyone with servers.view can browse the inventory to request access /
+  // connect; writes need their own permissions below.
+  requirePermission('servers.view'),
   asyncHandler(async (req, res) => {
     const result = await serverService.listServers(req.orgId, req.query);
     res.json({ success: true, data: result });
@@ -121,7 +150,7 @@ router.get(
 
 router.get(
   '/health/summary',
-  requireRole('super_admin', 'admin', 'manager', 'member'),
+  requirePermission('servers.view'),
   asyncHandler(async (req, res) => {
     const summary = await healthCheckService.getHealthSummary(req.orgId);
     res.json({ success: true, data: summary });
@@ -130,7 +159,8 @@ router.get(
 
 router.post(
   '/bulk/environment',
-  requireRole('super_admin', 'admin'),
+  requirePermission('servers.change_environment'),
+  audit('server.bulk_environment', 'Server'),
   validate(bulkEnvSchema),
   asyncHandler(async (req, res) => {
     const result = await serverService.bulkUpdateEnvironment(
@@ -145,9 +175,16 @@ router.post(
 // Generalized bulk update — change any of a set of fields on many servers.
 router.post(
   '/bulk',
-  requireRole('super_admin', 'admin', 'manager'),
+  requirePermission('servers.update'),
+  audit('server.bulk_update', 'Server'),
   validate(bulkUpdateSchema),
   asyncHandler(async (req, res) => {
+    if (req.body.patch.environment !== undefined && !can(req, 'servers.change_environment')) {
+      throw new ApiError(403, 'You don’t have permission to change server environments', {
+        code: 'PERMISSION_DENIED',
+        details: { missing: ['servers.change_environment'] },
+      });
+    }
     const result = await serverService.bulkUpdate(req.orgId, req.body.serverIds, req.body.patch);
     res.json({ success: true, data: result });
   })
@@ -155,20 +192,24 @@ router.post(
 
 router.get(
   '/:id',
-  requireRole('super_admin', 'admin', 'manager', 'member'),
+  requirePermission('servers.view'),
   asyncHandler(async (req, res) => {
     const server = await serverService.getServer(req.orgId, req.params.id);
     res.json({ success: true, data: { server } });
   })
 );
 
-// Update the connection IP of a non-static-IP server (any role with access) —
-// so a changed cloud IP doesn't lock members out.
+// Update the connection IP of a non-static-IP server so a changed cloud IP
+// doesn't lock people out (servers.update_connection_ip). An identity-auth
+// server also needs servers.manage_credentials (see above).
 router.patch(
   '/:id/connection-ip',
-  requireRole('super_admin', 'admin', 'manager', 'member'),
+  requirePermission('servers.update_connection_ip'),
+  audit('server.connection_ip', 'Server'),
   validate(Joi.object({ ipAddress: Joi.string().required() })),
   asyncHandler(async (req, res) => {
+    const current = await serverService.getServer(req.orgId, req.params.id);
+    assertServerFieldPermissions(req, { ipAddress: req.body.ipAddress }, current);
     const server = await serverService.updateConnectionIp(
       req.orgId,
       req.params.id,
@@ -180,9 +221,11 @@ router.patch(
 
 router.post(
   '/',
-  requireRole('super_admin', 'admin', 'manager'),
+  requirePermission('servers.create'),
+  audit('server.create', 'Server'),
   validate(createSchema),
   asyncHandler(async (req, res) => {
+    assertServerFieldPermissions(req, req.body);
     const { customerId, ...rest } = req.body;
     const server = await serverService.createServer(req.orgId, customerId, rest);
     res.status(201).json({ success: true, data: { server } });
@@ -191,9 +234,12 @@ router.post(
 
 router.put(
   '/:id',
-  requireRole('super_admin', 'admin', 'manager'),
+  requirePermission('servers.update'),
+  audit('server.update', 'Server'),
   validate(updateSchema),
   asyncHandler(async (req, res) => {
+    const current = await serverService.getServer(req.orgId, req.params.id);
+    assertServerFieldPermissions(req, req.body, current);
     const server = await serverService.updateServer(req.orgId, req.params.id, req.body);
     res.json({ success: true, data: { server } });
   })
@@ -201,7 +247,7 @@ router.put(
 
 router.get(
   '/:id/delete-impact',
-  requireRole('super_admin', 'admin'),
+  requirePermission('servers.delete'),
   asyncHandler(async (req, res) => {
     const impact = await serverService.getDeleteImpact(req.orgId, req.params.id);
     res.json({ success: true, data: impact });
@@ -210,7 +256,8 @@ router.get(
 
 router.delete(
   '/:id',
-  requireRole('super_admin'),
+  requirePermission('servers.delete'),
+  audit('server.delete', 'Server'),
   asyncHandler(async (req, res) => {
     await serverService.deleteServer(req.orgId, req.params.id, req.user.userId);
     res.json({ success: true, data: { success: true } });
@@ -221,7 +268,7 @@ router.delete(
 // host key (TOFU) so the next ssh2 connection re-pins on first contact.
 router.post(
   '/:id/host-key/reset',
-  requireRole('super_admin', 'admin'),
+  requirePermission('servers.reset_host_key'),
   audit('server.host_key_reset', 'Server'),
   asyncHandler(async (req, res) => {
     const server = await serverService.resetHostKey(req.orgId, req.params.id);
@@ -231,7 +278,7 @@ router.post(
 
 router.post(
   '/:id/health-check',
-  requireRole('super_admin', 'admin', 'manager'),
+  requirePermission('servers.onboard'),
   asyncHandler(async (req, res) => {
     const server = await healthCheckService.runHealthCheckForServer(req.orgId, req.params.id);
     if (!server) throw new ApiError(404, 'Server not found');
@@ -244,7 +291,7 @@ router.post(
 // The private key and sudo password are used once in memory and never stored.
 router.post(
   '/:id/provision',
-  requireRole('super_admin', 'admin', 'manager'),
+  requirePermission('servers.onboard'),
   audit('server.provision', 'Server'),
   asyncHandler(async (req, res) => {
     const { privateKey, passphrase, password, sshUser, sudoPassword } = req.body;

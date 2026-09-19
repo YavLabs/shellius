@@ -31,6 +31,7 @@ import { PrismaClient } from '@prisma/client';
 import bcrypt from 'bcryptjs';
 import { seedRolesAndPolicies } from '../src/services/defaultSeedService.js';
 import * as caService from '../src/services/caService.js';
+import { syncSystemRoles } from '../src/services/roleService.js';
 
 const prisma = new PrismaClient();
 
@@ -95,6 +96,10 @@ async function main() {
     where: { orgId_email: { orgId: org.id, email: ADMIN_EMAIL } },
   });
 
+  // Built-in roles must exist before anyone can be linked to one.
+  await syncSystemRoles(org.id);
+  const superAdminRole = await prisma.role.findFirst({ where: { orgId: org.id, key: 'super_admin', isSystem: true } });
+
   let admin;
   if (!existing) {
     admin = await prisma.user.create({
@@ -104,6 +109,7 @@ async function main() {
         name: ADMIN_NAME,
         passwordHash,
         role: 'super_admin',
+        roleId: superAdminRole.id,
         status: 'active',
       },
     });
@@ -115,6 +121,7 @@ async function main() {
     const update = {
       name: ADMIN_NAME,
       role: 'super_admin',
+      roleId: superAdminRole.id,
       status: 'active',
     };
     if (FORCE_PASSWORD) update.passwordHash = passwordHash;

@@ -39,6 +39,7 @@ import bcrypt from 'bcryptjs';
 import * as keystoreService from '../src/services/keystoreService.js';
 import * as notificationService from '../src/services/notificationService.js';
 import * as auditService from '../src/services/auditService.js';
+import { syncSystemRoles } from '../src/services/roleService.js';
 
 const prisma = new PrismaClient();
 
@@ -223,6 +224,10 @@ async function upsertCustomers(orgId) {
 }
 
 async function upsertUsers(orgId) {
+  await syncSystemRoles(orgId);
+  const roleIds = Object.fromEntries(
+    (await prisma.role.findMany({ where: { orgId, isSystem: true }, select: { id: true, key: true } })).map((r) => [r.key, r.id])
+  );
   const byLocalPart = {};
   for (const u of DEMO_USERS) {
     const localPart = u.email.split('@')[0];
@@ -233,7 +238,7 @@ async function upsertUsers(orgId) {
     }
     const passwordHash = u.status === 'invited' ? null : await bcrypt.hash(DEMO_PASSWORD, 10);
     const created = await prisma.user.create({
-      data: { orgId, email: u.email, name: u.name, role: u.role, status: u.status, passwordHash },
+      data: { orgId, email: u.email, name: u.name, role: u.role, roleId: roleIds[u.role], status: u.status, passwordHash },
     });
     byLocalPart[localPart] = created;
   }

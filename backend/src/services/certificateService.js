@@ -8,12 +8,12 @@ import * as policyService from './policyService.js';
 // Internal helpers
 // ---------------------------------------------------------------------------
 
-async function writeAudit(orgId, action, resourceId, metadata = {}) {
+async function writeAudit(orgId, action, resourceId, metadata = {}, actorId = null) {
   try {
     await prisma.auditLog.create({
       data: {
         orgId,
-        actorId: null,
+        actorId,
         action,
         resourceType: 'Certificate',
         resourceId: resourceId ?? null,
@@ -24,6 +24,14 @@ async function writeAudit(orgId, action, resourceId, metadata = {}) {
     logger.error('certificateService: audit log write failed', { action, error: err.message });
   }
 }
+
+const ALLOWED_EXTENSIONS = new Set([
+  'permit-pty',
+  'permit-port-forwarding',
+  'permit-agent-forwarding',
+  'permit-X11-forwarding',
+  'permit-user-rc',
+]);
 
 // ---------------------------------------------------------------------------
 // Public API
@@ -58,8 +66,21 @@ export async function issue({
   extensions = {},
   criticalOptions = {},
   issuedVia = 'web',
+  actorId = null,
 }) {
   if (!orgId) throw new ApiError(400, 'orgId is required');
+  // Direct issuance is a narrow, audited API (certificates.issue_direct). It
+  // must never be a way around the access-request flow — docs/rbac F-03/F-04:
+  //   - bound to a saved server, and every principal passes policy
+  //   - USER certificates only, standard extensions only, no critical options
+  //   - production always goes through an approved access request
+  if (!serverId) throw new ApiError(400, 'serverId is required');
+  if (certType !== 'USER') throw new ApiError(400, 'Only USER certificates can be issued directly');
+  const badExt = Object.keys(extensions || {}).filter((k) => !ALLOWED_EXTENSIONS.has(k));
+  if (badExt.length > 0) throw new ApiError(400, `Unsupported certificate extension(s): ${badExt.join(', ')}`);
+  if (criticalOptions && Object.keys(criticalOptions).length > 0) {
+    throw new ApiError(400, 'Critical options cannot be set on directly issued certificates');
+  }
   if (!userId) throw new ApiError(400, 'userId is required');
   if (!publicKey) throw new ApiError(400, 'publicKey is required');
   if (!Array.isArray(principals) || principals.length === 0) {
@@ -76,20 +97,20 @@ export async function issue({
   const user = await prisma.user.findFirst({ where: { id: userId, orgId } });
   if (!user) throw new ApiError(404, 'User not found in organization');
 
-  // Load and verify server (scoped to org) — required for USER certs
-  let server = null;
-  if (serverId) {
-    server = await prisma.server.findFirst({ where: { id: serverId, orgId } });
-    if (!server) throw new ApiError(404, 'Server not found in organization');
+  const server = await prisma.server.findFirst({ where: { id: serverId, orgId } });
+  if (!server) throw new ApiError(404, 'Server not found in organization');
+  if (server.environment === 'prod') {
+    throw new ApiError(403, 'Production certificates are only issued for an approved access request');
   }
 
-  // Policy evaluation (phase 6): deny-before-allow engine with prod hard-block
-  if (server) {
+  // Every principal must pass policy on its own — the old check only looked
+  // at principals[0] and signed the rest unchecked (G2).
+  for (const principal of principals) {
     const policyResult = await policyService.evaluate({
       orgId,
       userId,
       serverId,
-      requestedPrincipal: principals[0],
+      requestedPrincipal: principal,
     });
 
     if (policyResult.requiresApproval) {
@@ -186,7 +207,8 @@ export async function issue({
     serverId: serverId ?? null,
     principals,
     certType,
-  });
+    issuedVia,
+  }, actorId);
 
   return { certificate, signedCert };
 }

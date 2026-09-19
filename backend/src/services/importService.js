@@ -21,6 +21,7 @@ import * as userService from './userService.js';
 import * as groupService from './groupService.js';
 import * as policyService from './policyService.js';
 import * as userInviteService from './userInviteService.js';
+import { resolveRole } from './roleService.js';
 
 // Dependency order for both planning and committing.
 const ORDER = ['groups', 'customers', 'users', 'servers', 'policies', 'memberships'];
@@ -83,7 +84,7 @@ function labelsToArray(v) {
  * Parse the upload and build a preview (ImportJob + ImportRows). Returns the
  * job id and a per-entity summary. Stores onboarding secrets only at commit.
  */
-export async function createImportJob({ orgId, actorId, actorRole, buffer, filename, declaredType }) {
+export async function createImportJob({ orgId, actorId, buffer, filename, declaredType }) {
   const { source, entities, files, warnings } = parseUpload(buffer, filename, declaredType);
 
   const job = await prisma.importJob.create({
@@ -298,7 +299,7 @@ export async function setDecisions({ orgId, jobId, decision, rowIds, applyAll })
 
 // --- public: commit ---------------------------------------------------------
 
-export async function commitImportJob({ orgId, jobId, actorId, actorRole, req }) {
+export async function commitImportJob({ orgId, jobId, actorId, actor = null, req }) {
   const job = await prisma.importJob.findFirst({ where: { id: jobId, orgId } });
   if (!job) throw new Error('Import job not found');
   if (!['preview_ready', 'failed'].includes(job.status)) {
@@ -318,7 +319,7 @@ export async function commitImportJob({ orgId, jobId, actorId, actorRole, req })
     for (const entity of ORDER) {
       const singular = ENTITY_SINGULAR[entity];
       for (const row of byEntity(singular)) {
-        await commitRow({ orgId, job, row, actorId, actorRole, req, cache, result });
+        await commitRow({ orgId, job, row, actorId, actor, req, cache, result });
       }
     }
 
@@ -358,7 +359,18 @@ async function markRow(rowId, data) {
   await prisma.importRow.update({ where: { id: rowId }, data });
 }
 
-async function commitRow({ orgId, job, row, actorId, actorRole, req, cache, result }) {
+// Permission each row type needs (on top of import.run). Overwrites of
+// existing records need the matching edit permission too.
+const ROW_PERMISSIONS = {
+  customer: { create: 'customers.create', overwrite: 'customers.update' },
+  group: { create: 'groups.manage', overwrite: 'groups.manage' },
+  user: { create: 'users.invite', overwrite: 'users.update' },
+  server: { create: 'servers.create', overwrite: 'servers.update' },
+  policy: { create: 'policies.manage', overwrite: 'policies.manage' },
+  membership: { create: 'groups.manage', overwrite: 'groups.manage' },
+};
+
+async function commitRow({ orgId, job, row, actorId, actor, req, cache, result }) {
   // Honor user decisions / planning outcomes.
   if (row.action === 'error') {
     await markRow(row.id, { status: 'failed' });
@@ -375,6 +387,10 @@ async function commitRow({ orgId, job, row, actorId, actorRole, req, cache, resu
   const raw = row.raw || {};
 
   try {
+    const needed = ROW_PERMISSIONS[row.entity]?.[overwrite ? 'overwrite' : 'create'];
+    if (actor && needed && !actor.permissions.has(needed)) {
+      throw new Error(`You don't have the ${needed} permission`);
+    }
     switch (row.entity) {
       case 'customer':
         await commitCustomer(orgId, row, raw, overwrite, cache);
@@ -383,7 +399,7 @@ async function commitRow({ orgId, job, row, actorId, actorRole, req, cache, resu
         await commitGroup(orgId, row, raw, overwrite, cache);
         break;
       case 'user':
-        await commitUser(orgId, row, raw, overwrite, actorRole, req, cache);
+        await commitUser(orgId, row, raw, overwrite, actor, req, cache);
         break;
       case 'server':
         await commitServer(orgId, job, row, raw, overwrite, cache);
@@ -448,19 +464,20 @@ async function resolveManagerId(orgId, raw, cache) {
   return mgr?.id;
 }
 
-async function commitUser(orgId, row, raw, overwrite, actorRole, req, cache) {
+async function commitUser(orgId, row, raw, overwrite, actor, req, cache) {
   const email = lower(raw.email);
   const name = str(raw.name);
-  const role = lower(raw.role) || undefined;
+  // A role id, key or name ("Senior admin"); resolved by userService.
+  const role = str(raw.role) || undefined;
   const managerId = await resolveManagerId(orgId, raw, cache);
 
   // Bulk users are always invite-based (no inline passwords stored). They
   // either set a password via the invite link or sign in with SSO.
   let user = await prisma.user.findFirst({ where: { orgId, email } });
   if (user && overwrite) {
-    user = await userService.updateUser(orgId, user.id, { name, role, managerId }, null, actorRole);
+    user = await userService.updateUser(orgId, user.id, { name, role, managerId }, actor);
   } else if (!user) {
-    user = await userService.createUser(orgId, { email, name, role, managerId, status: 'invited' }, actorRole);
+    user = await userService.createUser(orgId, { email, name, role, managerId, status: 'invited' }, actor);
     if (bool(raw.sendInvite, true)) {
       await userInviteService.sendInvite({ orgId, user, req }).catch(() => {});
     }
@@ -576,7 +593,11 @@ async function commitPolicy(orgId, row, raw, overwrite, cache) {
     const id = cache.groups.get(lower(g)) || (await prisma.group.findFirst({ where: { orgId, name: g } }))?.id;
     if (id) subjects.push({ subjectType: 'GROUP', subjectId: id });
   }
-  for (const r of list(raw.subjectRoles)) subjects.push({ subjectType: 'ROLE', subjectId: lower(r) });
+  for (const r of list(raw.subjectRoles)) {
+    const role = await resolveRole(orgId, r);
+    if (!role) throw new Error(`Unknown role "${r}" in subjectRoles`);
+    subjects.push({ subjectType: 'ROLE', subjectId: role.key });
+  }
   for (const e of list(raw.subjectUsers)) {
     const id = cache.users.get(lower(e)) || (await prisma.user.findFirst({ where: { orgId, email: lower(e) } }))?.id;
     if (id) subjects.push({ subjectType: 'USER', subjectId: id });
@@ -601,7 +622,13 @@ async function commitPolicy(orgId, row, raw, overwrite, cache) {
     priority: int(raw.priority, 100),
     allowKeyDownload: bool(raw.allowKeyDownload),
     approverGroupId,
-    approverRoles: list(raw.approverRoles).map(lower),
+    approverRoles: await Promise.all(
+      list(raw.approverRoles).map(async (r) => {
+        const role = await resolveRole(orgId, r);
+        if (!role) throw new Error(`Unknown role "${r}" in approverRoles`);
+        return role.key;
+      })
+    ),
     subjects,
   };
 

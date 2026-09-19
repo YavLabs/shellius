@@ -4,7 +4,7 @@ import asyncHandler from '../utils/asyncHandler.js';
 import ApiError from '../utils/ApiError.js';
 import authenticate from '../middleware/auth.js';
 import tenant from '../middleware/tenant.js';
-import requireRole from '../middleware/rbac.js';
+import { requirePermission } from '../middleware/rbac.js';
 import audit from '../middleware/audit.js';
 import * as policyService from '../services/policyService.js';
 
@@ -35,15 +35,12 @@ const validateQuery = (schema) => (req, res, next) => {
 const ENVIRONMENTS = ['demo', 'dev', 'staging', 'prod'];
 const EFFECTS = ['ALLOW', 'DENY'];
 const SUBJECT_TYPES = ['USER', 'GROUP', 'ROLE'];
-const ORG_ROLES = ['super_admin', 'admin', 'manager', 'member'];
 
 const subjectSchema = Joi.object({
   subjectType: Joi.string().valid(...SUBJECT_TYPES).required(),
-  subjectId: Joi.when('subjectType', {
-    is: 'ROLE',
-    then: Joi.string().valid(...ORG_ROLES).required(),
-    otherwise: Joi.string().required(),
-  }),
+  // ROLE: a role key (built-in or custom) — checked against the org's roles
+  // in policyService.
+  subjectId: Joi.string().max(100).required(),
 });
 
 // Phase 21A — JIT OS provisioning block embedded in AccessPolicy.
@@ -73,7 +70,7 @@ const policyBodySchema = Joi.object({
   allowKeyDownload: Joi.boolean().default(false),
   isBreakGlass: Joi.boolean().default(false),
   approverGroupId: Joi.string().allow(null, ''),
-  approverRoles: Joi.array().items(Joi.string().valid(...ORG_ROLES)).default([]),
+  approverRoles: Joi.array().items(Joi.string().max(100)).default([]),
   approverUserIds: Joi.array().items(Joi.string()).default([]),
   subjects: Joi.array().items(subjectSchema).default([]),
 });
@@ -96,7 +93,7 @@ const policyUpdateSchema = Joi.object({
   allowKeyDownload: Joi.boolean(),
   isBreakGlass: Joi.boolean(),
   approverGroupId: Joi.string().allow(null, ''),
-  approverRoles: Joi.array().items(Joi.string().valid(...ORG_ROLES)),
+  approverRoles: Joi.array().items(Joi.string().max(100)),
   approverUserIds: Joi.array().items(Joi.string()),
   subjects: Joi.array().items(subjectSchema),
 }).min(1);
@@ -160,7 +157,7 @@ router.get(
 
 router.post(
   '/evaluate',
-  requireRole('super_admin', 'admin'),
+  requirePermission('policies.view'),
   validate(evaluateBodySchema),
   asyncHandler(async (req, res) => {
     const { userId, serverId, requestedPrincipal, policyId, policy } = req.body;
@@ -199,7 +196,7 @@ router.post(
 
 router.get(
   '/',
-  requireRole('super_admin', 'admin'),
+  requirePermission('policies.view'),
   validateQuery(listQuerySchema),
   asyncHandler(async (req, res) => {
     const result = await policyService.list(req.orgId, req.query);
@@ -213,7 +210,7 @@ router.get(
 
 router.post(
   '/',
-  requireRole('super_admin', 'admin'),
+  requirePermission('policies.manage'),
   audit('policy.create', 'AccessPolicy'),
   validate(policyBodySchema),
   asyncHandler(async (req, res) => {
@@ -228,7 +225,7 @@ router.post(
 
 router.get(
   '/:id',
-  requireRole('super_admin', 'admin'),
+  requirePermission('policies.view'),
   asyncHandler(async (req, res) => {
     const policy = await policyService.getById(req.orgId, req.params.id);
     res.json({ success: true, data: { policy } });
@@ -241,7 +238,7 @@ router.get(
 
 router.put(
   '/:id',
-  requireRole('super_admin', 'admin'),
+  requirePermission('policies.manage'),
   audit('policy.update', 'AccessPolicy'),
   validate(policyUpdateSchema),
   asyncHandler(async (req, res) => {
@@ -256,7 +253,7 @@ router.put(
 
 router.get(
   '/:id/delete-impact',
-  requireRole('super_admin', 'admin'),
+  requirePermission('policies.manage'),
   asyncHandler(async (req, res) => {
     const impact = await policyService.getDeleteImpact(req.orgId, req.params.id);
     res.json({ success: true, data: impact });
@@ -265,7 +262,7 @@ router.get(
 
 router.delete(
   '/:id',
-  requireRole('super_admin', 'admin'),
+  requirePermission('policies.manage'),
   audit('policy.delete', 'AccessPolicy'),
   asyncHandler(async (req, res) => {
     await policyService.del(req.orgId, req.params.id);

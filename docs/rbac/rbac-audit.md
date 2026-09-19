@@ -125,6 +125,7 @@ The IDs refer to the detailed write-ups:
 - **No escalation (subset rule).** You can only create or edit a role, assign a role, or manage a user if the permissions involved are ones **you hold yourself**. An admin can never make anyone more powerful than themselves.
 - **Your own role.** You can't change your own role or edit the role you hold, so nobody can lock themselves out or grant themselves more.
 - **Built-in roles** (admin, manager, member) can be edited, and have **Reset to defaults**. Custom roles can be cloned from any role.
+- **Who defines roles:** admins and super admins (`roles.manage`). Admins are limited to permissions they hold, so they can build roles up to, but never beyond, Admin.
 - **Deleting a role** requires moving its users to another role first. Policies that target it lose that subject, and this is shown before deleting.
 - **Settings keyed on role names become permissions.** `prodApprovalBypassMinRole` becomes `access.prod_bypass`, and `quickConnect.minRole` becomes `quick_connect.use`. They migrate from the current settings, so behavior is identical on upgrade.
 - **SSO and self-registration** assign a role by id. SSO auto-provisioning can't assign a role holding sensitive permissions.
@@ -133,4 +134,4 @@ The IDs refer to the detailed write-ups:
 
 ### Example: "more than admin, less than super admin"
 
-Clone **Admin** into **Senior admin** and add `settings.smtp`, `settings.mfa`, `audit.export` and `users.delete`. Leave out `settings.sso`, `settings.storage`, `ca.rotate` and `roles.manage`. Senior admins then get those extra screens and buttons. An admin can't assign the Senior admin role, because it holds permissions they don't.
+Clone **Admin** into **Senior admin** and add `settings.smtp`, `settings.mfa`, `audit.export` and `users.delete`. Leave out `settings.sso`, `settings.storage`, `ca.rotate` and `roles.manage`. Senior admins then get those extra screens and buttons. A super admin creates it, since it holds permissions admins don't have. An admin can't assign, edit or copy it for the same reason.

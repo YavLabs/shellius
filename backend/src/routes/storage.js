@@ -4,7 +4,7 @@ import asyncHandler from '../utils/asyncHandler.js';
 import ApiError from '../utils/ApiError.js';
 import authenticate from '../middleware/auth.js';
 import tenant from '../middleware/tenant.js';
-import requireRole from '../middleware/rbac.js';
+import { requirePermission } from '../middleware/rbac.js';
 import audit from '../middleware/audit.js';
 import * as storageConfigService from '../services/storageConfigService.js';
 import * as storageService from '../services/storageService.js';
@@ -35,7 +35,7 @@ const validate = (schema) => (req, res, next) => {
 // GET /api/settings/storage — super_admin; effective config, secret masked
 router.get(
   '/',
-  requireRole('super_admin'),
+  requirePermission('settings.storage'),
   asyncHandler(async (req, res) => {
     const config = await storageConfigService.getPublic();
     res.json({ success: true, data: { config } });
@@ -45,7 +45,7 @@ router.get(
 // PUT /api/settings/storage — super_admin; upsert + encrypt secret
 router.put(
   '/',
-  requireRole('super_admin'),
+  requirePermission('settings.storage'),
   audit('storage.config.updated', 'StorageConfig'),
   validate(storageSchema),
   asyncHandler(async (req, res) => {
@@ -57,7 +57,7 @@ router.put(
 // DELETE /api/settings/storage — super_admin; revert to env defaults
 router.delete(
   '/',
-  requireRole('super_admin'),
+  requirePermission('settings.storage'),
   audit('storage.config.deleted', 'StorageConfig'),
   asyncHandler(async (req, res) => {
     await storageConfigService.remove();
@@ -68,7 +68,7 @@ router.delete(
 // POST /api/settings/storage/test — super_admin; verify connectivity + bucket
 router.post(
   '/test',
-  requireRole('super_admin'),
+  requirePermission('settings.storage'),
   audit('storage.config.test', 'StorageConfig'),
   asyncHandler(async (req, res) => {
     if (!(await storageService.isConfigured())) {

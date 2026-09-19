@@ -4,7 +4,7 @@ import asyncHandler from '../utils/asyncHandler.js';
 import ApiError from '../utils/ApiError.js';
 import authenticate from '../middleware/auth.js';
 import tenant from '../middleware/tenant.js';
-import requireRole from '../middleware/rbac.js';
+import { requirePermission } from '../middleware/rbac.js';
 import * as auditService from '../services/auditService.js';
 
 const router = express.Router();
@@ -54,7 +54,7 @@ router.use(authenticate, tenant);
 
 router.get(
   '/',
-  requireRole('super_admin', 'admin'),
+  requirePermission('audit.view'),
   validateQuery(listQuerySchema),
   asyncHandler(async (req, res) => {
     const { page, limit, ...filters } = req.query;
@@ -80,7 +80,7 @@ router.get(
 
 router.get(
   '/export',
-  requireRole('super_admin'),
+  requirePermission('audit.export'),
   validateQuery(exportQuerySchema),
   asyncHandler(async (req, res) => {
     const { format, ...filters } = req.query;

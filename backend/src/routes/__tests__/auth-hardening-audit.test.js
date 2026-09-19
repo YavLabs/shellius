@@ -173,7 +173,7 @@ describe('Session invalidation on role/status change and admin actions', () => {
     expect(usersRouteSrc).toContain("/:id/revoke-sessions");
     const unlockIdx = usersRouteSrc.indexOf("/:id/unlock");
     const unlockBlock = usersRouteSrc.slice(unlockIdx - 200, unlockIdx + 300);
-    expect(unlockBlock).toContain('requireRole');
+    expect(unlockBlock).toContain("requirePermission('users.reset_credentials')");
   });
 
   test('PUT /api/users/me/password returns a fresh token pair', () => {

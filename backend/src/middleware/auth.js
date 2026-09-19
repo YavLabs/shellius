@@ -2,6 +2,7 @@ import ApiError from '../utils/ApiError.js';
 import { verifyAccessToken } from '../utils/jwt.js';
 import prisma from '../config/db.js';
 import * as mfaConfigService from '../services/mfaConfigService.js';
+import { permissionsForUser } from '../services/roleService.js';
 
 // ---------------------------------------------------------------------------
 // Enforced-MFA allowlist — endpoints that must stay reachable for a user who
@@ -28,8 +29,8 @@ function isMfaSetupAllowlisted(req) {
  *   - non-active users are rejected (401 SESSION_REVOKED)
  *   - tokens minted before a "sign out everywhere" event are rejected
  *     (iat < user.sessionsValidFrom → 401 SESSION_REVOKED)
- *   - the role used for RBAC is always the current DB role (demotions apply
- *     immediately, not just on next login)
+ *   - the role and its permissions used for RBAC are always the current DB
+ *     values (demotions and role edits apply immediately, not on next login)
  *   - org-enforced MFA is applied except for a small allowlist of endpoints
  */
 const authenticate = async (req, res, next) => {
@@ -61,6 +62,8 @@ const authenticate = async (req, res, next) => {
         orgId: true,
         email: true,
         role: true,
+        roleId: true,
+        assignedRole: { select: { id: true, key: true, name: true, isSystem: true, baseRole: true, permissions: true } },
         status: true,
         sessionsValidFrom: true,
         mfaTotpEnabled: true,
@@ -87,7 +90,10 @@ const authenticate = async (req, res, next) => {
   req.user = {
     userId: user.id,
     orgId: user.orgId,
-    role: user.role, // DB-authoritative — demotions apply immediately
+    role: user.role, // base tier — DB-authoritative, demotions apply immediately
+    roleId: user.roleId,
+    roleKey: user.assignedRole?.key || user.role,
+    permissions: new Set(permissionsForUser(user)),
     email: user.email,
     fid: decoded.fid,
   };

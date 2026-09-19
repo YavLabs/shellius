@@ -64,12 +64,15 @@ export async function findJitPolicyForUserServer({ orgId, userId, serverId }) {
     });
   }
 
-  const user = await prisma.user.findUnique({
-    where: { id: userId },
-    select: { role: true },
+  // ROLE subjects match the base tier and the custom role's key (see
+  // policyService.loadSubject).
+  const user = await prisma.user.findFirst({
+    where: { id: userId, orgId },
+    select: { role: true, assignedRole: { select: { key: true } } },
   });
-  if (user?.role) {
-    subjectFilter.push({ subjectType: 'ROLE', subjectId: user.role });
+  const roleKeys = [...new Set([user?.role, user?.assignedRole?.key].filter(Boolean))];
+  if (roleKeys.length > 0) {
+    subjectFilter.push({ subjectType: 'ROLE', subjectId: { in: roleKeys } });
   }
 
   const policies = await prisma.accessPolicy.findMany({

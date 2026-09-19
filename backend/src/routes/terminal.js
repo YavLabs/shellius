@@ -135,6 +135,7 @@ router.post(
       userId: req.user.userId,
       orgId: req.orgId,
       role: req.user.role,
+      permissions: req.user.permissions,
     });
     res.status(201).json({ success: true, data });
   })
@@ -178,7 +179,7 @@ router.post(
     if (spec.type === 'quick_connect') {
       const result = await quickConnectService.createTicketFromSpec(
         req.orgId,
-        { id: req.user.userId, role: req.user.role },
+        { id: req.user.userId, role: req.user.role, permissions: req.user.permissions },
         { host: spec.host, port: spec.port, username: spec.username, auth: spec.auth, expectedHostKey: spec.expectedHostKey }
       );
       res.status(201).json({ success: true, data: { connect: { ticket: result.ticket } } });

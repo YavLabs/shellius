@@ -35,7 +35,7 @@ router.get(
     const { q, limit } = req.query;
     const { results, counts } = await searchService.search({
       orgId: req.orgId,
-      role: req.user.role,
+      permissions: req.user.permissions,
       q,
       limit,
     });

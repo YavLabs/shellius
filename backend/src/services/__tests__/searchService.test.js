@@ -18,6 +18,7 @@ import {
 } from '../searchService.js';
 import prisma from '../../config/db.js';
 import { dbReachable, createTestOrg, cleanupOrg } from './testDbHelper.js';
+import { defaultPermissionsFor } from '../../config/permissions.js';
 
 // ---------------------------------------------------------------------------
 // getAllowedTypes — role gating
@@ -166,7 +167,7 @@ describe('search — integration', () => {
       console.warn('DB unreachable — skipping search integration test');
       return;
     }
-    const { results, counts } = await search({ orgId: org.id, role: 'member', q: 'search-web' });
+    const { results, counts } = await search({ orgId: org.id, permissions: defaultPermissionsFor('member'), q: 'search-web' });
     expect(results.servers.length).toBeGreaterThan(0);
     expect(results.servers[0].id).toBe(server.id);
     expect(results.servers[0].href).toBe(`/servers/${server.id}`);
@@ -176,7 +177,7 @@ describe('search — integration', () => {
 
   test('admin finds policies too', async () => {
     if (!(await dbReachable())) return;
-    const { results } = await search({ orgId: org.id, role: 'admin', q: 'Search Test Policy' });
+    const { results } = await search({ orgId: org.id, permissions: defaultPermissionsFor('admin'), q: 'Search Test Policy' });
     expect(results.policies.length).toBeGreaterThan(0);
     expect(results.policies[0].meta.effect).toBe('ALLOW');
   });
@@ -185,7 +186,7 @@ describe('search — integration', () => {
     if (!(await dbReachable())) return;
     const otherOrg = await createTestOrg();
     try {
-      const { results } = await search({ orgId: otherOrg.id, role: 'admin', q: 'search-web' });
+      const { results } = await search({ orgId: otherOrg.id, permissions: defaultPermissionsFor('admin'), q: 'search-web' });
       expect(results.servers).toEqual([]);
     } finally {
       await cleanupOrg(otherOrg.id);
@@ -194,7 +195,7 @@ describe('search — integration', () => {
 
   test('server meta includes onboarded flag computed from provision state', async () => {
     if (!(await dbReachable())) return;
-    const { results } = await search({ orgId: org.id, role: 'member', q: 'search-web' });
+    const { results } = await search({ orgId: org.id, permissions: defaultPermissionsFor('member'), q: 'search-web' });
     expect(results.servers[0].meta).toHaveProperty('onboarded');
     expect(typeof results.servers[0].meta.onboarded).toBe('boolean');
   });
@@ -219,7 +220,7 @@ describe('search — integration', () => {
     }
     await Promise.all(extra);
 
-    const { results, counts } = await search({ orgId: org.id, role: 'admin', q: 'search-web', limit: 2 });
+    const { results, counts } = await search({ orgId: org.id, permissions: defaultPermissionsFor('admin'), q: 'search-web', limit: 2 });
     expect(results.servers).toHaveLength(2); // truncated to limit
     expect(counts.servers).toBeGreaterThanOrEqual(5); // total (1 original + 4 extra)
     expect(counts.servers).toBeGreaterThan(results.servers.length);
@@ -227,7 +228,7 @@ describe('search — integration', () => {
 
   test('gated types report zero count for a role that cannot see them', async () => {
     if (!(await dbReachable())) return;
-    const { counts } = await search({ orgId: org.id, role: 'member', q: 'Search Test Policy' });
+    const { counts } = await search({ orgId: org.id, permissions: defaultPermissionsFor('member'), q: 'Search Test Policy' });
     expect(counts.policies).toBe(0);
   });
 });

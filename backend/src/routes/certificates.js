@@ -4,7 +4,9 @@ import asyncHandler from '../utils/asyncHandler.js';
 import ApiError from '../utils/ApiError.js';
 import authenticate from '../middleware/auth.js';
 import tenant from '../middleware/tenant.js';
-import requireRole from '../middleware/rbac.js';
+import { requirePermission, can } from '../middleware/rbac.js';
+import { actorFromReq } from '../services/roleService.js';
+import * as userService from '../services/userService.js';
 import audit from '../middleware/audit.js';
 import agentAuth from '../middleware/agentAuth.js';
 import * as certificateService from '../services/certificateService.js';
@@ -29,17 +31,16 @@ const validateQuery = (schema) => (req, res, next) => {
   next();
 };
 
-const CERT_TYPES = ['USER', 'HOST'];
 const CERT_STATUSES = ['ACTIVE', 'REVOKED', 'EXPIRED'];
 
 const issueSchema = Joi.object({
   userId: Joi.string(),
-  serverId: Joi.string(),
-  principals: Joi.array().items(Joi.string().min(1)).min(1).required(),
+  serverId: Joi.string().required(),
+  principals: Joi.array().items(Joi.string().min(1).max(64)).min(1).max(10).required(),
   validitySeconds: Joi.number().integer().min(60).max(604800).required(),
   publicKey: Joi.string().required(),
   keyId: Joi.string().max(255),
-  certType: Joi.string().valid(...CERT_TYPES).default('USER'),
+  certType: Joi.string().valid('USER').default('USER'),
   extensions: Joi.object().default({}),
   criticalOptions: Joi.object().default({}),
   issuedVia: Joi.string().valid('web', 'tui', 'api').default('web'),
@@ -84,20 +85,22 @@ router.post(
 
 router.use(authenticate, tenant);
 
-// POST /api/certificates/issue
-// Any authenticated user can issue for themselves; admin+ can target other users.
+// POST /api/certificates/issue — direct issuance (API only; the web UI and
+// CLI use access requests). Needs certificates.issue_direct. Issuing for
+// another user additionally needs users.update and the right to manage that
+// user (you can't borrow a stronger user's policy access — F-04).
 router.post(
   '/issue',
+  requirePermission('certificates.issue_direct'),
   audit('certificate.issue', 'Certificate'),
   validate(issueSchema),
   asyncHandler(async (req, res) => {
     const requestingUserId = req.user.userId;
-    const isAdmin = ['super_admin', 'admin'].includes(req.user.role);
-
-    // Non-admin callers can only issue certs for themselves
     const targetUserId = req.body.userId || requestingUserId;
-    if (!isAdmin && targetUserId !== requestingUserId) {
-      throw new ApiError(403, 'You may only issue certificates for yourself');
+    if (targetUserId !== requestingUserId) {
+      if (!can(req, 'users.update')) throw new ApiError(403, 'You may only issue certificates for yourself');
+      const target = await userService.getUser(req.orgId, targetUserId);
+      await userService.assertCanManageUser(req.orgId, actorFromReq(req), target, 'issue certificates for this user');
     }
 
     const { certificate, signedCert } = await certificateService.issue({
@@ -112,6 +115,7 @@ router.post(
       extensions: req.body.extensions,
       criticalOptions: req.body.criticalOptions,
       issuedVia: req.body.issuedVia,
+      actorId: requestingUserId,
     });
 
     res.status(201).json({ success: true, data: { certificate, signedCert } });
@@ -137,7 +141,7 @@ router.get(
 // GET /api/certificates — admin+; all certs with filters
 router.get(
   '/',
-  requireRole('super_admin', 'admin'),
+  requirePermission('certificates.view_all'),
   validateQuery(listQuerySchema),
   asyncHandler(async (req, res) => {
     const result = await certificateService.list({
@@ -152,16 +156,15 @@ router.get(
   })
 );
 
-// GET /api/certificates/:id — admin+ OR owner of the cert
+// GET /api/certificates/:id — certificates.view_all OR owner of the cert
 router.get(
   '/:id',
   asyncHandler(async (req, res) => {
     const cert = await certificateService.getById(req.orgId, req.params.id);
 
-    const isAdmin = ['super_admin', 'admin'].includes(req.user.role);
     const isOwner = cert.issuedToId === req.user.userId;
 
-    if (!isAdmin && !isOwner) {
+    if (!can(req, 'certificates.view_all') && !isOwner) {
       throw new ApiError(403, 'Insufficient permissions');
     }
 
@@ -172,7 +175,7 @@ router.get(
 // POST /api/certificates/:id/revoke — admin+
 router.post(
   '/:id/revoke',
-  requireRole('super_admin', 'admin'),
+  requirePermission('certificates.revoke'),
   audit('certificate.revoke', 'Certificate'),
   asyncHandler(async (req, res) => {
     const updated = await certificateService.revoke(

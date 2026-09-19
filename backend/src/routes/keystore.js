@@ -5,7 +5,9 @@ import asyncHandler from '../utils/asyncHandler.js';
 import ApiError from '../utils/ApiError.js';
 import authenticate from '../middleware/auth.js';
 import tenant from '../middleware/tenant.js';
-import requireRole from '../middleware/rbac.js';
+import { requirePermission, can } from '../middleware/rbac.js';
+import prisma from '../config/db.js';
+import { canBypassProdApproval } from '../services/orgService.js';
 import audit from '../middleware/audit.js';
 import * as keystoreService from '../services/keystoreService.js';
 import * as keyDeploymentService from '../services/keyDeploymentService.js';
@@ -29,9 +31,19 @@ const validateQuery = (schema) => (req, res, next) => {
 
 router.use(authenticate, tenant);
 
-// Viewer roles for list/get/test; admin+ for mutations.
-const VIEW_ROLES = ['super_admin', 'admin', 'manager'];
-const ADMIN_ROLES = ['super_admin', 'admin'];
+// A key deployed to a prod host is standing access without an approval, so
+// it needs the same right as skipping prod approval (F-09).
+async function assertCanDeployTo(req, serverIds) {
+  const prodCount = await prisma.server.count({ where: { orgId: req.orgId, id: { in: serverIds }, environment: 'prod' } });
+  if (prodCount === 0) return;
+  if (!(await canBypassProdApproval(req.orgId, req.user.permissions))) {
+    throw new ApiError(403, 'Deploying keys to production servers requires the Production without approval permission', {
+      code: 'PERMISSION_DENIED',
+      details: { missing: ['access.prod_bypass'] },
+    });
+  }
+}
+
 
 // ---------------------------------------------------------------------------
 // Keys — /api/keystore/keys
@@ -71,7 +83,7 @@ const updateKeySchema = Joi.object({
 
 router.get(
   '/keys',
-  requireRole(...VIEW_ROLES),
+  requirePermission('keystore.view'),
   asyncHandler(async (req, res) => {
     const result = await keystoreService.listKeys(req.orgId, { search: req.query.search });
     res.json({ success: true, data: result });
@@ -80,7 +92,7 @@ router.get(
 
 router.get(
   '/keys/:id',
-  requireRole(...VIEW_ROLES),
+  requirePermission('keystore.view'),
   asyncHandler(async (req, res) => {
     const result = await keystoreService.getKey(req.orgId, req.params.id);
     res.json({ success: true, data: result });
@@ -89,7 +101,7 @@ router.get(
 
 router.post(
   '/keys/generate',
-  requireRole(...ADMIN_ROLES),
+  requirePermission('keystore.manage'),
   audit('keystore.key.generate', 'SshKey'),
   validate(generateKeySchema),
   asyncHandler(async (req, res) => {
@@ -104,7 +116,7 @@ const credentialTestLimiter = userRateLimiter({ keyPrefix: 'rl:credential-test',
 
 router.post(
   '/keys/inspect',
-  requireRole(...VIEW_ROLES),
+  requirePermission('keystore.view'),
   inspectLimiter,
   validate(inspectKeySchema),
   asyncHandler(async (req, res) => {
@@ -115,7 +127,7 @@ router.post(
 
 router.post(
   '/keys/import',
-  requireRole(...ADMIN_ROLES),
+  requirePermission('keystore.manage'),
   importLimiter,
   audit('keystore.key.import', 'SshKey'),
   validate(importKeySchema),
@@ -127,7 +139,7 @@ router.post(
 
 router.patch(
   '/keys/:id',
-  requireRole(...ADMIN_ROLES),
+  requirePermission('keystore.manage'),
   audit('keystore.key.update', 'SshKey'),
   validate(updateKeySchema),
   asyncHandler(async (req, res) => {
@@ -138,7 +150,7 @@ router.patch(
 
 router.delete(
   '/keys/:id',
-  requireRole(...ADMIN_ROLES),
+  requirePermission('keystore.manage'),
   audit('keystore.key.delete', 'SshKey'),
   asyncHandler(async (req, res) => {
     const result = await keystoreService.deleteKey(req.orgId, req.params.id);
@@ -148,7 +160,7 @@ router.delete(
 
 router.post(
   '/keys/:id/export',
-  requireRole(...ADMIN_ROLES),
+  requirePermission('keystore.export_private'),
   audit('keystore.key.export', 'SshKey'),
   validate(Joi.object({ includePrivate: Joi.boolean().valid(true).required() })),
   asyncHandler(async (req, res) => {
@@ -209,7 +221,7 @@ const testCredentialSchema = Joi.object({
 
 router.get(
   '/credentials',
-  requireRole(...VIEW_ROLES),
+  requirePermission('keystore.view'),
   asyncHandler(async (req, res) => {
     const result = await keystoreService.listCredentials(req.orgId, { search: req.query.search });
     res.json({ success: true, data: result });
@@ -218,7 +230,7 @@ router.get(
 
 router.get(
   '/credentials/:id',
-  requireRole(...VIEW_ROLES),
+  requirePermission('keystore.view'),
   asyncHandler(async (req, res) => {
     const result = await keystoreService.getCredential(req.orgId, req.params.id);
     res.json({ success: true, data: result });
@@ -227,7 +239,7 @@ router.get(
 
 router.post(
   '/credentials',
-  requireRole(...ADMIN_ROLES),
+  requirePermission('keystore.manage'),
   audit('keystore.credential.create', 'Credential'),
   validate(createCredentialSchema),
   asyncHandler(async (req, res) => {
@@ -238,7 +250,7 @@ router.post(
 
 router.patch(
   '/credentials/:id',
-  requireRole(...ADMIN_ROLES),
+  requirePermission('keystore.manage'),
   audit('keystore.credential.update', 'Credential'),
   validate(updateCredentialSchema),
   asyncHandler(async (req, res) => {
@@ -249,7 +261,7 @@ router.patch(
 
 router.delete(
   '/credentials/:id',
-  requireRole(...ADMIN_ROLES),
+  requirePermission('keystore.manage'),
   audit('keystore.credential.delete', 'Credential'),
   asyncHandler(async (req, res) => {
     const force = req.query.force === 'true' || req.query.force === true;
@@ -260,11 +272,19 @@ router.delete(
 
 router.post(
   '/credentials/:id/test',
-  requireRole(...VIEW_ROLES),
+  requirePermission('keystore.test'),
   credentialTestLimiter,
   audit('keystore.credential.test', 'Credential'),
   validate(testCredentialSchema),
   asyncHandler(async (req, res) => {
+    // Testing against an arbitrary host sends the stored secret there — only
+    // for people who could read/replace the identity anyway (F-17).
+    if (req.body.host && !can(req, 'keystore.manage')) {
+      throw new ApiError(403, 'Testing against an arbitrary host requires the Manage Keystore permission — pick a saved server', {
+        code: 'PERMISSION_DENIED',
+        details: { missing: ['keystore.manage'] },
+      });
+    }
     const result = await keystoreService.testCredential(req.orgId, req.params.id, req.body, req.user.userId);
     res.json({ success: true, data: result });
   })
@@ -306,10 +326,11 @@ const listDeploymentsQuerySchema = Joi.object({
 
 router.post(
   '/deployments',
-  requireRole(...ADMIN_ROLES),
+  requirePermission('keystore.deploy'),
   audit('keystore.deployment.create', 'KeyDeployment'),
   validate(createDeploymentSchema),
   asyncHandler(async (req, res) => {
+    await assertCanDeployTo(req, req.body.serverIds);
     const result = await keyDeploymentService.createBatch(req.orgId, req.body, req.user.userId);
     res.status(202).json({ success: true, data: result });
   })
@@ -317,7 +338,7 @@ router.post(
 
 router.get(
   '/deployments/batches',
-  requireRole(...VIEW_ROLES),
+  requirePermission('keystore.view'),
   asyncHandler(async (req, res) => {
     const limit = parseInt(req.query.limit, 10) || 20;
     const result = await keyDeploymentService.listBatches(req.orgId, { limit });
@@ -327,7 +348,7 @@ router.get(
 
 router.get(
   '/deployments',
-  requireRole(...VIEW_ROLES),
+  requirePermission('keystore.view'),
   validateQuery(listDeploymentsQuerySchema),
   asyncHandler(async (req, res) => {
     const result = await keyDeploymentService.listDeployments(req.orgId, req.query);
@@ -337,9 +358,11 @@ router.get(
 
 router.post(
   '/deployments/:id/retry',
-  requireRole(...ADMIN_ROLES),
+  requirePermission('keystore.deploy'),
   audit('keystore.deployment.retry', 'KeyDeployment'),
   asyncHandler(async (req, res) => {
+    const dep = await prisma.keyDeployment.findFirst({ where: { id: req.params.id, orgId: req.orgId }, select: { serverId: true } });
+    if (dep) await assertCanDeployTo(req, [dep.serverId]);
     const result = await keyDeploymentService.retryDeployment(req.orgId, req.params.id, req.user.userId);
     res.json({ success: true, data: result });
   })

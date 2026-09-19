@@ -612,7 +612,7 @@ export const PERMISSIONS = [
     label: 'Manage roles',
     description: 'Create, edit and delete custom roles and edit built-in ones. You can only grant permissions you hold.',
     sensitive: true,
-    defaults: SA,
+    defaults: ADM,
     current: [],
     endpoints: ['POST /api/roles', 'PUT /api/roles/:id', 'DELETE /api/roles/:id', 'POST /api/roles/:id/reset'],
   },

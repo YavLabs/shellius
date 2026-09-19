@@ -66,6 +66,7 @@ import * as quickConnectService from './quickConnectService.js';
 import * as wsTicketService from './wsTicketService.js';
 import * as hub from './terminalHub.js';
 import GuacamoleLite from 'guacamole-lite';
+import { permissionsForUser } from './roleService.js';
 
 const GUACD_HOST = process.env.GUACD_HOST || '127.0.0.1';
 const GUACD_PORT = parseInt(process.env.GUACD_PORT, 10) || 4822;
@@ -780,7 +781,10 @@ async function handleConnection(ws, req) {
   // a revoked/suspended/deactivated/deleted user, or a ticket minted before
   // the last "sign out everywhere" (sessionsValidFrom), must not be able to
   // open (or keep) a shell. See docs — B-3 hardening.
-  const user = await prisma.user.findFirst({ where: { id: userId, orgId } });
+  const user = await prisma.user.findFirst({
+    where: { id: userId, orgId },
+    include: { assignedRole: { select: { id: true, key: true, isSystem: true, baseRole: true, permissions: true } } },
+  });
   if (!user || user.status !== 'active') {
     safeClose(ws, 4401, 'Session has been revoked');
     return;
@@ -794,7 +798,9 @@ async function handleConnection(ws, req) {
     return;
   }
 
-  const role = user.role; // DB-authoritative, matches middleware/auth.js
+  // DB-authoritative, matches middleware/auth.js
+  const role = user.role;
+  const permissions = new Set(permissionsForUser(user));
 
   // ── Reattach path — WS re-joins a live hub session ─────────────────────
   if (attachSessionId) {
@@ -886,7 +892,7 @@ async function handleConnection(ws, req) {
       requestId,
       orgId,
       callerId: userId,
-      callerRole: role,
+      callerPermissions: permissions,
     });
   } catch (err) {
     safeClose(ws, 1008, err.message || 'Access request not found');
@@ -957,6 +963,7 @@ async function handleConnection(ws, req) {
       requestId,
       callerId: userId,
       callerRole: role,
+      callerPermissions: permissions,
       principalOverride,
     });
   } catch (err) {

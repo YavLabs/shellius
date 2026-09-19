@@ -198,7 +198,7 @@ export async function describe(sessionId, { userId, orgId }) {
  * Connect spec for the `reconnect` / `attach` actions, for TerminalView.
  * @returns {Promise<{ connect: object }>}
  */
-export async function reconnect(sessionId, { userId, orgId, role }) {
+export async function reconnect(sessionId, { userId, orgId, role, permissions }) {
   const info = await describe(sessionId, { userId, orgId });
   if (info.action === 'attach') return { connect: { attach: sessionId } };
   if (info.action !== 'reconnect') {
@@ -212,7 +212,7 @@ export async function reconnect(sessionId, { userId, orgId, role }) {
   }
   // Quick Connect with a saved identity: the regular ticket path (prod-host
   // guard, identity lookup, org scoping) mints a fresh single-use ticket.
-  const ticket = await quickConnectService.createTicket(orgId, { id: userId, role }, {
+  const ticket = await quickConnectService.createTicket(orgId, { id: userId, role, permissions }, {
     host: info.prefill.host,
     port: info.prefill.port,
     username: info.prefill.username,

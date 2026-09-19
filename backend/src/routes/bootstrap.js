@@ -27,7 +27,8 @@ import asyncHandler from '../utils/asyncHandler.js';
 import ApiError from '../utils/ApiError.js';
 import authenticate from '../middleware/auth.js';
 import tenant from '../middleware/tenant.js';
-import requireRole from '../middleware/rbac.js';
+import audit from '../middleware/audit.js';
+import { requirePermission } from '../middleware/rbac.js';
 import config from '../config/index.js';
 import prisma from '../config/db.js';
 import * as caService from '../services/caService.js';
@@ -115,7 +116,8 @@ router.post(
   '/token',
   authenticate,
   tenant,
-  requireRole('super_admin', 'admin', 'manager'),
+  requirePermission('servers.onboard'),
+  audit('bootstrap.link.created', 'Server'),
   asyncHandler(async (req, res) => {
     const { error, value } = tokenSchema.validate(req.body);
     if (error) throw new ApiError(400, error.message);
@@ -283,7 +285,8 @@ router.post(
   '/uninstall-token',
   authenticate,
   tenant,
-  requireRole('super_admin', 'admin', 'manager'),
+  requirePermission('servers.onboard'),
+  audit('bootstrap.uninstall_link.created', 'Server'),
   asyncHandler(async (req, res) => {
     const { error, value } = tokenSchema.validate(req.body);
     if (error) throw new ApiError(400, error.message);
