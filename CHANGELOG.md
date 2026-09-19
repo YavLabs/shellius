@@ -9,6 +9,8 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 Tracked here as work lands on `main`; moved into a dated section on release
 (`node scripts/version.mjs bump <major|minor|patch>`).
 
+## [1.5.1] - 2026-09-19
+
 ### Changed
 
 - **Lists on phones are cards instead of tables.** Below 768px wide, every list (Servers, Customers, a customer's servers, Access requests, Policies, Certificates, Sessions, Notifications, My hosts, Keystore identities and keys, Users, Groups, Audit log, Bulk import) shows one card per row: an icon or avatar, the name, a line of detail and up to three badges. Tapping a card does what clicking the row does. The row's main action (Connect, Quick Connect, Request access) is a button on the card and the rest are in the "⋯" menu, with the same permissions as before.
