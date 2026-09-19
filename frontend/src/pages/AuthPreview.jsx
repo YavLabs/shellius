@@ -1,5 +1,5 @@
 import { useMemo } from 'react';
-import { Link, useLocation, useNavigate } from 'react-router-dom';
+import { Link, useLocation, useNavigate, useSearchParams } from 'react-router-dom';
 import { Check, ChevronDown, ChevronLeft, ChevronRight, Eye, LayoutGrid, Moon, Sun } from 'lucide-react';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
 import { AuthContext } from '@/context/AuthContext';
@@ -78,6 +78,8 @@ function fakeSession(signedIn) {
 function PreviewBar({ index }) {
   const navigate = useNavigate();
   const { theme, toggleTheme } = useTheme();
+  const [params] = useSearchParams();
+  const ssoCount = Math.min(6, Math.max(0, Number(params.get('sso') ?? 6) || 0));
   const prev = PREVIEW_PAGES[(index - 1 + PREVIEW_PAGES.length) % PREVIEW_PAGES.length];
   const next = PREVIEW_PAGES[(index + 1) % PREVIEW_PAGES.length];
   const btn =
@@ -109,6 +111,31 @@ function PreviewBar({ index }) {
           ))}
         </DropdownMenuContent>
       </DropdownMenu>
+      {PREVIEW_PAGES[index].key === 'login' && (
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <button
+              type="button"
+              className="flex h-7 items-center gap-1.5 rounded-full bg-foreground/[0.06] px-3 text-xs text-foreground transition-colors hover:bg-foreground/10 focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            >
+              SSO: {ssoCount}
+              <ChevronDown className="h-3.5 w-3.5 text-muted-foreground" />
+            </button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end" className="w-44">
+            {[0, 1, 2, 3, 4, 5, 6].map((n) => (
+              <DropdownMenuItem
+                key={n}
+                onSelect={() => window.location.assign(`/dummy/login?sso=${n}`)}
+                className="flex items-center justify-between text-sm"
+              >
+                {n === 0 ? 'No SSO providers' : `${n} provider${n === 1 ? '' : 's'}`}
+                {n === ssoCount && <Check className="h-3.5 w-3.5 text-primary" />}
+              </DropdownMenuItem>
+            ))}
+          </DropdownMenuContent>
+        </DropdownMenu>
+      )}
       <button type="button" className={btn} title={`Previous: ${prev.label}`} onClick={() => window.location.assign(prev.path)}>
         <ChevronLeft className="h-4 w-4" />
       </button>

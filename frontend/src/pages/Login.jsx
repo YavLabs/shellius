@@ -54,7 +54,7 @@ const PREVIEW_PROVIDERS = [
   { id: 'preview-okta', name: 'Okta', presetId: 'okta' },
   { id: 'preview-auth0', name: 'Auth0', presetId: 'auth0' },
   { id: 'preview-github', name: 'GitHub', presetId: 'github' },
-  { id: 'preview-oidc', name: 'SSO (OIDC)', presetId: 'generic' },
+  { id: 'preview-oidc', name: 'SSO', presetId: 'generic' },
 ];
 
 /**
@@ -78,6 +78,10 @@ function SsoTextButtons({ providers, submitting, onSelect }) {
       </div>
     );
   }
+  // 2–3 in one row; 4 as 2×2; 5–6 in rows of three with the last row
+  // centred — so no provider is ever left stranded on its own.
+  const cols = providers.length <= 3 ? providers.length : providers.length === 4 ? 2 : 3;
+  const basis = cols === 2 ? 'basis-[calc(50%-0.25rem)]' : 'basis-[calc(33.333%-0.34rem)]';
   return (
     <div className="space-y-3">
       <div className="flex items-center gap-3 text-[11px] uppercase tracking-[0.14em] text-muted-foreground/70">
@@ -85,14 +89,15 @@ function SsoTextButtons({ providers, submitting, onSelect }) {
         or continue with
         <div className="hairline-fade flex-1" />
       </div>
-      <div className="grid grid-cols-2 gap-2">
+      <div className="flex flex-wrap justify-center gap-2">
         {providers.map((provider) => (
           <button
             key={provider.id ?? provider.presetId}
             type="button"
             onClick={() => onSelect(provider.id)}
             disabled={submitting}
-            className="inline-flex h-10 items-center justify-center gap-2 rounded-full bg-foreground/[0.04] px-3 text-sm font-medium text-foreground/85 ring-1 ring-foreground/[0.06] transition-colors hover:bg-foreground/[0.08] hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50"
+            title={`Sign in with ${provider.name || ssoLoginLabel(provider.presetId)}`}
+            className={`${basis} inline-flex h-10 min-w-0 grow-0 items-center justify-center gap-2 rounded-full bg-foreground/[0.04] px-3 text-sm font-medium text-foreground/85 ring-1 ring-foreground/[0.06] transition-colors hover:bg-foreground/[0.08] hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50`}
           >
             <ProviderGlyph presetId={provider.presetId} />
             <span className="truncate">{provider.name || ssoLoginLabel(provider.presetId)}</span>
@@ -306,6 +311,8 @@ function Login() {
   const locked = !!lockout && retryRemaining > 0;
 
   const brand = import.meta.env.VITE_BRAND_NAME || 'Shellius';
+  // /dummy/login?sso=N previews N providers (0–6); default all six.
+  const previewCount = Math.min(6, Math.max(0, Number(searchParams.get('sso') ?? 6) || 0));
   const ssoList = ssoStatus.providers?.length
     ? ssoStatus.providers
     : [{ id: null, name: ssoLoginLabel(ssoStatus.presetId), presetId: ssoStatus.presetId }];
@@ -480,9 +487,9 @@ function Login() {
             {step === 'email' && ssoStatus.enabled && (
               <SsoTextButtons providers={ssoList} submitting={ssoSubmitting} onSelect={(id) => handleSsoLogin(id)} />
             )}
-            {step === 'email' && !ssoStatus.enabled && (
+            {step === 'email' && !ssoStatus.enabled && previewCount > 0 && (
               <SsoTextButtons
-                providers={PREVIEW_PROVIDERS}
+                providers={PREVIEW_PROVIDERS.slice(0, previewCount)}
                 submitting={false}
                 onSelect={() => setError('Preview only — set up single sign-on in Settings → SSO.')}
               />
