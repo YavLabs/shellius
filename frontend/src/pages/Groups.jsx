@@ -227,7 +227,7 @@ function CreateGroupModal({ open, onClose, onCreated }) {
             onChange={(e) => setDescription(e.target.value)}
           />
         </div>
-        <div className="flex justify-end gap-2 pt-2">
+        <div data-sheet-footer className="flex justify-end gap-2 pt-2">
           <Button type="button" variant="outline" onClick={onClose}>Cancel</Button>
           <Button type="submit" disabled={submitting}>
             {submitting ? 'Creating...' : 'Create group'}

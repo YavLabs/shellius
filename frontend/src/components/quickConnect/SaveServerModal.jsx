@@ -87,7 +87,7 @@ function SaveServerModal({ open, onClose, connection, onSaved }) {
           canCreateIdentity={false}
           identityModes={canBindIdentity ? ['existing', 'none'] : ['none']}
         />
-        <div className="flex justify-end gap-2 pt-1">
+        <div data-sheet-footer className="flex justify-end gap-2 pt-1">
           <Button type="button" variant="outline" onClick={onClose}>
             Cancel
           </Button>

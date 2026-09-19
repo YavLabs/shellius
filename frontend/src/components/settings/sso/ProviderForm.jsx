@@ -378,7 +378,7 @@ export default function ProviderForm({ preset, existingProvider, orgGroups, onSa
         </div>
       )}
 
-      <div className="flex flex-wrap items-center justify-between gap-3 pt-1">
+      <div data-sheet-footer className="flex flex-wrap items-center justify-between gap-3 pt-1">
         <div className="flex flex-wrap items-center gap-3">
           <Button type="button" variant="outline" disabled={testing || !canSave} onClick={handleTest}>
             {testing ? <WifiOff className="mr-2 h-4 w-4 animate-pulse" /> : <Wifi className="mr-2 h-4 w-4" />}
@@ -388,7 +388,7 @@ export default function ProviderForm({ preset, existingProvider, orgGroups, onSa
             {saving ? 'Saving...' : isEdit ? 'Save changes' : 'Add provider'}
           </Button>
         </div>
-        <button type="button" onClick={onCancel} className="text-sm text-muted-foreground hover:text-foreground">
+        <button type="button" onClick={onCancel} className="text-sm text-muted-foreground hover:text-foreground max-md:order-first">
           Cancel
         </button>
       </div>

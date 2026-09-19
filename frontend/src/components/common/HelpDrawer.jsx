@@ -2,14 +2,18 @@ import { useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import { X, HelpCircle } from 'lucide-react';
 import { getHelp } from '@/config/helpContent';
+import useIsMobile from '@/hooks/useIsMobile';
+import BottomSheet from '@/components/mobile/BottomSheet';
 
 /**
  * HelpDrawer — slide-in panel from the right edge of the viewport.
  * Renders into a React portal so it lives outside the parent's DOM
  * tree (same reason as Modal — see Phase 17A bug). Click the backdrop
- * or press Escape to close.
+ * or press Escape to close. On phones it opens as a bottom sheet instead
+ * (docs/plans/1.5.1-mobile.md §4).
  */
 function HelpDrawer({ open, onClose, helpKey }) {
+  const isMobile = useIsMobile();
   useEffect(() => {
     if (!open) return;
     const onKey = (e) => {
@@ -22,6 +26,49 @@ function HelpDrawer({ open, onClose, helpKey }) {
   if (!open || typeof document === 'undefined') return null;
 
   const help = getHelp(helpKey);
+
+  const content = (
+    <>
+      {!help ? (
+        <p className="text-sm text-muted-foreground">
+          No help content available for this page yet.
+        </p>
+      ) : (
+        <div className="space-y-5">
+          {help.summary && (
+            <p className="text-sm leading-relaxed text-foreground/90">
+              {help.summary}
+            </p>
+          )}
+          {help.sections?.map((section, idx) => (
+            <div key={idx}>
+              <h3 className="mb-1 text-sm font-semibold text-foreground">
+                {section.heading}
+              </h3>
+              <p className="text-sm leading-relaxed text-muted-foreground">
+                {section.body}
+              </p>
+            </div>
+          ))}
+        </div>
+      )}
+    </>
+  );
+
+  if (isMobile) {
+    return (
+      <BottomSheet
+        open={open}
+        onClose={onClose}
+        title={help?.title || 'Help'}
+        icon={<HelpCircle className="h-4 w-4 text-primary" />}
+        closeLabel="Close help"
+        closeOnEscape={false}
+      >
+        {content}
+      </BottomSheet>
+    );
+  }
 
   const drawer = (
     <div
@@ -51,29 +98,7 @@ function HelpDrawer({ open, onClose, helpKey }) {
         </header>
 
         <div className="flex-1 overflow-y-auto px-5 py-4">
-          {!help ? (
-            <p className="text-sm text-muted-foreground">
-              No help content available for this page yet.
-            </p>
-          ) : (
-            <div className="space-y-5">
-              {help.summary && (
-                <p className="text-sm leading-relaxed text-foreground/90">
-                  {help.summary}
-                </p>
-              )}
-              {help.sections?.map((section, idx) => (
-                <div key={idx}>
-                  <h3 className="mb-1 text-sm font-semibold text-foreground">
-                    {section.heading}
-                  </h3>
-                  <p className="text-sm leading-relaxed text-muted-foreground">
-                    {section.body}
-                  </p>
-                </div>
-              ))}
-            </div>
-          )}
+          {content}
         </div>
 
         <footer className="border-t border-border px-5 py-3 text-xs text-muted-foreground">

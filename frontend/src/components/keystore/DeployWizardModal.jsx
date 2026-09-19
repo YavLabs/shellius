@@ -392,7 +392,7 @@ function DeployWizardModal({
           </div>
         )}
 
-        <div className="flex justify-between gap-2 pt-1">
+        <div data-sheet-footer className="flex justify-between gap-2 pt-1">
           <div>
             {step > 1 && step < 4 && (
               <Button type="button" variant="outline" onClick={handleBack}>

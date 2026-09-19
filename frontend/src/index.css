@@ -202,6 +202,72 @@
 }
 
 /* ---------------------------------------------------------------------------
+   Mobile bottom sheets (docs/plans/1.5.1-mobile.md §3). Modal, ConfirmDialog,
+   HelpDrawer (components/mobile/BottomSheet.jsx) and ui/dialog.jsx carry
+   these classes; the rules only apply below the `md` breakpoint so desktop
+   dialogs are untouched.
+   - .sheet-panel   fields 44px tall, 16px text (iOS doesn't zoom on focus)
+   - .sheet-body    scrolling body; a `[data-sheet-footer]` row inside it (a
+                    form's buttons) sticks to the bottom as the sheet footer
+   - .sheet-footer  the sheet's own footer
+   Footer buttons fill the width and wrap (stack) when they don't fit; the
+   primary action stays last (on the right).
+   --------------------------------------------------------------------------- */
+@layer components {
+  @media (max-width: 767px) {
+    .sheet-panel :is(input:not([type='checkbox']):not([type='radio']):not([type='range']):not([type='file']):not([type='color']), select) {
+      min-height: 2.75rem;
+      font-size: 1rem;
+    }
+    .sheet-panel textarea {
+      font-size: 1rem;
+    }
+    .sheet-panel :is(button[role='combobox'], .field-soft) {
+      min-height: 2.75rem;
+    }
+    .sheet-body {
+      padding-bottom: 1rem;
+    }
+    .sheet-body.sheet-body-last {
+      padding-bottom: max(1rem, env(safe-area-inset-bottom));
+    }
+    .sheet-body:has([data-sheet-footer]) {
+      padding-bottom: 0;
+    }
+    .sheet-body [data-sheet-footer] {
+      position: sticky;
+      bottom: 0;
+      z-index: 10;
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.5rem;
+      margin: 1rem -1rem 0;
+      border-top: 1px solid hsl(var(--border));
+      background-color: hsl(var(--card));
+      padding: 0.75rem 1rem max(0.75rem, env(safe-area-inset-bottom));
+    }
+    .sheet-footer {
+      padding-bottom: max(0.75rem, env(safe-area-inset-bottom));
+    }
+    .sheet-footer > div {
+      flex-wrap: wrap;
+      gap: 0.5rem;
+    }
+    /* Nested button groups (e.g. [Back] … [Cancel][Save]) flatten into the
+       one footer row so every button gets the same full-width treatment. */
+    :is(.sheet-footer > div, .sheet-body [data-sheet-footer]) > div {
+      display: contents;
+    }
+    :is(.sheet-footer, .sheet-body [data-sheet-footer]) button:not([role='checkbox']):not([role='switch']) {
+      min-height: 2.75rem;
+      flex: 1 1 0%;
+      min-width: fit-content;
+      justify-content: center;
+    }
+  }
+}
+
+/* ---------------------------------------------------------------------------
    Auth pages (Fey-style): near-black canvas, a soft coloured aura behind the
    form, gradient headline, cards flattened so the form floats, pill fields
    and pill buttons. Scoped to `.auth-fey` (AuthShell).

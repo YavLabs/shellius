@@ -66,7 +66,7 @@ function DeleteRoleDialog({ open, onClose, role, roles, policyRefs = 0, onDelete
             {policyRefs} access polic{policyRefs === 1 ? 'y targets' : 'ies target'} this role. They’ll stop applying to it.
           </div>
         )}
-        <div className="flex justify-end gap-2">
+        <div data-sheet-footer className="flex justify-end gap-2">
           <Button type="button" variant="outline" onClick={onClose}>
             Cancel
           </Button>
