@@ -445,6 +445,11 @@ aside a[aria-current='page'] {
 .bg-brand-gradient {
   background-image: var(--brand-gradient);
 }
+/* Wordmark cursor bar: exactly the capital height (0.7em fallback). */
+.wordmark-bar {
+  height: 0.7em;
+  height: 1cap;
+}
 .text-brand-gradient {
   background-image: var(--brand-gradient);
   -webkit-background-clip: text;

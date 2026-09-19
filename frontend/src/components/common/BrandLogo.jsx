@@ -80,11 +80,13 @@ export function BrandWordmark({ compact = false, className = '', nudge = false }
     return <span className={`font-brand font-bold leading-none tracking-[-0.02em] text-foreground ${className}`}>{BRAND_NAME}</span>;
   }
   return (
-    <span className={`inline-flex items-center font-brand font-bold uppercase leading-none tracking-[-0.02em] text-foreground ${className}`} aria-label={BRAND_NAME}>
+    // Baseline-aligned so the cursor bar (exactly cap height, .wordmark-bar)
+    // sits on the letters' baseline and tops out with them.
+    <span className={`inline-flex items-baseline font-brand font-bold uppercase leading-none tracking-[-0.02em] text-foreground ${className}`} aria-label={BRAND_NAME}>
       <span aria-hidden="true" className={n}>SHELL</span>
       <span
         aria-hidden="true"
-        className={`bg-brand-gradient mx-[0.07em] inline-block h-[0.72em] w-[0.34em] rounded-[0.05em] ${n}`}
+        className={`wordmark-bar bg-brand-gradient mx-[0.07em] inline-block w-[0.34em] rounded-[0.05em] ${n}`}
       />
       <span aria-hidden="true" className={n}>US</span>
     </span>
