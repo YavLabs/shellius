@@ -9,6 +9,10 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 Tracked here as work lands on `main`; moved into a dated section on release
 (`node scripts/version.mjs bump <major|minor|patch>`).
 
+### Fixed
+
+- Just-in-time Linux accounts (a policy's OS provisioning: groups, sudo, ACLs) were never provisioned. Building the provisioning manifest failed on every certificate check, and allocating the account's Linux UID failed on a Postgres type mismatch. Both are fixed, and access without OS provisioning is unaffected.
+
 ## [1.4.0] - 2026-09-19
 
 ### Changed

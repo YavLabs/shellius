@@ -139,7 +139,7 @@ export async function buildManifest({ accessRequestId }) {
     // simple — full policy evaluation already happened at approval time.
     const policies = await prisma.accessPolicy.findMany({
       where: {
-        orgId: ar.user.orgId,
+        orgId: ar.requester.orgId,
         isActive: true,
         effect: 'ALLOW',
       },
@@ -152,8 +152,8 @@ export async function buildManifest({ accessRequestId }) {
     if (!active) return null;
 
     const os = active.osProvisioning || {};
-    const uid = await jitUidService.getOrAllocateUid(ar.user.orgId, ar.user.id);
-    const linuxUser = `${sanitizedBase(ar.user)}_jit`;
+    const uid = await jitUidService.getOrAllocateUid(ar.requester.orgId, ar.requester.id);
+    const linuxUser = `${sanitizedBase(ar.requester)}_jit`;
     const ttlSeconds = Math.max(0, Math.floor((ar.expiresAt.getTime() - Date.now()) / 1000));
 
     return {

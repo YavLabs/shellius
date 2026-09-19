@@ -50,7 +50,9 @@ export async function getOrAllocateUid(orgId, userId) {
     // advisory-lock users in the codebase.
     const classifier = 0x4a495455; // "JITU"
     const lockKey = hashOrgId(orgId);
-    await tx.$executeRawUnsafe(`SELECT pg_advisory_xact_lock($1, $2)`, classifier, lockKey);
+    // Cast explicitly: Prisma binds JS numbers as bigint, and Postgres only
+    // has pg_advisory_xact_lock(int4, int4) / (int8) — not (int8, int8).
+    await tx.$executeRawUnsafe(`SELECT pg_advisory_xact_lock($1::int4, $2::int4)`, classifier, lockKey);
 
     // Re-check inside the txn to avoid double-allocation if another
     // caller beat us to the lock.
