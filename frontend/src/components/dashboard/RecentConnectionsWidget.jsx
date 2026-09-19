@@ -70,9 +70,9 @@ function untilText(date) {
 }
 
 const btnPrimary =
-  'inline-flex h-7 min-w-[5.5rem] shrink-0 items-center justify-center gap-1 rounded-md bg-primary px-2.5 text-xs font-medium text-primary-foreground transition-colors hover:bg-primary/90 disabled:opacity-60';
+  'inline-flex h-9 min-w-[5.5rem] shrink-0 items-center justify-center gap-1 rounded-md bg-primary md:h-7 px-2.5 text-xs font-medium text-primary-foreground transition-colors hover:bg-primary/90 disabled:opacity-60';
 const btnSecondary =
-  'inline-flex h-7 min-w-[5.5rem] shrink-0 items-center justify-center gap-1 rounded-md border border-border px-2.5 text-xs font-medium text-foreground transition-colors hover:bg-accent disabled:opacity-60';
+  'inline-flex h-9 min-w-[5.5rem] shrink-0 items-center justify-center gap-1 rounded-md border md:h-7 border-border px-2.5 text-xs font-medium text-foreground transition-colors hover:bg-accent disabled:opacity-60';
 
 function RowMenu({ label, children }) {
   return (
@@ -81,7 +81,7 @@ function RowMenu({ label, children }) {
         <button
           type="button"
           aria-label={label}
-          className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground"
+          className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground md:h-7 md:w-7"
         >
           <MoreHorizontal className="h-3.5 w-3.5" />
         </button>
@@ -113,7 +113,8 @@ function SectionHeader({ icon: Icon, title, hint, count, viewAllTo }) {
 // corner dot says its state.
 function Row({ icon: Icon, iconTone = 'text-muted-foreground', dot, title, badges, sub, actions }) {
   return (
-    <li className="flex items-center gap-3 border-b border-border/70 py-2.5 last:border-0">
+    // Mobile: the actions wrap under the text so names aren't squeezed.
+    <li className="flex flex-wrap items-start gap-x-3 gap-y-2 border-b border-border/70 py-3 last:border-0 md:flex-nowrap md:items-center md:py-2.5">
       <span className="relative flex h-7 w-7 shrink-0 items-center justify-center rounded-md bg-muted" aria-hidden="true">
         <Icon className={cn('h-3.5 w-3.5', iconTone)} />
         {dot && <span className={cn('absolute -bottom-0.5 -right-0.5 h-2 w-2 rounded-full ring-2 ring-card', dot)} />}
@@ -123,9 +124,9 @@ function Row({ icon: Icon, iconTone = 'text-muted-foreground', dot, title, badge
           {title}
           {badges}
         </div>
-        {sub && <p className="mt-0.5 truncate text-[11px] text-muted-foreground">{sub}</p>}
+        {sub && <p className="mt-0.5 break-words text-[11px] text-muted-foreground md:truncate">{sub}</p>}
       </div>
-      <div className="flex shrink-0 items-center gap-1">{actions}</div>
+      <div className="ml-10 flex shrink-0 basis-[calc(100%-2.5rem)] items-center gap-1 md:ml-0 md:basis-auto">{actions}</div>
     </li>
   );
 }
@@ -315,10 +316,10 @@ export function RecentConnections({ variant = 'widget' }) {
     <div className={cn('flex flex-col rounded-lg border border-border bg-card p-5', !isPage && 'h-full')}>
       <div className="mb-3 flex flex-wrap items-start justify-between gap-2">
         {isPage ? (
-          <div className="flex min-w-0 flex-1 flex-wrap items-center gap-2">
-            <div className="relative w-full max-w-xs">
+          <div className="flex min-w-0 flex-1 basis-full flex-wrap items-center gap-2 md:basis-0">
+            <div className="relative w-full md:max-w-xs">
               <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
-              <Input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search servers, hosts, users…" className="h-8 pl-8 text-sm" />
+              <Input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search servers, hosts, users…" className="h-11 pl-8 text-base md:h-8 md:text-sm" />
             </div>
             <div className="inline-flex rounded-md border border-border p-0.5" role="group" aria-label="Type">
               {KIND_FILTERS.filter((f) => f.id !== 'qc' || qcAllowed).map((f) => (
@@ -327,7 +328,7 @@ export function RecentConnections({ variant = 'widget' }) {
                   type="button"
                   aria-pressed={kind === f.id}
                   onClick={() => setKind(f.id)}
-                  className={cn('h-7 rounded px-2.5 text-xs font-medium', kind === f.id ? 'bg-accent text-foreground' : 'text-muted-foreground hover:text-foreground')}
+                  className={cn('h-9 whitespace-nowrap rounded px-2.5 text-xs font-medium md:h-7', kind === f.id ? 'bg-accent text-foreground' : 'text-muted-foreground hover:text-foreground')}
                 >
                   {f.label}
                 </button>
@@ -340,7 +341,7 @@ export function RecentConnections({ variant = 'widget' }) {
                   type="button"
                   aria-pressed={days === d}
                   onClick={() => setDays(d)}
-                  className={cn('h-7 rounded px-2.5 text-xs font-medium', days === d ? 'bg-accent text-foreground' : 'text-muted-foreground hover:text-foreground')}
+                  className={cn('h-9 whitespace-nowrap rounded px-2.5 text-xs font-medium md:h-7', days === d ? 'bg-accent text-foreground' : 'text-muted-foreground hover:text-foreground')}
                 >
                   {d} days
                 </button>

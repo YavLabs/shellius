@@ -27,6 +27,10 @@ import { useAuth } from '@/context/AuthContext';
 import { relativeTime, formatDateTime } from '@/utils/time';
 import { formatLabel } from '@/utils/format';
 import { can } from '@/lib/permissions';
+import useIsMobile from '@/hooks/useIsMobile';
+import { MobileCard, MobileCardList, MobileCardSkeleton, MobileEmptyCard } from '@/components/mobile/MobileCard';
+import { MobileFiltersButton, MobilePager, MobileSearch } from '@/components/mobile/MobileListControls';
+import Avatar from '@/components/ui/Avatar';
 
 // ---------------------------------------------------------------------------
 // Action category configuration
@@ -121,6 +125,7 @@ function MetadataPanel({ metadata }) {
 function AuditLog() {
   const { user } = useAuth();
   const canExport = can(user, 'audit.export');
+  const isMobile = useIsMobile();
 
   const [items, setItems] = useState([]);
   const [total, setTotal] = useState(0);
@@ -262,6 +267,151 @@ function AuditLog() {
     },
   ];
 
+  // Mobile: the non-search filters, stacked in the Filters sheet.
+  const mobileFilterCount = [actionFilter, resourceTypeFilter, actorSearch, startDate, endDate].filter(Boolean).length;
+  const dateInputCls =
+    'flex h-11 w-full rounded-md border border-input bg-background px-3 py-2 text-base text-foreground focus:outline-none focus:ring-2 focus:ring-ring';
+  const mobileFilters = (
+    <>
+      <div>
+        <label className="mb-1 block text-xs text-muted-foreground">Action</label>
+        <SearchableSelect
+          value={actionFilter}
+          onChange={(v) => handleFilterChange(setActionFilter)(v)}
+          searchable={false}
+          clearable={false}
+          options={[
+            { value: '', label: 'All actions' },
+            ...Object.entries(ACTION_CATEGORIES).flatMap(([, cat]) =>
+              cat.actions.map((action) => ({ value: action, label: formatLabel(action) }))
+            ),
+          ]}
+        />
+      </div>
+      <div>
+        <label className="mb-1 block text-xs text-muted-foreground">Resource type</label>
+        <SearchableSelect
+          value={resourceTypeFilter}
+          onChange={(v) => handleFilterChange(setResourceTypeFilter)(v)}
+          placeholder="All types"
+          searchable={false}
+          clearable={false}
+          options={[{ value: '', label: 'All types' }, ...RESOURCE_TYPES.map((t) => ({ value: t, label: t }))]}
+        />
+      </div>
+      <div>
+        <label className="mb-1 block text-xs text-muted-foreground">Actor ID</label>
+        <Input
+          type="text"
+          value={actorSearch}
+          onChange={(e) => handleFilterChange(setActorSearch)(e.target.value)}
+          placeholder="User ID..."
+          className="h-11 text-base"
+        />
+      </div>
+      <div className="grid grid-cols-2 gap-3">
+        <div className="min-w-0">
+          <label className="mb-1 block text-xs text-muted-foreground">From</label>
+          <input type="date" value={startDate} onChange={(e) => handleFilterChange(setStartDate)(e.target.value)} className={dateInputCls} />
+        </div>
+        <div className="min-w-0">
+          <label className="mb-1 block text-xs text-muted-foreground">To</label>
+          <input type="date" value={endDate} onChange={(e) => handleFilterChange(setEndDate)(e.target.value)} className={dateInputCls} />
+        </div>
+      </div>
+    </>
+  );
+
+  const mobileList = (
+    <div className="space-y-3">
+      <MobileSearch
+        value={search}
+        onChange={(v) => handleFilterChange(setSearch)(v)}
+        placeholder="Search actions, resources..."
+      />
+      <div className="flex items-center gap-2">
+        <MobileFiltersButton filters={mobileFilters} activeCount={mobileFilterCount} onReset={clearFilters} />
+        {hasFilters && (
+          <Button variant="ghost" className="h-10 px-3 text-muted-foreground" onClick={clearFilters}>
+            <X className="mr-1 h-4 w-4" /> Clear
+          </Button>
+        )}
+      </div>
+      {loading ? (
+        <MobileCardSkeleton count={6} withLeading />
+      ) : items.length === 0 ? (
+        <MobileEmptyCard>No audit log entries found.</MobileEmptyCard>
+      ) : (
+        <MobileCardList>
+          {items.map((item) => {
+            const isExpanded = expandedRow === item.id;
+            const actor = item.actorId ? item.actorName || item.actorEmail || item.actorId : 'System';
+            return (
+              <MobileCard
+                key={item.id}
+                leading={<Avatar name={item.actorId ? item.actorName : 'System'} email={item.actorEmail} avatarUrl={item.actorAvatarUrl} size="md" />}
+                title={
+                  <span className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
+                    <ActionBadge action={item.action} />
+                    <span className="min-w-0 break-all text-sm">
+                      {item.resourceLabel || item.resourceType || '-'}
+                    </span>
+                  </span>
+                }
+                secondary={
+                  <span>
+                    {actor} · <span title={formatDateTime(item.createdAt)}>{relativeTime(item.createdAt)}</span>
+                  </span>
+                }
+                meta={[
+                  item.ipAddress ? (
+                    <span key="ip" className="font-mono text-xs text-muted-foreground">{item.ipAddress}</span>
+                  ) : null,
+                  <span key="more" className="inline-flex items-center gap-1 text-xs text-muted-foreground">
+                    {isExpanded ? <ChevronUp className="h-3.5 w-3.5" /> : <ChevronDown className="h-3.5 w-3.5" />}
+                    {isExpanded ? 'Hide details' : 'Details'}
+                  </span>,
+                ]}
+                onClick={() => setExpandedRow(isExpanded ? null : item.id)}
+              >
+                {isExpanded && (
+                  <div className="mt-3 space-y-1 border-t border-border pt-3" onClick={(e) => e.stopPropagation()}>
+                    <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Full timestamp</p>
+                    <p className="mb-3 font-mono text-xs text-foreground">{formatDateTime(item.createdAt)}</p>
+                    {item.actorId && (
+                      <>
+                        <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Actor ID</p>
+                        <p className="mb-3 break-all font-mono text-xs text-foreground">{item.actorId}</p>
+                      </>
+                    )}
+                    {item.resourceId && (
+                      <>
+                        <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Resource ID</p>
+                        <p className="mb-3 break-all font-mono text-xs text-foreground">{item.resourceId}</p>
+                      </>
+                    )}
+                    <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Metadata</p>
+                    <MetadataPanel metadata={item.metadata} />
+                  </div>
+                )}
+              </MobileCard>
+            );
+          })}
+        </MobileCardList>
+      )}
+      {!loading && (
+        <MobilePager
+          page={page}
+          totalPages={totalPages}
+          startRow={total === 0 ? 0 : (page - 1) * pageSize + 1}
+          endRow={Math.min(page * pageSize, total)}
+          total={total}
+          onPage={(p) => { setPage(Math.max(1, Math.min(totalPages, p))); setExpandedRow(null); }}
+        />
+      )}
+    </div>
+  );
+
   // Build the filter JSX for the DataTable filters slot
   const filterSlot = (
     <div className="space-y-3 rounded-lg border border-border bg-card p-4 w-full">
@@ -385,7 +535,7 @@ function AuditLog() {
       </PageHeader>
 
       {/* Filter panel (not inside DataTable — rendered as a standalone block) */}
-      {filterSlot}
+      {!isMobile && filterSlot}
 
       {error && (
         <div className="rounded-md border border-destructive/50 bg-destructive/10 px-3 py-2 text-sm text-destructive">
@@ -393,7 +543,10 @@ function AuditLog() {
         </div>
       )}
 
+      {isMobile && mobileList}
+
       {/* Bespoke table with expand-row support */}
+      {!isMobile && (<>
       <div className="overflow-hidden rounded-lg border border-border bg-card">
         <div className="overflow-x-auto">
           <table className="w-full border-collapse text-sm">
@@ -528,6 +681,7 @@ function AuditLog() {
         onPageChange={setPage}
         onPageSizeChange={(size) => { setPageSize(size); setPage(1); }}
       />
+      </>)}
     </div>
   );
 }

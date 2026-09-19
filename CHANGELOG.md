@@ -9,6 +9,13 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 Tracked here as work lands on `main`; moved into a dated section on release
 (`node scripts/version.mjs bump <major|minor|patch>`).
 
+### Changed
+
+- **Lists on phones are cards instead of tables.** Below 768px wide, every list (Servers, Customers, a customer's servers, Access requests, Policies, Certificates, Sessions, Notifications, My hosts, Keystore identities and keys, Users, Groups, Audit log, Bulk import) shows one card per row: an icon or avatar, the name, a line of detail and up to three badges. Tapping a card does what clicking the row does. The row's main action (Connect, Quick Connect, Request access) is a button on the card and the rest are in the "⋯" menu, with the same permissions as before.
+- On phones, search is full width, filters open in a sheet from a "Filters" button that shows how many are set, and sorting is a "Sort" menu. Long lists end with "Load more" or previous/next page buttons. Selecting servers shows the bulk actions in a bar at the bottom of the screen.
+- The role matrix on phones lists each permission by area with the roles that hold it. Recent connections, the Roles list and key exports have larger touch targets and no longer squeeze names on narrow screens.
+- Desktop and tablet layouts are unchanged.
+
 ### Fixed
 
 - The cursor bar in the email logo sits on the same baseline as the letters. It was a separate table cell, so it sat lower in some mail clients.

@@ -12,6 +12,7 @@ import ConfirmDialog from '@/components/shared/ConfirmDialog';
 import CertStatusBadge from '@/components/shared/CertStatusBadge';
 import EnvironmentBadge from '@/components/shared/EnvironmentBadge';
 import UserCell from '@/components/shared/UserCell';
+import Avatar from '@/components/ui/Avatar';
 import { Badge } from '@/components/ui/badge';
 import PageHeader from '@/components/common/PageHeader';
 import { Button } from '@/components/ui/button';
@@ -224,6 +225,11 @@ function Certificates() {
       key: 'serial',
       label: 'Serial',
       sortable: true,
+      mobile: {
+        slot: 'secondary',
+        order: 2,
+        render: (r) => (r.serial ? <span className="font-mono">#{r.serial.slice(0, 12)}{r.serial.length > 12 ? '…' : ''}</span> : null),
+      },
       render: (r) => (
         <span className="font-mono text-xs text-muted-foreground">
           {r.serial ? r.serial.slice(0, 16) + (r.serial.length > 16 ? '…' : '') : '-'}
@@ -235,6 +241,7 @@ function Certificates() {
       label: 'Issued to',
       sortable: true,
       searchAccessor: (r) => `${r.issuedTo?.name || ''} ${r.issuedTo?.email || ''}`,
+      mobile: { slot: 'secondary', order: 1, render: (r) => r.issuedTo?.name || r.issuedTo?.email || r.userId },
       render: (r) => <UserCell user={r.issuedTo} subtitle={r.issuedTo?.email || r.userId} />,
     },
     {
@@ -242,6 +249,15 @@ function Certificates() {
       label: 'Server',
       sortable: true,
       searchAccessor: (r) => `${r.issuedFor?.hostname || ''} ${r.issuedFor?.environment || ''}`,
+      mobile: {
+        slot: 'title',
+        render: (r) => (
+          <span className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
+            <span className="min-w-0 break-all">{r.issuedFor?.hostname || 'Any server'}</span>
+            {r.issuedFor?.environment && <EnvironmentBadge environment={r.issuedFor.environment} />}
+          </span>
+        ),
+      },
       render: (r) =>
         r.issuedFor ? (
           <span className="flex items-center gap-2">
@@ -256,6 +272,7 @@ function Certificates() {
       key: 'principals',
       label: 'Principals',
       hideBelow: 'md',
+      mobile: { slot: 'meta', order: 3 },
       render: (r) => {
         const list = Array.isArray(r.principals) ? r.principals : [];
         const display = list.slice(0, 3).join(', ');
@@ -272,6 +289,7 @@ function Certificates() {
       key: 'validBefore',
       label: 'Valid until',
       sortable: true,
+      mobile: { slot: 'meta', order: 2 },
       render: (r) => <ExpiryPill validBefore={r.validBefore} />,
     },
     {
@@ -279,6 +297,7 @@ function Certificates() {
       label: 'Status',
       sortable: true,
       searchAccessor: (r) => r.status || '',
+      mobile: { slot: 'meta', order: 1 },
       render: (r) => <CertStatusBadge status={r.status} />,
     },
     {
@@ -333,6 +352,10 @@ function Certificates() {
         emptyMessage="No certificates found"
         searchPlaceholder="Search by user, server, or serial..."
         filters={filterSlot}
+        mobile={{
+          onCardClick: (r) => setDetailCert(r),
+          leading: (r) => <Avatar name={r.issuedTo?.name} email={r.issuedTo?.email} avatarUrl={r.issuedTo?.avatarUrl} size="md" />,
+        }}
         serverPagination={{
           page,
           total,

@@ -12,6 +12,7 @@ import {
   AlertTriangle,
 } from 'lucide-react';
 import DataTable from '@/components/shared/DataTable';
+import { CardIcon } from '@/components/mobile/MobileCard';
 import ConfirmDialog from '@/components/shared/ConfirmDialog';
 import EmptyState from '@/components/ui/EmptyState';
 import PageHeader from '@/components/common/PageHeader';
@@ -187,6 +188,15 @@ function MyHosts() {
       label: 'Name',
       sortable: true,
       searchAccessor: (r) => `${r.name} ${r.host} ${r.username || ''} ${r.credential?.username || ''}`,
+      mobile: {
+        slot: 'title',
+        render: (r) => (
+          <span className="flex min-w-0 items-center gap-1.5">
+            <span className="min-w-0 break-words">{r.name}</span>
+            <Lock className="h-3 w-3 shrink-0 text-muted-foreground" aria-label="Private" />
+          </span>
+        ),
+      },
       render: (r) => (
         <div>
           <span className="flex items-center gap-1.5 font-medium text-foreground">
@@ -202,6 +212,16 @@ function MyHosts() {
     {
       key: 'host',
       label: 'Host',
+      mobile: {
+        slot: 'secondary',
+        render: (r) => (
+          <span className="break-all font-mono">
+            {r.username || r.credential?.username ? `${r.username || r.credential?.username}@` : ''}
+            {r.host}
+            {r.port && r.port !== 22 ? `:${r.port}` : ''}
+          </span>
+        ),
+      },
       render: (r) => (
         <span className="font-mono text-xs text-muted-foreground">
           {r.host}
@@ -220,6 +240,19 @@ function MyHosts() {
       key: 'identity',
       label: 'Identity',
       hideBelow: 'md',
+      mobile: {
+        slot: 'meta',
+        order: 1,
+        render: (r) =>
+          r.credential ? (
+            <span className="flex min-w-0 items-center gap-1.5">
+              <span className="truncate">{r.credential.name}</span>
+              <ScopeBadge scope={r.credential.scope} />
+            </span>
+          ) : (
+            'Ask each time'
+          ),
+      },
       render: (r) =>
         r.credential ? (
           <span className="flex items-center gap-1.5">
@@ -235,6 +268,7 @@ function MyHosts() {
       label: 'Last connected',
       sortable: true,
       hideBelow: 'lg',
+      mobile: { slot: 'meta', order: 2 },
       render: (r) => (
         <span className="flex items-center gap-1.5 text-xs text-muted-foreground" title={formatDateTime(r.lastConnectedAt)}>
           {r.lastConnectedAt ? relativeTime(r.lastConnectedAt) : 'Never'}
@@ -246,6 +280,7 @@ function MyHosts() {
       key: 'hostKey',
       label: 'Host key',
       hideBelow: 'lg',
+      mobile: { slot: 'meta', order: 3, render: (r) => (r.hostKeyFingerprint ? 'Key pinned' : null) },
       render: (r) =>
         r.hostKeyFingerprint ? (
           <span
@@ -263,6 +298,7 @@ function MyHosts() {
       key: 'connect',
       label: '',
       className: 'w-32',
+      mobile: 'action',
       render: (r) => (
         <Button size="sm" className="gap-1.5" disabled={connectingId === r.id} onClick={() => handleConnect(r)}>
           {connectingId === r.id ? (
@@ -368,6 +404,7 @@ function MyHosts() {
           loading={loading}
           searchPlaceholder="Search your hosts..."
           emptyMessage="No hosts match your search"
+          mobile={{ leading: () => <CardIcon icon={TerminalIcon} /> }}
         />
       )}
 

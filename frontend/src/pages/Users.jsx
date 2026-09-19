@@ -21,6 +21,7 @@ import DataTable from '@/components/shared/DataTable';
 import { Badge } from '@/components/ui/badge';
 import { roleTone, statusTone } from '@/lib/badgeTones';
 import UserCell from '@/components/shared/UserCell';
+import Avatar from '@/components/ui/Avatar';
 import Modal from '@/components/shared/Modal';
 import ConfirmDialog from '@/components/shared/ConfirmDialog';
 import DeleteUserDialog from '@/components/users/DeleteUserDialog';
@@ -314,6 +315,15 @@ function Users() {
       label: 'Name',
       sortable: true,
       searchAccessor: (r) => `${r.name || ''} ${r.email || ''}`,
+      mobile: {
+        slot: 'title',
+        render: (r) => (
+          <span className="block min-w-0">
+            <span className="block truncate">{r.name || r.email}</span>
+            {r.name && <span className="block truncate text-xs font-normal text-muted-foreground">{r.email}</span>}
+          </span>
+        ),
+      },
       render: (r) => <UserCell user={r} />,
     },
     {
@@ -321,6 +331,7 @@ function Users() {
       label: 'Role',
       sortable: true,
       searchAccessor: (r) => r.roleInfo?.name || r.role || '',
+      mobile: { slot: 'meta', order: 1 },
       render: (r) => (
         <Badge tone={roleTone(r.role).tone}>{r.roleInfo?.name || roleTone(r.role).label}</Badge>
       ),
@@ -330,6 +341,7 @@ function Users() {
       label: 'Status',
       sortable: true,
       searchAccessor: (r) => r.status || '',
+      mobile: { slot: 'meta', order: 2 },
       render: (r) => (
         <div className="flex flex-wrap items-center gap-1.5">
           <Badge tone={statusTone(r.status).tone}>{statusTone(r.status).label}</Badge>
@@ -345,6 +357,16 @@ function Users() {
       key: 'mfa',
       label: 'MFA',
       hideBelow: 'md',
+      mobile: {
+        slot: 'meta',
+        order: 3,
+        render: (r) =>
+          r.mfaEnabled ? (
+            <span className="inline-flex items-center gap-1 text-emerald-600 dark:text-emerald-400">
+              <ShieldCheck className="h-3.5 w-3.5" /> MFA
+            </span>
+          ) : null,
+      },
       render: (r) =>
         r.mfaEnabled ? (
           <span className="inline-flex items-center gap-1 text-xs font-medium text-emerald-600 dark:text-emerald-400">
@@ -364,6 +386,10 @@ function Users() {
       key: 'lastLogin',
       label: 'Last login',
       hideBelow: 'lg',
+      mobile: {
+        slot: 'secondary',
+        render: (r) => (r.lastLoginAt || r.lastLogin ? `Last login ${formatDate(r.lastLoginAt || r.lastLogin)}` : 'Never signed in'),
+      },
       render: (r) => <span className="text-muted-foreground">{formatDate(r.lastLoginAt || r.lastLogin)}</span>,
     },
     {
@@ -457,6 +483,14 @@ function Users() {
         emptyMessage="No users found"
         searchPlaceholder="Search by name or email..."
         filters={filterSlot}
+        onResetFilters={() => { setRole(''); setStatus(''); setPage(1); }}
+        mobile={{
+          leading: (r) => <Avatar name={r.name} email={r.email} avatarUrl={r.avatarUrl} size="md" />,
+          onCardClick:
+            can('users.update') || can('users.assign_role') || can('users.suspend')
+              ? (r) => manageable(r) && openEdit(r)
+              : undefined,
+        }}
         serverPagination={{
           page,
           total,

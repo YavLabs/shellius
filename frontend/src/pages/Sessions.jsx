@@ -16,6 +16,7 @@ import ServerName, { serverSearchString } from '@/components/shared/ServerName';
 import Badge from '@/components/shared/Badge';
 import EnvironmentBadge from '@/components/shared/EnvironmentBadge';
 import UserCell from '@/components/shared/UserCell';
+import Avatar from '@/components/ui/Avatar';
 import Modal from '@/components/shared/Modal';
 import ConfirmDialog from '@/components/shared/ConfirmDialog';
 import SessionPlayer from '@/components/sessions/SessionPlayer';
@@ -527,6 +528,17 @@ function Sessions() {
       sortable: true,
       searchAccessor: (r) =>
         r.server ? serverSearchString(r.server) : `${r.targetUser || ''} ${r.targetHost || r.host || ''}`,
+      mobile: {
+        slot: 'title',
+        render: (r) => (
+          <span className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
+            <span className="min-w-0 break-all">
+              <SessionTarget session={r} />
+            </span>
+            {r.server?.environment && <EnvironmentBadge environment={r.server.environment} />}
+          </span>
+        ),
+      },
       render: (r) => (
         <div className="flex items-center gap-2">
           <SessionTarget session={r} />
@@ -565,12 +577,14 @@ function Sessions() {
       label: 'User',
       sortable: true,
       searchAccessor: (r) => r.user?.name || r.user?.email || '',
+      mobile: { slot: 'secondary', order: 1, render: (r) => r.user?.name || r.user?.email || r.userId || 'Unknown user' },
       render: (r) => <UserCell user={r.user} fallback={r.userId || 'Unknown user'} />,
     },
     {
       key: 'startedAt',
       label: 'Started',
       sortable: true,
+      mobile: { slot: 'secondary', order: 2, render: (r) => relativeTime(r.startedAt) },
       render: (r) => (
         <span className="text-xs text-muted-foreground">{relativeTime(r.startedAt)}</span>
       ),
@@ -578,6 +592,11 @@ function Sessions() {
     {
       key: 'duration',
       label: 'Duration',
+      mobile: {
+        slot: 'secondary',
+        order: 3,
+        render: (r) => (r.status === 'ACTIVE' ? null : durationLabel(r.startedAt, r.endedAt)),
+      },
       render: (r) =>
         r.status === 'ACTIVE' ? (
           <span className="text-xs font-medium text-emerald-600 dark:text-emerald-400">Active</span>
@@ -592,18 +611,32 @@ function Sessions() {
       label: 'Status',
       sortable: true,
       searchAccessor: (r) => r.status || '',
+      mobile: { slot: 'meta', order: 1 },
       render: (r) => <SessionStatusBadge status={r.status} />,
     },
     {
       key: 'authMethod',
       label: 'Auth',
       hideBelow: 'md',
+      mobile: { slot: 'meta', order: 2 },
       render: (r) => <AuthMethodBadge authMethod={r.authMethod} />,
     },
     {
       key: 'clientIp',
       label: 'Client IP',
       hideBelow: 'lg',
+      mobile: {
+        slot: 'meta',
+        order: 3,
+        render: (r) =>
+          (r.recordingKey || r.recordingPath) && can(user, 'sessions.view_recordings') ? (
+            <span className="inline-flex items-center gap-1">
+              <Film className="h-3.5 w-3.5" /> Recorded
+            </span>
+          ) : r.clientIp ? (
+            <span className="font-mono">{r.clientIp}</span>
+          ) : null,
+      },
       render: (r) => (
         <span className="font-mono text-xs text-muted-foreground">{r.clientIp || '-'}</span>
       ),
@@ -616,6 +649,7 @@ function Sessions() {
         {
           label: 'Connect',
           icon: TerminalIcon,
+          primary: true,
           hidden: (r) => !isOwnActiveSession(r, user),
           onClick: (r) => sessionConnect.connect(r),
         },
@@ -679,6 +713,10 @@ function Sessions() {
         emptyMessage={activeTab === 'active' ? 'No active sessions.' : 'No sessions found.'}
         searchPlaceholder="Search server or user..."
         filters={filterSlot}
+        mobile={{
+          onCardClick: (r) => openDetail(r.id),
+          leading: (r) => <Avatar name={r.user?.name} email={r.user?.email} avatarUrl={r.user?.avatarUrl} size="md" />,
+        }}
         serverPagination={{
           page,
           total,

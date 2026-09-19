@@ -21,6 +21,7 @@ import {
 import SearchableSelect from '@/components/ui/SearchableSelect';
 import { Badge } from '@/components/ui/badge';
 import { statusTone } from '@/lib/badgeTones';
+import { MobileCard, MobileCardList, MobileEmptyCard } from '@/components/mobile/MobileCard';
 
 const ENTITY_TYPES = [
   { value: '', label: 'Auto-detect (JSON object / ZIP)' },
@@ -246,8 +247,56 @@ function BulkImport() {
             </div>
           )}
 
+          {/* Rows — cards on mobile */}
+          <div className="md:hidden">
+            {rows.length === 0 ? (
+              <MobileEmptyCard>
+                No rows were parsed. For a single CSV, pick the matching{' '}
+                <span className="font-medium text-foreground">File type</span> above and re-upload — “Auto-detect”
+                only works for JSON objects and ZIP packages.
+              </MobileEmptyCard>
+            ) : (
+              <MobileCardList>
+                {rows.map((r) => (
+                  <MobileCard
+                    key={r.id}
+                    title={
+                      <span className="break-all font-mono text-[13px]">
+                        {r.raw?.name || r.raw?.hostname || r.raw?.email || r.raw?.group || '—'}
+                      </span>
+                    }
+                    secondary={<span className="capitalize">{r.entity}</span>}
+                    meta={[
+                      <Badge key="action" tone={ACTION_TONE[r.action] || 'neutral'}>
+                        {r.action === 'conflict' ? `conflict → ${r.decision}` : r.action}
+                      </Badge>,
+                    ]}
+                    actions={
+                      r.action === 'conflict' ? (
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          className="h-10"
+                          onClick={() => setRowDecision(r.id, r.decision === 'overwrite' ? 'skip' : 'overwrite')}
+                        >
+                          {r.decision === 'overwrite' ? 'Switch to skip' : 'Switch to overwrite'}
+                        </Button>
+                      ) : null
+                    }
+                  >
+                    {((r.action === 'error' && r.error) || ((r.action === 'create' || r.action === 'conflict') && r.conflictReason)) && (
+                      <p className={`mt-2 break-words text-xs ${r.action === 'error' ? 'text-destructive' : 'text-muted-foreground'}`}>
+                        {r.action === 'error' ? r.error : r.conflictReason}
+                      </p>
+                    )}
+                  </MobileCard>
+                ))}
+              </MobileCardList>
+            )}
+          </div>
+
           {/* Rows table */}
-          <div className="overflow-hidden rounded-lg border border-border">
+          <div className="hidden overflow-hidden rounded-lg border border-border md:block">
             <table className="w-full text-sm">
               <thead className="bg-muted/50 text-left text-xs text-muted-foreground">
                 <tr>
@@ -337,7 +386,21 @@ function BulkImport() {
           </div>
 
           {job.onboarding?.length > 0 && (
-            <div className="overflow-hidden rounded-lg border border-border">
+            <MobileCardList className="md:hidden">
+              {job.onboarding.map((o) => (
+                <MobileCard
+                  key={o.id}
+                  title={<span className="break-all font-mono text-[13px]">{o.serverRef}</span>}
+                  secondary={`${o.attempts} attempt${o.attempts === 1 ? '' : 's'}`}
+                  meta={[
+                    <Badge key="s" tone={statusTone(o.status).tone}>{ONBOARDING_LABEL[o.status] || o.status}</Badge>,
+                  ]}
+                />
+              ))}
+            </MobileCardList>
+          )}
+          {job.onboarding?.length > 0 && (
+            <div className="hidden overflow-hidden rounded-lg border border-border md:block">
               <table className="w-full text-sm">
                 <thead className="bg-muted/50 text-left text-xs text-muted-foreground">
                   <tr>

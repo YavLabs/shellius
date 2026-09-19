@@ -184,13 +184,14 @@ function Keystore() {
         </div>
       )}
 
-      <div className="flex items-center gap-1 border-b border-border">
+      {/* Mobile: tabs stay on one line (scroll inside the bar if they must). */}
+      <div className="flex items-center gap-1 overflow-x-auto border-b border-border md:overflow-visible">
         {TABS.map((tab) => (
           <button
             key={tab.key}
             onClick={() => handleTabChange(tab.key)}
             className={[
-              'relative px-4 py-2.5 text-sm font-medium transition-colors',
+              'relative shrink-0 whitespace-nowrap px-2.5 py-2.5 text-sm font-medium transition-colors md:px-4',
               activeTab === tab.key
                 ? 'border-b-2 border-primary text-foreground'
                 : 'text-muted-foreground hover:text-foreground',
