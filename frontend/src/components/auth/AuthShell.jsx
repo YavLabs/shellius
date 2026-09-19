@@ -2,18 +2,18 @@ import { useMemo } from 'react';
 import { Link } from 'react-router-dom';
 import { APP_VERSION } from '@/version';
 import useOrgName from '@/hooks/useOrgName';
-import { BrandMark } from '@/components/common/BrandLogo';
+import BrandLogo from '@/components/common/BrandLogo';
 import { cn } from '@/lib/utils';
 import FlowRing from './FlowRing';
 
-// Cool, restrained palette (indigo / blue / teal / slate violet) — an
-// org-level access tool, not a consumer app.
+// Brand palette (brand/README.txt): Sky #8FB6F5 → Lavender #B9A6F2, with
+// the deeper light-background pair #3D63B8 → #6B54C4 for contrast.
 const RINGS = [
-  { colors: ['#6366f1', '#3b82f6', '#22d3ee'], seed: 3, dur: 14 },
-  { colors: ['#0ea5e9', '#6366f1', '#8b5cf6'], seed: 11, dur: 18 },
-  { colors: ['#14b8a6', '#3b82f6', '#6366f1'], seed: 23, dur: 16 },
-  { colors: ['#8b5cf6', '#6366f1', '#0ea5e9'], seed: 37, dur: 20 },
-  { colors: ['#64748b', '#818cf8', '#38bdf8'], seed: 51, dur: 15 },
+  { colors: ['#8FB6F5', '#A7AEF4', '#B9A6F2'], seed: 3, dur: 14 },
+  { colors: ['#3D63B8', '#8FB6F5', '#B9A6F2'], seed: 11, dur: 18 },
+  { colors: ['#B9A6F2', '#8FB6F5', '#6B54C4'], seed: 23, dur: 16 },
+  { colors: ['#6B54C4', '#B9A6F2', '#8FB6F5'], seed: 37, dur: 20 },
+  { colors: ['#8FB6F5', '#6B54C4', '#B9A6F2'], seed: 51, dur: 15 },
 ];
 
 const LEGAL_LINKS = [
@@ -64,14 +64,15 @@ function AuthShell({ children, align = 'center', className, footer }) {
   return (
     <div className="auth-fey relative isolate flex min-h-screen flex-col overflow-hidden">
       <div aria-hidden="true" className="auth-backdrop -z-10">
+        <div className="brand-bloom absolute inset-0" />
         {rings.map((r, i) => (
           <FlowRing key={i} className={`auth-ring auth-ring-${i + 1}`} colors={r.colors} seed={r.seed} dur={r.dur} scale={r.scale} />
         ))}
         <div className="auth-aura" />
       </div>
       <header className="relative flex items-center px-5 pt-5">
-        <Link to="/" aria-label="Home" className="opacity-80 transition-opacity hover:opacity-100">
-          <BrandMark size="sm" />
+        <Link to="/" aria-label="Home" className="transition-opacity hover:opacity-90">
+          <BrandLogo size="sm" />
         </Link>
       </header>
       <main

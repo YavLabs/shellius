@@ -45,6 +45,14 @@ export default {
       //   lg           12px  — containers: cards, tables, modals, panels
       //   xl / 2xl     16px  — large surfaces (auth page boxes)
       //   full               — pills, avatars, switches, dots only
+      fontFamily: {
+        // Brand typography (brand/README.txt): Space Grotesk for the
+        // wordmark and headings, Manrope for product UI, JetBrains Mono for
+        // machine data. Self-hosted via @fontsource (CSP: font-src 'self').
+        brand: ['"Space Grotesk"', 'ui-sans-serif', 'system-ui', 'sans-serif'],
+        ui: ['"Manrope Variable"', 'Manrope', 'ui-sans-serif', 'system-ui', 'sans-serif'],
+        mono: ['"JetBrains Mono Variable"', '"JetBrains Mono"', 'ui-monospace', 'SFMono-Regular', 'Menlo', 'monospace'],
+      },
       borderRadius: {
         '2xl': 'calc(var(--radius) + 4px)',
         xl: 'calc(var(--radius) + 4px)',

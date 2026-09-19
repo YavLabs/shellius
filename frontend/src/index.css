@@ -206,22 +206,22 @@
    --------------------------------------------------------------------------- */
 @layer components {
   .auth-fey {
-    --auth-canvas: 0 0% 99%;
+    --auth-canvas: 228 20% 97%;
     background-color: hsl(var(--auth-canvas));
+    font-family: theme('fontFamily.ui');
   }
   .dark .auth-fey {
-    --auth-canvas: 240 8% 3.5%;
+    --auth-canvas: 240 14% 4.1%; /* Ink #09090C */
   }
 
   .auth-fey main h1 {
-    background-image: linear-gradient(90deg, #1e293b, #4f46e5 60%, #0e7490);
+    font-family: theme('fontFamily.brand');
+    font-weight: 700;
+    letter-spacing: -0.02em;
+    background-image: var(--brand-gradient);
     -webkit-background-clip: text;
     background-clip: text;
     color: transparent;
-    letter-spacing: -0.02em;
-  }
-  .dark .auth-fey main h1 {
-    background-image: linear-gradient(90deg, #e5e7eb, #a5b4fc 55%, #7dd3fc);
   }
 
   /* The form floats — no card chrome. */
@@ -244,6 +244,8 @@
   }
   .auth-fey main :is(button, a).bg-primary {
     height: 2.75rem;
+    background-image: var(--brand-gradient);
+    color: var(--brand-on-gradient);
   }
   /* Every button on the auth pages is a pill (primary, destructive,
      approve/reject, outline, icon toggles). */
@@ -340,34 +342,88 @@
    indigo accent for focus/selection, and softer borders.
    --------------------------------------------------------------------------- */
 .theme-fey {
-  --background: 240 20% 99%;
+  --background: 228 20% 97%;
+  --foreground: 229 33% 7%;
   --card: 0 0% 100%;
   --popover: 0 0% 100%;
-  --muted: 240 10% 96%;
-  --muted-foreground: 240 4% 44%;
-  --secondary: 240 10% 95.5%;
-  --accent: 240 10% 95%;
-  --border: 240 8% 91.5%;
-  --input: 240 8% 89%;
-  --ring: 239 84% 67%;
-  --field: 240 12% 97%;
-  --field-border: 240 8% 90%;
-  --brand: 239 84% 60%;
+  --muted: 228 18% 94%;
+  --muted-foreground: 223 5% 44%;
+  --secondary: 228 18% 94%;
+  --accent: 228 20% 94%;
+  --border: 228 16% 90%;
+  --input: 228 14% 87%;
+  --primary: 221 50% 48%; /* #3D63B8 */
+  --primary-foreground: 0 0% 100%;
+  --ring: 221 50% 48%;
+  --field: 228 22% 97.5%;
+  --field-border: 228 14% 88%;
+  --brand: 221 50% 48%;
 }
 .dark.theme-fey {
-  --background: 240 8% 3.5%;
-  --card: 240 6% 6%;
-  --popover: 240 6% 7.5%;
-  --muted: 240 5% 10%;
-  --muted-foreground: 240 5% 62%;
-  --secondary: 240 5% 11%;
-  --accent: 240 5% 11%;
-  --border: 240 5% 12%;
-  --input: 240 5% 15%;
-  --ring: 239 84% 67%;
-  --field: 240 5% 8.5%;
-  --field-border: 240 5% 13%;
-  --brand: 239 84% 72%;
+  --background: 240 14% 4.1%; /* Ink #09090C */
+  --foreground: 228 14% 94%; /* Light #EDEEF2 */
+  --card: 228 22% 6.5%;
+  --popover: 228 22% 8%;
+  --muted: 228 18% 10%;
+  --muted-foreground: 223 4% 56%; /* Muted #8A8D94 */
+  --secondary: 228 18% 11%;
+  --accent: 228 18% 11%;
+  --border: 228 16% 12.5%;
+  --input: 228 16% 15%;
+  --primary: 217 83% 76%; /* Sky #8FB6F5 */
+  --primary-foreground: 229 33% 7%;
+  --ring: 217 83% 76%;
+  --field: 228 20% 7.5%;
+  --field-border: 228 16% 13%;
+  --brand: 217 83% 76%;
+}
+.theme-fey body {
+  font-family: theme('fontFamily.ui');
+}
+/* Brand gradient on primary actions and "on" controls. */
+.theme-fey .bg-primary,
+.theme-fey input[type='checkbox']:checked,
+.theme-fey input[type='checkbox']:indeterminate {
+  background-image: var(--brand-gradient);
+  border-color: transparent;
+}
+.theme-fey :is(button, a).bg-primary:hover {
+  filter: brightness(1.06);
+}
+.theme-fey :is(button, a).border-input:hover {
+  border-color: hsl(var(--brand) / 0.45);
+}
+/* Faint brand ambience in the content area. */
+.app-ambient {
+  display: none;
+}
+.theme-fey .app-ambient {
+  display: block;
+}
+.theme-fey .app-ambient .brand-bloom {
+  opacity: 0.55;
+}
+.dark.theme-fey .app-ambient .brand-bloom {
+  opacity: 0.8;
+}
+.app-ring {
+  position: absolute;
+  width: var(--size);
+  height: var(--size);
+  filter: blur(60px);
+  opacity: 0.07;
+  animation: auth-drift var(--dur, 60s) ease-in-out var(--delay, 0s) infinite alternate;
+}
+.dark .app-ring {
+  opacity: 0.09;
+}
+.app-ring-1 { --size: 620px; top: -22%; right: -8%; --dx: -90px; --dy: 60px; --dur: 40s; }
+.app-ring-2 { --size: 520px; bottom: -24%; left: -6%; --dx: 80px; --dy: -50px; --dur: 46s; --delay: -12s; }
+.app-ring-3 { --size: 380px; top: 36%; left: 46%; --dx: -60px; --dy: 40px; --dur: 52s; --delay: -24s; }
+@media (prefers-reduced-motion: reduce) {
+  .app-ring {
+    animation: none;
+  }
 }
 /* Surfaces: a faint top highlight instead of a heavier border. */
 .theme-fey .bg-card.border {
@@ -375,7 +431,9 @@
 }
 /* Page titles get the auth pages' calm gradient. */
 .theme-fey main h1 {
-  background-image: linear-gradient(90deg, hsl(var(--foreground)), hsl(var(--brand)));
+  font-family: theme('fontFamily.brand');
+  letter-spacing: -0.02em;
+  background-image: var(--brand-gradient);
   -webkit-background-clip: text;
   background-clip: text;
   color: transparent;
@@ -398,4 +456,38 @@
 /* Content-area grid a touch quieter on the darker canvas. */
 .theme-fey .bg-grid {
   opacity: 0.6;
+}
+
+/* ---------------------------------------------------------------------------
+   Brand (frontend/public/brand, brand/README.txt)
+     Ink #09090C · Indigo #141A2E · Plum #241C3B · Sky #8FB6F5
+     Lavender #B9A6F2 · Light #EDEEF2 · Muted #8A8D94
+     Gradient 135° Sky → Lavender (on light: #3D63B8 → #6B54C4)
+   --------------------------------------------------------------------------- */
+:root {
+  --brand-gradient: linear-gradient(135deg, #3d63b8, #6b54c4);
+  --brand-on-gradient: #ffffff;
+  --brand-bloom-a: rgba(143, 182, 245, 0.18);
+  --brand-bloom-b: rgba(185, 166, 242, 0.16);
+}
+.dark {
+  --brand-gradient: linear-gradient(135deg, #8fb6f5, #b9a6f2);
+  --brand-on-gradient: #0b0d16;
+  --brand-bloom-a: rgba(20, 26, 46, 0.9); /* Indigo */
+  --brand-bloom-b: rgba(36, 28, 59, 0.85); /* Plum */
+}
+.bg-brand-gradient {
+  background-image: var(--brand-gradient);
+}
+.text-brand-gradient {
+  background-image: var(--brand-gradient);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+/* Ambient bloom — indigo + plum radials on ink (brand guideline 04). */
+.brand-bloom {
+  background:
+    radial-gradient(ellipse 55% 45% at 22% 28%, var(--brand-bloom-a), transparent 70%),
+    radial-gradient(ellipse 50% 45% at 78% 72%, var(--brand-bloom-b), transparent 70%);
 }

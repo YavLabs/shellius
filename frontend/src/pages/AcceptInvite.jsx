@@ -90,10 +90,7 @@ function AcceptInvite() {
     <AuthShell>
       <div className="w-full max-w-sm">
         <div className="mb-8 text-center">
-          <h1 className="text-2xl font-bold tracking-tight text-foreground">
-            {import.meta.env.VITE_BRAND_NAME || 'Shellius'}
-          </h1>
-          <p className="mt-1 text-sm text-muted-foreground">Set up your account</p>
+          <h1 className="text-3xl font-semibold">Set up your account</h1>
         </div>
 
         <div className="rounded-lg border border-border bg-card p-6 shadow-sm">

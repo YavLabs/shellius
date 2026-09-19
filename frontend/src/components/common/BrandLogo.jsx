@@ -1,4 +1,3 @@
-import { Terminal } from 'lucide-react';
 
 /**
  * BrandLogo — the canonical brand mark for Shellius (or a re-branded
@@ -29,9 +28,9 @@ import { Terminal } from 'lucide-react';
  */
 
 const SIZE_MAP = {
-  sm: { box: 'h-7 w-7 rounded-md', icon: 'h-4 w-4', text: 'text-sm' },
-  md: { box: 'h-9 w-9 rounded-lg', icon: 'h-5 w-5', text: 'text-base' },
-  lg: { box: 'h-12 w-12 rounded-lg', icon: 'h-6 w-6', text: 'text-lg' },
+  sm: { box: 'h-7 w-7 rounded-md', icon: 'h-4 w-4', mark: 'h-7 w-7', text: 'text-[17px]' },
+  md: { box: 'h-9 w-9 rounded-lg', icon: 'h-5 w-5', mark: 'h-9 w-9', text: 'text-[21px]' },
+  lg: { box: 'h-12 w-12 rounded-lg', icon: 'h-6 w-6', mark: 'h-12 w-12', text: 'text-[30px]' },
 };
 
 // Read once at module load — Vite inlines import.meta.env.* at build time.
@@ -48,57 +47,58 @@ function pickSize(size) {
  * VITE_BRAND_LOGO_SHORT_URL (preferred for compact placements) or
  * VITE_BRAND_LOGO_URL is set, otherwise the default Terminal lucide.
  */
+// Brand assets (frontend/public/brand — copied verbatim from the brand kit).
+const MARK_SRC = '/brand/shellius-mark.svg';
+
+/**
+ * BrandMark — the gradient chip (brand/shellius-mark.svg). A deployment's
+ * VITE_BRAND_LOGO_SHORT_URL / VITE_BRAND_LOGO_URL still wins.
+ */
 export function BrandMark({ size = 'md', className = '' }) {
   const s = pickSize(size);
   const src = LOGO_SHORT_URL || LOGO_URL;
-
   if (src) {
-    // Custom branded image. Render against the same primary background
-    // square so corner radius and contrast match the default mark.
     return (
-      <div
-        className={`flex shrink-0 items-center justify-center bg-primary ${s.box} ${className}`}
-      >
-        <img
-          src={src}
-          alt={BRAND_NAME}
-          className={`${s.icon} object-contain`}
-        />
+      <div className={`flex shrink-0 items-center justify-center bg-primary ${s.box} ${className}`}>
+        <img src={src} alt={BRAND_NAME} className={`${s.icon} object-contain`} />
       </div>
     );
   }
+  return <img src={MARK_SRC} alt={BRAND_NAME} className={`shrink-0 ${s.mark} ${className}`} draggable="false" />;
+}
 
+/**
+ * BrandWordmark — "SHELL▮US": Space Grotesk 700, −2% tracking, the I drawn
+ * as the gradient cursor block (brand guideline 01). `compact` renders the
+ * mixed-case "Shellius" for product chrome under 24px tall. A custom
+ * VITE_BRAND_NAME renders as plain text.
+ */
+export function BrandWordmark({ compact = false, className = '' }) {
+  if (BRAND_NAME !== 'Shellius' || compact) {
+    return <span className={`font-brand font-bold tracking-[-0.02em] text-foreground ${className}`}>{BRAND_NAME}</span>;
+  }
   return (
-    <div
-      className={`flex shrink-0 items-center justify-center bg-primary ${s.box} ${className}`}
-    >
-      <Terminal className={`${s.icon} text-primary-foreground`} />
-    </div>
+    <span className={`font-brand font-bold uppercase tracking-[-0.02em] text-foreground ${className}`} aria-label={BRAND_NAME}>
+      <span aria-hidden="true">SHELL</span>
+      <span
+        aria-hidden="true"
+        className="bg-brand-gradient mx-[0.07em] inline-block h-[0.72em] w-[0.34em] translate-y-[0.02em] rounded-[0.05em] align-baseline"
+      />
+      <span aria-hidden="true">US</span>
+    </span>
   );
 }
 
 /**
- * BrandLogo — the icon + wordmark combo. The wordmark text is muted to
- * match the existing inline patterns (`text-foreground tracking-tight
- * font-semibold`). Pass `wordmarkClassName` to override.
+ * BrandLogo — horizontal lockup: mark + wordmark (brand guideline 01,
+ * "Primary — horizontal"). `compact` uses the mixed-case wordmark.
  */
-export default function BrandLogo({
-  size = 'md',
-  className = '',
-  wordmarkClassName = '',
-  showWordmark = true,
-}) {
+export default function BrandLogo({ size = 'md', className = '', wordmarkClassName = '', showWordmark = true, compact = false }) {
   const s = pickSize(size);
   return (
-    <div className={`flex items-center gap-2 ${className}`}>
+    <div className={`flex items-center gap-2.5 ${className}`}>
       <BrandMark size={size} />
-      {showWordmark && (
-        <span
-          className={`font-semibold tracking-tight text-foreground ${s.text} ${wordmarkClassName}`}
-        >
-          {BRAND_NAME}
-        </span>
-      )}
+      {showWordmark && <BrandWordmark compact={compact} className={`${s.text} ${wordmarkClassName}`} />}
     </div>
   );
 }
