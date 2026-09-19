@@ -9,6 +9,12 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 Tracked here as work lands on `main`; moved into a dated section on release
 (`node scripts/version.mjs bump <major|minor|patch>`).
 
+## [1.5.3] - 2026-09-19
+
+### Added
+
+- **`scripts/update-shellius.sh`** — one-command upgrade for a `docker-compose.deploy.yml` host: builds the new release in a staging folder, keeps the current images as `:rollback-<version>`, backs up the database (`.sql.gz`) and the current folder (`-code.zip`) to `~/shellius-previous/<name>/`, migrates over the direct database address, switches and waits for `/api/health` to report the new version. `--rollback` restores code and images, `--list` shows backups.
+
 ### Changed
 
 - **Toggles instead of checkboxes in forms.** Every on/off option in a form is now a switch with its label (and a short description where useful) on the left and the switch on the right, lined up the same way as the Administration settings. This covers:
