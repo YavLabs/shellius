@@ -9,6 +9,8 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 Tracked here as work lands on `main`; moved into a dated section on release
 (`node scripts/version.mjs bump <major|minor|patch>`).
 
+## [1.5.0] - 2026-09-19
+
 ### Added
 
 - **Connect sign-in providers from Profile.** Sign-in methods lists every SSO provider the organization uses, with Connect for the ones you haven't linked and Disconnect for the ones you have. Connecting links the provider account to you, never to another account with the same email. An account already linked to another user is refused.
