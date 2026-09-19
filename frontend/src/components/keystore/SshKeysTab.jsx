@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useImperativeHandle, useState, forwardRef } from 'react';
-import { Pencil, Trash2, Copy, Download, Send, RefreshCw, Key, FileKey } from 'lucide-react';
+import { Pencil, Trash2, Copy, Download, Send, RefreshCw, Key, FileKey, Lock } from 'lucide-react';
 import DataTable from '@/components/shared/DataTable';
 import ConfirmDialog from '@/components/shared/ConfirmDialog';
 import EmptyState from '@/components/ui/EmptyState';
@@ -25,7 +25,7 @@ const FORMAT_LABEL = {
   putty_v3: 'PuTTY v3',
 };
 
-const SshKeysTab = forwardRef(function SshKeysTab({ canManage }, ref) {
+const SshKeysTab = forwardRef(function SshKeysTab({ canManage, scope = 'org', canMoveToOrg = false }, ref) {
   const [keys, setKeys] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -47,7 +47,7 @@ const SshKeysTab = forwardRef(function SshKeysTab({ canManage }, ref) {
     setLoading(true);
     setError('');
     try {
-      const data = await listKeys();
+      const data = await listKeys({ scope });
       setKeys(data);
       return data;
     } catch (err) {
@@ -56,7 +56,7 @@ const SshKeysTab = forwardRef(function SshKeysTab({ canManage }, ref) {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [scope]);
 
   useEffect(() => {
     fetch();
@@ -124,6 +124,7 @@ const SshKeysTab = forwardRef(function SshKeysTab({ canManage }, ref) {
           <span className="flex items-center gap-1.5 font-medium text-foreground">
             {r.name}
             <KeyCertBadge certificate={r.certificate} />
+            {scope === 'personal' && <Lock className="h-3 w-3 shrink-0 text-muted-foreground" aria-label="Private" />}
           </span>
           {r.description && (
             <span className="block truncate text-[11px] text-muted-foreground max-w-xs">{r.description}</span>
@@ -188,8 +189,12 @@ const SshKeysTab = forwardRef(function SshKeysTab({ canManage }, ref) {
         { label: 'Download public key (.pub)', icon: Download, onClick: downloadPublicKey },
         ...(canManage
           ? [
-              { label: 'Export to servers…', icon: Send, onClick: (r) => setDeployTarget({ key: r, action: 'deploy' }) },
-              { label: 'Rotate…', icon: RefreshCw, onClick: (r) => setDeployTarget({ key: r, action: 'rotate' }) },
+              ...(scope === 'org'
+                ? [
+                    { label: 'Export to servers…', icon: Send, onClick: (r) => setDeployTarget({ key: r, action: 'deploy' }) },
+                    { label: 'Rotate…', icon: RefreshCw, onClick: (r) => setDeployTarget({ key: r, action: 'rotate' }) },
+                  ]
+                : []),
               { label: 'Export private key', icon: FileKey, onClick: (r) => setExportConfirm(r) },
               { label: 'Edit', icon: Pencil, onClick: (r) => setEditing(r) },
               { separator: true },
@@ -216,24 +221,30 @@ const SshKeysTab = forwardRef(function SshKeysTab({ canManage }, ref) {
         </div>
       )}
 
-      <DataTable
-        columns={columns}
-        data={keys}
-        loading={loading}
-        onRowClick={(r) => setDetailId(r.id)}
-        searchPlaceholder="Search keys..."
-        emptyState={
-          <EmptyState
-            icon={Key}
-            title="No SSH keys yet"
-            description="Generate a new key pair or import an existing one to start deploying to hosts that can't use CA certificates."
-            action={canManage ? { label: 'Generate key', onClick: () => setGenerateOpen(true) } : undefined}
-          />
-        }
-      />
+      {!loading && keys.length === 0 ? (
+        <EmptyState
+          icon={scope === 'personal' ? Lock : Key}
+          title={scope === 'personal' ? 'No personal keys yet' : 'No SSH keys yet'}
+          description={
+            scope === 'personal'
+              ? 'Generate or import a key that stays private to you — never used for org key deployment or bound to org servers.'
+              : "Generate a new key pair or import an existing one to start deploying to hosts that can't use CA certificates."
+          }
+          action={canManage ? { label: 'Generate key', onClick: () => setGenerateOpen(true) } : undefined}
+        />
+      ) : (
+        <DataTable
+          columns={columns}
+          data={keys}
+          loading={loading}
+          onRowClick={(r) => setDetailId(r.id)}
+          searchPlaceholder="Search keys..."
+          emptyMessage="No keys match your search"
+        />
+      )}
 
-      <GenerateKeyModal open={generateOpen} onClose={() => setGenerateOpen(false)} onSaved={fetch} />
-      <ImportKeyModal open={importOpen} onClose={() => setImportOpen(false)} onSaved={fetch} />
+      <GenerateKeyModal open={generateOpen} onClose={() => setGenerateOpen(false)} scope={scope} onSaved={fetch} />
+      <ImportKeyModal open={importOpen} onClose={() => setImportOpen(false)} scope={scope} onSaved={fetch} />
       <EditKeyModal open={!!editing} sshKey={editing} onClose={() => setEditing(null)} onSaved={fetch} />
       <ExportKeyModal open={!!exporting} sshKey={exporting} onClose={() => setExporting(null)} />
 
@@ -241,6 +252,8 @@ const SshKeysTab = forwardRef(function SshKeysTab({ canManage }, ref) {
         open={!!detailId}
         keyId={detailId}
         canManage={canManage}
+        scope={scope}
+        canMoveToOrg={canMoveToOrg}
         onClose={() => setDetailId(null)}
         onChanged={fetch}
       />

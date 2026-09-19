@@ -48,6 +48,23 @@ export async function canBypassProdApproval(orgId, permissions) {
   return isProdBypassEnabled(orgId);
 }
 
+// ---------------------------------------------------------------------------
+// Personal vault switch (docs/personal-vault.md)
+//
+// Organization.settings.vault.enabled — default on. Off: nobody can list,
+// create or use personal identities, keys or hosts (the data is kept).
+// ---------------------------------------------------------------------------
+
+export function vaultEnabledFromSettings(settings) {
+  const vault = settings && typeof settings === 'object' && settings.vault && typeof settings.vault === 'object' ? settings.vault : {};
+  return vault.enabled !== false;
+}
+
+export async function isVaultEnabled(orgId) {
+  const org = await prisma.organization.findUnique({ where: { id: orgId }, select: { settings: true } });
+  return vaultEnabledFromSettings(org?.settings);
+}
+
 /**
  * @returns {Promise<{ prodBypassEnabled: boolean, rolesWithBypass: {id,name,key,isSystem}[], prodApprovalBypassMinRole: string }>}
  */
@@ -60,14 +77,29 @@ export async function getAccessSettings(orgId) {
   // Legacy summary for older clients (and the CLI).
   const adminHas = rolesWithBypass.some((r) => r.isSystem && r.key === 'admin');
   const prodApprovalBypassMinRole = !prodBypassEnabled ? 'none' : adminHas ? 'admin' : 'super_admin';
-  return { prodBypassEnabled, rolesWithBypass, prodApprovalBypassMinRole };
+  const personalVaultEnabled = await isVaultEnabled(orgId);
+  return { prodBypassEnabled, rolesWithBypass, prodApprovalBypassMinRole, personalVaultEnabled };
 }
 
 /**
  * @param {string} orgId
- * @param {{ prodBypassEnabled?: boolean, prodApprovalBypassMinRole?: string }} data
+ * @param {{ prodBypassEnabled?: boolean, prodApprovalBypassMinRole?: string, personalVaultEnabled?: boolean }} data
  */
 export async function updateAccessSettings(orgId, data) {
+  if (data.personalVaultEnabled !== undefined) {
+    if (typeof data.personalVaultEnabled !== 'boolean') throw new ApiError(400, 'personalVaultEnabled must be true or false');
+    const org = await prisma.organization.findUnique({ where: { id: orgId }, select: { settings: true } });
+    if (!org) throw new ApiError(404, 'Organization not found');
+    const current = org.settings && typeof org.settings === 'object' ? org.settings : {};
+    const vault = current.vault && typeof current.vault === 'object' ? current.vault : {};
+    await prisma.organization.update({
+      where: { id: orgId },
+      data: { settings: { ...current, vault: { ...vault, enabled: data.personalVaultEnabled } } },
+    });
+    logger.info('orgService.updateAccessSettings: personal vault switch updated', { orgId, enabled: data.personalVaultEnabled });
+    if (data.prodBypassEnabled === undefined && data.prodApprovalBypassMinRole === undefined) return getAccessSettings(orgId);
+  }
+
   let enabled = data.prodBypassEnabled;
   const legacy = data.prodApprovalBypassMinRole;
   if (legacy !== undefined) {

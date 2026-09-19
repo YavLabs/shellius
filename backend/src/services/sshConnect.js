@@ -811,8 +811,8 @@ export async function resolveServerAuth(server) {
 
   let credential = server.credential;
   if (!credential && server.credentialId) {
-    credential = await prisma.credential.findUnique({
-      where: { id: server.credentialId },
+    credential = await prisma.credential.findFirst({
+      where: { id: server.credentialId, orgId: server.orgId, ownerId: null },
       include: { sshKey: true },
     });
   }

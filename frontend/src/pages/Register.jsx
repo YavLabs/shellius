@@ -4,6 +4,7 @@ import { Mail, User, Lock, Eye, EyeOff, Loader2 } from 'lucide-react';
 import { BrandMark } from '@/components/common/BrandLogo';
 import { getRegistrationStatus, register } from '@/services/registrationService';
 import AuthShell from '@/components/auth/AuthShell';
+import { Checkbox } from '@/components/ui/checkbox';
 
 function validatePassword(password) {
   if (password.length < 12) return 'Password must be at least 12 characters.';
@@ -214,12 +215,11 @@ function Register() {
               </div>
 
               <div className="flex items-start gap-2 pt-1">
-                <input
+                <Checkbox
                   id="reg-terms"
-                  type="checkbox"
                   checked={termsAccepted}
                   onChange={(e) => setTermsAccepted(e.target.checked)}
-                  className="mt-0.5 h-4 w-4 shrink-0 rounded border-input accent-primary"
+                  className="mt-0.5 shrink-0"
                 />
                 <label htmlFor="reg-terms" className="text-sm text-muted-foreground leading-snug">
                   I agree to the{' '}

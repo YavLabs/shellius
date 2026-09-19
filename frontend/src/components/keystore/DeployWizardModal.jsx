@@ -6,6 +6,7 @@ import { Input } from '@/components/ui/input';
 import SearchableSelect from '@/components/ui/SearchableSelect';
 import EnvironmentBadge from '@/components/shared/EnvironmentBadge';
 import { Badge } from '@/components/ui/badge';
+import { Checkbox } from '@/components/ui/checkbox';
 import { statusTone } from '@/lib/badgeTones';
 import { ENVIRONMENT_LABELS } from '@/lib/labels';
 import { listKeys, listCredentials, createDeployments, listDeployments } from '@/services/keystoreService';
@@ -249,12 +250,7 @@ function DeployWizardModal({
                   />
                 </div>
                 <label className="flex items-center gap-2 text-sm text-foreground">
-                  <input
-                    type="checkbox"
-                    checked={updateCredentials}
-                    onChange={(e) => setUpdateCredentials(e.target.checked)}
-                    className="rounded border-border accent-primary"
-                  />
+                  <Checkbox checked={updateCredentials} onChange={(e) => setUpdateCredentials(e.target.checked)} />
                   Update identities that use the old key to point at the new key
                 </label>
               </>
@@ -295,12 +291,7 @@ function DeployWizardModal({
                     <li key={s.id}>
                       <label className="flex cursor-pointer items-center justify-between gap-2 px-3 py-2 text-sm hover:bg-accent/40">
                         <span className="flex min-w-0 items-center gap-2">
-                          <input
-                            type="checkbox"
-                            checked={selectedServerIds.includes(s.id)}
-                            onChange={() => toggleServer(s.id)}
-                            className="rounded border-border accent-primary"
-                          />
+                          <Checkbox checked={selectedServerIds.includes(s.id)} onChange={() => toggleServer(s.id)} />
                           <span className="truncate">{s.displayName || s.hostname}</span>
                           <Badge tone="neutral" className="shrink-0">
                             {s.authMode === 'credential' ? 'Identity' : 'Certificate'}
@@ -355,12 +346,7 @@ function DeployWizardModal({
               <Input value={targetUser} onChange={(e) => setTargetUser(e.target.value)} placeholder="e.g. deploy" />
             </div>
             <label className="flex items-center gap-2 text-sm text-foreground">
-              <input
-                type="checkbox"
-                checked={useSudo}
-                onChange={(e) => setUseSudo(e.target.checked)}
-                className="rounded border-border accent-primary"
-              />
+              <Checkbox checked={useSudo} onChange={(e) => setUseSudo(e.target.checked)} />
               Use sudo to write another user&apos;s authorized_keys
             </label>
 

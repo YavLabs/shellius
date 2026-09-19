@@ -8,6 +8,13 @@
  * Security: DTOs returned to callers NEVER include secret material — only
  * derived metadata (hasPassphrase / hasPassword, public key, fingerprint).
  * Secrets are decrypted only for export (admin, audited) or connect/deploy.
+ *
+ * Scope (docs/personal-vault.md): ownerId null = organization Keystore,
+ * ownerId set = that user's personal vault. Every function takes an
+ * `ownerId` (default null) and only ever touches rows of that scope, so a
+ * personal item is invisible from the org views and from other users.
+ * Personal identities only use the owner's personal keys; org identities
+ * only org keys.
  */
 
 import crypto from 'crypto';
@@ -19,6 +26,26 @@ import { encrypt, decrypt } from '../utils/crypto.js';
 import * as sshKeys from '../utils/sshKeys.js';
 import * as sshConnect from './sshConnect.js';
 import { log as auditLog } from './auditService.js';
+import { assertNotProdHost, assertNotDeniedHost } from './quickConnectService.js';
+
+// ---------------------------------------------------------------------------
+// Scope helpers
+// ---------------------------------------------------------------------------
+
+export const scopeOf = (row) => (row?.ownerId ? 'personal' : 'org');
+
+/** Names are unique per scope: org-wide for org items, per owner for personal ones. */
+async function assertNameFree(model, orgId, ownerId, name, excludeId) {
+  if (!name) return;
+  const clash = await prisma[model].findFirst({
+    where: { orgId, ownerId: ownerId || null, name, ...(excludeId ? { id: { not: excludeId } } : {}) },
+    select: { id: true },
+  });
+  if (clash) {
+    const what = model === 'sshKey' ? 'A key' : 'An identity';
+    throw new ApiError(409, `${what} named "${name}" already exists${ownerId ? ' in your vault' : ''}`);
+  }
+}
 
 // ---------------------------------------------------------------------------
 // DTOs
@@ -47,6 +74,7 @@ function certificateSummary(certificateText) {
 export function toSshKeyDTO(key, { createdBy, credentialCount, deploymentCount } = {}) {
   return {
     id: key.id,
+    scope: scopeOf(key),
     name: key.name,
     description: key.description ?? null,
     keyType: key.keyType,
@@ -70,6 +98,7 @@ export function toSshKeyDTO(key, { createdBy, credentialCount, deploymentCount }
 export function toCredentialDTO(cred, { sshKey, serverCount, createdBy } = {}) {
   return {
     id: cred.id,
+    scope: scopeOf(cred),
     name: cred.name,
     description: cred.description ?? null,
     username: cred.username,
@@ -100,8 +129,8 @@ async function loadUsersById(orgId, ids) {
 // Keys
 // ---------------------------------------------------------------------------
 
-export async function listKeys(orgId, { search } = {}) {
-  const where = { orgId };
+export async function listKeys(orgId, { search, ownerId = null } = {}) {
+  const where = { orgId, ownerId };
   if (search) {
     where.OR = [
       { name: { contains: search, mode: 'insensitive' } },
@@ -126,9 +155,9 @@ export async function listKeys(orgId, { search } = {}) {
   };
 }
 
-export async function getKey(orgId, id) {
+export async function getKey(orgId, id, { ownerId = null } = {}) {
   const key = await prisma.sshKey.findFirst({
-    where: { id, orgId },
+    where: { id, orgId, ownerId },
     include: { _count: { select: { credentials: true, deployments: true } } },
   });
   if (!key) throw new ApiError(404, 'Key not found');
@@ -257,8 +286,9 @@ function validateCertificateForKey(certificate, parsed) {
   return certificate;
 }
 
-export async function generateKey(orgId, { name, description, keyType, bits, comment, passphrase }, createdById) {
+export async function generateKey(orgId, { name, description, keyType, bits, comment, passphrase }, createdById, { ownerId = null } = {}) {
   if (!name) throw new ApiError(400, 'name is required');
+  await assertNameFree('sshKey', orgId, ownerId, name);
 
   const generated = await sshKeys.generateKeyPair({ keyType, bits, comment, passphrase });
 
@@ -278,6 +308,7 @@ export async function generateKey(orgId, { name, description, keyType, bits, com
       source: 'generated',
       originalFormat: 'openssh',
       createdById: createdById || null,
+      ownerId,
     };
 
     const key = await createSshKeyRow(data);
@@ -288,7 +319,7 @@ export async function generateKey(orgId, { name, description, keyType, bits, com
       action: 'keystore.key.generate',
       resourceType: 'SshKey',
       resourceId: key.id,
-      metadata: { name: key.name, keyType: key.keyType, fingerprint: key.fingerprint },
+      metadata: { name: key.name, keyType: key.keyType, fingerprint: key.fingerprint, scope: scopeOf(key) },
     });
 
     return { key: toSshKeyDTO(key, { credentialCount: 0, deploymentCount: 0 }) };
@@ -298,8 +329,9 @@ export async function generateKey(orgId, { name, description, keyType, bits, com
   }
 }
 
-export async function importKey(orgId, { name, description, privateKey, passphrase, publicKey, certificate }, createdById) {
+export async function importKey(orgId, { name, description, privateKey, passphrase, publicKey, certificate }, createdById, { ownerId = null } = {}) {
   if (!name) throw new ApiError(400, 'name is required');
+  await assertNameFree('sshKey', orgId, ownerId, name);
 
   const parsed = await sshKeys.normalizePrivateKey({ privateKey, passphrase });
 
@@ -325,6 +357,7 @@ export async function importKey(orgId, { name, description, privateKey, passphra
     originalFormat: parsed.format,
     certificate: certificateToStore,
     createdById: createdById || null,
+    ownerId,
   };
 
   const key = await createSshKeyRow(data);
@@ -335,7 +368,7 @@ export async function importKey(orgId, { name, description, privateKey, passphra
     action: 'keystore.key.import',
     resourceType: 'SshKey',
     resourceId: key.id,
-    metadata: { name: key.name, keyType: key.keyType, fingerprint: key.fingerprint, originalFormat: key.originalFormat },
+    metadata: { name: key.name, keyType: key.keyType, fingerprint: key.fingerprint, originalFormat: key.originalFormat, scope: scopeOf(key) },
   });
 
   return { key: toSshKeyDTO(key, { credentialCount: 0, deploymentCount: 0 }) };
@@ -352,9 +385,10 @@ async function createSshKeyRow(data) {
   }
 }
 
-export async function updateKey(orgId, id, { name, description, comment, certificate }) {
-  const existing = await prisma.sshKey.findFirst({ where: { id, orgId } });
+export async function updateKey(orgId, id, { name, description, comment, certificate }, { ownerId = null } = {}) {
+  const existing = await prisma.sshKey.findFirst({ where: { id, orgId, ownerId } });
   if (!existing) throw new ApiError(404, 'Key not found');
+  if (name !== undefined && name !== existing.name) await assertNameFree('sshKey', orgId, ownerId, name, id);
 
   const data = {};
   if (name !== undefined) data.name = name;
@@ -394,9 +428,9 @@ export async function updateKey(orgId, id, { name, description, comment, certifi
   };
 }
 
-export async function deleteKey(orgId, id) {
+export async function deleteKey(orgId, id, { ownerId = null } = {}) {
   const existing = await prisma.sshKey.findFirst({
-    where: { id, orgId },
+    where: { id, orgId, ownerId },
     include: { _count: { select: { credentials: true } } },
   });
   if (!existing) throw new ApiError(404, 'Key not found');
@@ -407,8 +441,8 @@ export async function deleteKey(orgId, id) {
   return { success: true };
 }
 
-export async function exportKey(orgId, id, actorId) {
-  const key = await prisma.sshKey.findFirst({ where: { id, orgId } });
+export async function exportKey(orgId, id, actorId, { ownerId = null } = {}) {
+  const key = await prisma.sshKey.findFirst({ where: { id, orgId, ownerId } });
   if (!key) throw new ApiError(404, 'Key not found');
 
   const privateKey = decrypt(key.privateKeyEncrypted);
@@ -421,7 +455,7 @@ export async function exportKey(orgId, id, actorId) {
     action: 'keystore.key.export',
     resourceType: 'SshKey',
     resourceId: id,
-    metadata: { name: key.name, fingerprint: key.fingerprint, severity: 'HIGH' },
+    metadata: { name: key.name, fingerprint: key.fingerprint, scope: scopeOf(key), severity: ownerId ? 'MEDIUM' : 'HIGH' },
   });
 
   logger.warn('keystoreService: private key exported', { orgId, keyId: id, actorId });
@@ -440,7 +474,7 @@ export async function exportKey(orgId, id, actorId) {
 
 const AUTH_TYPES = ['password', 'key', 'key_password'];
 
-async function resolveNewKey(orgId, name, newKey, createdById) {
+async function resolveNewKey(orgId, name, newKey, createdById, ownerId = null) {
   if (!newKey) return null;
   let parsed;
   let privateKeyText;
@@ -466,6 +500,10 @@ async function resolveNewKey(orgId, name, newKey, createdById) {
   }
 
   let keyName = `${name} key`;
+  // Org-scope names aren't unique in the DB (owner NULL) — pick a free one.
+  if (await prisma.sshKey.findFirst({ where: { orgId, ownerId, name: keyName }, select: { id: true } })) {
+    keyName = `${keyName} (${crypto.randomBytes(3).toString('hex')})`;
+  }
   let created;
   for (let attempt = 0; attempt < 3; attempt++) {
     try {
@@ -483,6 +521,7 @@ async function resolveNewKey(orgId, name, newKey, createdById) {
           source: newKey.generate ? 'generated' : 'imported',
           originalFormat,
           createdById: createdById || null,
+          ownerId,
         },
       });
       break;
@@ -510,8 +549,8 @@ export function validateAuthMaterial({ authType, password, sshKeyId, newKey }) {
   }
 }
 
-export async function listCredentials(orgId, { search } = {}) {
-  const where = { orgId };
+export async function listCredentials(orgId, { search, ownerId = null } = {}) {
+  const where = { orgId, ownerId };
   if (search) {
     where.OR = [
       { name: { contains: search, mode: 'insensitive' } },
@@ -535,9 +574,9 @@ export async function listCredentials(orgId, { search } = {}) {
   };
 }
 
-export async function getCredential(orgId, id) {
+export async function getCredential(orgId, id, { ownerId = null } = {}) {
   const cred = await prisma.credential.findFirst({
-    where: { id, orgId },
+    where: { id, orgId, ownerId },
     include: {
       sshKey: { select: { id: true, name: true, fingerprint: true, keyType: true } },
       _count: { select: { servers: true } },
@@ -561,19 +600,23 @@ export async function getCredential(orgId, id) {
 export async function createCredential(
   orgId,
   { name, description, username, authType, password, sshKeyId, newKey, tags },
-  createdById
+  createdById,
+  { ownerId = null } = {}
 ) {
   if (!name) throw new ApiError(400, 'name is required');
   if (!username) throw new ApiError(400, 'username is required');
   validateAuthMaterial({ authType, password, sshKeyId, newKey });
+  await assertNameFree('credential', orgId, ownerId, name);
 
   let resolvedSshKeyId = sshKeyId || null;
+  if (sshKeyId && !newKey) {
+    // Same scope only: personal identities use the owner's keys, org identities org keys.
+    const key = await prisma.sshKey.findFirst({ where: { id: sshKeyId, orgId, ownerId } });
+    if (!key) throw new ApiError(400, ownerId ? 'sshKeyId not found in your vault' : 'sshKeyId not found in organization');
+  }
   if (newKey) {
-    const created = await resolveNewKey(orgId, name, newKey, createdById);
+    const created = await resolveNewKey(orgId, name, newKey, createdById, ownerId);
     resolvedSshKeyId = created.id;
-  } else if (sshKeyId) {
-    const key = await prisma.sshKey.findFirst({ where: { id: sshKeyId, orgId } });
-    if (!key) throw new ApiError(400, 'sshKeyId not found in organization');
   }
 
   const data = {
@@ -586,6 +629,7 @@ export async function createCredential(
     sshKeyId: resolvedSshKeyId,
     tags: tags || [],
     createdById: createdById || null,
+    ownerId,
   };
 
   let cred;
@@ -605,7 +649,7 @@ export async function createCredential(
     action: 'keystore.credential.create',
     resourceType: 'Credential',
     resourceId: cred.id,
-    metadata: { name: cred.name, username: cred.username, authType: cred.authType },
+    metadata: { name: cred.name, username: cred.username, authType: cred.authType, scope: scopeOf(cred) },
   });
 
   return { credential: toCredentialDTO(cred, { sshKey: cred.sshKey, serverCount: 0 }) };
@@ -615,10 +659,12 @@ export async function updateCredential(
   orgId,
   id,
   { name, description, username, authType, password, clearPassword, sshKeyId, newKey, tags },
-  actorId
+  actorId,
+  { ownerId = null } = {}
 ) {
-  const existing = await prisma.credential.findFirst({ where: { id, orgId } });
+  const existing = await prisma.credential.findFirst({ where: { id, orgId, ownerId } });
   if (!existing) throw new ApiError(404, 'Identity not found');
+  if (name !== undefined && name !== existing.name) await assertNameFree('credential', orgId, ownerId, name, id);
 
   const effectiveAuthType = authType || existing.authType;
   const effectiveSshKeyId = newKey ? 'PENDING' : sshKeyId !== undefined ? sshKeyId : existing.sshKeyId;
@@ -644,12 +690,12 @@ export async function updateCredential(
   }
 
   if (newKey) {
-    const created = await resolveNewKey(orgId, name || existing.name, newKey, actorId);
+    const created = await resolveNewKey(orgId, name || existing.name, newKey, actorId, ownerId);
     data.sshKeyId = created.id;
   } else if (sshKeyId !== undefined) {
     if (sshKeyId) {
-      const key = await prisma.sshKey.findFirst({ where: { id: sshKeyId, orgId } });
-      if (!key) throw new ApiError(400, 'sshKeyId not found in organization');
+      const key = await prisma.sshKey.findFirst({ where: { id: sshKeyId, orgId, ownerId } });
+      if (!key) throw new ApiError(400, ownerId ? 'sshKeyId not found in your vault' : 'sshKeyId not found in organization');
     }
     data.sshKeyId = sshKeyId || null;
   }
@@ -675,15 +721,15 @@ export async function updateCredential(
     action: 'keystore.credential.update',
     resourceType: 'Credential',
     resourceId: cred.id,
-    metadata: { name: cred.name },
+    metadata: { name: cred.name, scope: scopeOf(cred) },
   });
 
   return { credential: toCredentialDTO(cred, { sshKey: cred.sshKey, serverCount: cred._count.servers }) };
 }
 
-export async function deleteCredential(orgId, id, { force = false } = {}, actorId) {
+export async function deleteCredential(orgId, id, { force = false, ownerId = null } = {}, actorId) {
   const existing = await prisma.credential.findFirst({
-    where: { id, orgId },
+    where: { id, orgId, ownerId },
     include: { _count: { select: { servers: true } } },
   });
   if (!existing) throw new ApiError(404, 'Identity not found');
@@ -708,10 +754,78 @@ export async function deleteCredential(orgId, id, { force = false } = {}, actorI
     action: 'keystore.credential.delete',
     resourceType: 'Credential',
     resourceId: id,
-    metadata: { name: existing.name, forced: !!force },
+    metadata: { name: existing.name, forced: !!force, scope: scopeOf(existing) },
   });
 
   return { success: true };
+}
+
+// ---------------------------------------------------------------------------
+// Move personal → organization (one-way, audited). The route checks the
+// caller owns the item AND holds keystore.manage.
+// ---------------------------------------------------------------------------
+
+export async function moveKeyToOrg(orgId, id, ownerId) {
+  const key = await prisma.sshKey.findFirst({
+    where: { id, orgId, ownerId },
+    include: { _count: { select: { credentials: true } } },
+  });
+  if (!key) throw new ApiError(404, 'Key not found');
+  if (key._count.credentials > 0) {
+    throw new ApiError(
+      409,
+      'Personal identities use this key — move those identities instead (their key moves with them) or switch them to another key first',
+      { code: 'KEY_IN_USE' }
+    );
+  }
+  await assertNameFree('sshKey', orgId, null, key.name);
+  const moved = await prisma.sshKey.update({ where: { id }, data: { ownerId: null } });
+  await auditLog({
+    orgId,
+    actorId: ownerId,
+    action: 'keystore.key.move_to_org',
+    resourceType: 'SshKey',
+    resourceId: id,
+    metadata: { name: key.name, fingerprint: key.fingerprint },
+  });
+  return { key: toSshKeyDTO(moved, { credentialCount: 0, deploymentCount: 0 }) };
+}
+
+export async function moveCredentialToOrg(orgId, id, ownerId) {
+  const cred = await prisma.credential.findFirst({
+    where: { id, orgId, ownerId },
+    include: { sshKey: { include: { _count: { select: { credentials: true } } } } },
+  });
+  if (!cred) throw new ApiError(404, 'Identity not found');
+  // The key moves with the identity — unless another personal identity uses
+  // it, which would leave that identity pointing at an org key.
+  if (cred.sshKey && cred.sshKey._count.credentials > 1) {
+    throw new ApiError(
+      409,
+      `Other identities in your vault also use the key "${cred.sshKey.name}" — give this identity its own key first`,
+      { code: 'KEY_SHARED' }
+    );
+  }
+  await assertNameFree('credential', orgId, null, cred.name);
+  if (cred.sshKey) await assertNameFree('sshKey', orgId, null, cred.sshKey.name);
+
+  const moved = await prisma.$transaction(async (tx) => {
+    if (cred.sshKey) await tx.sshKey.update({ where: { id: cred.sshKey.id }, data: { ownerId: null } });
+    return tx.credential.update({
+      where: { id },
+      data: { ownerId: null },
+      include: { sshKey: { select: { id: true, name: true, fingerprint: true, keyType: true } } },
+    });
+  });
+  await auditLog({
+    orgId,
+    actorId: ownerId,
+    action: 'keystore.credential.move_to_org',
+    resourceType: 'Credential',
+    resourceId: id,
+    metadata: { name: cred.name, username: cred.username, keyMoved: cred.sshKey ? cred.sshKey.id : null },
+  });
+  return { credential: toCredentialDTO(moved, { sshKey: moved.sshKey, serverCount: 0 }) };
 }
 
 /**
@@ -735,12 +849,15 @@ export function resolveCredentialAuth(credential) {
   return opts;
 }
 
-export async function testCredential(orgId, id, { serverId, host, port }, actorId) {
+export async function testCredential(orgId, id, { serverId, host, port }, actorId, { ownerId = null } = {}) {
   const cred = await prisma.credential.findFirst({
-    where: { id, orgId },
+    where: { id, orgId, ownerId },
     include: { sshKey: true },
   });
   if (!cred) throw new ApiError(404, 'Identity not found');
+  if (ownerId && serverId) {
+    throw new ApiError(400, 'Personal identities can only be tested against a host, not a saved server');
+  }
 
   let targetHost = host;
   let targetPort = port || 22;
@@ -759,6 +876,10 @@ export async function testCredential(orgId, id, { serverId, host, port }, actorI
   if (!server) {
     const resolved = await sshConnect.resolveTarget(targetHost);
     connectHost = resolved.ip;
+    // A stored secret sent to a prod server (or one a DENY policy keeps
+    // you from) is a login without an approval — same guards as Quick Connect.
+    await assertNotProdHost(orgId, targetHost, resolved.addresses);
+    await assertNotDeniedHost(orgId, actorId, targetHost, resolved.addresses);
   }
 
   const start = Date.now();
@@ -867,6 +988,9 @@ export default {
   resolveCredentialAuth,
   validateAuthMaterial,
   testCredential,
+  moveKeyToOrg,
+  moveCredentialToOrg,
+  scopeOf,
   toKeyDeploymentDTO,
   toSshKeyDTO,
   toCredentialDTO,

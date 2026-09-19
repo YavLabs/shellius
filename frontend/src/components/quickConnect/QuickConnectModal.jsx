@@ -1,14 +1,16 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { ChevronDown, ChevronRight, Clock, Loader2, AlertTriangle } from 'lucide-react';
+import { ChevronDown, ChevronRight, Clock, Loader2, AlertTriangle, Lock, Building2 } from 'lucide-react';
 import Modal from '@/components/shared/Modal';
 import { Button } from '@/components/ui/button';
 import PasswordInput from '@/components/ui/PasswordInput';
 import SearchableSelect from '@/components/ui/SearchableSelect';
+import { Checkbox } from '@/components/ui/checkbox';
 import PrivateKeyInput from '@/components/keystore/PrivateKeyInput';
 import SaveServerFields from './SaveServerFields';
 import { createQuickConnectTicket, saveQuickConnectServer, getHistory } from '@/services/quickConnectService';
 import { listCredentials } from '@/services/keystoreService';
+import { createVaultHost } from '@/services/vaultService';
 import { useAuth } from '@/context/AuthContext';
 import { useTerminalWorkspace } from '@/context/TerminalWorkspaceContext';
 import { useQuickConnect } from '@/context/QuickConnectContext';
@@ -44,14 +46,18 @@ function parseHostPaste(raw) {
 
 function QuickConnectModal({ open, onClose, prefill }) {
   const navigate = useNavigate();
-  const { can } = useAuth();
-  const { canUseStoredIdentity } = useQuickConnect();
+  const { can, user } = useAuth();
+  const { canUseStoredIdentity, canUsePersonalIdentity } = useQuickConnect();
   const { openTab, reconnectTab, tabs } = useTerminalWorkspace();
   // What this role may do here (the API enforces the same rules):
   const canBindIdentity = can('servers.manage_credentials');
   const canCreateIdentity = canBindIdentity && can('keystore.manage');
   const canSaveServer = can('quick_connect.save_server');
-  const authTabs = AUTH_TABS.filter((t) => t.value !== 'credential' || canUseStoredIdentity);
+  // "Save to My hosts" — separate permission + org switch from Quick
+  // Connect's own settings (docs/personal-vault.md).
+  const vaultFeatureOn = user?.features?.personalVault !== false;
+  const canSaveHost = can('vault.hosts') && vaultFeatureOn;
+  const authTabs = AUTH_TABS.filter((t) => t.value !== 'credential' || canUseStoredIdentity || canUsePersonalIdentity);
   const defaultIdentityMode = canBindIdentity ? 'existing' : 'none';
 
   const [host, setHost] = useState('');
@@ -64,7 +70,8 @@ function QuickConnectModal({ open, onClose, prefill }) {
   const [keyPassphrase, setKeyPassphrase] = useState('');
   const [keyAlsoPassword, setKeyAlsoPassword] = useState('');
   const [credentialId, setCredentialId] = useState('');
-  const [identities, setIdentities] = useState([]);
+  const [identities, setIdentities] = useState([]); // org identities — also used by "save as server"
+  const [personalIdentities, setPersonalIdentities] = useState([]); // caller's own — "Mine"
 
   const [advancedOpen, setAdvancedOpen] = useState(false);
   const [expectedHostKey, setExpectedHostKey] = useState('');
@@ -72,9 +79,17 @@ function QuickConnectModal({ open, onClose, prefill }) {
   const [saveOn, setSaveOn] = useState(false);
   const [saveValues, setSaveValues] = useState({ identityMode: defaultIdentityMode, environment: 'dev' });
 
+  // "Save to My hosts" — separate from "Save as server"; the two are
+  // mutually exclusive (one credential, one destination at a time).
+  const [saveHostOn, setSaveHostOn] = useState(false);
+  const [hostName, setHostName] = useState('');
+  const [hostAlsoSaveIdentity, setHostAlsoSaveIdentity] = useState(false);
+  const [hostIdentityName, setHostIdentityName] = useState('');
+
   const [recent, setRecent] = useState([]);
   const [connecting, setConnecting] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [savingHost, setSavingHost] = useState(false);
   const [error, setError] = useState(null); // { message, serverId? }
 
   useEffect(() => {
@@ -92,14 +107,23 @@ function QuickConnectModal({ open, onClose, prefill }) {
     setExpectedHostKey('');
     setSaveOn(false);
     setSaveValues({ identityMode: defaultIdentityMode, environment: 'dev' });
+    setSaveHostOn(false);
+    setHostName('');
+    setHostAlsoSaveIdentity(false);
+    setHostIdentityName('');
     setError(null);
     getHistory({ limit: 8 })
       .then(setRecent)
       .catch(() => setRecent([]));
     if (can('keystore.view')) {
-      listCredentials()
+      listCredentials({ scope: 'org' })
         .then(setIdentities)
         .catch(() => setIdentities([]));
+    }
+    if (can('vault.use')) {
+      listCredentials({ scope: 'personal' })
+        .then(setPersonalIdentities)
+        .catch(() => setPersonalIdentities([]));
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, prefill]);
@@ -231,7 +255,43 @@ function QuickConnectModal({ open, onClose, prefill }) {
     }
   };
 
-  const busy = connecting || saving;
+  const doSaveHost = async (thenConnect) => {
+    setError(null);
+    setSavingHost(true);
+    try {
+      const payload = {
+        name: hostName.trim(),
+        host: host.trim(),
+        port: Number(port) || 22,
+        username: username.trim() || undefined,
+      };
+      if (authTab === 'credential') {
+        payload.credentialId = credentialId;
+      } else if (hostAlsoSaveIdentity) {
+        payload.newIdentity = { name: hostIdentityName.trim(), auth: buildAuth() };
+      }
+      await createVaultHost(payload);
+      if (thenConnect) {
+        await doConnect();
+      } else {
+        onClose();
+      }
+    } catch (err) {
+      setError({ message: err.response?.data?.error?.message || err.message || 'Failed to save to My hosts' });
+    } finally {
+      setSavingHost(false);
+    }
+  };
+
+  const busy = connecting || saving || savingHost;
+
+  // "Mine" first, then organization identities — used by the "Saved
+  // identity" auth tab (docs/personal-vault.md: personal identities need
+  // vault.use, org identities need quick_connect.use_stored_identity).
+  const combinedIdentityOptions = [
+    ...personalIdentities.map((c) => ({ value: c.id, label: c.name, sublabel: c.username, scope: 'personal' })),
+    ...identities.map((c) => ({ value: c.id, label: c.name, sublabel: c.username, scope: 'org' })),
+  ];
 
   return (
     <Modal open={open} onClose={onClose} title="Quick Connect" size="md">
@@ -387,12 +447,28 @@ function QuickConnectModal({ open, onClose, prefill }) {
                 value={credentialId}
                 onChange={(v) => {
                   setCredentialId(v);
-                  const id = identities.find((c) => c.id === v);
+                  const id = [...personalIdentities, ...identities].find((c) => c.id === v);
                   if (id?.username && !username) setUsername(id.username);
                 }}
-                options={identities.map((c) => ({ value: c.id, label: c.name, sublabel: c.username }))}
+                options={combinedIdentityOptions}
                 placeholder="Select a saved identity..."
                 clearable={false}
+                renderOption={(o) => (
+                  <span className="flex items-center gap-2">
+                    {o.scope === 'personal' ? (
+                      <Lock className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                    ) : (
+                      <Building2 className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                    )}
+                    <span className="min-w-0 flex-1">
+                      <span className="block truncate text-foreground">{o.label}</span>
+                      <span className="block truncate font-mono text-[11px] text-muted-foreground">
+                        {o.scope === 'personal' ? 'Mine · ' : ''}
+                        {o.sublabel}
+                      </span>
+                    </span>
+                  </span>
+                )}
               />
             )}
           </div>
@@ -422,11 +498,12 @@ function QuickConnectModal({ open, onClose, prefill }) {
 
         {canSaveServer && (
           <label className="flex items-center gap-2 text-sm text-foreground">
-            <input
-              type="checkbox"
+            <Checkbox
               checked={saveOn}
-              onChange={(e) => setSaveOn(e.target.checked)}
-              className="rounded border-border accent-primary"
+              onChange={(e) => {
+                setSaveOn(e.target.checked);
+                if (e.target.checked) setSaveHostOn(false);
+              }}
             />
             Save as server
           </label>
@@ -442,6 +519,46 @@ function QuickConnectModal({ open, onClose, prefill }) {
           />
         )}
 
+        {canSaveHost && !saveOn && (
+          <label className="flex items-center gap-2 text-sm text-foreground">
+            <Checkbox checked={saveHostOn} onChange={(e) => setSaveHostOn(e.target.checked)} />
+            Save to My hosts
+            <span className="text-xs text-muted-foreground">(private — only you)</span>
+          </label>
+        )}
+
+        {saveHostOn && canSaveHost && (
+          <div className="space-y-3 rounded-md border border-border p-3">
+            <div>
+              <label className={labelCls}>
+                Name <span className="text-destructive">*</span>
+              </label>
+              <input
+                className={inputCls}
+                value={hostName}
+                onChange={(e) => setHostName(e.target.value)}
+                placeholder="home-lab"
+              />
+            </div>
+            {authTab !== 'credential' && (
+              <div>
+                <label className="flex cursor-pointer items-center gap-2 text-sm text-foreground">
+                  <Checkbox checked={hostAlsoSaveIdentity} onChange={(e) => setHostAlsoSaveIdentity(e.target.checked)} />
+                  Also save this {authTab === 'key' ? 'key' : 'password'} as a private identity
+                </label>
+                {hostAlsoSaveIdentity && (
+                  <input
+                    className={`${inputCls} mt-2`}
+                    value={hostIdentityName}
+                    onChange={(e) => setHostIdentityName(e.target.value)}
+                    placeholder="Identity name"
+                  />
+                )}
+              </div>
+            )}
+          </div>
+        )}
+
         <div className="flex justify-end gap-2 pt-1">
           <Button type="button" variant="outline" onClick={onClose}>
             Cancel
@@ -452,6 +569,20 @@ function QuickConnectModal({ open, onClose, prefill }) {
                 {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : 'Save only'}
               </Button>
               <Button type="button" disabled={!canConnect || busy} onClick={() => doSave(true)}>
+                {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : 'Save & Connect'}
+              </Button>
+            </>
+          ) : saveHostOn ? (
+            <>
+              <Button
+                type="button"
+                variant="outline"
+                disabled={busy || !hostName.trim()}
+                onClick={() => doSaveHost(false)}
+              >
+                {savingHost ? <Loader2 className="h-4 w-4 animate-spin" /> : 'Save only'}
+              </Button>
+              <Button type="button" disabled={!canConnect || !hostName.trim() || busy} onClick={() => doSaveHost(true)}>
                 {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : 'Save & Connect'}
               </Button>
             </>

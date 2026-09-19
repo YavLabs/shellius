@@ -13,11 +13,13 @@ import {
   ShieldCheck,
   MoreHorizontal,
   Users,
+  Building2,
 } from 'lucide-react';
 import Modal from '@/components/shared/Modal';
 import ConfirmDialog from '@/components/shared/ConfirmDialog';
 import UserCell from '@/components/shared/UserCell';
 import EnvironmentBadge from '@/components/shared/EnvironmentBadge';
+import ScopeBadge from '@/components/shared/ScopeBadge';
 import EmptyState from '@/components/ui/EmptyState';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -35,7 +37,7 @@ import ExportKeyModal from './ExportKeyModal';
 import DeployWizardModal from './DeployWizardModal';
 import { keySourceTone, statusTone } from '@/lib/badgeTones';
 import { KEY_TYPE_LABELS, labelize } from '@/lib/labels';
-import { getKey, deleteKey } from '@/services/keystoreService';
+import { getKey, deleteKey, moveKeyToOrg } from '@/services/keystoreService';
 import { formatDateTime, relativeTime } from '@/utils/time';
 
 const FORMAT_LABEL = {
@@ -80,8 +82,9 @@ function EmptyTab({ icon, title }) {
  * canManage gates admin-only actions (edit/export/rotate/delete); everyone
  * else gets read-only + copy/download of the public key.
  */
-function KeyDetailModal({ open, onClose, keyId, canManage, onChanged }) {
+function KeyDetailModal({ open, onClose, keyId, canManage, scope = 'org', canMoveToOrg = false, onChanged }) {
   const navigate = useNavigate();
+  const isPersonal = scope === 'personal';
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
@@ -94,6 +97,9 @@ function KeyDetailModal({ open, onClose, keyId, canManage, onChanged }) {
   const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
   const [deleteError, setDeleteError] = useState('');
   const [deleting, setDeleting] = useState(false);
+  const [moveConfirmOpen, setMoveConfirmOpen] = useState(false);
+  const [moving, setMoving] = useState(false);
+  const [moveError, setMoveError] = useState('');
 
   const fetchDetail = useCallback(async () => {
     if (!keyId) return;
@@ -166,16 +172,34 @@ function KeyDetailModal({ open, onClose, keyId, canManage, onChanged }) {
 
   const goToIdentity = (id) => {
     onClose();
-    navigate(`/keystore?tab=identities&highlight=${id}`);
+    navigate(`/keystore?scope=${scope}&tab=identities&highlight=${id}`);
+  };
+
+  const handleMoveToOrg = async () => {
+    if (!key) return;
+    setMoving(true);
+    setMoveError('');
+    try {
+      await moveKeyToOrg(key.id);
+      setMoveConfirmOpen(false);
+      onChanged?.();
+      onClose();
+    } catch (err) {
+      setMoveError(err.response?.data?.error?.message || err.message || 'Failed to move key to the organization');
+    } finally {
+      setMoving(false);
+    }
   };
 
   if (!open) return null;
 
   const source = key ? keySourceTone(key.source) : null;
   // Counts live on the tabs (Identities (2), Servers (5), …) instead of a
-  // separate stat row.
+  // separate stat row. Personal keys are never bound to org servers/exports
+  // (docs/personal-vault.md rule 2), so those tabs don't apply to them.
   const counts = { identities: stats.identityCount, servers: stats.serverCount, exports: stats.deploymentCount };
-  const allTabs = (key?.certificate ? [...TABS, { key: 'certificate', label: 'Certificate' }] : TABS).map((t) => ({
+  const baseTabs = isPersonal ? TABS.filter((t) => t.key !== 'servers' && t.key !== 'exports') : TABS;
+  const allTabs = (key?.certificate ? [...baseTabs, { key: 'certificate', label: 'Certificate' }] : baseTabs).map((t) => ({
     ...t,
     count: counts[t.key],
   }));
@@ -202,7 +226,10 @@ function KeyDetailModal({ open, onClose, keyId, canManage, onChanged }) {
                   <KeyRound className="h-5 w-5 text-primary" />
                 </div>
                 <div className="min-w-0">
-                  <h2 className="truncate text-base font-semibold text-foreground">{key.name}</h2>
+                  <h2 className="flex items-center gap-2 truncate text-base font-semibold text-foreground">
+                    {key.name}
+                    {isPersonal && <ScopeBadge scope="personal" />}
+                  </h2>
                   <p className="text-sm text-muted-foreground">
                     {labelize(KEY_TYPE_LABELS, key.keyType)}
                     {key.bits ? ` · ${key.bits}-bit` : ''}
@@ -213,7 +240,7 @@ function KeyDetailModal({ open, onClose, keyId, canManage, onChanged }) {
                 </div>
               </div>
               <div className="flex w-full flex-wrap items-center gap-2 sm:ml-auto sm:w-auto sm:justify-end">
-                {canManage && (
+                {canManage && !isPersonal && (
                   <Button size="sm" onClick={() => setDeployTarget({ action: 'deploy' })}>
                     <Send className="mr-1.5 h-3.5 w-3.5" /> Export to servers
                   </Button>
@@ -238,9 +265,11 @@ function KeyDetailModal({ open, onClose, keyId, canManage, onChanged }) {
                         <DropdownMenuItem onClick={() => setEditOpen(true)}>
                           <Pencil className="mr-2 h-4 w-4" /> Edit
                         </DropdownMenuItem>
-                        <DropdownMenuItem onClick={() => setDeployTarget({ action: 'rotate' })}>
-                          <RefreshCw className="mr-2 h-4 w-4" /> Rotate…
-                        </DropdownMenuItem>
+                        {!isPersonal && (
+                          <DropdownMenuItem onClick={() => setDeployTarget({ action: 'rotate' })}>
+                            <RefreshCw className="mr-2 h-4 w-4" /> Rotate…
+                          </DropdownMenuItem>
+                        )}
                         <DropdownMenuItem
                           onClick={() => {
                             setDeleteError('');
@@ -249,6 +278,16 @@ function KeyDetailModal({ open, onClose, keyId, canManage, onChanged }) {
                         >
                           <FileKey className="mr-2 h-4 w-4" /> Export private key
                         </DropdownMenuItem>
+                        {isPersonal && canMoveToOrg && (
+                          <DropdownMenuItem
+                            onClick={() => {
+                              setMoveError('');
+                              setMoveConfirmOpen(true);
+                            }}
+                          >
+                            <Building2 className="mr-2 h-4 w-4" /> Move to organization…
+                          </DropdownMenuItem>
+                        )}
                         <DropdownMenuSeparator />
                         <DropdownMenuItem
                           className="text-destructive focus:text-destructive"
@@ -470,6 +509,12 @@ function KeyDetailModal({ open, onClose, keyId, canManage, onChanged }) {
               </div>
             </div>
 
+            {moveError && (
+              <div className="rounded-md border border-destructive/50 bg-destructive/10 px-3 py-2 text-sm text-destructive">
+                {moveError}
+              </div>
+            )}
+
             {deleteError && (
               <div className="rounded-md border border-destructive/50 bg-destructive/10 px-3 py-2 text-sm text-destructive">
                 {deleteError}
@@ -478,6 +523,15 @@ function KeyDetailModal({ open, onClose, keyId, canManage, onChanged }) {
           </div>
         )}
       </Modal>
+
+      <ConfirmDialog
+        open={moveConfirmOpen}
+        title="Move to organization"
+        message={`Move "${key?.name}" into the org Keystore? This is one-way — it becomes visible to everyone with Keystore access and can be bound to servers or exported to hosts.`}
+        confirmLabel={moving ? 'Moving…' : 'Move to organization'}
+        onConfirm={handleMoveToOrg}
+        onCancel={() => setMoveConfirmOpen(false)}
+      />
 
       <EditKeyModal
         open={editOpen}

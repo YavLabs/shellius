@@ -7,6 +7,9 @@ systems). For those, Shellius provides a **Keystore** — Termix/Termius-style
 stored identities — plus **Key Deployment** (push/rotate keys across hosts) and
 **Quick Connect** (ad-hoc sessions without saving a server).
 
+> Identities and keys now have a scope — organization or personal. Personal
+> vault items and My hosts are described in `docs/personal-vault.md`.
+
 ## Security model (exception to "zero static keys")
 
 The Keystore is a deliberate, admin-sanctioned exception to the zero-static-keys

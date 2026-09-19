@@ -1,10 +1,11 @@
 import { useCallback, useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Server as ServerIcon, PlugZap, Pencil, Trash2, MoreHorizontal, KeyRound, UserRound } from 'lucide-react';
+import { Server as ServerIcon, PlugZap, Pencil, Trash2, MoreHorizontal, KeyRound, UserRound, Building2 } from 'lucide-react';
 import Modal from '@/components/shared/Modal';
 import ConfirmDialog from '@/components/shared/ConfirmDialog';
 import EmptyState from '@/components/ui/EmptyState';
 import EnvironmentBadge from '@/components/shared/EnvironmentBadge';
+import ScopeBadge from '@/components/shared/ScopeBadge';
 import UserCell from '@/components/shared/UserCell';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -13,12 +14,13 @@ import {
   DropdownMenuTrigger,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuSeparator,
 } from '@/components/ui/dropdown-menu';
 import AuthTypeBadge from './AuthTypeBadge';
 import KeyDetailModal from './KeyDetailModal';
 import IdentityFormModal from './IdentityFormModal';
 import TestConnectionModal from './TestConnectionModal';
-import { getCredential, deleteCredential } from '@/services/keystoreService';
+import { getCredential, deleteCredential, moveCredentialToOrg } from '@/services/keystoreService';
 import { formatDateTime, relativeTime } from '@/utils/time';
 
 /** DetailItem — one cell in the "Details" definition grid: muted xs label
@@ -42,8 +44,9 @@ function DetailItem({ label, value, full }) {
  * canManage gates edit/delete; everyone can still test the connection and
  * browse servers/linked key.
  */
-function IdentityDetailModal({ open, onClose, credentialId, canManage, onChanged }) {
+function IdentityDetailModal({ open, onClose, credentialId, canManage, scope = 'org', canMoveToOrg = false, onChanged }) {
   const navigate = useNavigate();
+  const isPersonal = scope === 'personal';
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
@@ -55,6 +58,9 @@ function IdentityDetailModal({ open, onClose, credentialId, canManage, onChanged
   const [inUseInfo, setInUseInfo] = useState(null);
   const [deleteError, setDeleteError] = useState('');
   const [deleting, setDeleting] = useState(false);
+  const [moveConfirmOpen, setMoveConfirmOpen] = useState(false);
+  const [moving, setMoving] = useState(false);
+  const [moveError, setMoveError] = useState('');
 
   const fetchDetail = useCallback(() => {
     if (!credentialId) return;
@@ -98,6 +104,22 @@ function IdentityDetailModal({ open, onClose, credentialId, canManage, onChanged
     }
   };
 
+  const handleMoveToOrg = async () => {
+    if (!credential) return;
+    setMoving(true);
+    setMoveError('');
+    try {
+      await moveCredentialToOrg(credential.id);
+      setMoveConfirmOpen(false);
+      onChanged?.();
+      onClose();
+    } catch (err) {
+      setMoveError(err.response?.data?.error?.message || err.message || 'Failed to move identity to the organization');
+    } finally {
+      setMoving(false);
+    }
+  };
+
   if (!open) return null;
 
   return (
@@ -122,7 +144,10 @@ function IdentityDetailModal({ open, onClose, credentialId, canManage, onChanged
                   <UserRound className="h-5 w-5 text-primary" />
                 </div>
                 <div className="min-w-0">
-                  <h2 className="truncate text-base font-semibold text-foreground">{credential.name}</h2>
+                  <h2 className="flex items-center gap-2 truncate text-base font-semibold text-foreground">
+                    {credential.name}
+                    {isPersonal && <ScopeBadge scope="personal" />}
+                  </h2>
                   <p className="font-mono text-sm text-muted-foreground">{credential.username}</p>
                   {credential.description && (
                     <p className="mt-1 max-w-md text-sm text-muted-foreground">{credential.description}</p>
@@ -144,7 +169,20 @@ function IdentityDetailModal({ open, onClose, credentialId, canManage, onChanged
                           <MoreHorizontal className="h-4 w-4" />
                         </Button>
                       </DropdownMenuTrigger>
-                      <DropdownMenuContent align="end" className="w-44">
+                      <DropdownMenuContent align="end" className="w-52">
+                        {isPersonal && canMoveToOrg && (
+                          <>
+                            <DropdownMenuItem
+                              onClick={() => {
+                                setMoveError('');
+                                setMoveConfirmOpen(true);
+                              }}
+                            >
+                              <Building2 className="mr-2 h-4 w-4" /> Move to organization…
+                            </DropdownMenuItem>
+                            <DropdownMenuSeparator />
+                          </>
+                        )}
                         <DropdownMenuItem
                           className="text-destructive focus:text-destructive"
                           onClick={() => {
@@ -216,40 +254,48 @@ function IdentityDetailModal({ open, onClose, credentialId, canManage, onChanged
               </div>
             </div>
 
-            {/* Servers */}
-            <div>
-              <p className="mb-2 text-xs font-medium text-muted-foreground">
-                Servers using this identity{servers.length > 0 && <span className="text-muted-foreground/70"> ({servers.length})</span>}
-              </p>
-              {servers.length === 0 ? (
-                <EmptyState
-                  icon={ServerIcon}
-                  title="No servers use this identity"
-                  className="border-none bg-transparent py-10"
-                />
-              ) : (
-                <ul className="divide-y divide-border rounded-md border border-border">
-                  {servers.map((s) => (
-                    <li key={s.id}>
-                      <button
-                        type="button"
-                        onClick={() => {
-                          onClose();
-                          navigate(`/servers/${s.id}`);
-                        }}
-                        className="flex w-full items-center justify-between gap-2 px-3 py-2 text-left text-sm hover:bg-accent"
-                      >
-                        <span className="flex min-w-0 items-center gap-2">
-                          <ServerIcon className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
-                          <span className="truncate text-foreground">{s.displayName || s.hostname}</span>
-                        </span>
-                        {s.environment && <EnvironmentBadge environment={s.environment} />}
-                      </button>
-                    </li>
-                  ))}
-                </ul>
-              )}
-            </div>
+            {/* Servers — personal identities can never be bound to org servers */}
+            {!isPersonal && (
+              <div>
+                <p className="mb-2 text-xs font-medium text-muted-foreground">
+                  Servers using this identity{servers.length > 0 && <span className="text-muted-foreground/70"> ({servers.length})</span>}
+                </p>
+                {servers.length === 0 ? (
+                  <EmptyState
+                    icon={ServerIcon}
+                    title="No servers use this identity"
+                    className="border-none bg-transparent py-10"
+                  />
+                ) : (
+                  <ul className="divide-y divide-border rounded-md border border-border">
+                    {servers.map((s) => (
+                      <li key={s.id}>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            onClose();
+                            navigate(`/servers/${s.id}`);
+                          }}
+                          className="flex w-full items-center justify-between gap-2 px-3 py-2 text-left text-sm hover:bg-accent"
+                        >
+                          <span className="flex min-w-0 items-center gap-2">
+                            <ServerIcon className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                            <span className="truncate text-foreground">{s.displayName || s.hostname}</span>
+                          </span>
+                          {s.environment && <EnvironmentBadge environment={s.environment} />}
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </div>
+            )}
+
+            {moveError && (
+              <div className="rounded-md border border-destructive/50 bg-destructive/10 px-3 py-2 text-sm text-destructive">
+                {moveError}
+              </div>
+            )}
 
             {deleteError && (
               <div className="rounded-md border border-destructive/50 bg-destructive/10 px-3 py-2 text-sm text-destructive">
@@ -261,12 +307,18 @@ function IdentityDetailModal({ open, onClose, credentialId, canManage, onChanged
       </Modal>
 
       {credential && (
-        <TestConnectionModal open={testOpen} credential={credential} onClose={() => setTestOpen(false)} />
+        <TestConnectionModal
+          open={testOpen}
+          credential={credential}
+          scope={scope}
+          onClose={() => setTestOpen(false)}
+        />
       )}
 
       <IdentityFormModal
         open={editOpen}
         identity={credential}
+        scope={scope}
         onClose={() => setEditOpen(false)}
         onSaved={() => {
           setEditOpen(false);
@@ -280,10 +332,21 @@ function IdentityDetailModal({ open, onClose, credentialId, canManage, onChanged
           open={linkedKeyOpen}
           keyId={credential.sshKey.id}
           canManage={canManage}
+          scope={scope}
+          canMoveToOrg={canMoveToOrg}
           onClose={() => setLinkedKeyOpen(false)}
           onChanged={onChanged}
         />
       )}
+
+      <ConfirmDialog
+        open={moveConfirmOpen}
+        title="Move to organization"
+        message={`Move "${credential?.name}" into the org Keystore? This is one-way — it becomes visible to everyone with Keystore access and can be bound to servers. Its linked key moves with it, unless another personal identity of yours still uses it.`}
+        confirmLabel={moving ? 'Moving…' : 'Move to organization'}
+        onConfirm={handleMoveToOrg}
+        onCancel={() => setMoveConfirmOpen(false)}
+      />
 
       <ConfirmDialog
         open={!!deleteTarget && !inUseInfo}

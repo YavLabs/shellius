@@ -346,7 +346,8 @@ export async function getUserDeleteImpact(orgId, userId) {
  * Hard-delete a user. Guards the last super_admin, force-terminates live
  * sessions, optionally reassigns direct reports to another manager, removes
  * orphan policy-subject rows (polymorphic, no cascade), then deletes — which
- * cascades sessions, access requests, group memberships and tokens, and
+ * cascades sessions, access requests, group memberships and tokens (and
+ * the user's personal vault: identities, keys, My hosts), and
  * SetNulls audit-log actor / issued certificates.
  *
  * @param {object} [options] - { reassignReportsTo?: string }
@@ -380,6 +381,11 @@ export async function deleteUser(orgId, userId, options = {}, callerId = null, a
       await tx.user.updateMany({ where: { orgId, managerId: userId }, data: { managerId: reassignTo } });
     }
     await cleanupPolicySubjects('USER', userId, tx);
+    // Personal vault (docs/personal-vault.md) goes with its owner. Explicit
+    // order: identities reference keys with ON DELETE RESTRICT.
+    await tx.personalHost.deleteMany({ where: { orgId, ownerId: userId } });
+    await tx.credential.deleteMany({ where: { orgId, ownerId: userId } });
+    await tx.sshKey.deleteMany({ where: { orgId, ownerId: userId } });
     await tx.user.delete({ where: { id: userId } });
   });
 

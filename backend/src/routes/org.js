@@ -54,7 +54,9 @@ router.put(
 const updateAccessSettingsSchema = Joi.object({
   prodBypassEnabled: Joi.boolean(),
   prodApprovalBypassMinRole: Joi.string().valid('admin', 'super_admin', 'none'),
-}).or('prodBypassEnabled', 'prodApprovalBypassMinRole');
+  // Personal vault switch (docs/personal-vault.md).
+  personalVaultEnabled: Joi.boolean(),
+}).or('prodBypassEnabled', 'prodApprovalBypassMinRole', 'personalVaultEnabled');
 
 // GET /api/org/access-settings — org.access_settings
 router.get(

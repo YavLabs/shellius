@@ -5,9 +5,9 @@ import asyncHandler from '../utils/asyncHandler.js';
 import ApiError from '../utils/ApiError.js';
 import authenticate from '../middleware/auth.js';
 import tenant from '../middleware/tenant.js';
-import { requirePermission, can } from '../middleware/rbac.js';
+import { requirePermission, requireAnyPermission, can } from '../middleware/rbac.js';
 import prisma from '../config/db.js';
-import { canBypassProdApproval } from '../services/orgService.js';
+import { canBypassProdApproval, isVaultEnabled } from '../services/orgService.js';
 import audit from '../middleware/audit.js';
 import * as keystoreService from '../services/keystoreService.js';
 import * as keyDeploymentService from '../services/keyDeploymentService.js';
@@ -44,6 +44,57 @@ async function assertCanDeployTo(req, serverIds) {
   }
 }
 
+// ---------------------------------------------------------------------------
+// Scope (docs/personal-vault.md). Org items (ownerId null) keep their
+// keystore.* permissions; personal items belong to one user, need vault.use
+// + the org switch, and are a 404 for everyone else. Each handler resolves
+// the ownerId it may act on and passes it to keystoreService, which only
+// ever touches rows of that scope.
+// ---------------------------------------------------------------------------
+
+const VAULT_OR_KEYSTORE = requireAnyPermission('keystore.view', 'vault.use');
+
+function permissionDenied(missing, message = 'You don’t have permission to do this') {
+  return new ApiError(403, message, { code: 'PERMISSION_DENIED', details: { missing: [missing] } });
+}
+
+async function assertPersonalAccess(req) {
+  if (!(await isVaultEnabled(req.orgId))) {
+    throw new ApiError(403, 'The personal vault is turned off for this organization', { code: 'VAULT_DISABLED' });
+  }
+  if (!can(req, 'vault.use')) throw permissionDenied('vault.use');
+}
+
+/** ownerId for a list/create call: `scope` from the query/body. */
+async function ownerForScope(req, scope, orgPermission) {
+  if (scope === 'personal') {
+    await assertPersonalAccess(req);
+    return req.user.userId;
+  }
+  if (!can(req, orgPermission)) throw permissionDenied(orgPermission);
+  return null;
+}
+
+/**
+ * ownerId for an existing item. `orgPermission` applies to org items; the
+ * owner of a personal item needs only vault.use (`personalCheck` can add
+ * more, e.g. move-to-org also needs keystore.manage).
+ */
+async function ownerForItem(req, model, id, orgPermission, personalCheck) {
+  const row = await prisma[model].findFirst({ where: { id, orgId: req.orgId }, select: { ownerId: true } });
+  const notFound = new ApiError(404, model === 'sshKey' ? 'Key not found' : 'Identity not found');
+  if (!row) throw notFound;
+  if (row.ownerId) {
+    if (row.ownerId !== req.user.userId) throw notFound;
+    await assertPersonalAccess(req);
+    if (personalCheck) personalCheck(req);
+    return row.ownerId;
+  }
+  if (orgPermission && !can(req, orgPermission)) throw permissionDenied(orgPermission);
+  return null;
+}
+
+const scopeSchema = Joi.string().valid('org', 'personal').default('org');
 
 // ---------------------------------------------------------------------------
 // Keys — /api/keystore/keys
@@ -52,6 +103,7 @@ async function assertCanDeployTo(req, serverIds) {
 const KEY_TYPES = ['ed25519', 'rsa', 'ecdsa'];
 
 const generateKeySchema = Joi.object({
+  scope: scopeSchema,
   name: Joi.string().min(1).max(200).required(),
   description: Joi.string().allow('', null).max(1000),
   keyType: Joi.string().valid(...KEY_TYPES).default('ed25519'),
@@ -61,6 +113,7 @@ const generateKeySchema = Joi.object({
 });
 
 const importKeySchema = Joi.object({
+  scope: scopeSchema,
   name: Joi.string().min(1).max(200).required(),
   description: Joi.string().allow('', null).max(1000),
   privateKey: Joi.string().required(),
@@ -83,29 +136,33 @@ const updateKeySchema = Joi.object({
 
 router.get(
   '/keys',
-  requirePermission('keystore.view'),
+  VAULT_OR_KEYSTORE,
   asyncHandler(async (req, res) => {
-    const result = await keystoreService.listKeys(req.orgId, { search: req.query.search });
+    const ownerId = await ownerForScope(req, req.query.scope, 'keystore.view');
+    const result = await keystoreService.listKeys(req.orgId, { search: req.query.search, ownerId });
     res.json({ success: true, data: result });
   })
 );
 
 router.get(
   '/keys/:id',
-  requirePermission('keystore.view'),
+  VAULT_OR_KEYSTORE,
   asyncHandler(async (req, res) => {
-    const result = await keystoreService.getKey(req.orgId, req.params.id);
+    const ownerId = await ownerForItem(req, 'sshKey', req.params.id, 'keystore.view');
+    const result = await keystoreService.getKey(req.orgId, req.params.id, { ownerId });
     res.json({ success: true, data: result });
   })
 );
 
 router.post(
   '/keys/generate',
-  requirePermission('keystore.manage'),
+  requireAnyPermission('keystore.manage', 'vault.use'),
   audit('keystore.key.generate', 'SshKey'),
   validate(generateKeySchema),
   asyncHandler(async (req, res) => {
-    const result = await keystoreService.generateKey(req.orgId, req.body, req.user.userId);
+    const { scope, ...body } = req.body;
+    const ownerId = await ownerForScope(req, scope, 'keystore.manage');
+    const result = await keystoreService.generateKey(req.orgId, body, req.user.userId, { ownerId });
     res.status(201).json({ success: true, data: result });
   })
 );
@@ -116,7 +173,7 @@ const credentialTestLimiter = userRateLimiter({ keyPrefix: 'rl:credential-test',
 
 router.post(
   '/keys/inspect',
-  requirePermission('keystore.view'),
+  VAULT_OR_KEYSTORE,
   inspectLimiter,
   validate(inspectKeySchema),
   asyncHandler(async (req, res) => {
@@ -127,46 +184,71 @@ router.post(
 
 router.post(
   '/keys/import',
-  requirePermission('keystore.manage'),
+  requireAnyPermission('keystore.manage', 'vault.use'),
   importLimiter,
   audit('keystore.key.import', 'SshKey'),
   validate(importKeySchema),
   asyncHandler(async (req, res) => {
-    const result = await keystoreService.importKey(req.orgId, req.body, req.user.userId);
+    const { scope, ...body } = req.body;
+    const ownerId = await ownerForScope(req, scope, 'keystore.manage');
+    const result = await keystoreService.importKey(req.orgId, body, req.user.userId, { ownerId });
     res.status(201).json({ success: true, data: result });
   })
 );
 
 router.patch(
   '/keys/:id',
-  requirePermission('keystore.manage'),
+  requireAnyPermission('keystore.manage', 'vault.use'),
   audit('keystore.key.update', 'SshKey'),
   validate(updateKeySchema),
   asyncHandler(async (req, res) => {
-    const result = await keystoreService.updateKey(req.orgId, req.params.id, req.body);
+    const ownerId = await ownerForItem(req, 'sshKey', req.params.id, 'keystore.manage');
+    const result = await keystoreService.updateKey(req.orgId, req.params.id, req.body, { ownerId });
     res.json({ success: true, data: result });
   })
 );
 
 router.delete(
   '/keys/:id',
-  requirePermission('keystore.manage'),
+  requireAnyPermission('keystore.manage', 'vault.use'),
   audit('keystore.key.delete', 'SshKey'),
   asyncHandler(async (req, res) => {
-    const result = await keystoreService.deleteKey(req.orgId, req.params.id);
+    const ownerId = await ownerForItem(req, 'sshKey', req.params.id, 'keystore.manage');
+    const result = await keystoreService.deleteKey(req.orgId, req.params.id, { ownerId });
     res.json({ success: true, data: result });
   })
 );
 
 router.post(
   '/keys/:id/export',
-  requirePermission('keystore.export_private'),
+  requireAnyPermission('keystore.export_private', 'vault.use'),
   audit('keystore.key.export', 'SshKey'),
   validate(Joi.object({ includePrivate: Joi.boolean().valid(true).required() })),
   asyncHandler(async (req, res) => {
+    // Owners may always export their own personal keys (audited).
+    const ownerId = await ownerForItem(req, 'sshKey', req.params.id, 'keystore.export_private');
     res.set('Cache-Control', 'no-store');
     res.set('Pragma', 'no-cache');
-    const result = await keystoreService.exportKey(req.orgId, req.params.id, req.user.userId);
+    const result = await keystoreService.exportKey(req.orgId, req.params.id, req.user.userId, { ownerId });
+    res.json({ success: true, data: result });
+  })
+);
+
+// Personal → organization, one-way. Owner only, and only with keystore.manage.
+const requireManage = (req) => {
+  if (!can(req, 'keystore.manage')) {
+    throw permissionDenied('keystore.manage', 'Moving items into the organization Keystore requires Manage Keystore');
+  }
+};
+
+router.post(
+  '/keys/:id/move-to-org',
+  requirePermission('keystore.manage'),
+  audit('keystore.key.move_to_org', 'SshKey'),
+  asyncHandler(async (req, res) => {
+    const ownerId = await ownerForItem(req, 'sshKey', req.params.id, null, requireManage);
+    if (!ownerId) throw new ApiError(400, 'This key is already in the organization Keystore');
+    const result = await keystoreService.moveKeyToOrg(req.orgId, req.params.id, ownerId);
     res.json({ success: true, data: result });
   })
 );
@@ -191,6 +273,7 @@ const newKeySchema = Joi.alternatives().try(
 );
 
 const createCredentialSchema = Joi.object({
+  scope: scopeSchema,
   name: Joi.string().min(1).max(200).required(),
   description: Joi.string().allow('', null).max(1000),
   username: Joi.string().min(1).max(255).required(),
@@ -221,62 +304,75 @@ const testCredentialSchema = Joi.object({
 
 router.get(
   '/credentials',
-  requirePermission('keystore.view'),
+  VAULT_OR_KEYSTORE,
   asyncHandler(async (req, res) => {
-    const result = await keystoreService.listCredentials(req.orgId, { search: req.query.search });
+    const ownerId = await ownerForScope(req, req.query.scope, 'keystore.view');
+    const result = await keystoreService.listCredentials(req.orgId, { search: req.query.search, ownerId });
     res.json({ success: true, data: result });
   })
 );
 
 router.get(
   '/credentials/:id',
-  requirePermission('keystore.view'),
+  VAULT_OR_KEYSTORE,
   asyncHandler(async (req, res) => {
-    const result = await keystoreService.getCredential(req.orgId, req.params.id);
+    const ownerId = await ownerForItem(req, 'credential', req.params.id, 'keystore.view');
+    const result = await keystoreService.getCredential(req.orgId, req.params.id, { ownerId });
     res.json({ success: true, data: result });
   })
 );
 
 router.post(
   '/credentials',
-  requirePermission('keystore.manage'),
+  requireAnyPermission('keystore.manage', 'vault.use'),
   audit('keystore.credential.create', 'Credential'),
   validate(createCredentialSchema),
   asyncHandler(async (req, res) => {
-    const result = await keystoreService.createCredential(req.orgId, req.body, req.user.userId);
+    const { scope, ...body } = req.body;
+    const ownerId = await ownerForScope(req, scope, 'keystore.manage');
+    const result = await keystoreService.createCredential(req.orgId, body, req.user.userId, { ownerId });
     res.status(201).json({ success: true, data: result });
   })
 );
 
 router.patch(
   '/credentials/:id',
-  requirePermission('keystore.manage'),
+  requireAnyPermission('keystore.manage', 'vault.use'),
   audit('keystore.credential.update', 'Credential'),
   validate(updateCredentialSchema),
   asyncHandler(async (req, res) => {
-    const result = await keystoreService.updateCredential(req.orgId, req.params.id, req.body, req.user.userId);
+    const ownerId = await ownerForItem(req, 'credential', req.params.id, 'keystore.manage');
+    const result = await keystoreService.updateCredential(req.orgId, req.params.id, req.body, req.user.userId, { ownerId });
     res.json({ success: true, data: result });
   })
 );
 
 router.delete(
   '/credentials/:id',
-  requirePermission('keystore.manage'),
+  requireAnyPermission('keystore.manage', 'vault.use'),
   audit('keystore.credential.delete', 'Credential'),
   asyncHandler(async (req, res) => {
+    const ownerId = await ownerForItem(req, 'credential', req.params.id, 'keystore.manage');
     const force = req.query.force === 'true' || req.query.force === true;
-    const result = await keystoreService.deleteCredential(req.orgId, req.params.id, { force }, req.user.userId);
+    const result = await keystoreService.deleteCredential(req.orgId, req.params.id, { force, ownerId }, req.user.userId);
     res.json({ success: true, data: result });
   })
 );
 
 router.post(
   '/credentials/:id/test',
-  requirePermission('keystore.test'),
+  requireAnyPermission('keystore.test', 'vault.use'),
   credentialTestLimiter,
   audit('keystore.credential.test', 'Credential'),
   validate(testCredentialSchema),
   asyncHandler(async (req, res) => {
+    const ownerId = await ownerForItem(req, 'credential', req.params.id, 'keystore.test');
+    if (ownerId) {
+      // Your own identity: host tests only (prod / DENY guards in the service).
+      const result = await keystoreService.testCredential(req.orgId, req.params.id, req.body, req.user.userId, { ownerId });
+      res.json({ success: true, data: result });
+      return;
+    }
     // Testing against an arbitrary host sends the stored secret there — only
     // for people who could read/replace the identity anyway (F-17).
     if (req.body.host && !can(req, 'keystore.manage')) {
@@ -286,6 +382,18 @@ router.post(
       });
     }
     const result = await keystoreService.testCredential(req.orgId, req.params.id, req.body, req.user.userId);
+    res.json({ success: true, data: result });
+  })
+);
+
+router.post(
+  '/credentials/:id/move-to-org',
+  requirePermission('keystore.manage'),
+  audit('keystore.credential.move_to_org', 'Credential'),
+  asyncHandler(async (req, res) => {
+    const ownerId = await ownerForItem(req, 'credential', req.params.id, null, requireManage);
+    if (!ownerId) throw new ApiError(400, 'This identity is already in the organization Keystore');
+    const result = await keystoreService.moveCredentialToOrg(req.orgId, req.params.id, ownerId);
     res.json({ success: true, data: result });
   })
 );

@@ -3,6 +3,10 @@ import api from './api';
 // ---------------------------------------------------------------------------
 // Keys — /keystore/keys
 // ---------------------------------------------------------------------------
+// Every list/create call is scope-aware (docs/personal-vault.md): pass
+// `{ scope: 'personal' }` in params/body to work the caller's own private
+// items instead of the org's (default `scope: 'org'`, needs keystore.view /
+// keystore.manage; `personal` needs vault.use + the org's vault switch).
 
 export const listKeys = (params) =>
   api.get('/keystore/keys', { params }).then((r) => r.data.data?.keys ?? []);
@@ -53,6 +57,13 @@ export const deleteCredential = (id, { force = false } = {}) =>
 
 export const testCredential = (id, data) =>
   api.post(`/keystore/credentials/${id}/test`, data).then((r) => r.data.data);
+
+// Personal → org, one-way (docs/personal-vault.md rule 6). Owner + keystore.manage.
+export const moveCredentialToOrg = (id) =>
+  api.post(`/keystore/credentials/${id}/move-to-org`).then((r) => r.data.data?.credential);
+
+export const moveKeyToOrg = (id) =>
+  api.post(`/keystore/keys/${id}/move-to-org`).then((r) => r.data.data?.key);
 
 // ---------------------------------------------------------------------------
 // Deployments — /keystore/deployments

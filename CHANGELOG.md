@@ -9,6 +9,27 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 Tracked here as work lands on `main`; moved into a dated section on release
 (`node scripts/version.mjs bump <major|minor|patch>`).
 
+### Added
+
+- **Personal vault**: everyone can keep their own identities and SSH keys, visible only to them.
+  - The Keystore has a Personal / Organization switch. Members see only their personal items.
+  - Personal items can be used in Quick Connect. They can never be bound to org servers or used for key deployment.
+  - Owners who also hold Manage Keystore can move a personal identity or key into the organization Keystore.
+  - Deleting a user deletes their personal vault.
+- **My hosts**: a private list of SSH hosts per user, connected with personal (or permitted org) identities.
+  - Same checks as Quick Connect: production servers refused, DENY policies applied, audited, recorded.
+  - Host keys are pinned on first connect.
+  - Quick Connect can save a target to My hosts.
+- Permissions `vault.use` and `vault.hosts`, granted to every built-in role on upgrade.
+- Org switch in Settings → Access to turn the personal vault off.
+- See `docs/personal-vault.md`.
+
+### Changed
+
+- Identity and key names are unique per scope: org names across the org, personal names per owner.
+- Testing an identity against an arbitrary host now refuses production servers and hosts a DENY policy keeps you from.
+- The auth pages use a shared layout with a faint grid and legal footer; the content area has a faint grid.
+
 ## [1.2.2] - 2026-09-19
 
 ### Added

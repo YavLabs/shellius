@@ -253,7 +253,7 @@ function Servers() {
 
   const bulkActionsSlot =
     selected.length > 0 ? (
-      <div className="flex flex-col gap-2 rounded-lg border border-border bg-accent/30 px-4 py-2.5 sm:flex-row sm:items-center sm:justify-between">
+      <div className="flex flex-col gap-3 rounded-lg border border-border bg-accent/30 px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
         <span className="text-sm text-foreground">{selected.length} selected</span>
         <div className="flex flex-wrap items-center gap-2">
           {BULK_FIELDS.length > 0 && (

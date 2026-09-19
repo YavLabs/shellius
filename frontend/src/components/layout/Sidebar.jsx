@@ -21,6 +21,7 @@ import {
   Menu,
   X,
   ShieldCheck,
+  Lock,
 } from 'lucide-react';
 import { useAuth } from '@/context/AuthContext';
 import { useNotifications } from '@/context/NotificationContext';
@@ -64,6 +65,7 @@ const NAV_SECTIONS = [
     items: [
       { id: 'customers', label: 'Customers', icon: Building2, to: '/customers' },
       { id: 'servers', label: 'Servers', icon: Server, to: '/servers' },
+      { id: 'my-hosts', label: 'My hosts', icon: Lock, to: '/my-hosts' },
     ],
   },
   {

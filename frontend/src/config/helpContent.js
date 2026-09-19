@@ -289,6 +289,34 @@ export const HELP_CONTENT = {
     ],
   },
 
+  'my-hosts': {
+    title: 'My hosts',
+    summary:
+      "Your own private SSH address book — name, host, username and an identity to connect with. My hosts are never servers: they don't appear in the inventory, policies, approvals, dashboards, health checks, search or the TUI, and nobody else — not even admins — can see them.",
+    sections: [
+      {
+        heading: 'Identities',
+        body:
+          'Attach one of your personal identities (Keystore → Personal), an organization identity if your role allows it, or pick "Ask each time" to enter a password or key on each connection — nothing typed there is ever stored.',
+      },
+      {
+        heading: 'Same connection guards as Quick Connect',
+        body:
+          "Connecting goes through the same ticket engine as Quick Connect: loopback/link-local/metadata addresses are blocked, and a host matching a saved production server is refused — use the access-request flow for that host instead.",
+      },
+      {
+        heading: 'Host key pinning',
+        body:
+          'The first successful connection pins the host\'s SSH key (TOFU); a mismatch afterward blocks the connection until you reset the pin yourself.',
+      },
+      {
+        heading: 'Turned off?',
+        body:
+          'An admin can turn off personal vault for the whole organization (Settings → Access). While off, your hosts and identities are kept but hidden and unusable until it\'s turned back on.',
+      },
+    ],
+  },
+
   settings: {
     title: 'Settings',
     summary:

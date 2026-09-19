@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import { Link } from 'react-router-dom';
-import { ShieldCheck } from 'lucide-react';
+import { ShieldCheck, Lock } from 'lucide-react';
 import { SectionCard } from './shared';
 import { SwitchField } from '@/components/ui/switch';
 import RolesWithPermission from '@/components/roles/RolesWithPermission';
@@ -44,6 +44,21 @@ function AccessSettings() {
     setSettings((s) => ({ ...s, prodBypassEnabled: next }));
     try {
       setSettings(await updateAccessSettings({ prodBypassEnabled: next }));
+    } catch (err) {
+      setSettings(previous);
+      setError(err.response?.data?.error?.message || err.message || 'Failed to save access settings');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const togglePersonalVault = async (next) => {
+    setSaving(true);
+    setError('');
+    const previous = settings;
+    setSettings((s) => ({ ...s, personalVaultEnabled: next }));
+    try {
+      setSettings(await updateAccessSettings({ personalVaultEnabled: next }));
     } catch (err) {
       setSettings(previous);
       setError(err.response?.data?.error?.message || err.message || 'Failed to save access settings');
@@ -114,6 +129,23 @@ function AccessSettings() {
               </p>
             )}
           </div>
+
+          <SwitchField
+            bordered
+            label={
+              <span className="flex items-center gap-1.5">
+                <Lock className="h-3.5 w-3.5 text-muted-foreground" /> Personal vault
+              </span>
+            }
+            description={
+              settings?.personalVaultEnabled
+                ? 'On: users may keep private identities, keys and My hosts — visible only to their owner, never to admins.'
+                : 'Off: personal identities, keys and My hosts are hidden and unusable for everyone. Nothing is deleted — turning this back on restores access to what was already saved.'
+            }
+            checked={!!settings?.personalVaultEnabled}
+            disabled={saving}
+            onCheckedChange={togglePersonalVault}
+          />
         </div>
       )}
     </SectionCard>
