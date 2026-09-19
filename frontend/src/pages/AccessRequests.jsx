@@ -451,17 +451,13 @@ function AccessRequests() {
       <PageHeader
         icon={KeyRound}
         title="Access Requests"
-        subtitle="Request temporary access to servers or review pending requests." helpKey="access-requests">
-        <div className="flex items-center gap-2">
-          <Button variant="outline" onClick={() => fetchRequests()} disabled={loading}>
-            <RefreshCw className={`mr-2 h-4 w-4 ${loading ? 'animate-spin' : ''}`} /> Refresh
-          </Button>
-          <Button onClick={() => setFormOpen(true)}>
-            <Plus className="mr-2 h-4 w-4" />
-            New request
-          </Button>
-        </div>
-      </PageHeader>
+        subtitle="Request temporary access to servers or review pending requests."
+        helpKey="access-requests"
+        actions={[
+          { key: 'refresh', label: 'Refresh', icon: RefreshCw, variant: 'outline', onClick: () => fetchRequests(), disabled: loading, spin: loading },
+          { key: 'new', label: 'New request', icon: Plus, onClick: () => setFormOpen(true) },
+        ]}
+      />
 
       {/* Tabs */}
       <div className="flex items-center gap-1 border-b border-border">

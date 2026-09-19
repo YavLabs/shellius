@@ -430,13 +430,13 @@ function Users() {
 
   return (
     <div className="space-y-6">
-      <PageHeader icon={UsersIcon} title="Users" subtitle="Manage user accounts, roles, and access." helpKey="users">
-        {can('users.invite') && (
-          <Button onClick={openCreate}>
-            <Plus className="mr-2 h-4 w-4" /> Add User
-          </Button>
-        )}
-      </PageHeader>
+      <PageHeader
+        icon={UsersIcon}
+        title="Users"
+        subtitle="Manage user accounts, roles, and access."
+        helpKey="users"
+        actions={[{ key: 'add', label: 'Add User', icon: Plus, onClick: openCreate, hidden: !can('users.invite') }]}
+      />
 
       {error && (
         <div className="rounded-md border border-destructive/50 bg-destructive/10 px-3 py-2 text-sm text-destructive">
