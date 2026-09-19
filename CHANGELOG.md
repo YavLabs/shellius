@@ -9,6 +9,13 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 Tracked here as work lands on `main`; moved into a dated section on release
 (`node scripts/version.mjs bump <major|minor|patch>`).
 
+### Fixed
+
+- The seed strips one pair of matching outer quotes from `SEED_*` values. `docker run --env-file`
+  passes quotes through literally, which stored names like `"Local Admin"` (quotes included) for
+  the super admin and organization.
+- Avatar initials ignore punctuation, so a quoted or bracketed name no longer shows `"A`.
+
 ## [1.1.0] - 2026-09-18
 
 This is a large release:

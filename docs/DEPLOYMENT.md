@@ -292,6 +292,11 @@ docker run -d --name shellius -p 8080:8080 --env-file .env.prod \
   --restart unless-stopped yavadmin/shellius:latest
 ```
 
+> `docker run --env-file` does **not** strip quotes: `SEED_ADMIN_NAME="Jane Doe"` arrives with
+> the quotes included. Write values unquoted in that file. (Compose's `env_file` and dotenv do
+> strip them. The seed strips one pair of outer quotes from `SEED_*` values either way, but other
+> settings such as SMTP names would keep them.)
+
 **Behind a TLS proxy** (Traefik, Caddy, Coolify, a cloud load balancer), point it at port 8080
 and set:
 - `TRAEFIK_HOST=shellius.example.com`. Despite the name, it works behind any proxy: the bare

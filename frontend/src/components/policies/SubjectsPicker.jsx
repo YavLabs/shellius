@@ -22,6 +22,7 @@ import { X, Search, Users, UsersRound, ShieldCheck, Loader2 } from 'lucide-react
 import { listUsers } from '@/services/userService';
 import { listGroups } from '@/services/groupService';
 import { formatLabel } from '@/utils/format';
+import { initialsOf } from '@/components/ui/Avatar';
 
 // How many rows to show per category before "Show more" appears.
 const WINDOW_SIZE = 50;
@@ -62,11 +63,7 @@ function useDebounce(value, delay) {
 
 // Initials avatar for users.
 function Avatar({ name }) {
-  const initials = (name || '?')
-    .split(/\s+/)
-    .slice(0, 2)
-    .map((w) => w[0]?.toUpperCase() ?? '')
-    .join('');
+  const initials = initialsOf(name);
   return (
     <div
       className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-primary/15 text-[11px] font-semibold text-primary select-none"

@@ -24,9 +24,11 @@ const SIZES = {
   xl: 'h-16 w-16 text-lg',
 };
 
+// Letters/digits only, so a name like `"Local Admin"` or `(Ops) Bot` gives
+// "LA" / "OB", never a quote or bracket.
 export function initialsOf(name, email) {
-  const s = (name || email || 'U').trim();
-  if (!s) return 'U';
+  const clean = (v) => (v || '').replace(/[^\p{L}\p{N}\s]/gu, ' ').trim();
+  const s = clean(name) || clean((email || '').split('@')[0]) || 'U';
   const parts = s.split(/\s+/).filter(Boolean);
   if (parts.length >= 2) return (parts[0][0] + parts[1][0]).toUpperCase();
   return s.slice(0, 2).toUpperCase();
