@@ -41,6 +41,7 @@ import Keystore from './pages/Keystore';
 import MyHosts from './pages/MyHosts';
 import Roles from './pages/Roles';
 import MfaSetup from './pages/MfaSetup';
+import AuthPreview, { AuthPreviewPage } from './pages/AuthPreview';
 
 function App() {
   return (
@@ -58,6 +59,19 @@ function App() {
               <Route path="/register" element={<Register />} />
               <Route path="/legal/:doc" element={<Legal />} />
               <Route path="/auth/callback" element={<AuthCallback />} />
+              {/* Auth page previews — sample data, no server calls (lib/previewMock.js) */}
+              <Route path="/dummy" element={<AuthPreview />} />
+              <Route path="/dummy/login" element={<AuthPreviewPage pageKey="login" />} />
+              <Route path="/dummy/register" element={<AuthPreviewPage pageKey="register" />} />
+              <Route path="/dummy/forgot-password" element={<AuthPreviewPage pageKey="forgot-password" />} />
+              <Route path="/dummy/password-reset/:token" element={<AuthPreviewPage pageKey="reset-password" />} />
+              <Route path="/dummy/invite/:token" element={<AuthPreviewPage pageKey="invite" />} />
+              <Route path="/dummy/approve/:token" element={<AuthPreviewPage pageKey="approve" />} />
+              <Route path="/dummy/device" element={<AuthPreviewPage pageKey="device" />} />
+              <Route path="/dummy/mfa-setup" element={<AuthPreviewPage pageKey="mfa-setup" />} />
+              <Route path="/dummy/sso-callback" element={<AuthPreviewPage pageKey="sso-error" />} />
+              <Route path="/dummy/legal/:doc" element={<AuthPreviewPage pageKey="legal" />} />
+              <Route path="/dummy/not-found" element={<AuthPreviewPage pageKey="not-found" />} />
               <Route element={<ProtectedRoute />}>
                 {/* Forced MFA enrollment — full screen, no app chrome */}
                 <Route path="/mfa-setup" element={<MfaSetup />} />

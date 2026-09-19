@@ -203,40 +203,6 @@
     --auth-canvas: 240 8% 3.5%;
   }
 
-  .auth-aura {
-    position: absolute;
-    left: 50%;
-    top: 44%;
-    width: min(760px, 140vw);
-    height: min(560px, 105vw);
-    transform: translate(-50%, -50%);
-    pointer-events: none;
-  }
-  /* coloured halo — a ring, masked so the middle stays neutral */
-  .auth-aura::before {
-    content: '';
-    position: absolute;
-    inset: 0;
-    border-radius: 9999px;
-    background: conic-gradient(from 200deg, #ff4d5e, #9d5cff, #4f6bff, #2fa8ff, #ff9150, #ff4d5e);
-    -webkit-mask-image: radial-gradient(closest-side, transparent 38%, #000 72%, transparent 100%);
-    mask-image: radial-gradient(closest-side, transparent 38%, #000 72%, transparent 100%);
-    filter: blur(60px);
-    opacity: 0.1;
-  }
-  /* soft grey lift behind the form */
-  .auth-aura::after {
-    content: '';
-    position: absolute;
-    inset: 16% 20%;
-    border-radius: 9999px;
-    background: radial-gradient(closest-side, hsl(var(--foreground) / 0.05), transparent);
-    filter: blur(30px);
-  }
-  .dark .auth-aura::before {
-    opacity: 0.16;
-  }
-
   .auth-fey main h1 {
     background-image: linear-gradient(90deg, #6d5bd0, #b0578f 55%, #c9743a);
     -webkit-background-clip: text;
@@ -286,3 +252,93 @@
     background: linear-gradient(90deg, transparent, hsl(var(--foreground) / 0.12), transparent);
   }
 }
+
+/* Auth backdrop — plain CSS (not @layer) so Tailwind never purges the
+   numbered ring/bubble classes, which are built from template strings. */
+  /* Backdrop: several soft coloured rings scattered around the edges that
+   drift and breathe very slowly, a few faint bubbles rising, and a quiet
+   grey lift behind the form. Motion stops for prefers-reduced-motion. */
+.auth-backdrop {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  pointer-events: none;
+}
+.auth-ring {
+  position: absolute;
+  width: var(--size);
+  height: var(--size);
+  border-radius: 9999px;
+  background: conic-gradient(from var(--from, 0deg), var(--c1), var(--c2), var(--c3), var(--c1));
+  -webkit-mask-image: radial-gradient(closest-side, transparent 40%, #000 70%, transparent 100%);
+  mask-image: radial-gradient(closest-side, transparent 40%, #000 70%, transparent 100%);
+  filter: blur(48px);
+  opacity: var(--o, 0.1);
+  animation: auth-drift var(--dur, 60s) ease-in-out var(--delay, 0s) infinite alternate;
+  will-change: transform;
+}
+.dark .auth-ring {
+  opacity: var(--od, 0.14);
+}
+.auth-ring-1 { --size: min(520px, 95vw); top: -10%; left: -8%; --c1: #ff4d5e; --c2: #b35cff; --c3: #ff8a65; --dx: 70px; --dy: 50px; --dur: 52s; }
+.auth-ring-2 { --size: min(620px, 105vw); top: -16%; right: -10%; --c1: #4f6bff; --c2: #2fb8ff; --c3: #8a7dff; --dx: -60px; --dy: 70px; --dur: 64s; --delay: -14s; --from: 120deg; }
+.auth-ring-3 { --size: min(480px, 90vw); bottom: -14%; left: 6%; --c1: #ff6fa8; --c2: #ffb25c; --c3: #ff5f6d; --dx: 60px; --dy: -60px; --dur: 58s; --delay: -26s; --from: 60deg; }
+.auth-ring-4 { --size: min(560px, 100vw); bottom: -12%; right: -6%; --c1: #8b5cff; --c2: #4f8bff; --c3: #d06bff; --dx: -70px; --dy: -40px; --dur: 70s; --delay: -8s; --from: 220deg; }
+.auth-ring-5 { --size: min(300px, 60vw); top: 14%; left: 60%; --c1: #ffb08a; --c2: #ff6f91; --c3: #c58bff; --dx: -40px; --dy: 50px; --dur: 80s; --delay: -40s; --o: 0.06; --od: 0.09; }
+
+@keyframes auth-drift {
+  0% { transform: translate3d(0, 0, 0) scale(1) rotate(0deg); }
+  50% { transform: translate3d(var(--dx), var(--dy), 0) scale(1.08) rotate(25deg); }
+  100% { transform: translate3d(calc(var(--dx) * -0.5), calc(var(--dy) * 0.7), 0) scale(0.94) rotate(-15deg); }
+}
+
+/* Faint bubbles that rise and fade, very slowly. */
+.auth-bubble {
+  position: absolute;
+  bottom: -40px;
+  width: var(--b);
+  height: var(--b);
+  border-radius: 9999px;
+  background: radial-gradient(circle at 30% 30%, hsl(var(--foreground) / 0.14), hsl(var(--foreground) / 0.02) 70%);
+  box-shadow: inset 0 0 0 1px hsl(var(--foreground) / 0.06);
+  opacity: 0;
+  animation: auth-rise var(--dur) linear var(--delay, 0s) infinite;
+}
+.auth-bubble-1 { --b: 14px; left: 12%; --dur: 38s; --delay: -4s; }
+.auth-bubble-2 { --b: 22px; left: 27%; --dur: 52s; --delay: -30s; }
+.auth-bubble-3 { --b: 10px; left: 46%; --dur: 44s; --delay: -18s; }
+.auth-bubble-4 { --b: 18px; left: 71%; --dur: 48s; --delay: -9s; }
+.auth-bubble-5 { --b: 12px; left: 86%; --dur: 40s; --delay: -24s; }
+.auth-bubble-6 { --b: 26px; left: 58%; --dur: 60s; --delay: -44s; }
+
+@keyframes auth-rise {
+  0% { transform: translate3d(0, 0, 0); opacity: 0; }
+  10% { opacity: 0.7; }
+  50% { transform: translate3d(18px, -55vh, 0); }
+  85% { opacity: 0.5; }
+  100% { transform: translate3d(-12px, -110vh, 0); opacity: 0; }
+}
+
+/* quiet grey lift behind the form */
+.auth-aura {
+  position: absolute;
+  left: 50%;
+  top: 46%;
+  width: min(620px, 120vw);
+  height: min(460px, 90vw);
+  transform: translate(-50%, -50%);
+  border-radius: 9999px;
+  background: radial-gradient(closest-side, hsl(var(--foreground) / 0.045), transparent);
+  filter: blur(30px);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .auth-ring,
+  .auth-bubble {
+    animation: none;
+  }
+  .auth-bubble {
+    display: none;
+  }
+}
+

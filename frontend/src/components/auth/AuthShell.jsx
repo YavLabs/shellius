@@ -39,8 +39,8 @@ export function AuthFooter({ className, children }) {
 /**
  * AuthShell — shared frame for every signed-out / full-screen auth page
  * (login, register, invite, password reset, device, approvals, MFA setup,
- * SSO callback, 404, legal). Fey-style: near-black canvas, a soft coloured
- * aura behind the form, the form floating without a card (see `.auth-fey`
+ * SSO callback, 404, legal). Fey-style: near-black canvas, soft coloured
+ * rings drifting slowly around the edges with a few rising bubbles, the form floating without a card (see `.auth-fey`
  * in index.css), and the footer pinned to the bottom.
  *
  *   align   'center' (forms, default) | 'top' (long documents)
@@ -49,7 +49,15 @@ export function AuthFooter({ className, children }) {
 function AuthShell({ children, align = 'center', className, footer }) {
   return (
     <div className="auth-fey relative isolate flex min-h-screen flex-col overflow-hidden">
-      <div aria-hidden="true" className="auth-aura -z-10" />
+      <div aria-hidden="true" className="auth-backdrop -z-10">
+        {[1, 2, 3, 4, 5].map((n) => (
+          <span key={`r${n}`} className={`auth-ring auth-ring-${n}`} />
+        ))}
+        {[1, 2, 3, 4, 5, 6].map((n) => (
+          <span key={`b${n}`} className={`auth-bubble auth-bubble-${n}`} />
+        ))}
+        <div className="auth-aura" />
+      </div>
       <header className="relative flex items-center px-5 pt-5">
         <Link to="/" aria-label="Home" className="opacity-80 transition-opacity hover:opacity-100">
           <BrandMark size="sm" />

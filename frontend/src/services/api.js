@@ -1,4 +1,5 @@
 import axios from 'axios';
+import { isPreview, previewAdapter } from '@/lib/previewMock';
 
 const api = axios.create({
   baseURL: import.meta.env.VITE_API_URL || '/api',
@@ -9,6 +10,11 @@ const api = axios.create({
 
 api.interceptors.request.use(
   (config) => {
+    // /dummy/* auth page previews never talk to the server.
+    if (isPreview()) {
+      config.adapter = previewAdapter;
+      return config;
+    }
     const token = localStorage.getItem('accessToken');
     if (token) {
       config.headers.Authorization = `Bearer ${token}`;
