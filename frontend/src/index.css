@@ -411,10 +411,9 @@ main h1 svg {
 ::selection {
   background: hsl(var(--brand) / 0.3);
 }
-/* Active sidebar item: accent bar + tint. */
+/* Active sidebar item: accent tint. */
 aside a[aria-current='page'] {
   background: hsl(var(--brand) / 0.12);
-  box-shadow: inset 2px 0 0 hsl(var(--brand));
 }
 /* Content-area grid a touch quieter on the darker canvas. */
 .bg-grid {

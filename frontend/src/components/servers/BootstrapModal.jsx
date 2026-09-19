@@ -125,7 +125,7 @@ function BootstrapModal({ open, server, onClose }) {
 
           {data && !loading && (
             <>
-              <div className="relative rounded-md border border-border bg-[#0a0a0a] p-3 pr-20">
+              <div className="relative rounded-md border border-border bg-ink p-3 pr-20">
                 <pre className="overflow-x-auto whitespace-pre-wrap break-all font-mono text-xs text-emerald-300">
                   {command}
                 </pre>
