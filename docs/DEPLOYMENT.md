@@ -112,7 +112,7 @@ platform's env var UI, never commit it). Full precedent copies live in
 | `PORT` | No | `3001` | No | Backend HTTP/WebSocket port |
 | `TRAEFIK_HOST` | Recommended | — | No | Public hostname; derives CORS origin, frontend URL, and SSO callback base when set |
 | `PUBLIC_BASE_URL` | No | derived from `TRAEFIK_HOST` | No | Explicit public base URL override (links in emails, CORS, terminal WebSocket origin check) |
-| `APP_URL` | No | derived | No | Overrides the base used to build the SSO redirect URI specifically |
+| `APP_URL` | No | derived from `TRAEFIK_HOST` | No | Public URL of the web app. Used for every link that opens an app page (invite, password-reset, email-verify and approval links, the SSO redirect URI) and as the default CORS origin. Takes precedence over `PUBLIC_BASE_URL` / `FRONTEND_URL`. Links are never built from request headers |
 | `PUBLIC_API_URL` | No | derived | No | Explicit absolute API URL (bootstrap script, invite links) when not using `TRAEFIK_HOST` |
 | `PUBLIC_GATEWAY_HOST` | No | `localhost` | No | Hostname RDP clients use to reach the WebSocket gateway |
 | `CORS_ORIGIN` | No | derived from `TRAEFIK_HOST` | No | Explicit CORS origin override |

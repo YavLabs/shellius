@@ -15,6 +15,7 @@
 import crypto from 'crypto';
 import prisma from '../config/db.js';
 import ApiError from '../utils/ApiError.js';
+import config from '../config/index.js';
 
 // ---------------------------------------------------------------------------
 // Token types
@@ -36,26 +37,17 @@ function sha256(value) {
 }
 
 /**
- * Derive the public-facing base URL using the same env-var priority as
- * bootstrap.js so all generated links are consistent.
- *
- * @param {import('express').Request|null} req - Optional; falls back to env vars.
+ * Public base URL of the web app, for links to its pages.
  * @returns {string}
  */
-export function getPublicBaseUrl(req = null) {
-  const strip = (u) => String(u).replace(/\/$/, '').replace(/\/api$/, '');
-
-  if (process.env.TRAEFIK_HOST) return `https://${process.env.TRAEFIK_HOST}`;
-  if (process.env.PUBLIC_API_URL) return strip(process.env.PUBLIC_API_URL);
-  if (process.env.VITE_API_URL) return strip(process.env.VITE_API_URL);
-
-  if (req) {
-    const proto = (req.headers['x-forwarded-proto'] || req.protocol || 'http').split(',')[0];
-    const host = req.headers['x-forwarded-host'] || req.get('host');
-    return `${proto}://${host}`;
-  }
-
-  return 'http://localhost:3000';
+export function getPublicBaseUrl() {
+  // Links in emails and in the "SMTP unavailable" dialog open pages of the
+  // web app, so they use the app's configured public URL (APP_URL →
+  // PUBLIC_BASE_URL → FRONTEND_URL → TRAEFIK_HOST → dev default; see
+  // config/index.js). Never derive them from request headers: Host /
+  // X-Forwarded-Host are client-controlled, and a forged one would put a
+  // password-reset token on someone else's domain (reset-link poisoning).
+  return config.publicBaseUrl;
 }
 
 /**
@@ -67,8 +59,8 @@ export function getPublicBaseUrl(req = null) {
  * @param {import('express').Request|null} req
  * @returns {string}
  */
-export function buildTokenUrl(type, rawToken, req = null) {
-  const base = getPublicBaseUrl(req);
+export function buildTokenUrl(type, rawToken, _req = null) {
+  const base = getPublicBaseUrl();
   let path;
   if (type === TOKEN_TYPES.INVITE) {
     path = 'invite';

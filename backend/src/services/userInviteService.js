@@ -45,7 +45,7 @@ export async function sendInvite({ orgId, user, req = null }) {
 
   if (sso.enabled) {
     // SSO mode — no token, just a link to the login page.
-    const loginUrl = `${inviteService.getPublicBaseUrl(req)}/login`;
+    const loginUrl = `${inviteService.getPublicBaseUrl()}/login`;
     const tpl = renderTemplate('inviteSso', {
       recipientName: user.name,
       orgName,
