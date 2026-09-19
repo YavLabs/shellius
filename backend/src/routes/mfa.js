@@ -82,6 +82,20 @@ router.post(
   })
 );
 
+// PUT /api/mfa/preferred — which enrolled factor sign-in asks for first.
+const preferredSchema = Joi.object({ method: Joi.string().valid('totp', 'email').required() });
+router.put(
+  '/preferred',
+  audit('mfa.preferred_method.updated', 'User'),
+  asyncHandler(async (req, res) => {
+    const { error, value } = preferredSchema.validate(req.body, { stripUnknown: true });
+    if (error) throw new ApiError(400, error.message);
+    const user = await loadUser(req);
+    const data = await mfaService.setPreferredMethod(user, value.method);
+    res.json({ success: true, data });
+  })
+);
+
 // POST /api/mfa/email/send-code — self-service: email the current user a
 // one-time code usable as { method: 'email', code } for /disable and
 // /backup-codes/regenerate. Only when email MFA is enrolled; rate-limited

@@ -9,6 +9,21 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 Tracked here as work lands on `main`; moved into a dated section on release
 (`node scripts/version.mjs bump <major|minor|patch>`).
 
+## [1.5.2] - 2026-09-19
+
+### Added
+
+- **Default two-factor method.** When both the authenticator app and email codes are set up, Profile → Two-factor authentication has a **Default at sign-in** choice. Sign-in, SSO account linking and the "verify it's you" check open on that method. Stored per user (`User.mfaPreferredMethod`, migration `20260922000000_mfa_preferred_method`; `PUT /api/mfa/preferred`, audited as `mfa.preferred_method.updated`). A preference for a method that's later turned off is ignored.
+- **"More ways to verify"** on the two-factor screens replaces the Authenticator / Email tabs and the separate backup-code link: it lists the other methods you have, backup codes included.
+
+### Changed
+
+- **Email codes are sent first, then verified.** Choosing an email code shows where it will go and a full-width **Send code** button. After sending, the screen confirms it was sent and shows the code field and **Verify**, with "Didn't get it? Resend code" under it. Resend waits 30 seconds between sends, confirms the new code, and shows the server's message when it rate-limits. "I already have a code" skips straight to the code field. Same flow at sign-in, when linking an SSO account and in the "verify it's you" check on Profile.
+
+### Migration notes
+
+- One new migration, `20260922000000_mfa_preferred_method`: adds a nullable `users.mfa_preferred_method` column. No data changes; run `prisma migrate deploy` before starting the new backend.
+
 ## [1.5.1] - 2026-09-19
 
 ### Changed

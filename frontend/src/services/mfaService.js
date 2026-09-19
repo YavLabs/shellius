@@ -26,3 +26,6 @@ export const sendMfaOtp = (mfaToken) => api.post('/auth/mfa/send-otp', { mfaToke
 // Super-admin config
 export const getMfaConfig = () => api.get('/settings/mfa').then((r) => r.data?.data?.config ?? r.data);
 export const saveMfaConfig = (body) => api.put('/settings/mfa', body).then((r) => r.data?.data?.config ?? r.data);
+
+// Which enrolled factor sign-in asks for first ('totp' | 'email').
+export const setPreferredMfaMethod = (method) => api.put('/mfa/preferred', { method }).then(unwrap);

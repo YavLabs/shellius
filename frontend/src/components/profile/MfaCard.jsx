@@ -11,6 +11,7 @@ import {
   enableEmailMfa,
   regenerateBackupCodes,
   disableMfa,
+  setPreferredMfaMethod,
 } from '@/services/mfaService';
 
 /**
@@ -31,6 +32,7 @@ export default function MfaCard({ hasPassword }) {
   const [backupCodes, setBackupCodes] = useState(null);
   const [pendingAction, setPendingAction] = useState(null); // 'disable' | 'regenerate'
   const [verifyError, setVerifyError] = useState('');
+  const [savingDefault, setSavingDefault] = useState(false);
 
   const refresh = useCallback(() => {
     setLoading(true);
@@ -65,11 +67,28 @@ export default function MfaCard({ hasPassword }) {
     );
   }
 
+  // Preferred factor first, so "verify it's you" also opens on it.
   const enrolledMethods = [
     status?.totpEnabled && 'totp',
     status?.emailEnabled && 'email',
     status?.backupCodesRemaining > 0 && 'backup',
-  ].filter(Boolean);
+  ]
+    .filter(Boolean)
+    .sort((a, b) => (a === status?.preferredMethod ? -1 : b === status?.preferredMethod ? 1 : 0));
+
+  const changeDefault = async (method) => {
+    if (method === status?.preferredMethod) return;
+    setSavingDefault(true);
+    setError('');
+    try {
+      await setPreferredMfaMethod(method);
+      setData((d) => ({ ...d, status: { ...d.status, preferredMethod: method } }));
+    } catch (e) {
+      setError(e?.response?.data?.error?.message || e.message || 'Could not save your default method');
+    } finally {
+      setSavingDefault(false);
+    }
+  };
 
   const startTotp = async (isReplace) => {
     setBusy(true);
@@ -162,6 +181,43 @@ export default function MfaCard({ hasPassword }) {
         <p>Email code: {status?.emailEnabled ? <span className="text-emerald-600">enabled</span> : 'not set up'}</p>
         {status?.enrolled && <p>Backup codes remaining: {status.backupCodesRemaining}</p>}
       </div>
+
+      {/* Both factors set up: choose which one sign-in asks for first. */}
+      {status?.totpEnabled && status?.emailEnabled && (
+        <div className="space-y-1.5">
+          <p id="mfa-default-label" className="text-sm font-medium text-foreground">Default at sign-in</p>
+          <div
+            role="radiogroup"
+            aria-labelledby="mfa-default-label"
+            className="inline-flex w-full gap-1 rounded-md border border-border p-1 sm:w-auto"
+          >
+            {[
+              ['totp', 'Authenticator app'],
+              ['email', 'Email code'],
+            ].map(([m, label]) => {
+              const active = status.preferredMethod === m;
+              return (
+                <button
+                  key={m}
+                  type="button"
+                  role="radio"
+                  aria-checked={active}
+                  disabled={savingDefault}
+                  onClick={() => changeDefault(m)}
+                  className={`flex-1 rounded px-3 py-1.5 text-xs font-medium transition-colors sm:flex-none max-sm:h-9 ${
+                    active ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:text-foreground'
+                  }`}
+                >
+                  {label}
+                </button>
+              );
+            })}
+          </div>
+          <p className="text-xs text-muted-foreground">
+            Sign-in asks for this one first. You can always pick another way on the sign-in screen.
+          </p>
+        </div>
+      )}
 
       {enroll ? (
         <TotpEnrollPanel enroll={enroll} onConfirm={finishTotp} busy={busy} error={totpError} replacing={replacing} />
