@@ -1,0 +1,209 @@
+method,path,router_file:line,action_description,member,manager,admin,super_admin,conditions,notes
+GET,/api/health,routes/health.js:12,Liveness + DB/Redis status,Y,Y,Y,Y,,public (no auth)
+GET,/api/version,routes/health.js:42,App version,Y,Y,Y,Y,,public (no auth)
+GET,/api/metrics,routes/metrics.js:26,Prometheus metrics,N,N,N,N,Bearer METRICS_TOKEN must equal env METRICS_TOKEN; 404 when env unset,public+static token (not a user role); plain string compare (not constant-time)
+GET,/api/cli/install.sh,routes/cli.js:82,TUI installer script,Y,Y,Y,Y,,public (no auth)
+GET,/api/cli/version,routes/cli.js:136,TUI binary version,Y,Y,Y,Y,,public (no auth)
+GET,/api/cli/bin/:file,routes/cli.js:186,Download TUI binary (allow-listed filenames),Y,Y,Y,Y,,public (no auth)
+POST,/api/auth/login,routes/auth.js:119,Password login,Y,Y,Y,Y,,public; authLimiter
+POST,/api/auth/login-options,routes/auth.js:136,Email-first login options (password/SSO),Y,Y,Y,Y,,public; authLimiter
+POST,/api/auth/mfa/verify,routes/auth.js:164,Complete MFA challenge,Y,Y,Y,Y,Requires valid mfaToken from /login,public (mfaToken-gated)
+POST,/api/auth/mfa/send-otp,routes/auth.js:182,Email OTP during MFA challenge,Y,Y,Y,Y,Requires valid mfaToken,public (mfaToken-gated)
+POST,/api/auth/refresh,routes/auth.js:197,Rotate refresh token,Y,Y,Y,Y,Requires valid refresh token,public (refresh-token-gated)
+POST,/api/auth/logout,routes/auth.js:210,Revoke refresh token,Y,Y,Y,Y,authenticate only (no tenant/role),"self-service; revokes whichever refresh-token family is in the body (ownership not checked, but possession of the token is required - benign)"
+GET,/api/auth/me,routes/auth.js:220,Caller profile + SSO identities,S,S,S,S,,self-service; MFA-setup allowlisted
+DELETE,/api/auth/identities/:id,routes/auth.js:234,Unlink own SSO identity,S,S,S,S,ssoService.deleteUserIdentity scoped to caller userId,self-service
+GET,/api/auth/sessions,routes/auth.js:257,List own refresh-token families,S,S,S,S,,self-service
+DELETE,/api/auth/sessions/:id,routes/auth.js:266,Revoke one own session family,S,S,S,S,scoped to caller userId,self-service
+POST,/api/auth/sessions/revoke-others,routes/auth.js:285,Revoke all other own sessions,S,S,S,S,,self-service
+GET,/api/auth/invite/:token,routes/auth.js:308,Peek invite token,Y,Y,Y,Y,64-hex INVITE token,public (token-gated)
+POST,/api/auth/invite/:token/accept,routes/auth.js:333,"Accept invite: set password, status=active, log in",Y,Y,Y,Y,INVITE token; does NOT check current user.status (suspended/deactivated user is re-activated),public (token-gated); see finding F-11
+GET,/api/auth/password-reset/:token,routes/auth.js:380,Peek reset token,Y,Y,Y,Y,PASSWORD_RESET token,public (token-gated)
+POST,/api/auth/password-reset/:token/reset,routes/auth.js:405,"Consume reset token, set password, log in",Y,Y,Y,Y,PASSWORD_RESET token; refuses suspended/deactivated/deleted,public (token-gated)
+POST,/api/auth/password-reset,routes/auth.js:466,Self-service reset request (always 204),Y,Y,Y,Y,,public
+GET,/api/auth/registration-status,routes/auth.js:535,Is self-registration enabled,Y,Y,Y,Y,,public
+POST,/api/auth/register,routes/auth.js:548,Self-service registration,Y,Y,Y,Y,Only when org.selfServiceRegistrationEnabled; always creates role=member,public; hard-coded role 'member' (userService.createPendingUser)
+POST,/api/auth/verify-email/:token,routes/auth.js:636,Verify email -> status active,Y,Y,Y,Y,EMAIL_VERIFY token,public (token-gated)
+GET,/api/auth/sso/config,routes/sso.js:226,Read legacy SSO config,N,N,N,Y,requireRole('super_admin'),defaultRole Joi limited to admin|manager|member; safeDefaultRole only strips super_admin
+PUT,/api/auth/sso/config,routes/sso.js:239,Upsert legacy SSO config,N,N,N,Y,requireRole('super_admin'),defaultRole Joi limited to admin|manager|member; safeDefaultRole only strips super_admin
+POST,/api/auth/sso/config/test,routes/sso.js:253,Test legacy SSO config,N,N,N,Y,requireRole('super_admin'),defaultRole Joi limited to admin|manager|member; safeDefaultRole only strips super_admin
+GET,/api/auth/sso/providers,routes/sso.js:270,List SSO providers,N,N,N,Y,requireRole('super_admin'),defaultRole Joi limited to admin|manager|member; safeDefaultRole only strips super_admin
+POST,/api/auth/sso/providers,routes/sso.js:281,Create SSO provider,N,N,N,Y,requireRole('super_admin'),defaultRole Joi limited to admin|manager|member; safeDefaultRole only strips super_admin
+POST,/api/auth/sso/providers/test,routes/sso.js:296,Test unsaved provider draft,N,N,N,Y,requireRole('super_admin'),defaultRole Joi limited to admin|manager|member; safeDefaultRole only strips super_admin
+PUT,/api/auth/sso/providers/order,routes/sso.js:310,Reorder providers,N,N,N,Y,requireRole('super_admin'),defaultRole Joi limited to admin|manager|member; safeDefaultRole only strips super_admin
+POST,/api/auth/sso/providers/:id/test,routes/sso.js:323,Test saved provider,N,N,N,Y,requireRole('super_admin'),defaultRole Joi limited to admin|manager|member; safeDefaultRole only strips super_admin
+PATCH,/api/auth/sso/providers/:id,routes/sso.js:335,Update provider,N,N,N,Y,requireRole('super_admin'),defaultRole Joi limited to admin|manager|member; safeDefaultRole only strips super_admin
+DELETE,/api/auth/sso/providers/:id,routes/sso.js:348,Delete provider,N,N,N,Y,requireRole('super_admin'),defaultRole Joi limited to admin|manager|member; safeDefaultRole only strips super_admin
+GET,/api/auth/sso/public-status,routes/sso.js:376,Public SSO summary for login page,Y,Y,Y,Y,,public
+POST,/api/auth/sso/exchange,routes/sso.js:395,Trade one-time SSO callback code for session,Y,Y,Y,Y,one-time exchange code,public (code-gated)
+GET,/api/auth/sso/callback,routes/sso.js:695,OIDC/GitHub callback (state-derived org),Y,Y,Y,Y,signed state + cookie,public; JIT provisions users with provider defaultRole (never super_admin)
+GET,/api/auth/sso/callback/:providerId,routes/sso.js:708,Per-provider callback,Y,Y,Y,Y,signed state + cookie,public
+GET,/api/auth/sso/:orgSlug,routes/sso.js:717,Start SSO for org,Y,Y,Y,Y,,public
+GET,/api/auth/sso/:orgSlug/callback,routes/sso.js:770,Legacy per-org callback,Y,Y,Y,Y,,public
+POST,/api/auth/device/authorize,routes/deviceAuth.js:34,Start RFC 8628 device flow,Y,Y,Y,Y,,public
+POST,/api/auth/device/poll,routes/deviceAuth.js:45,Poll device flow for tokens,Y,Y,Y,Y,device_code; approving user must still be active,public (device_code-gated)
+POST,/api/auth/device/approve,routes/deviceAuth.js:65,Approve a device code (binds TUI session to caller),S,S,S,S,authenticate only (no tenant/role); device request orgId must equal caller orgId,self-service; not audited
+POST,/api/auth/device/deny,routes/deviceAuth.js:77,Deny a device code,S,S,S,S,authenticate only; org must match,self-service; not audited
+GET,/api/users,routes/users.js:82,List org users,N,N,Y,Y,,managers cannot list users (incl. their direct reports)
+GET,/api/users/me/preferences,routes/users.js:96,Own preferences,S,S,S,S,,self-service
+PUT,/api/users/me/preferences,routes/users.js:105,Update own preferences,S,S,S,S,,self-service
+GET,/api/users/me,routes/users.js:119,Own full profile,S,S,S,S,,self-service
+PUT,/api/users/me,routes/users.js:131,Update own name,S,S,S,S,name only,self-service
+PUT,/api/users/me/avatar,routes/users.js:146,Upload own avatar (validated data URL),S,S,S,S,,self-service
+DELETE,/api/users/me/avatar,routes/users.js:156,Remove own avatar,S,S,S,S,,self-service
+PUT,/api/users/me/password,routes/users.js:169,"Change own password (requires current pw, min 12)",S,S,S,S,local accounts only,self-service
+GET,/api/users/me/export,routes/users.js:227,GDPR export of own data,S,S,S,S,,self-service
+DELETE,/api/users/me,routes/users.js:245,Soft-delete own account,S,S,S,C,super_admin: refused if last non-deleted super_admin,self-service
+GET,/api/users/:id,routes/users.js:299,Get user,S,S,Y,Y,non-admin: only own id (inline role list in handler),"inline check, no requireRole"
+POST,/api/users,routes/users.js:315,Create user / send invite,N,N,C,Y,admin: new role rank <= admin (cannot create super_admin) (userService.createUser),
+PUT,/api/users/:id,routes/users.js:374,Update user (name/email/password/role/status/managerId/avatarUrl),S,S,C,Y,member/manager: only self and only name/password/avatarUrl (password WITHOUT current-password check); admin: ANY user incl. super_admin; role change only to rank <= admin; no target-rank check; no last-super_admin guard,"inline check, no requireRole, NO audit middleware; see F-01, F-02, F-08"
+GET,/api/users/:id/delete-impact,routes/users.js:403,Preview user hard-delete impact,N,N,Y,Y,,
+DELETE,/api/users/:id,routes/users.js:412,Hard-delete user,N,N,N,C,refuses deleting last super_admin,NOT audited
+PUT,/api/users/:id/ssh-key,routes/users.js:426,Set user's SSH public key,S,S,Y,Y,non-admin: own id only,inline check; not audited
+DELETE,/api/users/:id/ssh-key,routes/users.js:439,Remove user's SSH public key,S,S,Y,Y,non-admin: own id only,inline check; not audited
+GET,/api/users/:id/reports,routes/users.js:451,List direct reports of a user,N,N,Y,Y,,managers cannot see their own reports
+POST,/api/users/:id/resend-invite,routes/users.js:464,Re-issue INVITE token + email,N,N,C,Y,admin: works on ANY user incl. active super_admin; invite URL returned in response when mail not delivered,see F-02
+POST,/api/users/:id/password-reset,routes/users.js:513,Admin-issued password reset link,N,N,C,Y,admin: works on ANY user incl. super_admin; reset URL returned when mail not delivered,see F-02
+POST,/api/users/:id/unlock,routes/users.js:561,Clear login lockout,N,N,Y,Y,no target-rank check,
+POST,/api/users/:id/revoke-sessions,routes/users.js:576,Sign user out everywhere,N,N,C,Y,target role rank must be <= caller rank (userService.adminRevokeSessions),only user-mgmt endpoint with a target-rank check
+GET,/api/groups,routes/groups.js:36,List groups,N,Y,Y,Y,,
+GET,/api/groups/:id,routes/groups.js:45,Get group + members,N,Y,Y,Y,,
+POST,/api/groups,routes/groups.js:54,Create group,N,N,Y,Y,,NOT audited
+PUT,/api/groups/:id,routes/groups.js:64,Update group,N,N,Y,Y,,NOT audited
+GET,/api/groups/:id/delete-impact,routes/groups.js:74,Preview group delete impact,N,N,Y,Y,,
+DELETE,/api/groups/:id,routes/groups.js:83,Delete group (+ policy subject cleanup),N,N,Y,Y,,NOT audited
+POST,/api/groups/:id/members,routes/groups.js:92,Add member (user must be in org),N,N,Y,Y,,membership grants policy subjects + approver-pool eligibility
+DELETE,/api/groups/:id/members/:userId,routes/groups.js:108,Remove member,N,N,Y,Y,,does not remove user from already-snapshotted AccessRequestApprover rows
+GET,/api/customers,routes/customers.js:35,List customers,Y,Y,Y,Y,,org-wide; no per-customer scoping for any role
+GET,/api/customers/:id,routes/customers.js:44,Get customer,Y,Y,Y,Y,,
+GET,/api/customers/:id/stats,routes/customers.js:53,Customer server stats,Y,Y,Y,Y,,
+POST,/api/customers,routes/customers.js:62,Create customer,N,Y,Y,Y,,NOT audited
+PUT,/api/customers/:id,routes/customers.js:72,Update customer (incl. isActive),N,Y,Y,Y,any customer in org,NOT audited
+GET,/api/customers/:id/delete-impact,routes/customers.js:82,Preview customer delete impact,N,N,Y,Y,,
+DELETE,/api/customers/:id,routes/customers.js:91,Delete customer (+reassign/delete servers & policies),N,N,N,Y,servers must be reassigned or explicitly deleted; policies default to SetNull => become ORG-WIDE,NOT audited; see F-13
+GET,/api/servers,routes/servers.js:111,List servers,Y,Y,Y,Y,,full inventory to every role (not filtered by policy)
+GET,/api/servers/health/summary,routes/servers.js:122,Fleet health summary,Y,Y,Y,Y,,
+POST,/api/servers/bulk/environment,routes/servers.js:131,Bulk change environment,N,N,Y,Y,,NOT audited; bypassable via /api/servers/bulk (manager)
+POST,/api/servers/bulk,routes/servers.js:146,Bulk update environment/protocol/os/sshUser/isActive/customerId,N,Y,Y,Y,any servers in org,NOT audited; manager can set environment (prod->dev); see F-05
+GET,/api/servers/:id,routes/servers.js:156,Get server,Y,Y,Y,Y,,
+PATCH,/api/servers/:id/connection-ip,routes/servers.js:167,Change IP of a dynamicIp server,C,Y,Y,Y,"server.dynamicIp must be true; no policy/access-request check, applies to prod too",NOT audited; see F-06
+POST,/api/servers,routes/servers.js:181,Create server (incl. authMode=credential + credentialId),N,Y,Y,Y,,NOT audited; code comment says admin-only
+PUT,/api/servers/:id,routes/servers.js:192,"Update server (env, ip, authMode, credentialId, rdpPassword...)",N,Y,Y,Y,any server in org,NOT audited; see F-05
+GET,/api/servers/:id/delete-impact,routes/servers.js:202,Preview server delete impact,N,N,Y,Y,,
+DELETE,/api/servers/:id,routes/servers.js:211,Hard-delete server,N,N,N,Y,,NOT audited
+POST,/api/servers/:id/host-key/reset,routes/servers.js:222,Clear pinned host key (TOFU),N,N,Y,Y,,
+POST,/api/servers/:id/health-check,routes/servers.js:232,Run health probe,N,Y,Y,Y,,
+POST,/api/servers/:id/provision,routes/servers.js:245,SSE: SSH in with caller-supplied creds and run bootstrap,N,Y,Y,Y,caller supplies key/password; any server incl. prod,mints bootstrap JWT inline (duplicate of bootstrap.js)
+POST,/api/certificates/verify,routes/certificates.js:67,check-principals: verify cert serial+principal,N,N,N,N,x-agent-token (per-host) or legacy AGENT_SHARED_SECRET; per-host mode enforces cert.issuedForId==host,agent
+POST,/api/certificates/issue,routes/certificates.js:89,Sign arbitrary public key into a user cert,C,C,C,C,member/manager: userId must be self; admin/SA: any userId in org. Policy evaluated ONLY when serverId given and only for principals[0]; policy evaluated against TARGET user's role,"no requireRole; see F-03, F-04"
+GET,/api/certificates/my-certs,routes/certificates.js:122,Own certificates,S,S,S,S,,
+GET,/api/certificates,routes/certificates.js:138,List all org certificates,N,N,Y,Y,,
+GET,/api/certificates/:id,routes/certificates.js:156,Get certificate,S,S,Y,Y,non-admin: only issuedToId==caller (inline role list),inline check
+POST,/api/certificates/:id/revoke,routes/certificates.js:173,Revoke certificate,N,N,Y,Y,,owner cannot revoke own cert
+GET,/api/ca/public-key,routes/ca.js:16,Active CA public key,N,N,Y,Y,,public key only; managers can still get it embedded via bootstrap
+GET,/api/ca/status,routes/ca.js:30,CA metadata + cert count,N,N,Y,Y,,
+POST,/api/ca/rotate,routes/ca.js:68,Rotate CA key pair,N,N,N,Y,,
+GET,/api/policies/my-access,routes/policies.js:148,Servers the caller can access (policy eval per server),S,S,S,S,,
+POST,/api/policies/evaluate,routes/policies.js:161,Dry-run policy evaluation for any user/server,N,N,Y,Y,,
+GET,/api/policies,routes/policies.js:200,List policies,N,N,Y,Y,,
+POST,/api/policies,routes/policies.js:214,"Create policy (subjects, approvers, osProvisioning incl. sudo)",N,N,Y,Y,ROLE subjects / approverRoles Joi-validated against 4 roles; USER/GROUP subject ids and approverUserIds/approverGroupId not validated,admin fully controls who gets access and who approves
+GET,/api/policies/:id,routes/policies.js:229,Get policy,N,N,Y,Y,,
+PUT,/api/policies/:id,routes/policies.js:242,Update policy,N,N,Y,Y,,
+GET,/api/policies/:id/delete-impact,routes/policies.js:257,Preview policy delete,N,N,Y,Y,,
+DELETE,/api/policies/:id,routes/policies.js:266,Delete policy,N,N,Y,Y,,
+POST,/api/access-requests,routes/accessRequests.js:120,Submit access request,C,C,C,C,server onboarded; matching ALLOW policy & no DENY; non-admin principal must be legacy sshUser or JIT principal (admin/SA may request any principal the policy allows); prod: PENDING unless role >= org prodApprovalBypassMinRole (default admin); non-prod: policy.requireApproval; super_admin bypasses ALL policies off-prod and on prod unless bypass='none',no requireRole
+GET,/api/access-requests,routes/accessRequests.js:144,List requests (tab mine|to-review|all),C,C,Y,Y,tab=mine: own; tab=to-review: where caller is primary reviewer or in approver set; tab=all: admin+ (isAdminOrAbove),
+GET,/api/access-requests/by-server/:serverId/active,routes/accessRequests.js:172,Caller's active AR for a server,S,S,S,S,,
+GET,/api/access-requests/intent,routes/accessRequests.js:189,UI intent for one server,S,S,S,S,adminCanOverride flag true for admin/SA,
+GET,/api/access-requests/intents,routes/accessRequests.js:210,Bulk intents (<=50 servers),S,S,S,S,,
+POST,/api/access-requests/break-glass,routes/accessRequests.js:242,Self-approved emergency access (<=1h),N,N,Y,Y,reason >=20 chars; any server in org incl. prod; ignores policies (DENY too) and prodApprovalBypassMinRole; notifies admins,double-checked in service (role list); policy.isBreakGlass flag unused; see F-09
+GET,/api/access-requests/:id,routes/accessRequests.js:264,Get request,C,C,Y,Y,"requester, or primary reviewerId, or admin+ (org-scoped). Non-primary approvers are DENIED",see F-15
+PATCH,/api/access-requests/:id/review,routes/accessRequests.js:281,Approve/deny a PENDING request,C,C,C,C,"caller must be primary reviewerId or in AccessRequestApprover snapshot; NO role check, NO org scoping, NO re-check of approver status/group membership; approvedDuration up to 7 days (not clamped to policy maxTtl)","see F-12, F-14"
+POST,/api/access-requests/:id/revoke,routes/accessRequests.js:301,Revoke request (+ linked cert),C,C,Y,Y,admin+ OR caller==reviewerId; lookup NOT org-scoped (findUnique),see F-07 (cross-tenant)
+POST,/api/access-requests/:id/ssh-credentials,routes/accessRequests.js:325,Ephemeral key + cert download,S,S,S,S,requester only; APPROVED & unexpired; not credential-mode; ANY active ALLOW policy in org with allowKeyDownload (or breakGlass),"key-download gate is org-wide, not the matched policy"
+POST,/api/access-requests/:id/rdp-credentials,routes/accessRequests.js:412,.rdp file for approved RDP request,S,S,S,S,requester only; APPROVED & unexpired,service lookup not org-scoped (requester check compensates)
+POST,/api/access-requests/:id/rdp-token,routes/accessRequests.js:431,5-min Guacamole gateway token,S,S,S,S,requester only; APPROVED & unexpired,
+POST,/api/access-requests/:id/connect,routes/accessRequests.js:464,Stub web-terminal URL,S,S,S,S,requester only; APPROVED,
+GET,/api/approvals/:token,routes/approvals.js:48,Peek approval-link request summary,Y,Y,Y,Y,"ACCESS_APPROVAL token (24h, bound to approver+request)",public (token-gated); no check approver still active/eligible
+POST,/api/approvals/:token,routes/approvals.js:72,Approve/reject via email link,Y,Y,Y,Y,token -> review() as bound approver; approver status/role NOT re-checked,public (token-gated); see F-12
+PATCH,/api/notifications/read-all,routes/notifications.js:43,Mark own notifications read,S,S,S,S,,
+GET,/api/notifications,routes/notifications.js:55,List own notifications,S,S,S,S,,
+PATCH,/api/notifications/:id/read,routes/notifications.js:81,Mark one own notification read,S,S,S,S,scoped by userId,
+GET,/api/sessions,routes/sessions.js:50,List org sessions,N,Y,Y,Y,,org-wide incl. admins' sessions; members cannot list own history here
+GET,/api/sessions/active,routes/sessions.js:71,Active sessions,N,Y,Y,Y,,
+GET,/api/sessions/:id,routes/sessions.js:94,Session detail,N,Y,Y,Y,,
+GET,/api/sessions/:id/recording,routes/sessions.js:107,Download/decrypt session recording,N,Y,Y,Y,any session in org,NOT audited (sensitive read)
+POST,/api/sessions/:id/terminate,routes/sessions.js:165,Force-terminate session,N,N,Y,Y,org-scoped,
+GET,/api/audit,routes/audit.js:55,Audit log list,N,N,Y,Y,,
+GET,/api/audit/export,routes/audit.js:81,Audit export CSV/JSON,N,N,N,Y,,
+POST,/api/bootstrap/token,routes/bootstrap.js:114,Create single-use install link (auto-creates CA if missing),N,Y,Y,Y,any server in org incl. prod,NOT audited; install run rotates host agent token
+GET,/api/bootstrap/install.sh,routes/bootstrap.js:176,Unix install script (mints per-host agent token),Y,Y,Y,Y,"bootstrap JWT (30 min, single-use jti)",public (token-gated)
+GET,/api/bootstrap/install.ps1,routes/bootstrap.js:221,Windows install script,Y,Y,Y,Y,bootstrap JWT (single-use),public (token-gated)
+POST,/api/bootstrap/uninstall-token,routes/bootstrap.js:282,Create single-use uninstall link,N,Y,Y,Y,any server in org,NOT audited
+GET,/api/bootstrap/uninstall.sh,routes/bootstrap.js:322,Unix uninstall script,Y,Y,Y,Y,uninstall JWT (single-use),public (token-gated)
+POST,/api/hosts/heartbeat,routes/hosts.js:28,Agent heartbeat (marks server onboarded),N,N,N,N,per-host agent token (identity from token) or legacy shared secret (identity from body),agent
+GET,/api/org,routes/org.js:32,Get organization incl. full settings JSON,Y,Y,Y,Y,,"exposes settings (access, quickConnect) to every role"
+PUT,/api/org,routes/org.js:41,Update name/domain/logo/settings (whole JSON),N,N,Y,Y,requireRole('admin') (+SA implicit),admin can overwrite settings.access.prodApprovalBypassMinRole and settings.quickConnect; see F-10
+GET,/api/org/access-settings,routes/org.js:58,Read prodApprovalBypassMinRole,N,N,Y,Y,,
+PUT,/api/org/access-settings,routes/org.js:68,Set prodApprovalBypassMinRole,N,N,N,Y,,bypassable via PUT /api/org
+GET,/api/settings/smtp,routes/smtp.js:35,Read SMTP config,N,N,N,Y,,per-org
+PUT,/api/settings/smtp,routes/smtp.js:54,Upsert SMTP config,N,N,N,Y,,per-org
+DELETE,/api/settings/smtp,routes/smtp.js:66,Delete SMTP config,N,N,N,Y,,per-org
+POST,/api/settings/smtp/test,routes/smtp.js:77,Send test mail,N,N,N,Y,,per-org
+GET,/api/settings/storage,routes/storage.js:36,Read storage config,N,N,N,Y,,GLOBAL singleton (not org-scoped) editable by any org's super_admin; see F-16
+PUT,/api/settings/storage,routes/storage.js:46,Upsert storage config,N,N,N,Y,,GLOBAL singleton (not org-scoped) editable by any org's super_admin; see F-16
+DELETE,/api/settings/storage,routes/storage.js:58,Revert storage to env,N,N,N,Y,,GLOBAL singleton (not org-scoped) editable by any org's super_admin; see F-16
+POST,/api/settings/storage/test,routes/storage.js:69,Test storage,N,N,N,Y,,GLOBAL singleton (not org-scoped) editable by any org's super_admin; see F-16
+GET,/api/settings/mfa,routes/mfa.js:209,Read org MFA policy,N,N,N,Y,,
+PUT,/api/settings/mfa,routes/mfa.js:218,Set org MFA policy (enforce),N,N,N,Y,,
+GET,/api/mfa,routes/mfa.js:33,Own MFA status,S,S,S,S,,self-service; MFA-setup allowlisted; no admin MFA reset endpoint exists
+POST,/api/mfa/totp/begin,routes/mfa.js:46,Begin TOTP enrolment,S,S,S,S,,self-service; MFA-setup allowlisted; no admin MFA reset endpoint exists
+POST,/api/mfa/totp/confirm,routes/mfa.js:60,Confirm TOTP,S,S,S,S,,self-service; MFA-setup allowlisted; no admin MFA reset endpoint exists
+POST,/api/mfa/email/enable,routes/mfa.js:73,Enable email OTP,S,S,S,S,,self-service; MFA-setup allowlisted; no admin MFA reset endpoint exists
+POST,/api/mfa/email/send-code,routes/mfa.js:89,Send email OTP,S,S,S,S,,self-service; MFA-setup allowlisted; no admin MFA reset endpoint exists
+POST,/api/mfa/backup-codes/regenerate,routes/mfa.js:111,Regenerate backup codes (requires factor),S,S,S,S,,self-service; MFA-setup allowlisted; no admin MFA reset endpoint exists
+POST,/api/mfa/disable,routes/mfa.js:151,Disable own MFA (code or password; refused if enforced),S,S,S,S,,self-service; MFA-setup allowlisted; no admin MFA reset endpoint exists
+POST,/api/import,routes/import.js:36,Upload import file (users/servers/policies/...),N,N,C,Y,user rows: createUser/updateUser rank rules (same gaps as PUT /api/users/:id),see F-01 (overwrite can demote super_admin)
+GET,/api/import/:id,routes/import.js:57,Get import job,N,N,Y,Y,,
+PATCH,/api/import/:id/decisions,routes/import.js:74,Overwrite/skip decisions,N,N,Y,Y,,
+POST,/api/import/:id/commit,routes/import.js:93,Commit import (creates users/servers/policies/memberships),N,N,C,Y,policy subjectRoles/approverRoles NOT validated against enum on import path,
+GET,/api/import/templates/:entity,routes/import.js:140,CSV templates,N,N,Y,Y,,users template uses non-existent role 'operator'
+GET,/api/keystore/keys,routes/keystore.js:72,List keys (no secrets),N,Y,Y,Y,VIEW_ROLES,
+GET,/api/keystore/keys/:id,routes/keystore.js:81,Get key (no secrets),N,Y,Y,Y,VIEW_ROLES,
+POST,/api/keystore/keys/generate,routes/keystore.js:90,Generate key,N,N,Y,Y,ADMIN_ROLES,
+POST,/api/keystore/keys/inspect,routes/keystore.js:105,Parse a pasted private key (stateless),N,Y,Y,Y,VIEW_ROLES,
+POST,/api/keystore/keys/import,routes/keystore.js:116,Import key,N,N,Y,Y,ADMIN_ROLES,
+PATCH,/api/keystore/keys/:id,routes/keystore.js:128,Update key metadata/cert,N,N,Y,Y,ADMIN_ROLES,
+DELETE,/api/keystore/keys/:id,routes/keystore.js:139,Delete key,N,N,Y,Y,ADMIN_ROLES,
+POST,/api/keystore/keys/:id/export,routes/keystore.js:149,Export decrypted PRIVATE key,N,N,Y,Y,ADMIN_ROLES; includePrivate=true,audited HIGH
+GET,/api/keystore/credentials,routes/keystore.js:210,List identities (no secrets),N,Y,Y,Y,VIEW_ROLES,
+GET,/api/keystore/credentials/:id,routes/keystore.js:219,Get identity (no secrets),N,Y,Y,Y,VIEW_ROLES,
+POST,/api/keystore/credentials,routes/keystore.js:228,Create identity,N,N,Y,Y,ADMIN_ROLES,
+PATCH,/api/keystore/credentials/:id,routes/keystore.js:239,Update identity,N,N,Y,Y,ADMIN_ROLES,
+DELETE,/api/keystore/credentials/:id,routes/keystore.js:250,Delete identity,N,N,Y,Y,ADMIN_ROLES,
+POST,/api/keystore/credentials/:id/test,routes/keystore.js:261,Test identity against serverId OR arbitrary host,N,C,Y,Y,"VIEW_ROLES; host may be any public/private IP (not prod-guarded, not policy-checked)",manager can send stored secret to attacker host; see F-17
+POST,/api/keystore/deployments,routes/keystore.js:307,Deploy/remove/rotate key on servers,N,N,Y,Y,ADMIN_ROLES; no prod/approval guard,see F-09
+GET,/api/keystore/deployments/batches,routes/keystore.js:318,List deployment batches,N,Y,Y,Y,VIEW_ROLES,
+GET,/api/keystore/deployments,routes/keystore.js:328,List deployments,N,Y,Y,Y,VIEW_ROLES,
+POST,/api/keystore/deployments/:id/retry,routes/keystore.js:338,Retry deployment,N,N,Y,Y,ADMIN_ROLES,
+GET,/api/quick-connect/settings,routes/quickConnect.js:86,QC settings + allowed flag for caller,Y,Y,Y,Y,,
+PUT,/api/quick-connect/settings,routes/quickConnect.js:94,Set QC enabled/minRole,N,N,Y,Y,,admin can set minRole=super_admin (locking admins out) or member
+POST,/api/quick-connect/tickets,routes/quickConnect.js:105,Create ad-hoc SSH ticket (password/key/stored credential),C,C,C,C,settings.enabled && rank(role) >= rank(settings.minRole) (default minRole=manager => member denied by default); host not matching a saved prod server; auth.type=credential lets caller use ANY org Keystore identity,no requireRole; see F-17
+GET,/api/quick-connect/history,routes/quickConnect.js:124,Own QC history (7d),S,S,S,S,,
+POST,/api/quick-connect/history/:id/reconnect,routes/quickConnect.js:134,New ticket from own history row,C,C,C,C,own row; re-runs createTicket guards (enabled/minRole/prod),
+DELETE,/api/quick-connect/history/:id,routes/quickConnect.js:147,Delete own history row,S,S,S,S,,
+DELETE,/api/quick-connect/history,routes/quickConnect.js:156,Clear own history,S,S,S,S,,
+POST,/api/quick-connect/save,routes/quickConnect.js:165,Save QC target as a Server,N,C,Y,Y,manager: identity.mode 'existing' (bind any Keystore identity) or 'none'; 'new' identity requires admin/SA (inline role list); any environment incl. prod,
+GET,/api/search,routes/search.js:28,Global command-palette search,C,C,C,Y,"result types gated by rank: member=servers,customers; manager=+identities,keys; admin=+users,policies",searchService.getAllowedTypes ROLE_RANK
+POST,/api/terminal/ws-ticket,routes/terminal.js:55,Mint 30s single-use WS ticket,S,S,S,S,params validated at WS consume time,
+GET,/api/terminal/sessions,routes/terminal.js:83,Own live hub sessions,S,S,S,S,,
+GET,/api/terminal/recent-servers,routes/terminal.js:97,Own recently-connected servers,S,S,S,S,,
+GET,/api/terminal/sessions/:id/recovery,routes/terminal.js:115,Why own session ended + next step,S,S,S,S,owner only (404 otherwise),
+POST,/api/terminal/sessions/:id/reconnect,routes/terminal.js:129,Reconnect spec for own lost session,S,S,S,S,owner; QC path re-runs minRole/prod guards,
+POST,/api/terminal/sessions/:id/duplicate,routes/terminal.js:148,Duplicate own live session,S,S,S,S,owner; AR must still be APPROVED; QC path re-runs guards,
+PATCH,/api/terminal/sessions/:id,routes/terminal.js:200,Rename own session,S,S,S,S,owner,
+POST,/api/terminal/sessions/:id/close,routes/terminal.js:222,Close own session,S,S,S,S,owner,
+WS,/api/terminal/ssh?t=<ticket> (params.requestId),services/terminalService.js:238 (handleConnection :750),Web SSH terminal for an approved access request,S,S,C,C,ws-ticket; user active & ticket newer than sessionsValidFrom; requester only; AR APPROVED & unexpired; admin/SA may pass principalOverride = ANY valid Linux user (not re-checked vs policy/approved principal),WS upgrade; Origin check; see F-18
+WS,/api/terminal/ssh?t=<ticket> (params.ticket),services/terminalService.js:238 (handleConnection :822),Web SSH terminal via Quick Connect ticket,C,C,C,C,QC ticket bound to same user/org (guards applied at ticket creation),WS upgrade
+WS,/api/terminal/ssh?t=<ticket> (params.attach),services/terminalService.js:238 (handleConnection :800),Re-attach to own live hub session,S,S,S,S,owner only (hub.attach),WS upgrade
+WS,/api/terminal/rdp?token=<guac token>,services/terminalService.js:265 (buildGuacamoleServer :339),Guacamole RDP tunnel,S,S,S,S,encrypted gateway token from /rdp-token (requester only); only expiry checked at connect; token not single-use; user status/AR revocation not re-checked,WS upgrade; see F-19
