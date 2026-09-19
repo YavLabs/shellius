@@ -46,7 +46,7 @@ function RunningSessionsList({ onAttached, className = '' }) {
           </button>
         )}
       </div>
-      <ul className="divide-y divide-border rounded-md border border-border bg-card">
+      <ul className="divide-y divide-border rounded-lg border border-border bg-card">
         {detached.map((session) => (
           <li key={session.id} className="flex items-center gap-3 px-3 py-2 text-left">
             <span

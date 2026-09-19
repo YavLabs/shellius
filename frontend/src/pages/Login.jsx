@@ -391,7 +391,7 @@ function Login() {
             </button>
           </div>
         ) : step === 'mfa' ? (
-          <div className="rounded-2xl bg-foreground/[0.03] p-5 ring-1 ring-foreground/[0.06]">
+          <div className="rounded-xl bg-foreground/[0.03] p-5 ring-1 ring-foreground/[0.06]">
             <MfaChallenge
               mfaToken={mfaChallenge?.mfaToken}
               methods={mfaChallenge?.methods}

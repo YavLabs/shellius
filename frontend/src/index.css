@@ -23,7 +23,7 @@
     --border: 240 5.9% 90%;
     --input: 240 5.9% 90%;
     --ring: 240 5.9% 10%;
-    --radius: 0.5rem;
+    --radius: 0.75rem;
   }
 
   .dark {
@@ -141,6 +141,16 @@
    deliberately above single Tailwind utilities so it applies app-wide
    without touching each component.
    --------------------------------------------------------------------------- */
+/* Native controls (select popups, date pickers, scrollbars) follow the theme. */
+@layer base {
+  :root {
+    color-scheme: light;
+  }
+  .dark {
+    color-scheme: dark;
+  }
+}
+
 @layer base {
   :root {
     --field: 240 5% 96.5%;
@@ -156,7 +166,7 @@
   :is(input:not([type='checkbox']):not([type='radio']):not([type='range']):not([type='file']), textarea, select).border-input {
     background-color: hsl(var(--field));
     border-color: hsl(var(--field-border));
-    border-radius: 0.625rem;
+    border-radius: calc(var(--radius) - 2px);
     transition: border-color 150ms, box-shadow 150ms, background-color 150ms;
   }
   :is(input:not([type='checkbox']):not([type='radio']):not([type='range']):not([type='file']), textarea, select).border-input:hover {
@@ -173,7 +183,7 @@
   .field-soft.border-input {
     background-color: hsl(var(--field));
     border-color: hsl(var(--field-border));
-    border-radius: 0.625rem;
+    border-radius: calc(var(--radius) - 2px);
     transition: border-color 150ms, box-shadow 150ms, background-color 150ms;
   }
   .field-soft.border-input:hover {
@@ -224,20 +234,35 @@
   }
 
   /* Pill fields and buttons. */
-  .auth-fey :is(input:not([type='checkbox']):not([type='radio'])).border-input {
+  .auth-fey :is(input:not([type='checkbox']):not([type='radio']):not([type='range']):not([type='file'])).border-input {
     height: 2.75rem;
     border-radius: 9999px;
     padding-left: 1.125rem;
   }
-  .auth-fey :is(input:not([type='checkbox']):not([type='radio'])).border-input.pl-9 {
+  .auth-fey :is(input:not([type='checkbox']):not([type='radio']):not([type='range']):not([type='file'])).border-input.pl-9 {
     padding-left: 2.5rem;
   }
   .auth-fey main :is(button, a).bg-primary {
     height: 2.75rem;
+  }
+  /* Every button on the auth pages is a pill (primary, destructive,
+     approve/reject, outline, icon toggles). */
+  .auth-fey main :is(button, a):is(.rounded, .rounded-sm, .rounded-md, .rounded-lg, .bg-primary) {
     border-radius: 9999px;
   }
   .auth-fey main :is(button, a).border-input {
     border-radius: 9999px;
+  }
+  .auth-fey main textarea.border-input,
+  .auth-fey main .field-soft.border-input {
+    border-radius: calc(var(--radius) + 4px);
+  }
+  /* Auth pages: controls are pills (above); boxes share one larger radius. */
+  .auth-fey main :is(div, section, form, p, ul).rounded,
+  .auth-fey main :is(div, section, form, p, ul).rounded-sm,
+  .auth-fey main :is(div, section, form, p, ul).rounded-md,
+  .auth-fey main :is(div, section, form, p, ul).rounded-lg {
+    border-radius: calc(var(--radius) + 4px);
   }
   .auth-fey main label {
     font-weight: 400;

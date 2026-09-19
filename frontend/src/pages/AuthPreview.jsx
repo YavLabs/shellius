@@ -1,6 +1,7 @@
 import { useMemo } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
-import { ChevronLeft, ChevronRight, Eye, LayoutGrid, Moon, Sun } from 'lucide-react';
+import { Check, ChevronDown, ChevronLeft, ChevronRight, Eye, LayoutGrid, Moon, Sun } from 'lucide-react';
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
 import { AuthContext } from '@/context/AuthContext';
 import { useTheme } from '@/context/ThemeContext';
 import AuthShell from '@/components/auth/AuthShell';
@@ -85,21 +86,29 @@ function PreviewBar({ index }) {
     <div className="fixed right-4 top-4 z-50 flex items-center gap-1 rounded-full border border-border bg-background/80 p-1 pl-3 text-xs shadow-lg backdrop-blur">
       <Eye className="h-3.5 w-3.5 text-amber-500" />
       <span className="mr-1 font-medium text-foreground">Preview</span>
-      <select
-        aria-label="Page"
-        value={PREVIEW_PAGES[index].key}
-        onChange={(e) => {
-          const p = PREVIEW_PAGES.find((x) => x.key === e.target.value);
-          if (p) window.location.assign(p.path);
-        }}
-        className="h-7 max-w-[11rem] rounded-full border-0 bg-foreground/[0.06] px-2 text-xs text-foreground focus:outline-none"
-      >
-        {PREVIEW_PAGES.map((p) => (
-          <option key={p.key} value={p.key}>
-            {p.label}
-          </option>
-        ))}
-      </select>
+      <DropdownMenu>
+        <DropdownMenuTrigger asChild>
+          <button
+            type="button"
+            className="flex h-7 max-w-[13rem] items-center gap-1.5 rounded-full bg-foreground/[0.06] px-3 text-xs text-foreground transition-colors hover:bg-foreground/10 focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          >
+            <span className="truncate">{PREVIEW_PAGES[index].label}</span>
+            <ChevronDown className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+          </button>
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="end" className="max-h-[70vh] w-60 overflow-y-auto">
+          {PREVIEW_PAGES.map((p, i) => (
+            <DropdownMenuItem
+              key={p.key}
+              onSelect={() => window.location.assign(p.path)}
+              className="flex items-center justify-between gap-2 text-sm"
+            >
+              <span className="truncate">{p.label}</span>
+              {i === index && <Check className="h-3.5 w-3.5 shrink-0 text-primary" />}
+            </DropdownMenuItem>
+          ))}
+        </DropdownMenuContent>
+      </DropdownMenu>
       <button type="button" className={btn} title={`Previous: ${prev.label}`} onClick={() => window.location.assign(prev.path)}>
         <ChevronLeft className="h-4 w-4" />
       </button>

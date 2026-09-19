@@ -39,10 +39,19 @@ export default {
           foreground: 'hsl(var(--popover-foreground))',
         },
       },
+      // One radius scale, driven by --radius (index.css):
+      //   sm / DEFAULT  6px  — badges, chips, kbd, tiny icon buttons
+      //   md           10px  — controls: inputs, selects, buttons
+      //   lg           12px  — containers: cards, tables, modals, panels
+      //   xl / 2xl     16px  — large surfaces (auth page boxes)
+      //   full               — pills, avatars, switches, dots only
       borderRadius: {
+        '2xl': 'calc(var(--radius) + 4px)',
+        xl: 'calc(var(--radius) + 4px)',
         lg: 'var(--radius)',
         md: 'calc(var(--radius) - 2px)',
-        sm: 'calc(var(--radius) - 4px)',
+        sm: 'calc(var(--radius) - 6px)',
+        DEFAULT: 'calc(var(--radius) - 6px)',
       },
       keyframes: {
         'accordion-down': {
