@@ -29,13 +29,13 @@ import { renderTemplate } from '../email/index.js';
 export { PROVIDER_TYPES };
 
 export const AUDIT = {
-  created: 'email_provider.created',
-  updated: 'email_provider.updated',
-  deleted: 'email_provider.deleted',
-  activated: 'email_provider.activated',
-  deactivated: 'email_provider.deactivated',
-  tested: 'email_provider.tested',
-  googleConnected: 'email_provider.google_connected',
+  created: 'email_provider.create',
+  updated: 'email_provider.update',
+  deleted: 'email_provider.delete',
+  activated: 'email_provider.activate',
+  deactivated: 'email_provider.deactivate',
+  tested: 'email_provider.test',
+  googleConnected: 'email_provider.google_connect',
 };
 
 const RESOURCE = 'EmailProvider';
@@ -307,6 +307,11 @@ export async function create(orgId, input, ctx = {}) {
   if (!PROVIDER_TYPES.includes(type)) throw badRequest(`Unknown provider type: ${type}`);
   const cfg = validateFor(type, stripInternal(type, cfgInput));
   checkFromAddress(type, fromAddress);
+  if (isActive) {
+    // Refuse up front rather than create a provider and then fail to activate it.
+    const reason = getAdapter(type).notReadyReason?.(cfg);
+    if (reason) throw badRequest(`Can't make this provider active yet: ${reason}`);
+  }
 
   const row = await prisma.emailProvider.create({
     data: {

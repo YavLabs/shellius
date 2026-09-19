@@ -130,7 +130,7 @@ describe('/api/settings/email (live DB)', () => {
     expect(failed.body.data).toMatchObject({ ok: false, error: 'Resend error (HTTP 401): API key is invalid' });
     expect(failed.body.data.provider.lastTestOk).toBe(false);
 
-    const audits = await prisma.auditLog.count({ where: { orgId: org.id, resourceId: id, action: 'email_provider.tested' } });
+    const audits = await prisma.auditLog.count({ where: { orgId: org.id, resourceId: id, action: 'email_provider.test' } });
     expect(audits).toBe(3);
   });
 

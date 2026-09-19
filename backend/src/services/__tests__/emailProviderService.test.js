@@ -121,10 +121,10 @@ describe('emailProviderService (live DB)', () => {
     const p = await svc.create(org.id, { name: 'SG', type: 'sendgrid', fromAddress: 'a@example.com', config: { apiKey: 'SG.AUDITSECRET' } }, ctx());
     await svc.update(org.id, p.id, { config: { apiKey: 'SG.NEWAUDITSECRET' } }, ctx());
     const logs = await prisma.auditLog.findMany({ where: { orgId: org.id, resourceId: p.id } });
-    expect(logs.map((l) => l.action)).toEqual(expect.arrayContaining(['email_provider.created', 'email_provider.updated']));
+    expect(logs.map((l) => l.action)).toEqual(expect.arrayContaining(['email_provider.create', 'email_provider.update']));
     const json = JSON.stringify(logs);
     expect(json).not.toContain('AUDITSECRET');
-    const upd = logs.find((l) => l.action === 'email_provider.updated');
+    const upd = logs.find((l) => l.action === 'email_provider.update');
     expect(upd.metadata.changedFields).toContain('config.apiKey');
   });
 
@@ -396,7 +396,7 @@ describe('emailProviderService (live DB)', () => {
       expect(pub.google).toMatchObject({ connected: true, connectedEmail: 'ops@example.com' });
       expect(pub.config.refreshToken).toEqual({ set: true });
       expect(JSON.stringify(pub)).not.toContain('RT-SECRET');
-      const audit = await prisma.auditLog.findFirst({ where: { orgId: org.id, resourceId: p.id, action: 'email_provider.google_connected' } });
+      const audit = await prisma.auditLog.findFirst({ where: { orgId: org.id, resourceId: p.id, action: 'email_provider.google_connect' } });
       expect(audit).not.toBeNull();
       expect(JSON.stringify(audit)).not.toContain('RT-SECRET');
     });
