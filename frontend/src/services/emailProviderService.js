@@ -1,7 +1,7 @@
 import api from './api';
 
 /**
- * Email providers (Settings → Email). Secrets are write-only: responses
+ * Email providers (Administration → Email). Secrets are write-only: responses
  * carry `{ set: boolean }` in their place, and omitting a secret on update
  * keeps the stored value.
  */

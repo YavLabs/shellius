@@ -50,7 +50,7 @@ function Groups() {
       sortable: true,
       render: (g) => (
         <button
-          onClick={() => navigate(`/groups/${g.id}`)}
+          onClick={() => navigate(`/admin/groups/${g.id}`)}
           className="flex items-start gap-2 text-left font-medium text-foreground hover:text-primary"
         >
           {/* Long names wrap left-aligned; the icon stays on the first line. */}
@@ -95,7 +95,7 @@ function Groups() {
         {
           label: canManage ? 'Manage' : 'View',
           icon: Pencil,
-          onClick: (g) => navigate(`/groups/${g.id}`),
+          onClick: (g) => navigate(`/admin/groups/${g.id}`),
         },
         ...(canManage
           ? [
@@ -113,7 +113,7 @@ function Groups() {
   ];
 
   return (
-    <div className="space-y-6 p-6">
+    <div className="space-y-6">
       <PageHeader icon={UsersRound} title="Groups" subtitle="Organize users into access groups." helpKey="groups">
         {canManage && (
           <Button onClick={() => setCreateOpen(true)}>
@@ -134,7 +134,7 @@ function Groups() {
         loading={loading}
         emptyMessage="No groups yet. Create your first one to get started."
         searchPlaceholder="Search groups..."
-        onRowClick={(g) => navigate(`/groups/${g.id}`)}
+        onRowClick={(g) => navigate(`/admin/groups/${g.id}`)}
       />
 
       <CreateGroupModal

@@ -4,8 +4,6 @@ import {
   LayoutDashboard,
   Building2,
   Server,
-  Users,
-  UsersRound,
   Shield,
   KeyRound,
   FileKey,
@@ -20,7 +18,6 @@ import {
   PanelLeftClose,
   Menu,
   X,
-  ShieldCheck,
   Lock,
 } from 'lucide-react';
 import { useAuth } from '@/context/AuthContext';
@@ -95,19 +92,11 @@ const NAV_SECTIONS = [
       { id: 'notifications', label: 'Notifications', icon: Bell, to: '/notifications' },
     ],
   },
-  {
-    label: 'Administration',
-    items: [
-      { id: 'users', label: 'Users', icon: Users, to: '/users' },
-      { id: 'roles', label: 'Roles', icon: ShieldCheck, to: '/roles' },
-      { id: 'groups', label: 'Groups', icon: UsersRound, to: '/groups' },
-    ],
-  },
 ];
 
-// Phase 19: Profile + Settings moved into the shared UserMenu dropdown that
-// opens from both the topbar avatar AND the sidebar user section. The
-// sidebar no longer renders them as standalone nav items.
+// Profile and Administration (users, roles, groups and org settings) live in
+// the shared UserMenu dropdown that opens from both the topbar avatar AND the
+// sidebar user section, not as sidebar items.
 
 // ---------------------------------------------------------------------------
 // SectionHeader
@@ -311,7 +300,7 @@ function SidebarBody({ collapsed, onToggle, onNavigate }) {
       </nav>
 
       {/* Bottom: user — clickable, opens the same UserMenu dropdown the
-          topbar avatar uses. Profile / Settings / Bulk import / Install CLI /
+          topbar avatar uses. Profile / Administration / Bulk import / Install CLI /
           Keyboard shortcuts / Sign out all live in the shared menu now.
           Theme selection lives in the topbar's standalone ThemeMenu. */}
       <div className="shrink-0 border-t border-border px-2 py-3">

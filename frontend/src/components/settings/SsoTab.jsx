@@ -66,17 +66,17 @@ function SsoTab() {
 
   return (
     <SectionCard
-      title="Single Sign-On"
+      title="Single sign-on"
       description="Let people sign in with an identity provider instead of (or alongside) a password. Each active provider gets its own button on the login page."
-    >
-      <div className="mb-4 flex items-center justify-end">
-        {canManage && (
+      actions={
+        canManage && (
           <Button type="button" onClick={() => setAddStep('pick')}>
             <Plus className="mr-2 h-4 w-4" />
             Add provider
           </Button>
-        )}
-      </div>
+        )
+      }
+    >
 
       {loading ? (
         <div className="space-y-3 py-2">

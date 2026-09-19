@@ -50,7 +50,7 @@ function GroupDetail() {
 
   const handleDelete = async () => {
     await deleteGroup(id);
-    navigate('/groups');
+    navigate('/admin/groups');
   };
 
   const handleRemoveMember = async () => {
@@ -61,16 +61,14 @@ function GroupDetail() {
 
   if (loading) {
     return (
-      <div className="p-6">
-        <div className="h-8 w-64 animate-pulse rounded bg-muted" />
-      </div>
+      <div className="h-8 w-64 animate-pulse rounded bg-muted" />
     );
   }
 
   if (error || !group) {
     return (
-      <div className="p-6">
-        <Button variant="ghost" onClick={() => navigate('/groups')} className="gap-1 px-0 text-muted-foreground">
+      <div>
+        <Button variant="ghost" onClick={() => navigate('/admin/groups')} className="gap-1 px-0 text-muted-foreground">
           <ArrowLeft className="h-4 w-4" /> Back to groups
         </Button>
         <div className="mt-4 rounded-md border border-destructive/50 bg-destructive/10 px-3 py-2 text-sm text-destructive">
@@ -85,12 +83,10 @@ function GroupDetail() {
   const members = group.memberships || group.members || [];
 
   return (
-    <div className="space-y-6 p-6">
-      <Button variant="ghost" onClick={() => navigate('/groups')} className="gap-1 px-0 text-muted-foreground">
-        <ArrowLeft className="h-4 w-4" /> Back to groups
-      </Button>
-
+    <div className="space-y-6">
       <PageHeader
+        back={{ to: '/admin/groups', label: 'Back to groups' }}
+        helpKey="groups"
         icon={UsersRound}
         title={group.name}
         subtitle={group.description}

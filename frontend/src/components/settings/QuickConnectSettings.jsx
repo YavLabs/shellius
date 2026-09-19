@@ -4,6 +4,7 @@ import { Button } from '@/components/ui/button';
 import { getQuickConnectSettings, updateQuickConnectSettings } from '@/services/quickConnectService';
 import { SwitchField } from '@/components/ui/switch';
 import RolesWithPermission from '@/components/roles/RolesWithPermission';
+import { useUnsavedChanges } from '@/components/admin/AdminFrameContext';
 
 /**
  * QuickConnectSettings — the org-wide on/off switch. Who may use it is the
@@ -16,11 +17,15 @@ function QuickConnectSettings() {
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
   const [error, setError] = useState('');
+  const [savedEnabled, setSavedEnabled] = useState(true);
+
+  useUnsavedChanges(!loading && enabled !== savedEnabled);
 
   useEffect(() => {
     getQuickConnectSettings()
       .then((data) => {
         setEnabled(data?.enabled ?? true);
+        setSavedEnabled(data?.enabled ?? true);
       })
       .catch((err) => setError(err.response?.data?.error?.message || err.message))
       .finally(() => setLoading(false));
@@ -33,6 +38,7 @@ function QuickConnectSettings() {
     try {
       const data = await updateQuickConnectSettings({ enabled });
       setEnabled(data?.enabled ?? enabled);
+      setSavedEnabled(data?.enabled ?? enabled);
       setSaved(true);
       setTimeout(() => setSaved(false), 3000);
     } catch (err) {
@@ -78,7 +84,7 @@ function QuickConnectSettings() {
         <div className="rounded-lg border border-border p-4">
           <p className="mb-2 text-sm font-medium text-foreground">Who can use it</p>
           <p className="mb-2 text-xs text-muted-foreground">
-            Roles with the “Use Quick Connect” permission. Change it on the Roles page.
+            Roles with the “Use Quick Connect” permission. Change it under Administration → Roles.
           </p>
           <RolesWithPermission permission="quick_connect.use" emptyText="No role can use Quick Connect." />
         </div>

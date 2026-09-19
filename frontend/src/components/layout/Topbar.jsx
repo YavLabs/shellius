@@ -18,20 +18,17 @@ const routeNames = {
   '/': 'Dashboard',
   '/customers': 'Customers',
   '/servers': 'Servers',
-  '/users': 'Users',
-  '/groups': 'Groups',
   '/policies': 'Policies',
   '/access-requests': 'Access Requests',
   '/certificates': 'Certificates',
   '/sessions': 'Sessions',
   '/audit-log': 'Audit Log',
   '/cloud-connectors': 'Cloud Connectors',
-  '/settings': 'Settings',
+  '/admin': 'Administration',
   '/install-cli': 'Install CLI',
   '/keystore': 'Keystore',
   '/terminals': 'Terminals',
   '/connections': 'Recent connections',
-  '/roles': 'Roles',
   '/dashboard': 'Dashboard',
   '/profile': 'Profile',
   '/notifications': 'Notifications',
@@ -103,7 +100,7 @@ function Topbar() {
 
         <div aria-hidden="true" className="mx-1 hidden h-6 w-px shrink-0 bg-border sm:block" />
 
-        {/* User dropdown — avatar only trigger. Profile / Settings / Bulk
+        {/* User dropdown — avatar only trigger. Profile / Administration / Bulk
             import / Install CLI / Keyboard shortcuts / Sign out live inside. */}
         <TooltipProvider delayDuration={300}>
           <UserMenu

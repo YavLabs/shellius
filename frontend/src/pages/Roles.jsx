@@ -2,7 +2,6 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import {
   AlertTriangle,
-  ArrowLeft,
   Copy,
   LayoutGrid,
   List,
@@ -16,6 +15,7 @@ import {
   Users as UsersIcon,
 } from 'lucide-react';
 import PageHeader from '@/components/common/PageHeader';
+import { useUnsavedChanges } from '@/components/admin/AdminFrameContext';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import EmptyState from '@/components/ui/EmptyState';
@@ -97,7 +97,7 @@ function RoleList({ catalog, roles, onNew, onCopy, onDelete }) {
               >
                 {r.locked ? <Lock className="h-4 w-4" /> : <ShieldCheck className="h-4 w-4" />}
               </span>
-              <Link to={`/roles/${r.id}`} className="min-w-0 flex-1">
+              <Link to={`/admin/roles/${r.id}`} className="min-w-0 flex-1">
                 <span className="flex flex-wrap items-center gap-1.5">
                   <span className="truncate text-sm font-medium text-foreground group-hover:text-primary">{r.name}</span>
                   <Badge tone={kind.tone}>{kind.label}</Badge>
@@ -131,7 +131,7 @@ function RoleList({ catalog, roles, onNew, onCopy, onDelete }) {
                   </DropdownMenuTrigger>
                   <DropdownMenuContent align="end" className="w-44">
                     <DropdownMenuItem asChild>
-                      <Link to={`/roles/${r.id}`}>
+                      <Link to={`/admin/roles/${r.id}`}>
                         <Pencil className="mr-2 h-4 w-4" /> {r.editable ? 'Edit' : 'View'}
                       </Link>
                     </DropdownMenuItem>
@@ -205,16 +205,9 @@ function RoleDetail({ id, catalog, roles, reloadList }) {
   const dirty = role && draft.join() !== role.permissions.join();
   const canEdit = !!role?.editable && can('roles.manage');
 
-  // Warn before leaving with unsaved changes.
-  useEffect(() => {
-    if (!dirty) return undefined;
-    const onBeforeUnload = (e) => {
-      e.preventDefault();
-      e.returnValue = '';
-    };
-    window.addEventListener('beforeunload', onBeforeUnload);
-    return () => window.removeEventListener('beforeunload', onBeforeUnload);
-  }, [dirty]);
+  // Warn before leaving with unsaved changes (reload/close, and switching
+  // Administration sections).
+  useUnsavedChanges(!!dirty);
 
   if (error && !role) {
     return <div className="rounded-md border border-destructive/50 bg-destructive/10 px-3 py-2 text-sm text-destructive">{error}</div>;
@@ -264,24 +257,28 @@ function RoleDetail({ id, catalog, roles, reloadList }) {
 
   return (
     <div className="space-y-5">
-      <Link to="/roles" className="inline-flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground">
-        <ArrowLeft className="h-4 w-4" /> All roles
-      </Link>
-
-      <div className="flex flex-wrap items-start justify-between gap-4">
-        <div className="min-w-0">
-          <div className="flex flex-wrap items-center gap-2">
-            <h1 className="text-xl font-semibold text-foreground">{role.name}</h1>
+      <PageHeader
+        back={{ to: '/admin/roles', label: 'All roles' }}
+        icon={ShieldCheck}
+        helpKey="roles"
+        title={
+          <span className="flex flex-wrap items-center gap-2">
+            {role.name}
             <Badge tone={kind.tone}>{kind.label}</Badge>
-            {!role.isSystem && <span className="text-xs text-muted-foreground">based on {BASE_LABEL[role.baseRole]}</span>}
-          </div>
-          {role.description && <p className="mt-1 max-w-2xl text-sm text-muted-foreground">{role.description}</p>}
-          <p className="mt-1 text-xs text-muted-foreground">
-            {role.permissions.length} of {catalog.permissions.length} permissions · {role.userCount} user
-            {role.userCount === 1 ? '' : 's'}
-            {role.policyRefs > 0 && ` · targeted by ${role.policyRefs} access polic${role.policyRefs === 1 ? 'y' : 'ies'}`}
-          </p>
-        </div>
+            {!role.isSystem && <span className="text-xs font-normal text-muted-foreground">based on {BASE_LABEL[role.baseRole]}</span>}
+          </span>
+        }
+        subtitle={
+          <>
+            {role.description && <p className="max-w-2xl">{role.description}</p>}
+            <p className="mt-0.5 text-xs">
+              {role.permissions.length} of {catalog.permissions.length} permissions · {role.userCount} user
+              {role.userCount === 1 ? '' : 's'}
+              {role.policyRefs > 0 && ` · targeted by ${role.policyRefs} access polic${role.policyRefs === 1 ? 'y' : 'ies'}`}
+            </p>
+          </>
+        }
+      >
         {can('roles.manage') && (
           <div className="flex flex-wrap items-center gap-2">
             {canEdit && (
@@ -306,7 +303,7 @@ function RoleDetail({ id, catalog, roles, reloadList }) {
             )}
           </div>
         )}
-      </div>
+      </PageHeader>
 
       {readOnlyReason && (
         <div className="flex items-center gap-2 rounded-md border border-border bg-muted/30 px-3 py-2 text-xs text-muted-foreground">
@@ -354,7 +351,7 @@ function RoleDetail({ id, catalog, roles, reloadList }) {
 
       {tab === 'members' &&
         (role.users.length === 0 ? (
-          <EmptyState icon={UsersIcon} title="No one has this role yet" description="Assign it from the Users page." />
+          <EmptyState icon={UsersIcon} title="No one has this role yet" description="Assign it from Administration → Users." />
         ) : (
           <ul className="divide-y divide-border rounded-lg border border-border bg-card">
             {role.users.map((u) => (
@@ -411,7 +408,7 @@ function RoleDetail({ id, catalog, roles, reloadList }) {
         onSaved={(created) => {
           setCopyOpen(false);
           reloadList();
-          navigate(`/roles/${created.id}`);
+          navigate(`/admin/roles/${created.id}`);
         }}
       />
       <DeleteRoleDialog
@@ -423,7 +420,7 @@ function RoleDetail({ id, catalog, roles, reloadList }) {
         onDeleted={() => {
           setDeleteOpen(false);
           reloadList();
-          navigate('/roles');
+          navigate('/admin/roles');
         }}
       />
       <ConfirmDialog
@@ -454,14 +451,12 @@ function Roles() {
 
   if (id) {
     return (
-      <div className="p-6">
-        <RoleDetail id={id} catalog={catalog} roles={roles} reloadList={reload} />
-      </div>
+      <RoleDetail id={id} catalog={catalog} roles={roles} reloadList={reload} />
     );
   }
 
   return (
-    <div className="space-y-6 p-6">
+    <div className="space-y-6">
       <PageHeader icon={ShieldCheck} title="Roles" subtitle="What each role can do. Every user has one role." helpKey="roles">
         <div className="flex items-center gap-2">
           <div className="flex rounded-md border border-border p-0.5" role="tablist" aria-label="View">
@@ -521,7 +516,7 @@ function Roles() {
           setNewOpen(false);
           setCopyFrom(null);
           reload();
-          navigate(`/roles/${created.id}`);
+          navigate(`/admin/roles/${created.id}`);
         }}
       />
       <DeleteRoleDialog

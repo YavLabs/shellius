@@ -80,7 +80,7 @@ export const HELP_CONTENT = {
       {
         heading: 'Roles',
         body:
-          'Built-in roles: Super admin (every permission, cannot be edited), Admin, Manager and Member. Admin, Manager and Member can be edited, and you can create custom roles on the Roles page — e.g. an Admin with a few extra settings. You can only assign roles whose permissions you hold yourself. Skipping production approval is the "Production without approval" permission (Admin by default).',
+          'Built-in roles: Super admin (every permission, cannot be edited), Admin, Manager and Member. Admin, Manager and Member can be edited, and you can create custom roles under Administration → Roles — e.g. an Admin with a few extra settings. You can only assign roles whose permissions you hold yourself. Skipping production approval is the "Production without approval" permission (Admin by default).',
       },
       {
         heading: 'Inviting users',
@@ -241,7 +241,7 @@ export const HELP_CONTENT = {
       {
         heading: 'Email',
         body:
-          'Notification emails are sent based on your notification preferences on your Profile. Admins choose how email is delivered (SMTP, Google, Microsoft 365, SendGrid, Mailgun, Postmark or Resend) under Settings → Email.',
+          'Notification emails are sent based on your notification preferences on your Profile. Admins choose how email is delivered (SMTP, Google, Microsoft 365, SendGrid, Mailgun, Postmark or Resend) under Administration → Email.',
       },
     ],
   },
@@ -312,39 +312,70 @@ export const HELP_CONTENT = {
       {
         heading: 'Turned off?',
         body:
-          'An admin can turn off personal vault for the whole organization (Settings → Access). While off, your hosts and identities are kept but hidden and unusable until it\'s turned back on.',
+          'An admin can turn off personal vault for the whole organization (Administration → Access rules). While off, your hosts and identities are kept but hidden and unusable until it\'s turned back on.',
       },
     ],
   },
 
-  settings: {
-    title: 'Settings',
+  roles: {
+    title: 'Roles',
     summary:
-      "Org-level configuration: organization name, CA management, SSO, access, storage, MFA, Quick Connect and email delivery.",
+      'A role is a named set of permissions. Every user has exactly one role, and what they can see and do follows from it.',
     sections: [
+      {
+        heading: 'Built-in and custom roles',
+        body:
+          'Super admin always has every permission and cannot be changed. Admin, Manager and Member can be edited and reset to their defaults. Create a custom role from scratch or duplicate an existing one.',
+      },
+      {
+        heading: 'No escalation',
+        body:
+          'You can only create, edit, assign or delete a role whose permissions you hold yourself, and nobody can edit their own role.',
+      },
+      {
+        heading: 'List and matrix',
+        body:
+          'The list shows each role with its member count; the matrix shows every permission against every role. Open a role to change its permissions — unsaved changes are kept until you save or discard them.',
+      },
+    ],
+  },
+
+  admin: {
+    title: 'Administration',
+    summary:
+      'Everything an admin configures for this organization: people and roles, sign-in and security rules, organization settings and integrations. You only see the sections your role\'s permissions allow.',
+    sections: [
+      {
+        heading: 'People & access',
+        body:
+          'Users (invite, suspend, reset passwords, sign-in methods), Roles (what each role can do) and Groups (bundle users for policies).',
+      },
+      {
+        heading: 'Authentication',
+        body:
+          'Single sign-on: Google Workspace, Microsoft Entra ID, Okta, Auth0, GitHub or any generic OIDC provider — test the connection from the wizard before saving. Two-factor: enable and enforce authenticator apps (TOTP) or email codes. Access rules: whether roles with "Production without approval" may skip production approval, require SSO, and the personal vault switch.',
+      },
       {
         heading: 'Organization',
         body:
-          'Update your org\'s display name, domain, and logo URL.',
+          'General: display name, domain and logo URL. Certificate authority: the org\'s SSH CA fingerprint and public key; roles with the rotate permission can rotate it — every existing certificate is invalidated. Quick Connect: the org-wide switch for ad-hoc SSH connections.',
       },
       {
-        heading: 'CA Management',
+        heading: 'Integrations',
         body:
-          'View the org\'s SSH CA fingerprint and public key. Super admins can rotate the CA — every existing certificate is invalidated and the new key takes over.',
+          'Email: add one or more providers (SMTP, Google / Gmail API, Microsoft 365 via Graph, SendGrid, Mailgun, Postmark, Resend) and make one active. Use "Send test email" to check delivery; failures show the provider’s own error. With no active provider, email falls back to the server’s SMTP_* settings, or is not sent. Storage: where session recordings are kept (MinIO, AWS S3 or Azure Blob).',
       },
       {
-        heading: 'SSO',
+        heading: 'Finding a setting',
         body:
-          'Configure single sign-on with Google Workspace, Microsoft Entra ID, Okta, Auth0, or any generic OIDC provider. Test the connection from the wizard before saving.',
-      },
-      {
-        heading: 'Email',
-        body:
-          'Add one or more email providers (SMTP, Google / Gmail API, Microsoft 365 via Graph, SendGrid, Mailgun, Postmark, Resend) and make one active. Use "Send test email" to check delivery; failures show the provider’s own error. With no active provider, email falls back to the server’s SMTP_* settings, or is not sent.',
+          'Type in the search box above the sections — it matches names and keywords, so "smtp" finds Email and "okta" finds Single sign-on. Old Settings links (/settings?tab=…) and the old /users, /roles and /groups pages redirect here.',
       },
     ],
   },
 };
+
+// Settings became Administration in 1.5.0; the old key still resolves.
+HELP_CONTENT.settings = HELP_CONTENT.admin;
 
 export function getHelp(slug) {
   return HELP_CONTENT[slug] || null;

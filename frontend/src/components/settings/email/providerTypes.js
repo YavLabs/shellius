@@ -1,7 +1,7 @@
 import { Server, Mail, Building2, Send, Zap, Inbox, Rocket } from 'lucide-react';
 
 /**
- * Email provider catalogue for Settings → Email. Mirrors the backend
+ * Email provider catalogue for Administration → Email. Mirrors the backend
  * adapters (backend/src/services/email/providers). `secret: true` fields are
  * write-only: the API returns { set } for them and keeps the stored value
  * when the field is left blank on edit.
