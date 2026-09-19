@@ -1,6 +1,5 @@
 import express from 'express';
 import Joi from 'joi';
-import nodemailer from 'nodemailer';
 import asyncHandler from '../utils/asyncHandler.js';
 import ApiError from '../utils/ApiError.js';
 import authenticate from '../middleware/auth.js';
@@ -8,9 +7,16 @@ import tenant from '../middleware/tenant.js';
 import { requirePermission } from '../middleware/rbac.js';
 import audit from '../middleware/audit.js';
 import * as smtpConfigService from '../services/smtpConfigService.js';
+import * as emailProviderService from '../services/emailProviderService.js';
+import { sendWith, resolveFrom } from '../services/email/providers/index.js';
+import { envSmtpProvider } from '../services/email/envSmtp.js';
 import prisma from '../config/db.js';
 import { renderTemplate } from '../email/index.js';
 
+// DEPRECATED — superseded by /api/settings/email/providers
+// (routes/emailProviders.js). Kept so existing API clients keep working; it
+// reads/writes the org's active SMTP email provider through the
+// smtpConfigService compatibility shim.
 const router = express.Router();
 router.use(authenticate, tenant);
 
@@ -85,8 +91,8 @@ router.post(
     }
 
     // Pull caller's email + name; never send test mail to an arbitrary address
-    const user = await prisma.user.findUnique({
-      where: { id: req.user.userId },
+    const user = await prisma.user.findFirst({
+      where: { id: req.user.userId, orgId: req.orgId },
       select: { email: true, name: true },
     });
     if (!user?.email) throw new ApiError(400, 'Caller has no email on record');
@@ -96,38 +102,34 @@ router.post(
       select: { name: true },
     });
 
-    const transport = nodemailer.createTransport({
+    // The active SMTP provider records its test result like the new API does.
+    const active = await emailProviderService.getActiveForSend(req.orgId);
+    if (active?.type === 'smtp') {
+      const result = await emailProviderService.test(
+        req.orgId,
+        active.id,
+        { to: user.email, recipientName: user.name, orgName: org?.name },
+        { userId: req.user.userId, ip: req.ip, userAgent: req.headers['user-agent'] }
+      );
+      if (!result.ok) throw new ApiError(400, `SMTP test failed: ${result.error}`);
+      return res.json({ success: true, data: { ok: true, sentTo: user.email } });
+    }
+
+    const provider = envSmtpProvider();
+    const tpl = renderTemplate('smtpTest', {
+      recipientName: user.name,
+      orgName: org?.name,
       host: effective.host,
       port: effective.port,
-      secure: effective.useTls && effective.port === 465,
-      auth: effective.username && effective.password
-        ? { user: effective.username, pass: effective.password }
-        : undefined,
+      useTls: effective.security !== 'none',
+      when: new Date().toISOString(),
     });
-
     try {
-      await transport.verify();
-      const tpl = renderTemplate('smtpTest', {
-        recipientName: user.name,
-        orgName: org?.name,
-        host: effective.host,
-        port: effective.port,
-        useTls: effective.useTls,
-        when: new Date().toISOString(),
-      });
-      await transport.sendMail({
-        from: effective.fromAddress || effective.username || 'noreply@shellius.local',
-        to: user.email,
-        subject: tpl.subject,
-        html: tpl.html,
-        text: tpl.text,
-      });
-      res.json({ success: true, data: { ok: true, sentTo: user.email } });
+      await sendWith(provider, { to: user.email, subject: tpl.subject, html: tpl.html, text: tpl.text });
     } catch (err) {
       throw new ApiError(400, `SMTP test failed: ${err.message}`);
-    } finally {
-      transport.close();
     }
+    res.json({ success: true, data: { ok: true, sentTo: user.email, from: resolveFrom(provider).address } });
   })
 );
 

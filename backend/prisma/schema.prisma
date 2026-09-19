@@ -47,6 +47,7 @@ model Organization {
   groups          Group[]
   ssoConfigs      SsoConfig[]
   smtpConfig      SmtpConfig?
+  emailProviders  EmailProvider[]
   deviceAuthRequests DeviceAuthRequest[]
   caKeyPairs      CaKeyPair[]
   certificates    Certificate[]
@@ -764,6 +765,43 @@ model SmtpConfig {
   organization Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
 
   @@map("smtp_configs")
+}
+
+/// Outbound email delivery provider (docs/email-delivery.md). An org may
+/// define several; at most ONE is active (partial unique index
+/// email_providers_one_active_per_org, created in the migration SQL — Prisma
+/// can't express partial indexes — plus a transaction in
+/// emailProviderService.activate()). All type-specific settings, secrets
+/// included, live in configEncrypted as one AES-256-GCM encrypted JSON blob
+/// and are never returned by the API. No active provider → SMTP_* env vars
+/// → log-only.
+///
+/// legacySmtpConfigId: set on rows the 20260921000000_email_providers
+/// migration copied from smtp_configs. SQL can't encrypt, so those rows start
+/// with configEncrypted NULL and emailProviderService imports the legacy row
+/// (decrypting its password) on boot / first use. smtp_configs is kept
+/// untouched for rollback.
+model EmailProvider {
+  id                 String    @id @default(cuid())
+  orgId              String    @map("org_id")
+  name               String
+  type               String // smtp | google | microsoft | sendgrid | mailgun | postmark | resend
+  fromAddress        String?   @map("from_address")
+  fromName           String?   @map("from_name")
+  configEncrypted    String?   @map("config_encrypted") @db.Text
+  isActive           Boolean   @default(false) @map("is_active")
+  lastTestAt         DateTime? @map("last_test_at")
+  lastTestOk         Boolean?  @map("last_test_ok")
+  lastTestError      String?   @map("last_test_error") @db.Text
+  legacySmtpConfigId String?   @map("legacy_smtp_config_id")
+  createdById        String?   @map("created_by_id")
+  createdAt          DateTime  @default(now()) @map("created_at")
+  updatedAt          DateTime  @updatedAt @map("updated_at")
+
+  organization Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+
+  @@index([orgId])
+  @@map("email_providers")
 }
 
 /// Per-org MFA policy. enabled = MFA available; enforced = all users must

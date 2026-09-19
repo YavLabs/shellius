@@ -87,6 +87,16 @@ export const ACTIONS = {
   org: {
     update: 'org.update',
   },
+  // Written by emailProviderService (metadata never carries secrets).
+  email_provider: {
+    created: 'email_provider.created',
+    updated: 'email_provider.updated',
+    deleted: 'email_provider.deleted',
+    activated: 'email_provider.activated',
+    deactivated: 'email_provider.deactivated',
+    tested: 'email_provider.tested',
+    google_connected: 'email_provider.google_connected',
+  },
 };
 
 // ---------------------------------------------------------------------------
