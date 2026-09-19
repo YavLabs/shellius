@@ -70,7 +70,7 @@ function SsoTextButtons({ providers, submitting, onSelect }) {
           type="button"
           onClick={() => onSelect(provider.id)}
           disabled={submitting}
-          className="inline-flex items-center gap-2.5 rounded-full px-4 py-2 text-sm font-medium text-foreground/90 transition-colors hover:bg-foreground/[0.05] hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50"
+          className="inline-flex h-10 items-center gap-2.5 rounded-md px-4 text-sm font-semibold text-foreground/90 transition-colors hover:bg-foreground/[0.05] hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50"
         >
           {submitting ? <Loader2 className="h-4 w-4 animate-spin" /> : <ProviderGlyph presetId={provider.presetId} />}
           {submitting ? 'Opening sign-in…' : `Sign in with ${provider.name || ssoLoginLabel(provider.presetId)}`}
@@ -97,7 +97,7 @@ function SsoTextButtons({ providers, submitting, onSelect }) {
             onClick={() => onSelect(provider.id)}
             disabled={submitting}
             title={`Sign in with ${provider.name || ssoLoginLabel(provider.presetId)}`}
-            className={`${basis} inline-flex h-10 min-w-0 grow-0 items-center justify-center gap-2 rounded-full bg-foreground/[0.04] px-3 text-sm font-medium text-foreground/85 ring-1 ring-foreground/[0.06] transition-colors hover:bg-foreground/[0.08] hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50`}
+            className={`${basis} inline-flex h-10 min-w-0 grow-0 items-center justify-center gap-2 rounded-md bg-foreground/[0.04] px-3 text-sm font-semibold text-foreground/85 ring-1 ring-foreground/[0.06] transition-colors hover:bg-foreground/[0.08] hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50`}
           >
             <ProviderGlyph presetId={provider.presetId} />
             <span className="truncate">{provider.name || ssoLoginLabel(provider.presetId)}</span>
@@ -343,7 +343,7 @@ function Login() {
         )
       }
     >
-      <div className="w-full max-w-sm space-y-7">
+      <div className="w-full max-w-sm space-y-6">
         {isDeleted &&
           notice(
             'warn',

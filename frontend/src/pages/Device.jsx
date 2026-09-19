@@ -34,7 +34,7 @@ function Device() {
   return (
     <AuthShell>
       <div className="w-full max-w-sm">
-        <div className="mb-8 text-center">
+        <div className="mb-6 text-center">
           <h1 className="text-3xl font-semibold">Device login</h1>
           <p className="mt-1 text-sm text-muted-foreground">
             Confirm the code shown in your terminal

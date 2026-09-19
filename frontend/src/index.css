@@ -240,42 +240,43 @@
     background-color: transparent;
     border-color: transparent;
     box-shadow: none;
-    padding-left: 0;
-    padding-right: 0;
+    padding: 0;
   }
 
   /* Pill fields and buttons. */
   .auth-fey :is(input:not([type='checkbox']):not([type='radio']):not([type='range']):not([type='file'])).border-input {
-    height: 2.75rem;
-    border-radius: 9999px;
+    height: 2.5rem;
+    border-radius: calc(var(--radius) - 2px);
     padding-left: 1.125rem;
   }
   .auth-fey :is(input:not([type='checkbox']):not([type='radio']):not([type='range']):not([type='file'])).border-input.pl-9 {
     padding-left: 2.5rem;
   }
   .auth-fey main :is(button, a).bg-primary {
-    height: 2.75rem;
+    height: 2.5rem;
     background-image: var(--brand-gradient);
     color: var(--brand-on-gradient);
   }
-  /* Every button on the auth pages is a pill (primary, destructive,
-     approve/reject, outline, icon toggles). */
-  .auth-fey main :is(button, a):is(.rounded, .rounded-sm, .rounded-md, .rounded-lg, .bg-primary) {
-    border-radius: 9999px;
+  /* Buttons match the app (/dummy/app): 40px, 10px corners, semibold. */
+  .auth-fey main :is(button, a):is(.rounded, .rounded-sm, .rounded-md, .rounded-lg, .bg-primary, .border-input) {
+    border-radius: calc(var(--radius) - 2px);
   }
-  .auth-fey main :is(button, a).border-input {
-    border-radius: 9999px;
+  .auth-fey main :is(button, a):is(.bg-primary, .inline-flex.whitespace-nowrap.font-medium, .text-sm.font-medium) {
+    font-weight: 600;
+  }
+  .auth-fey main :is(button, a).h-9 {
+    height: 2.5rem;
   }
   .auth-fey main textarea.border-input,
   .auth-fey main .field-soft.border-input {
-    border-radius: calc(var(--radius) + 4px);
+    border-radius: calc(var(--radius) - 2px);
   }
-  /* Auth pages: controls are pills (above); boxes share one larger radius. */
+  /* Auth pages use the app's radius scale: boxes 12px, controls 10px. */
   .auth-fey main :is(div, section, form, p, ul).rounded,
   .auth-fey main :is(div, section, form, p, ul).rounded-sm,
   .auth-fey main :is(div, section, form, p, ul).rounded-md,
   .auth-fey main :is(div, section, form, p, ul).rounded-lg {
-    border-radius: calc(var(--radius) + 4px);
+    border-radius: var(--radius);
   }
   .auth-fey main label {
     font-weight: 400;

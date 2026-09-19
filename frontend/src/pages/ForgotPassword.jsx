@@ -27,7 +27,7 @@ function ForgotPassword() {
   return (
     <AuthShell>
       <div className="w-full max-w-sm">
-        <div className="mb-8 text-center">
+        <div className="mb-6 text-center">
           <h1 className="text-3xl font-semibold">Reset your password</h1>
         </div>
 
