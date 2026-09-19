@@ -223,6 +223,9 @@ jobs:
           body_path: /tmp/release-body.md
           draft: false
           prerelease: ${{ contains(steps.tag.outputs.version, '-') }}
+          # The app release (v* tags) owns the "Latest" badge; CLI releases
+          # are fetched through /api/cli, not GitHub's latest link.
+          make_latest: false
           files: |
             dist/shellius-linux-amd64
             dist/shellius-linux-arm64
