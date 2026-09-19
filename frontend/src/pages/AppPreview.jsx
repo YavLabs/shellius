@@ -382,6 +382,7 @@ function PreviewContent() {
 
         <div className="space-y-6">
           <Card title="Buttons & badges">
+            <p className="mb-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">Variants</p>
             <div className="flex flex-wrap gap-2">
               <Button>Primary</Button>
               <Button variant="outline">Outline</Button>
@@ -389,8 +390,16 @@ function PreviewContent() {
               <Button variant="ghost">Ghost</Button>
               <Button variant="destructive">Destructive</Button>
               <Button variant="link">Link</Button>
+            </div>
+            <p className="mb-2 mt-4 text-xs font-medium uppercase tracking-wide text-muted-foreground">Sizes &amp; states</p>
+            <div className="flex flex-wrap items-center gap-2">
               <Button size="sm">Small</Button>
+              <Button>Default</Button>
+              <Button size="lg">Large</Button>
               <Button disabled>Disabled</Button>
+              <Button variant="outline" disabled>
+                Disabled
+              </Button>
             </div>
             <div className="mt-4 flex flex-wrap items-center gap-2">
               <Badge tone="neutral">Neutral</Badge>
