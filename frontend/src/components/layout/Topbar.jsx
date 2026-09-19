@@ -50,7 +50,7 @@ function Topbar() {
   const pageName = pageNameFor(location.pathname);
 
   return (
-    <header className="flex h-14 shrink-0 items-center justify-between gap-3 border-b border-border bg-card pl-4 pr-3 sm:pl-6 sm:pr-4">
+    <header className="flex h-14 shrink-0 items-center justify-between gap-3 border-b border-border bg-card pl-16 pr-3 sm:pr-4 md:pl-6">
       {/* Breadcrumb */}
       <div className="flex min-w-0 items-center gap-2 text-sm">
         <span className="hidden text-muted-foreground sm:inline">Shellius</span>
