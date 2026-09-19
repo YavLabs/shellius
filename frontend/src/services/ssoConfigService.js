@@ -73,3 +73,38 @@ export const getSsoPublicStatus = (orgSlug) =>
  */
 export const unlinkIdentity = (id) =>
   api.delete(`/auth/identities/${id}`).then((r) => r.data?.data ?? r.data);
+
+// ---------------------------------------------------------------------------
+// Linking SSO accounts (docs/auth-hardening.md "Linking SSO accounts")
+// ---------------------------------------------------------------------------
+
+const unwrap = (r) => r.data?.data ?? r.data;
+
+/** POST /api/auth/sso/link/info — what a pending (password-confirm) link is for. */
+export const getPendingLink = (token) => api.post('/auth/sso/link/info', { token }).then(unwrap);
+
+/**
+ * POST /api/auth/sso/confirm-link — `{ token, password }`, then (MFA accounts)
+ * `{ token, method, code }`. Returns `{ linkMfaRequired, methods, emailHint }`
+ * or a session (`{ accessToken, refreshToken, user }`).
+ */
+export const confirmPendingLink = (body) => api.post('/auth/sso/confirm-link', body).then(unwrap);
+
+/** POST /api/auth/sso/confirm-link/send-code — email the MFA code. */
+export const sendPendingLinkCode = (token) => api.post('/auth/sso/confirm-link/send-code', { token }).then(unwrap);
+
+/** POST /api/auth/sso/link/cancel — burn a pending link. */
+export const cancelPendingLink = (token) => api.post('/auth/sso/link/cancel', { token }).then(unwrap);
+
+/** POST /api/auth/sso/link/approve-info — what an emailed approval is for. */
+export const getLinkApproval = (token) => api.post('/auth/sso/link/approve-info', { token }).then(unwrap);
+
+/** POST /api/auth/sso/link/approve — approve (links; does not sign in). */
+export const approveLink = (token) => api.post('/auth/sso/link/approve', { token }).then(unwrap);
+
+/** GET /api/auth/sso/connect/providers — active providers of the caller's org. */
+export const listConnectableProviders = () =>
+  api.get('/auth/sso/connect/providers').then((r) => r.data?.data?.providers ?? []);
+
+/** POST /api/auth/sso/connect/start → { url } (the IdP authorize URL). */
+export const startConnect = (providerId) => api.post('/auth/sso/connect/start', { providerId }).then(unwrap);

@@ -11,16 +11,14 @@ import AcceptInvite from './pages/AcceptInvite';
 import ResetPassword from './pages/ResetPassword';
 import ForgotPassword from './pages/ForgotPassword';
 import Dashboard from './pages/Dashboard';
-import Users from './pages/Users';
-import Groups from './pages/Groups';
-import GroupDetail from './pages/GroupDetail';
 import Customers from './pages/Customers';
 import CustomerDetail from './pages/CustomerDetail';
 import Servers from './pages/Servers';
 import ServerDetail from './pages/ServerDetail';
 import Certificates from './pages/Certificates';
 import Policies from './pages/Policies';
-import Settings from './pages/Settings';
+import Administration from './pages/Administration';
+import LegacyAdminRedirect from './components/admin/LegacyAdminRedirect';
 import AccessRequests from './pages/AccessRequests';
 import Sessions from './pages/Sessions';
 import AuditLog from './pages/AuditLog';
@@ -33,13 +31,14 @@ import Profile from './pages/Profile';
 import Register from './pages/Register';
 import Legal from './pages/Legal';
 import AuthCallback from './pages/AuthCallback';
+import SsoLink from './pages/SsoLink';
+import SsoLinkApprove from './pages/SsoLinkApprove';
 import NotFound from './pages/NotFound';
 import InstallCli from './pages/InstallCli';
 import ApproveRequest from './pages/ApproveRequest';
 import BulkImport from './pages/BulkImport';
 import Keystore from './pages/Keystore';
 import MyHosts from './pages/MyHosts';
-import Roles from './pages/Roles';
 import MfaSetup from './pages/MfaSetup';
 
 function App() {
@@ -58,6 +57,8 @@ function App() {
               <Route path="/register" element={<Register />} />
               <Route path="/legal/:doc" element={<Legal />} />
               <Route path="/auth/callback" element={<AuthCallback />} />
+              <Route path="/sso/link" element={<SsoLink />} />
+              <Route path="/sso/link/approve" element={<SsoLinkApprove />} />
               <Route element={<ProtectedRoute />}>
                 {/* Forced MFA enrollment — full screen, no app chrome */}
                 <Route path="/mfa-setup" element={<MfaSetup />} />
@@ -79,6 +80,19 @@ function App() {
                   <Route path="/notifications" element={<Notifications />} />
                   <Route path="/profile" element={<Profile />} />
                   <Route path="/install-cli" element={<InstallCli />} />
+                  {/* Administration checks each section's permission itself:
+                      no visible section → dashboard, hidden section → /admin. */}
+                  <Route path="/admin" element={<Administration />} />
+                  <Route path="/admin/:section" element={<Administration />} />
+                  <Route path="/admin/:section/:id" element={<Administration />} />
+                  {/* Old URLs → Administration (lib/adminSections.js legacyAdminPath) */}
+                  <Route path="/settings" element={<LegacyAdminRedirect />} />
+                  <Route path="/users" element={<LegacyAdminRedirect />} />
+                  <Route path="/users/:id" element={<LegacyAdminRedirect />} />
+                  <Route path="/roles" element={<LegacyAdminRedirect />} />
+                  <Route path="/roles/:id" element={<LegacyAdminRedirect />} />
+                  <Route path="/groups" element={<LegacyAdminRedirect />} />
+                  <Route path="/groups/:id" element={<LegacyAdminRedirect />} />
                   {/* Permission-gated pages — see ROUTE_ACCESS in lib/commands.js */}
                   <Route element={<PermissionRoute />}>
                     <Route path="/customers" element={<Customers />} />
@@ -88,15 +102,9 @@ function App() {
                     <Route path="/sessions" element={<Sessions />} />
                     <Route path="/keystore" element={<Keystore />} />
                     <Route path="/my-hosts" element={<MyHosts />} />
-                    <Route path="/users" element={<Users />} />
-                    <Route path="/roles" element={<Roles />} />
-                    <Route path="/roles/:id" element={<Roles />} />
-                    <Route path="/groups" element={<Groups />} />
-                    <Route path="/groups/:id" element={<GroupDetail />} />
                     <Route path="/bulk-import" element={<BulkImport />} />
                     <Route path="/certificates" element={<Certificates />} />
                     <Route path="/policies" element={<Policies />} />
-                    <Route path="/settings" element={<Settings />} />
                     <Route path="/audit-log" element={<AuditLog />} />
                   </Route>
                 </Route>

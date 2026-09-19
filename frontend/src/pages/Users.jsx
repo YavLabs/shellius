@@ -15,6 +15,7 @@ import {
   Unlock,
   ShieldCheck,
   LogOut,
+  Fingerprint,
 } from 'lucide-react';
 import DataTable from '@/components/shared/DataTable';
 import { Badge } from '@/components/ui/badge';
@@ -25,6 +26,7 @@ import ConfirmDialog from '@/components/shared/ConfirmDialog';
 import DeleteUserDialog from '@/components/users/DeleteUserDialog';
 import UserForm from '@/components/users/UserForm';
 import SshKeyDialog from '@/components/users/SshKeyDialog';
+import UserSignInMethods from '@/components/users/UserSignInMethods';
 import PageHeader from '@/components/common/PageHeader';
 import { formatLabel } from '@/utils/format';
 import { ROLE_LABELS, USER_STATUS_LABELS } from '@/lib/labels';
@@ -114,10 +116,11 @@ function Users() {
   const [deleteTarget, setDeleteTarget] = useState(null);
 
   const [urlModal, setUrlModal] = useState(null);
+  const [signInUser, setSignInUser] = useState(null);
   const [actionMsg, setActionMsg] = useState('');
   const [searchParams, setSearchParams] = useSearchParams();
 
-  // Deep links: /users?action=invite opens the invite modal; ?highlight=<id>
+  // Deep links: /admin/users?action=invite opens the invite modal; ?highlight=<id>
   // opens that user's edit modal (no inline row-highlight affordance in
   // DataTable, so this is the closest equivalent).
   useEffect(() => {
@@ -378,6 +381,12 @@ function Users() {
         },
         { label: 'Upload SSH Key', icon: KeyRound, hidden: (r) => !manageable(r) || !can('users.update'), onClick: (r) => openSsh(r) },
         {
+          label: 'Sign-in methods',
+          icon: Fingerprint,
+          hidden: (r) => !manageable(r) || !can('users.manage_identities'),
+          onClick: (r) => setSignInUser(r),
+        },
+        {
           label: 'Resend invite',
           icon: Mail,
           hidden: (r) => r.status !== 'invited' || !manageable(r) || !can('users.invite'),
@@ -420,7 +429,7 @@ function Users() {
   ];
 
   return (
-    <div className="space-y-6 p-6">
+    <div className="space-y-6">
       <PageHeader icon={UsersIcon} title="Users" subtitle="Manage user accounts, roles, and access." helpKey="users">
         {can('users.invite') && (
           <Button onClick={openCreate}>
@@ -482,6 +491,15 @@ function Users() {
             onCancel={() => { setSshOpen(false); setSshUser(null); }}
           />
         )}
+      </Modal>
+
+      <Modal
+        open={!!signInUser}
+        onClose={() => setSignInUser(null)}
+        title="Sign-in methods"
+        size="md"
+      >
+        {signInUser && <UserSignInMethods user={signInUser} onClose={() => setSignInUser(null)} />}
       </Modal>
 
       <ConfirmDialog

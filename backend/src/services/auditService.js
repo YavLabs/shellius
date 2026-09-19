@@ -24,6 +24,16 @@ export const ACTIONS = {
     device_approve: 'auth.device_approve',
     refresh_reuse: 'auth.refresh_reuse',
     mfa_failed: 'auth.mfa_failed',
+    // SSO account linking (docs/auth-hardening.md "Linking SSO accounts").
+    // metadata.method: auto | confirmed | email_approved | connect (linked)
+    // or self | admin (unlinked).
+    identity_linked: 'auth.identity.linked',
+    identity_unlinked: 'auth.identity.unlinked',
+    identity_link_pending: 'auth.identity.link_pending',
+    identity_link_failed: 'auth.identity.link_failed',
+    identity_connect_started: 'auth.identity.connect_started',
+    password_set: 'auth.password.set',
+    sso_required_blocked: 'auth.sso_required_blocked',
   },
   user: {
     create: 'user.create',
@@ -86,6 +96,16 @@ export const ACTIONS = {
   },
   org: {
     update: 'org.update',
+  },
+  // Written by emailProviderService (metadata never carries secrets).
+  email_provider: {
+    create: 'email_provider.create',
+    update: 'email_provider.update',
+    delete: 'email_provider.delete',
+    activate: 'email_provider.activate',
+    deactivate: 'email_provider.deactivate',
+    test: 'email_provider.test',
+    google_connect: 'email_provider.google_connect',
   },
 };
 
@@ -442,7 +462,7 @@ async function enrichAuditItems(items, orgId) {
         case 'User': {
           const u = lookups.User?.get(rid);
           if (u) label = u.name || u.email || 'User';
-          link = '/users';
+          link = '/admin/users';
           break;
         }
         case 'Server': {
@@ -497,7 +517,7 @@ async function enrichAuditItems(items, orgId) {
         case 'Group': {
           const g = lookups.Group?.get(rid);
           if (g) label = g.name;
-          link = `/groups/${rid}`; // detail page exists
+          link = `/admin/groups/${rid}`; // detail page exists
           break;
         }
         case 'AccessPolicy': {

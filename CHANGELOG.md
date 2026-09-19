@@ -9,6 +9,56 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 Tracked here as work lands on `main`; moved into a dated section on release
 (`node scripts/version.mjs bump <major|minor|patch>`).
 
+## [1.5.0] - 2026-09-19
+
+### Added
+
+- **Connect sign-in providers from Profile.** Sign-in methods lists every SSO provider the organization uses, with Connect for the ones you haven't linked and Disconnect for the ones you have. Connecting links the provider account to you, never to another account with the same email. An account already linked to another user is refused.
+- **Set a password.** People who sign in only with SSO can add a password from Profile. They confirm it's them with their two-factor code, or with a code emailed to them.
+- **Sign-in methods for administrators.** On Users, "Sign-in methods" shows whether a user has a password and which SSO accounts are linked, and can unlink one. It needs the new "Manage sign-in methods" permission (Admin and Super admin by default) and follows the same rule as editing users: you can't act on someone whose role has more permissions than yours.
+- **Require single sign-on** (Administration → Access rules). When on, password sign-in, password resets and adding a password are refused, except for roles with the "Single sign-on" permission, so an administrator can still sign in if the identity provider breaks. The sign-in page shows only the SSO buttons.
+- Emails when an SSO account is linked to or unlinked from your account, and when a password is added.
+- **Email providers.** Administration → Email (was Settings → "Email server") can hold several ways to send email, and one is active at a time:
+  - SMTP, Google (Gmail API), Microsoft 365 (Microsoft Graph), SendGrid, Mailgun, Postmark and Resend.
+  - Google: "Connect Google account" signs in once and only asks for permission to send email. Google Workspace service accounts (domain-wide delegation) work too. The OAuth client defaults to `SSO_GOOGLE_CLIENT_ID` / `SSO_GOOGLE_CLIENT_SECRET`.
+  - Microsoft 365: an Entra ID app with the Mail.Send application permission sends from a chosen mailbox.
+  - "Send test email" sends to any address (your own by default) and shows the provider's own error when it fails. Each provider shows its last test result.
+  - A notice says what happens when no provider is active: emails use the server's `SMTP_*` settings, or are not sent at all.
+  - API keys, client secrets, passwords and Google sign-in tokens are encrypted and never shown again. Leave a secret blank when editing to keep it.
+  - Every change and test is in the audit log, without secrets.
+  - See `docs/email-delivery.md`.
+- `SMTP_SECURITY` (`none`, `starttls` or `tls`) and `SMTP_FROM_NAME` for the environment SMTP settings.
+
+### Changed
+
+- Settings is now **Administration** (`/admin`), opened from the profile menu. Users, Roles and Groups moved out of the sidebar into it, next to the organization settings, grouped as People & access (Users, Roles, Groups), Authentication (Single sign-on, Two-factor, Access rules), Organization (General, Certificate authority, Quick Connect) and Integrations (Email, Storage). A search box finds a section by name or keyword (for example "smtp" or "okta"), and on phones the sections are a dropdown. Each section, the menu entry and the command palette entries ("Administration › Users", …) only appear with the matching permission. Switching sections asks before discarding unsaved changes. Old links keep working: `/settings` and `/settings?tab=…` redirect to the matching section, and `/users`, `/roles`, `/roles/:id`, `/groups` and `/groups/:id` redirect to `/admin/…`. Links in notifications, search results and the Google email-provider sign-in now point at the new pages.
+- The sidebar collapses automatically on the Terminals workspace and Administration. You can still expand it there; leaving restores your usual setting.
+- The Shellius logo files (`frontend/public/brand`) have outlined, evenly spaced lettering, so the gap between SHELL, the bar and US is gone and they look the same without the font installed.
+- Signing in with SSO for the first time no longer links the provider to an existing account with the same email straight away:
+  - If the account has a password, you confirm with that password (and your two-factor code, if you use one) before the provider is linked. This applies to every role.
+  - If the account has no password but has administrative permissions, an approval link is emailed to the account.
+  - Other accounts without a password are linked as before.
+- The sign-in page no longer jumps straight to the identity provider for SSO-only accounts. It shows "This account signs in with <Provider>" and a Continue button.
+- The SSO provider form warns when "Require verified email" is turned off.
+- People who have both a password and a linked SSO account can change their password again.
+- **Emails use the new Shellius brand.** The header shows the full Shellius logo (icon and wordmark) built in HTML, so it appears even when a mail client blocks images and no public app URL is set. The old header icon was blocked by Gmail and Outlook. Buttons use the brand gradient.
+- SMTP has an explicit Security setting: STARTTLS, TLS, or None. Before, the TLS switch only applied on port 465.
+- The "Email server" permission is now called "Email delivery" (same key, `settings.smtp`), and is marked as sensitive.
+- `/api/settings/smtp` is deprecated. It still works, and now reads and writes the org's active SMTP provider.
+
+### Security
+
+- An identity provider account with the same email can no longer take over a Shellius account without the account's password, two-factor code or an emailed approval. Wrong passwords on the confirm page count toward the account lockout.
+- When single sign-on is required, the sign-in page answers the same for every email address, and a failed password sign-in gives the same message whether the password was wrong or the account can't use one. Administrators allowed a password use "Sign in with a password instead". Neither step reveals which accounts are exempt.
+- Linking and unlinking SSO accounts are recorded in the audit log as their own events (`auth.identity.linked`, `auth.identity.unlinked`), with how it happened.
+
+### Migration notes
+
+- The `20260921000000_email_providers` migration adds the `email_providers` table. It copies each org's SMTP settings from Settings → Notifications → SMTP into an active "SMTP" provider. The SMTP password is moved into the provider's encrypted settings when the backend starts, so start the backend once after `prisma migrate deploy`.
+- The old SMTP "Use TLS" switch becomes Security: TLS on port 465, STARTTLS (required) on other ports, None when it was off. If your mail server doesn't support STARTTLS on port 587, set Security to None.
+- The `smtp_configs` table is kept unchanged, so rolling back to 1.4.x keeps working. Changes made after upgrading aren't copied back to it.
+- To use a Google provider with OAuth, add `https://<your host>/api/settings/email/google/callback` to the Google OAuth client's redirect URIs.
+
 ## [1.4.1] - 2026-09-19
 
 ### Fixed

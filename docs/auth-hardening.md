@@ -92,6 +92,8 @@ everything under `/api/mfa/*`, and `GET /api/settings/mfa/public` (if present).
   2. else match on email only when `email_verified` is asserted (if the config
      has `requireVerifiedEmail`) and the account has no different `ssoSub`;
   3. else JIT-provision if `autoProvision`.
+  (Step 2 now needs a confirmation for password and privileged accounts —
+  see "Linking SSO accounts" below.)
   `allowedDomains` (empty = any) gates both sign-in and provisioning.
   `defaultRole` can never be `super_admin`.
 - On success the callback redirects to `/auth/callback#code=<one-time code>`
@@ -184,8 +186,8 @@ accounts live in `UserIdentity` (one row per provider per user; unique on
 ### Production approval
 
 `server.environment === 'prod'` requires approval **unless the requester's role
-holds `access.prod_bypass`** (Admin and Super admin by default; edited on the
-Roles page) **and** the org switch `Organization.settings.access.prodBypassEnabled`
+holds `access.prod_bypass`** (Admin and Super admin by default; edited under
+Administration → Roles) **and** the org switch `Organization.settings.access.prodBypassEnabled`
 is on. With the switch off nobody skips approval — not even super admins — and
 break-glass can't reach prod either. Policy `autoApprove` is **ignored on prod**.
 A bypass still creates an `APPROVED` AccessRequest (reason required), is audited
@@ -206,3 +208,139 @@ fact (or, with no approver routing, everyone who can revoke access).
 
 `GET /api/search` `counts` are **total** matches per type (not the truncated
 page), so the UI can show "12 more…".
+
+---
+
+## Linking SSO accounts
+
+An SSO identity (`UserIdentity`, unique on `(ssoConfigId, subject)`) can be
+attached to an existing Shellius account in four ways. Every link is audited as
+`auth.identity.linked` with `metadata.method` = `auto` | `confirmed` |
+`email_approved` | `connect`, and the account is emailed (`identityLinked`
+template: "A <Provider> account was linked to your Shellius account. If this
+wasn't you, contact your administrator.").
+
+### Sign-in that matches by email
+
+`reconcileSsoUser` (services/ssoService.js):
+
+1. `UserIdentity(ssoConfigId, subject)` match → signed in. No confirmation —
+   the identity was linked before.
+2. Email match in the org (email verified by the IdP, or the provider has
+   `requireVerifiedEmail: false`; same-provider different-subject →
+   `identity_conflict`; disabled account → `account_disabled`):
+
+   | Matched account | What happens |
+   |---|---|
+   | Has a password (any role, including super admins) | **Confirm with password.** A pending link is stored in Redis (`sso:link:<sha256(token)>`, 10 min, single use) and the browser goes to `/sso/link#token=…`. |
+   | No password, **privileged** | **Approve by email.** A one-time link (`/sso/link/approve?token=…`, 30 min, single use) is emailed to the account; the browser goes to `/sso/link#status=approval_sent`. |
+   | No password, not privileged | Linked on the spot (`method: auto`), as before. |
+
+   *Privileged* = the role holds any permission in `PRIVILEGED_PERMISSIONS`
+   (config/permissions.js): every non-view permission in the Users, Roles and
+   Settings groups, plus `access.prod_bypass`. Derived from the catalogue —
+   never from role names.
+3. No match → JIT-provision (`autoProvision`), unchanged.
+
+Every pending link is audited as `auth.identity.link_pending`; cancels, burned
+tokens and connect failures as `auth.identity.link_failed`.
+
+### Confirm with password — `/sso/link`
+
+- `POST /api/auth/sso/link/info { token }` → `{ providerName, presetId,
+  identityEmail, accountEmail (masked), mfaRequired, methods }`.
+- `POST /api/auth/sso/confirm-link { token, password }`:
+  - wrong password → 401 `INVALID_CREDENTIALS` ("Incorrect password"); counts
+    toward the account's lockout exactly like password login (and locked
+    accounts get 423 `ACCOUNT_LOCKED`); max 5 attempts per token, then it is
+    burned (429 `LINK_TOO_MANY_ATTEMPTS`); `authLimiter` per IP.
+  - MFA enrolled → `{ linkMfaRequired: true, methods, emailHint }`; the page
+    then sends `{ token, method, code }` (email codes via
+    `POST /api/auth/sso/confirm-link/send-code { token }`).
+  - otherwise (or after the code) → the identity is linked and a normal
+    session is returned (`{ accessToken, refreshToken, user }`). MFA was
+    verified in this flow, so the user is **not** asked again by `mfaGate`.
+- Expired / unknown / reused token → 400 `LINK_EXPIRED`.
+- `POST /api/auth/sso/link/cancel { token }` — "Cancel" burns the token and
+  returns to `/login`.
+- In an org that requires SSO, a password can still be used here: it only
+  proves ownership, it doesn't sign in by password.
+
+### Approve by email — `/sso/link/approve`
+
+- `POST /api/auth/sso/link/approve-info { token }` shows what is being linked;
+  `POST /api/auth/sso/link/approve { token }` links it. Approving does **not**
+  sign anyone in — the person then signs in with the provider. Both use
+  `tokenActionLimiter`.
+- At most 5 approval emails per account per hour. If the email can't be sent
+  (no SMTP, or the server refused it) the token is burned and the browser goes
+  to `/sso/link#status=approval_failed`; an administrator can fix email, or
+  send a password reset so the user can confirm with a password instead.
+
+### Connect from Profile
+
+- `GET /api/auth/sso/connect/providers` — active providers of the caller's org.
+- `POST /api/auth/sso/connect/start { providerId }` (authenticated,
+  self-service, 10/min per user) → `{ url }`. The Redis state carries
+  `mode: 'connect'` and the signed-in `userId`; audited
+  `auth.identity.connect_started`.
+- The callback links `(provider, subject)` to **that user only** — never by
+  email. `allowedDomains` / GitHub `allowedOrgs` still apply. Redirects to
+  `/profile?connected=<provider name>` or `/profile?connect_error=<code>`:
+  `identity_in_use` (the IdP account belongs to another Shellius user),
+  `already_connected`, `domain_not_allowed`, `org_not_allowed`,
+  `email_not_verified`, `state_mismatch`, `sso_not_configured`, `sso_failed`.
+
+### Unlink
+
+- Self: `DELETE /api/auth/identities/:id`. Admin:
+  `GET /api/users/:id/identities` → `{ hasPassword, passwordUsable, identities }`
+  and `DELETE /api/users/:id/identities/:identityId`, both `users.manage_identities`
+  (Admin and Super admin by default) plus the same no-escalation rule as
+  managing the user (`roleService.canActOnRole`).
+- Refused with 409 `LAST_SIGN_IN_METHOD` when it would leave no way to sign
+  in. A password only counts when the user may use it (see "Require single
+  sign-on").
+- Audited as `auth.identity.unlinked` (`method: self | admin`); the user is
+  emailed (`identityUnlinked`).
+
+### Set a password
+
+Accounts without a password (SSO-only) can add one from Profile:
+
+- `POST /api/auth/password/set/send-code` — emails a one-time code (fails with
+  503 `EMAIL_NOT_DELIVERED` when it can't be sent).
+- `POST /api/auth/password/set { newPassword, method, code }` — same strength
+  rules as registration/reset. Proof: a code from an enrolled MFA factor
+  (`totp` / `email` / `backup`); with no MFA enrolled, the emailed code
+  (`method: 'email'`). 409 `PASSWORD_ALREADY_SET` if one exists; 403
+  `SSO_REQUIRED` when the org requires SSO. Audited `auth.password.set`; the
+  user gets the "password added" email. Rate-limited per user.
+
+### Require single sign-on
+
+`Organization.settings.access.ssoRequired` (JSON, no migration) — on
+`GET/PUT /api/org/access-settings` (`org.access_settings`) as `ssoRequired`,
+with `rolesExemptFromSso` and `ssoProvidersActive` in the GET. It can only be
+turned on while at least one provider is active (409 `SSO_NOT_CONFIGURED`).
+
+When on, for every user whose role does **not** hold `settings.sso`:
+
+- password login → 403 `SSO_REQUIRED` (the password isn't even checked;
+  audited `auth.sso_required_blocked`);
+- password reset links (self-service: silently not sent; token reset and the
+  admin "Send password reset": 403 `SSO_REQUIRED`), invite acceptance with a
+  password, and set-password are refused;
+- `POST /api/auth/login-options` returns `ssoRequired: true` and
+  `hasPassword: false`, so the login page shows only the SSO buttons ("Your
+  organization signs in with single sign-on").
+
+Holders of `settings.sso` (Super admin by default) keep password sign-in, so a
+broken identity provider can't lock the organization out.
+
+### Provider setting: require verified email
+
+With `requireVerifiedEmail` off, an email match links even when the IdP doesn't
+assert the address is verified. The provider form shows a warning. Password and
+privileged accounts are still protected by the confirmation steps above;
+password-less, non-privileged accounts are linked on email match alone.

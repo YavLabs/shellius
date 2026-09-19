@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { CheckCircle, Wifi, WifiOff, XCircle } from 'lucide-react';
+import { AlertTriangle, CheckCircle, Wifi, WifiOff, XCircle } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import SearchableSelect from '@/components/ui/SearchableSelect';
@@ -289,6 +289,17 @@ export default function ProviderForm({ preset, existingProvider, orgGroups, onSa
           checked={requireVerifiedEmail}
           onCheckedChange={setRequireVerifiedEmail}
         />
+        {!requireVerifiedEmail && (
+          <div role="alert" className="flex items-start gap-2 rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs text-amber-800 dark:text-amber-300">
+            <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+            <span>
+              Not recommended. Anyone who can create an account at this provider with an unverified email address
+              could claim a Shellius account with that address. Accounts with a password (or admin permissions) still
+              have to confirm before a new sign-in is linked, but password-less accounts are linked on email match
+              alone.
+            </span>
+          </div>
+        )}
       </div>
 
       {/* Provisioning */}

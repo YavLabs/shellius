@@ -9,11 +9,17 @@ import { attachWebSocketServer, reconcileOrphanedSessions } from './services/ter
 import * as terminalHub from './services/terminalHub.js';
 import * as storageService from './services/storageService.js';
 import { syncAllOrgs } from './services/roleService.js';
+import { importLegacySmtpConfigs } from './services/emailProviderService.js';
 
 // Every org needs its built-in roles and every user a role before the first
 // request is served (older installs are migrated here, including the legacy
 // prod-bypass / Quick Connect role settings). Idempotent; never blocks boot.
 await syncAllOrgs().catch((err) => logger.error('Role sync failed', { error: err.message }));
+
+// SMTP settings copied from smtp_configs by the email_providers migration
+// still need their password encrypted into the provider's config blob (SQL
+// can't encrypt). Idempotent; never throws. Also done lazily on first use.
+await importLegacySmtpConfigs();
 
 const httpServer = http.createServer(app);
 attachWebSocketServer(httpServer);

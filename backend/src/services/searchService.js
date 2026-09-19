@@ -169,7 +169,7 @@ async function searchUsers(orgId, q, limit) {
     type: 'users',
     title: u.name,
     subtitle: u.email,
-    href: `/users?highlight=${u.id}`,
+    href: `/admin/users?highlight=${u.id}`,
     meta: { email: u.email, role: u.role, status: u.status },
     _score: bestScore([u.name, u.email], q),
   }));

@@ -37,7 +37,7 @@ import { useAuth } from '@/context/AuthContext';
 import { useCommandPalette } from '@/context/CommandPaletteContext';
 import { useQuickConnect } from '@/context/QuickConnectContext';
 import { can } from '@/lib/permissions';
-import { QUICK_ACTIONS, NAV_ITEMS, isQuickActionVisible, isNavItemVisible, matchesQuery } from '@/lib/commands';
+import { QUICK_ACTIONS, NAV_ITEMS, isQuickActionVisible, isNavItemVisible, matchesQuery, matchesNavItem } from '@/lib/commands';
 import { globalSearch } from '@/services/searchService';
 import { getAccessIntent } from '@/services/accessRequestService';
 import { getRecentPaletteResults, addRecentPaletteResult } from '@/lib/paletteRecent';
@@ -189,7 +189,7 @@ function CommandPalette() {
   );
 
   const visibleNavItems = useMemo(
-    () => NAV_ITEMS.filter((n) => isNavItemVisible(n, user)).filter((n) => matchesQuery(n.label, showResultsMode ? query : '')),
+    () => NAV_ITEMS.filter((n) => isNavItemVisible(n, user)).filter((n) => matchesNavItem(n, showResultsMode ? query : '')),
     [user, query, showResultsMode]
   );
 

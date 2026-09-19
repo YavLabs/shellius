@@ -1,81 +1,84 @@
 /**
  * mailer.js
  *
- * Per-call nodemailer wrapper. Resolves SMTP config fresh on every call
- * from the DB + env merge via smtpConfigService.getEffective(). Falls
- * back to log-only mode when neither source is configured.
+ * Single entry point for outbound email. Resolution order, fresh on every
+ * call (docs/email-delivery.md):
  *
- * When orgId is undefined (legacy callsites not yet migrated by Task 16D),
- * getEffective() uses env vars only — preserving the original behavior.
+ *   1. the org's active EmailProvider (Administration → Email)
+ *   2. SMTP_* environment variables              → transport 'env-smtp'
+ *   3. log-only mode (nothing is sent)            → transport 'log'
  *
  * Exported:
  *   sendMail({ orgId, to, subject, html, text })
- *     → { delivered: boolean, transport: 'smtp'|'log', error?: string }
+ *     → { delivered: boolean, transport: <provider type>|'env-smtp'|'log', error?: string }
+ *
+ * Callers (mfaService, invites, approvals…) rely on `delivered`. Failures are
+ * logged with the provider's name/type and its error text — never
+ * credentials.
  */
 
-import nodemailer from 'nodemailer';
 import logger from '../utils/logger.js';
-import { getEffective } from './smtpConfigService.js';
+import { getActiveForSend } from './emailProviderService.js';
+import { sendWith } from './email/providers/index.js';
+import { envSmtpProvider } from './email/envSmtp.js';
 
 /**
- * Send an email. Resolves SMTP config fresh on every call from the
- * DB + env merge. Falls back to log-only mode when neither source is
- * configured.
+ * Send an email.
  *
  * @param {object} params
- * @param {string} [params.orgId]   - org for per-org SMTP config lookup; if
- *                                    omitted, falls through to env defaults only
- * @param {string} params.to
+ * @param {string} [params.orgId]   - org whose active provider to use; when
+ *                                    omitted only the env fallback applies
+ * @param {string|string[]} params.to
  * @param {string} params.subject
  * @param {string} [params.html]
  * @param {string} [params.text]
- * @returns {Promise<{delivered: boolean, transport: 'smtp'|'log', error?: string}>}
+ * @returns {Promise<{delivered: boolean, transport: string, error?: string}>}
  */
 export async function sendMail({ orgId, to, subject, html, text }) {
-  let cfg = null;
-  try {
-    cfg = await getEffective(orgId);
-  } catch (err) {
-    logger.warn('mailer: smtp config lookup failed', { orgId, error: err.message });
+  let provider = null;
+  let transport = null;
+
+  if (orgId) {
+    try {
+      provider = await getActiveForSend(orgId);
+      if (provider) transport = provider.type;
+    } catch (err) {
+      logger.warn('mailer: email provider lookup failed — trying env SMTP', { orgId, error: err.message });
+    }
   }
 
-  if (!cfg || !cfg.configured) {
-    logger.warn('mailer: no SMTP config — email not sent (log-only mode)', {
+  if (!provider) {
+    provider = envSmtpProvider();
+    if (provider) transport = 'env-smtp';
+  }
+
+  if (!provider) {
+    logger.warn('mailer: no email provider configured — email not sent (log-only mode)', {
       to,
       subject,
       // Intentionally log the text body in log-only mode so an admin can
       // extract the URL. We never log passwords or keys, but a one-time
       // invite/reset URL is acceptable here — it is the intended delivery
-      // mechanism when SMTP is not set up.
+      // mechanism when email is not set up.
       textPreview: text ? text.slice(0, 400) : '(no text body)',
     });
     return { delivered: false, transport: 'log' };
   }
 
-  const transport = nodemailer.createTransport({
-    host: cfg.host,
-    port: cfg.port,
-    secure: cfg.useTls && cfg.port === 465,
-    auth: cfg.username && cfg.password
-      ? { user: cfg.username, pass: cfg.password }
-      : undefined,
-  });
+  if (!provider.config) {
+    const error = 'Email provider settings are not available';
+    logger.error('mailer: email delivery failed', { orgId, to, subject, provider: provider.name, type: provider.type, error });
+    return { delivered: false, transport, error };
+  }
 
   try {
-    await transport.sendMail({
-      from: cfg.fromAddress || cfg.username || 'noreply@shellius.local',
-      to,
-      subject,
-      html,
-      text,
-    });
-    logger.info('mailer: email delivered via SMTP', { to, subject });
-    return { delivered: true, transport: 'smtp' };
+    await sendWith(provider, { to, subject, html, text });
+    logger.info('mailer: email delivered', { orgId, to, subject, provider: provider.name, type: transport });
+    return { delivered: true, transport };
   } catch (err) {
-    logger.error('mailer: SMTP delivery failed', { to, subject, error: err.message });
-    return { delivered: false, transport: 'log', error: err.message };
-  } finally {
-    transport.close();
+    const error = err?.message || 'Delivery failed';
+    logger.error('mailer: email delivery failed', { orgId, to, subject, provider: provider.name, type: transport, error });
+    return { delivered: false, transport, error };
   }
 }
 

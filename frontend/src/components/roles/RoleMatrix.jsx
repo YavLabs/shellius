@@ -56,7 +56,7 @@ function RoleMatrix({ catalog, roles }) {
               </th>
               {roles.map((r) => (
                 <th key={r.id} className="px-3 py-2.5 text-center text-xs font-medium">
-                  <Link to={`/roles/${r.id}`} className="text-foreground hover:text-primary hover:underline">
+                  <Link to={`/admin/roles/${r.id}`} className="text-foreground hover:text-primary hover:underline">
                     {r.name}
                   </Link>
                   <div className="font-normal tabular-nums text-muted-foreground">{r.permissions.length}</div>

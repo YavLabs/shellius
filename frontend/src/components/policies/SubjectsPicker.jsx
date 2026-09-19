@@ -408,7 +408,7 @@ export default function SubjectsPicker({ subjects = [], onChange }) {
                   debouncedSearch
                     ? `No groups match "${debouncedSearch}"`
                     : allGroups.length === 0
-                    ? 'No groups yet — create one in the Groups page'
+                    ? 'No groups yet — create one in Administration → Groups'
                     : 'No groups found'
                 }
                 renderRow={(g) => (

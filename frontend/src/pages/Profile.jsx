@@ -207,11 +207,10 @@ function Profile() {
     }
   };
 
-  // /auth/me (authUser) is the source of truth for hasPassword/ssoProvider
-  // post-hardening; fall back to the older /users/me heuristic if a field is
-  // missing so this keeps working against a not-yet-updated backend.
+  // /auth/me (authUser) is the source of truth for hasPassword post-hardening;
+  // fall back to the older /users/me heuristic if the field is missing so this
+  // keeps working against a not-yet-updated backend.
   const hasPassword = authUser?.hasPassword ?? (profile?.passwordHash !== null && !profile?.ssoProvider);
-  const ssoProvider = authUser?.ssoProvider ?? profile?.ssoProvider;
 
   if (loadingProfile) {
     return (
@@ -377,9 +376,9 @@ function Profile() {
         </SectionCard>
 
         {/* Security */}
-        <PasswordCard isPasswordUser={hasPassword} ssoProvider={ssoProvider} />
+        <PasswordCard isPasswordUser={hasPassword} />
         <MfaCard hasPassword={hasPassword} />
-        <SignInMethodsCard hasPassword={hasPassword} ssoProvider={ssoProvider} />
+        <SignInMethodsCard hasPassword={hasPassword} />
         <SessionsCard />
         <NotificationPreferencesCard />
 

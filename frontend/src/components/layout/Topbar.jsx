@@ -18,20 +18,17 @@ const routeNames = {
   '/': 'Dashboard',
   '/customers': 'Customers',
   '/servers': 'Servers',
-  '/users': 'Users',
-  '/groups': 'Groups',
   '/policies': 'Policies',
   '/access-requests': 'Access Requests',
   '/certificates': 'Certificates',
   '/sessions': 'Sessions',
   '/audit-log': 'Audit Log',
   '/cloud-connectors': 'Cloud Connectors',
-  '/settings': 'Settings',
+  '/admin': 'Administration',
   '/install-cli': 'Install CLI',
   '/keystore': 'Keystore',
   '/terminals': 'Terminals',
   '/connections': 'Recent connections',
-  '/roles': 'Roles',
   '/dashboard': 'Dashboard',
   '/profile': 'Profile',
   '/notifications': 'Notifications',
@@ -53,7 +50,7 @@ function Topbar() {
   const pageName = pageNameFor(location.pathname);
 
   return (
-    <header className="flex h-14 shrink-0 items-center justify-between gap-3 border-b border-border bg-card pl-4 pr-3 sm:pl-6 sm:pr-4">
+    <header className="flex h-14 shrink-0 items-center justify-between gap-3 border-b border-border bg-card pl-16 pr-3 sm:pr-4 md:pl-6">
       {/* Breadcrumb */}
       <div className="flex min-w-0 items-center gap-2 text-sm">
         <span className="hidden text-muted-foreground sm:inline">Shellius</span>
@@ -103,7 +100,7 @@ function Topbar() {
 
         <div aria-hidden="true" className="mx-1 hidden h-6 w-px shrink-0 bg-border sm:block" />
 
-        {/* User dropdown — avatar only trigger. Profile / Settings / Bulk
+        {/* User dropdown — avatar only trigger. Profile / Administration / Bulk
             import / Install CLI / Keyboard shortcuts / Sign out live inside. */}
         <TooltipProvider delayDuration={300}>
           <UserMenu

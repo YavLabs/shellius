@@ -1,5 +1,5 @@
 // Preset metadata for SSO identity providers — drives both the "Add provider"
-// picker grid and the per-provider configuration form in Settings > SSO, plus
+// picker grid and the per-provider configuration form in Administration → Single sign-on, plus
 // icon selection on the Login page. `id` here is the DTO's `presetId`
 // (google|entra|okta|auth0|generic|github) — keep these in sync with the
 // backend contract in docs/auth-hardening.md.

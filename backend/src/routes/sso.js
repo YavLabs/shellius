@@ -10,12 +10,14 @@ import * as ssoService from '../services/ssoService.js';
 import * as ssoConfigService from '../services/ssoConfigService.js';
 import * as githubOAuth from '../services/githubOAuth.js';
 import * as authService from '../services/authService.js';
+import * as ssoLinkService from '../services/ssoLinkService.js';
 import { log as auditLog, ACTIONS } from '../services/auditService.js';
 import logger from '../utils/logger.js';
 import redis from '../config/redis.js';
 import authenticate from '../middleware/auth.js';
 import tenant from '../middleware/tenant.js';
 import { requirePermission } from '../middleware/rbac.js';
+import { authLimiter, tokenActionLimiter, userRateLimiter } from '../middleware/rateLimiter.js';
 import audit from '../middleware/audit.js';
 import { assertSsoDefaultRole } from '../services/roleService.js';
 
@@ -103,6 +105,10 @@ function setStateCookie(res, state) {
 
 function redirectError(res, code) {
   res.clearCookie(SSO_STATE_COOKIE, { path: '/api/auth/sso' });
+  // A Profile "connect" round-trip returns to Profile, not the sign-in page.
+  if (res.locals?.ssoState?.mode === 'connect') {
+    return res.redirect(`${FRONTEND_URL}/profile?${new URLSearchParams({ connect_error: code }).toString()}`);
+  }
   return res.redirect(`${FRONTEND_URL}/auth/callback#${new URLSearchParams({ error: code }).toString()}`);
 }
 
@@ -169,6 +175,24 @@ const ssoTestSchema = Joi.object({
 
 const exchangeSchema = Joi.object({
   code: Joi.string().required(),
+});
+
+// Pending-link / connect schemas (docs/auth-hardening.md "Linking SSO accounts")
+const linkTokenSchema = Joi.object({
+  token: Joi.string().length(64).hex().required(),
+});
+
+const confirmLinkSchema = Joi.object({
+  token: Joi.string().length(64).hex().required(),
+  password: Joi.string().min(1).max(200),
+  method: Joi.string().valid('totp', 'email', 'backup'),
+  code: Joi.string().min(1).max(64),
+})
+  .xor('password', 'method')
+  .and('method', 'code');
+
+const connectStartSchema = Joi.object({
+  providerId: Joi.string().min(1).max(100).required(),
 });
 
 // ---------------------------------------------------------------------------
@@ -631,7 +655,44 @@ async function runGithubCallback(req, res, { org, cfg, code, stateData }) {
 // Shared tail — reconcile, audit, hand off a one-time exchange code.
 // ---------------------------------------------------------------------------
 
+async function finishConnectCallback(req, res, { org, cfg, subject, email, name, picture }) {
+  const stateData = res.locals.ssoState;
+  try {
+    const result = await ssoLinkService.completeConnect({
+      orgId: org.id,
+      userId: stateData.userId,
+      cfg,
+      subject,
+      email,
+      name,
+      picture,
+      ipAddress: req.ip,
+      userAgent: req.get('user-agent') || '',
+    });
+    res.clearCookie(SSO_STATE_COOKIE, { path: '/api/auth/sso' });
+    return res.redirect(`${FRONTEND_URL}/profile?${new URLSearchParams({ connected: result.providerName }).toString()}`);
+  } catch (err) {
+    const errorCode = err.errorCode || 'sso_failed';
+    await auditLog({
+      orgId: org.id,
+      actorId: stateData.userId,
+      action: ACTIONS.auth.identity_link_failed,
+      resourceType: 'User',
+      resourceId: stateData.userId,
+      metadata: { reason: errorCode, method: 'connect', provider: cfg.name || cfg.provider, providerId: cfg.id },
+      ipAddress: req.ip,
+      userAgent: req.get('user-agent') || '',
+    });
+    logger.warn('SSO connect rejected', { orgId: org.id, code: errorCode });
+    return redirectError(res, errorCode);
+  }
+}
+
 async function finishSsoCallback(req, res, { org, cfg, subject, email, emailVerified, name, picture }) {
+  if (res.locals.ssoState?.mode === 'connect') {
+    return finishConnectCallback(req, res, { org, cfg, subject, email, name, picture });
+  }
+
   let user;
   try {
     user = await ssoService.reconcileSsoUser({ orgId: org.id, cfg, subject, email, emailVerified, name, picture });
@@ -648,6 +709,33 @@ async function finishSsoCallback(req, res, { org, cfg, subject, email, emailVeri
     });
     logger.warn('SSO sign-in rejected', { orgId: org.id, error: err.message, code: errorCode });
     return redirectError(res, errorCode);
+  }
+
+  // Email matched an account that may not be linked silently — confirm
+  // first (password + MFA on /sso/link, or an emailed approval).
+  if (user.pendingLink) {
+    const pending = await ssoLinkService.createPendingLink(user.pendingLink, {
+      ipAddress: req.ip,
+      userAgent: req.get('user-agent') || '',
+    });
+    res.clearCookie(SSO_STATE_COOKIE, { path: '/api/auth/sso' });
+    const frag =
+      pending.mode === 'password'
+        ? { token: pending.token }
+        : { status: pending.emailSent ? 'approval_sent' : 'approval_failed', provider: user.pendingLink.providerName };
+    return res.redirect(`${FRONTEND_URL}/sso/link#${new URLSearchParams(frag).toString()}`);
+  }
+
+  if (user.ssoLinkedVia) {
+    await ssoLinkService.recordIdentityLinked({
+      user,
+      method: user.ssoLinkedVia,
+      providerName: cfg.name || cfg.provider,
+      providerId: cfg.id,
+      identityEmail: email,
+      ipAddress: req.ip,
+      userAgent: req.get('user-agent') || '',
+    });
   }
 
   const oneTimeCode = crypto.randomBytes(32).toString('hex');
@@ -679,6 +767,7 @@ async function runSsoCallback(req, res, { code, state, cookieState, orgHint = nu
 
   const stateData = await takeSsoState(state);
   if (!stateData) return redirectError(res, 'state_mismatch');
+  res.locals.ssoState = stateData;
   if (orgHint && orgHint !== stateData.orgId) return redirectError(res, 'state_mismatch');
 
   const org = await prisma.organization.findUnique({ where: { id: stateData.orgId } });
@@ -687,6 +776,10 @@ async function runSsoCallback(req, res, { code, state, cookieState, orgHint = nu
   let row = null;
   if (stateData.providerId) {
     row = await prisma.ssoConfig.findFirst({ where: { id: stateData.providerId, orgId: org.id } });
+  }
+  if (!row && stateData.mode === 'connect') {
+    // Never connect a different provider than the one the user picked.
+    return redirectError(res, 'sso_not_configured');
   }
   if (!row) {
     // Very old in-flight state from before multi-provider support, or a
@@ -727,6 +820,179 @@ router.get(
   })
 );
 
+/**
+ * Create the state (Redis + cookie) for one IdP round-trip and return the
+ * provider's authorize URL. `extra` is stored with the state — e.g.
+ * `{ mode: 'connect', userId }` for a Profile "connect" flow.
+ */
+async function beginAuthorize(res, org, cfg, extra = {}) {
+  const state = crypto.randomBytes(16).toString('hex');
+  const { codeVerifier, codeChallenge } = generatePkce();
+
+  if (cfg.provider === 'github') {
+    await saveSsoState(state, { orgId: org.id, providerId: cfg.id, codeVerifier, createdAt: Date.now(), ...extra });
+    setStateCookie(res, state);
+    return githubOAuth.buildAuthorizeUrl({
+      issuerUrl: cfg.issuerUrl,
+      clientId: cfg.clientId,
+      redirectUri: cfg.redirectUri,
+      scopes: cfg.scopes,
+      state,
+      codeChallenge,
+    });
+  }
+
+  const discovery = await discover(cfg.issuerUrl);
+  const nonce = crypto.randomBytes(16).toString('hex');
+
+  await saveSsoState(state, { orgId: org.id, providerId: cfg.id, nonce, codeVerifier, createdAt: Date.now(), ...extra });
+  setStateCookie(res, state);
+
+  const params = new URLSearchParams({
+    response_type: 'code',
+    client_id: cfg.clientId,
+    redirect_uri: cfg.redirectUri,
+    scope: cfg.scopes,
+    state,
+    nonce,
+    code_challenge: codeChallenge,
+    code_challenge_method: 'S256',
+  });
+  return `${discovery.authorization_endpoint}?${params.toString()}`;
+}
+
+// ---------------------------------------------------------------------------
+// Pending SSO links — public, token-bound (docs/auth-hardening.md "Linking SSO
+// accounts"). Registered before /:orgSlug for readability; all are POST.
+// ---------------------------------------------------------------------------
+
+// POST /api/auth/sso/link/info — what is being linked (for /sso/link)
+router.post(
+  '/link/info',
+  authLimiter,
+  validate(linkTokenSchema),
+  asyncHandler(async (req, res) => {
+    const info = await ssoLinkService.describePendingLink(req.body.token, 'password');
+    res.json({ success: true, data: info });
+  })
+);
+
+// POST /api/auth/sso/confirm-link — password (+ MFA) proof, then link + sign in
+router.post(
+  '/confirm-link',
+  authLimiter,
+  validate(confirmLinkSchema),
+  asyncHandler(async (req, res) => {
+    const result = await ssoLinkService.confirmPendingLink({
+      token: req.body.token,
+      password: req.body.password,
+      method: req.body.method,
+      code: req.body.code,
+      ipAddress: req.ip,
+      userAgent: req.get('user-agent') || '',
+    });
+    res.json({ success: true, data: result });
+  })
+);
+
+// POST /api/auth/sso/confirm-link/send-code — email the MFA code (step 2)
+router.post(
+  '/confirm-link/send-code',
+  authLimiter,
+  validate(linkTokenSchema),
+  asyncHandler(async (req, res) => {
+    const result = await ssoLinkService.sendConfirmLinkCode(req.body.token);
+    res.json({ success: true, data: result });
+  })
+);
+
+// POST /api/auth/sso/link/cancel — "Cancel" on /sso/link burns the token
+router.post(
+  '/link/cancel',
+  authLimiter,
+  validate(linkTokenSchema),
+  asyncHandler(async (req, res) => {
+    const result = await ssoLinkService.cancelPendingLink(req.body.token, {
+      ipAddress: req.ip,
+      userAgent: req.get('user-agent') || '',
+    });
+    res.json({ success: true, data: result });
+  })
+);
+
+// POST /api/auth/sso/link/approve-info — what the emailed approval is for
+router.post(
+  '/link/approve-info',
+  tokenActionLimiter,
+  validate(linkTokenSchema),
+  asyncHandler(async (req, res) => {
+    const info = await ssoLinkService.describePendingLink(req.body.token, 'email_approval');
+    res.json({ success: true, data: info });
+  })
+);
+
+// POST /api/auth/sso/link/approve — the emailed approval: links, no sign-in
+router.post(
+  '/link/approve',
+  tokenActionLimiter,
+  validate(linkTokenSchema),
+  asyncHandler(async (req, res) => {
+    const result = await ssoLinkService.approvePendingLink(req.body.token, {
+      ipAddress: req.ip,
+      userAgent: req.get('user-agent') || '',
+    });
+    res.json({ success: true, data: result });
+  })
+);
+
+// ---------------------------------------------------------------------------
+// POST /api/auth/sso/connect/start — signed-in user links another provider
+// from Profile. Self-service (acts only on the caller's own account, like
+// DELETE /api/auth/identities/:id), so no extra permission. The callback
+// links to THIS user only — never by email.
+// ---------------------------------------------------------------------------
+
+// GET /api/auth/sso/connect/providers — the caller's org's active providers
+// (for Profile → Sign-in methods). Same public-safe DTO as the login page.
+router.get(
+  '/connect/providers',
+  authenticate,
+  tenant,
+  asyncHandler(async (req, res) => {
+    const providers = await ssoConfigService.listActiveProviders(req.orgId);
+    res.json({ success: true, data: { providers } });
+  })
+);
+
+router.post(
+  '/connect/start',
+  authenticate,
+  tenant,
+  userRateLimiter({ keyPrefix: 'rl:sso-connect', windowSeconds: 60, max: 10 }),
+  validate(connectStartSchema),
+  asyncHandler(async (req, res) => {
+    const row = await ssoLinkService.assertCanStartConnect({
+      orgId: req.orgId,
+      userId: req.user.userId,
+      providerId: req.body.providerId,
+    });
+    const org = await prisma.organization.findUnique({ where: { id: req.orgId } });
+    const cfg = ssoService.decryptProvider(row);
+    const url = await beginAuthorize(res, org, cfg, { mode: 'connect', userId: req.user.userId });
+    await auditLog({
+      orgId: req.orgId,
+      actorId: req.user.userId,
+      action: ACTIONS.auth.identity_connect_started,
+      resourceType: 'User',
+      resourceId: req.user.userId,
+      metadata: { provider: cfg.name || cfg.provider, providerId: cfg.id },
+      ipAddress: req.ip,
+      userAgent: req.get('user-agent') || '',
+    });
+    res.json({ success: true, data: { url } });
+  })
+);
+
 router.get(
   '/:orgSlug',
   asyncHandler(async (req, res) => {
@@ -741,41 +1007,8 @@ router.get(
     }
 
     const cfg = ssoService.decryptProvider(row);
-    const state = crypto.randomBytes(16).toString('hex');
-    const { codeVerifier, codeChallenge } = generatePkce();
-
-    if (cfg.provider === 'github') {
-      await saveSsoState(state, { orgId: org.id, providerId: cfg.id, codeVerifier, createdAt: Date.now() });
-      setStateCookie(res, state);
-      const authorizeUrl = githubOAuth.buildAuthorizeUrl({
-        issuerUrl: cfg.issuerUrl,
-        clientId: cfg.clientId,
-        redirectUri: cfg.redirectUri,
-        scopes: cfg.scopes,
-        state,
-        codeChallenge,
-      });
-      return res.redirect(authorizeUrl);
-    }
-
-    const discovery = await discover(cfg.issuerUrl);
-    const nonce = crypto.randomBytes(16).toString('hex');
-
-    await saveSsoState(state, { orgId: org.id, providerId: cfg.id, nonce, codeVerifier, createdAt: Date.now() });
-    setStateCookie(res, state);
-
-    const params = new URLSearchParams({
-      response_type: 'code',
-      client_id: cfg.clientId,
-      redirect_uri: cfg.redirectUri,
-      scope: cfg.scopes,
-      state,
-      nonce,
-      code_challenge: codeChallenge,
-      code_challenge_method: 'S256',
-    });
-
-    res.redirect(`${discovery.authorization_endpoint}?${params.toString()}`);
+    const authorizeUrl = await beginAuthorize(res, org, cfg);
+    res.redirect(authorizeUrl);
   })
 );
 

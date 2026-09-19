@@ -122,10 +122,10 @@ describe('reconcileSsoUser', () => {
     ).rejects.toMatchObject({ errorCode: 'email_not_verified' });
   });
 
-  test('links an existing local account by email when email_verified is true', async () => {
+  test('links an existing SSO-only, non-privileged account by email when email_verified is true', async () => {
     if (skip) return;
     const cfg = await createTestConfig(org.id);
-    const existing = await createTestUser(org.id, { status: 'invited' });
+    const existing = await createTestUser(org.id, { status: 'invited', passwordHash: null });
     const linked = await ssoService.reconcileSsoUser({
       orgId: org.id,
       cfg,
@@ -135,6 +135,59 @@ describe('reconcileSsoUser', () => {
     });
     expect(linked.id).toBe(existing.id);
     expect(linked.status).toBe('active');
+    expect(linked.ssoLinkedVia).toBe('auto');
+  });
+
+  // docs/auth-hardening.md "Linking SSO accounts" — never link silently to
+  // an account that has a password, whatever its role.
+  for (const role of ['member', 'super_admin']) {
+    test(`an email match on a ${role} account WITH a password returns a pending link (mode password) and links nothing`, async () => {
+      if (skip) return;
+      const cfg = await createTestConfig(org.id);
+      const existing = await createTestUser(org.id, { role });
+      const subject = `pw-${role}-${Date.now()}`;
+      const result = await ssoService.reconcileSsoUser({
+        orgId: org.id,
+        cfg,
+        subject,
+        email: existing.email,
+        emailVerified: true,
+      });
+      expect(result.id).toBeUndefined();
+      expect(result.pendingLink).toMatchObject({ mode: 'password', userId: existing.id, ssoConfigId: cfg.id, subject });
+      const identity = await prisma.userIdentity.findFirst({ where: { ssoConfigId: cfg.id, subject } });
+      expect(identity).toBeNull();
+    });
+  }
+
+  test('an email match on a privileged SSO-only account requires email approval', async () => {
+    if (skip) return;
+    const cfg = await createTestConfig(org.id);
+    const existing = await createTestUser(org.id, { role: 'admin', passwordHash: null });
+    const subject = `admin-sso-${Date.now()}`;
+    const result = await ssoService.reconcileSsoUser({
+      orgId: org.id,
+      cfg,
+      subject,
+      email: existing.email,
+      emailVerified: true,
+    });
+    expect(result.pendingLink).toMatchObject({ mode: 'email_approval', userId: existing.id });
+    expect(await prisma.userIdentity.count({ where: { ssoConfigId: cfg.id, subject } })).toBe(0);
+  });
+
+  test('a subject match still signs in directly (no confirmation) even when the account has a password', async () => {
+    if (skip) return;
+    const cfg = await createTestConfig(org.id);
+    const existing = await createTestUser(org.id, { role: 'admin' });
+    const subject = `known-sub-${Date.now()}`;
+    await prisma.userIdentity.create({
+      data: { orgId: org.id, userId: existing.id, ssoConfigId: cfg.id, provider: 'oidc', subject, email: existing.email },
+    });
+    const user = await ssoService.reconcileSsoUser({ orgId: org.id, cfg, subject, email: existing.email, emailVerified: true });
+    expect(user.id).toBe(existing.id);
+    expect(user.pendingLink).toBeUndefined();
+    expect(user.ssoLinkedVia).toBeUndefined();
   });
 
   test('refuses to link when the SAME provider already has a different-subject identity for that user (identity_conflict)', async () => {

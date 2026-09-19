@@ -1,16 +1,52 @@
 /**
  * layout.js
  *
- * Shared HTML email layout. Inline styles only — every modern mail
- * client (Gmail, Outlook, Apple Mail, mobile) strips <link> and most
- * <style> tags, so we hand-write the styles inline. Max-width 600px
- * is the de-facto email standard. The dark header + monochrome brand accent
- * matches the Shellius web UI theme.
+ * Shared HTML email layout. Table-based with inline styles only — Gmail,
+ * Outlook, Apple Mail and mobile clients strip <link> and most <style> tags.
+ * Max-width 600px is the de-facto email standard.
+ *
+ * Header: the Shellius lockup (hosted PNG, see brand.js) on the Ink → Indigo
+ * brand background, with a Sky → Lavender accent rule. Gradients are
+ * progressive enhancement: every gradient cell also has a solid bgcolor for
+ * clients (Outlook desktop) that ignore background-image.
  *
  * No external dependencies — just template literals.
  */
 
 import { escapeHtml as esc } from './escape.js';
+import { BRAND, FONT_STACK } from './brand.js';
+
+/**
+ * Header logo: the full Shellius lockup (icon chip + wordmark) built from
+ * HTML tables — no image, so it shows even where remote images are blocked
+ * (Outlook, Gmail for new senders) and when the app has no public URL.
+ * Mirrors the app's BrandLogo: a rounded Sky→Lavender chip with ">_", then
+ * SHELL, a cap-height gradient bar and US with tight tracking. Clients
+ * without CSS gradients get the solid bgcolor (Sky).
+ */
+export function renderLogo() {
+  const chip = `<td width="32" height="32" align="center" valign="middle" bgcolor="${BRAND.sky}"
+                            style="width:32px;height:32px;background:${BRAND.sky};background-image:linear-gradient(135deg,${BRAND.sky} 0%,${BRAND.lavender} 100%);border-radius:9px;font:800 17px/32px Menlo,Consolas,'Courier New',monospace;color:${BRAND.ink};letter-spacing:-0.08em;text-align:center;">&gt;_</td>`;
+  const letters = `font:800 21px/1 ${FONT_STACK};color:${BRAND.light};letter-spacing:-0.02em;vertical-align:middle;`;
+  const bar = `<td width="7" height="15" bgcolor="${BRAND.sky}"
+                                  style="width:7px;height:15px;background:${BRAND.sky};background-image:linear-gradient(135deg,${BRAND.sky} 0%,${BRAND.lavender} 100%);border-radius:1px;font-size:0;line-height:0;">&nbsp;</td>`;
+  return `<table role="presentation" cellpadding="0" cellspacing="0" border="0" aria-label="Shellius">
+                        <tr>
+                          <td style="padding:0 10px 0 0;vertical-align:middle;">
+                            <table role="presentation" cellpadding="0" cellspacing="0" border="0"><tr>
+                              ${chip}
+                            </tr></table>
+                          </td>
+                          <td style="${letters}">SHELL</td>
+                          <td style="vertical-align:middle;padding:1px 2px 0 2px;">
+                            <table role="presentation" cellpadding="0" cellspacing="0" border="0"><tr>
+                              ${bar}
+                            </tr></table>
+                          </td>
+                          <td style="${letters}">US</td>
+                        </tr>
+                      </table>`;
+}
 
 /**
  * Render a complete HTML email document.
@@ -28,10 +64,10 @@ export function renderLayout({ title, preheader, bodyHtml, footerHtml }) {
   const safeFooter =
     footerHtml ||
     `
-      <p style="margin:0 0 8px;font:400 12px/1.5 -apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;color:#999;text-align:center">
+      <p style="margin:0 0 8px;font:400 12px/1.5 ${FONT_STACK};color:${BRAND.muted};text-align:center">
         Sent by Shellius — Centralized SSH/RDP Access Management
       </p>
-      <p style="margin:0;font:400 11px/1.5 -apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;color:#bbb;text-align:center">
+      <p style="margin:0;font:400 11px/1.5 ${FONT_STACK};color:#a1a1aa;text-align:center">
         You received this email because of activity on your Shellius account.
         If you did not expect it, contact your administrator.
       </p>
@@ -44,6 +80,8 @@ export function renderLayout({ title, preheader, bodyHtml, footerHtml }) {
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <meta http-equiv="X-UA-Compatible" content="IE=edge">
     <meta name="x-apple-disable-message-reformatting">
+    <meta name="color-scheme" content="light">
+    <meta name="supported-color-schemes" content="light">
     <title>${safeTitle}</title>
     <!--[if mso]>
     <style>
@@ -65,39 +103,26 @@ export function renderLayout({ title, preheader, bodyHtml, footerHtml }) {
           <table role="presentation" width="600" cellpadding="0" cellspacing="0" border="0"
                  style="max-width:600px;width:100%;background:#ffffff;border-radius:12px;overflow:hidden;box-shadow:0 1px 3px rgba(0,0,0,0.04);">
 
-            <!-- Header (dark) -->
+            <!-- Header (Ink → Indigo) -->
             <tr>
-              <td style="background:#0a0a0a;padding:24px 32px;">
+              <td bgcolor="${BRAND.ink}" style="background:${BRAND.ink};background-image:linear-gradient(135deg,${BRAND.ink} 0%,${BRAND.indigo} 100%);padding:26px 32px;">
                 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
                   <tr>
                     <td style="vertical-align:middle;">
-                      <table role="presentation" cellpadding="0" cellspacing="0" border="0">
-                        <tr>
-                          <td style="vertical-align:middle;padding-right:12px;">
-                            <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="44" height="44" style="background:#18181b;border:1px solid #3f3f46;border-radius:10px;">
-                              <tr>
-                                <td align="center" valign="middle" style="width:44px;height:44px;line-height:0;">
-                                  <img src="data:image/svg+xml;utf8,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20width%3D%2224%22%20height%3D%2224%22%20viewBox%3D%220%200%2024%2024%22%20fill%3D%22none%22%20stroke%3D%22%23ffffff%22%20stroke-width%3D%222.5%22%20stroke-linecap%3D%22round%22%20stroke-linejoin%3D%22round%22%3E%3Cpolyline%20points%3D%224%2017%2010%2011%204%205%22%2F%3E%3Cline%20x1%3D%2212%22%20y1%3D%2219%22%20x2%3D%2220%22%20y2%3D%2219%22%2F%3E%3C%2Fsvg%3E" width="24" height="24" alt="" style="display:block;border:0;outline:none;"/>
-                                </td>
-                              </tr>
-                            </table>
-                          </td>
-                          <td style="vertical-align:middle;">
-                            <span style="display:inline-block;font:700 22px/1 -apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;color:#ffffff;letter-spacing:-0.02em;">
-                              Shellius
-                            </span>
-                          </td>
-                        </tr>
-                      </table>
+                      ${renderLogo()}
                     </td>
                     <td align="right" style="vertical-align:middle;">
-                      <span style="font:500 12px/1 -apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;color:#a1a1aa;text-transform:uppercase;letter-spacing:0.05em;">
-                        SSH/RDP Access
+                      <span style="font:500 11px/1 ${FONT_STACK};color:${BRAND.muted};text-transform:uppercase;letter-spacing:0.12em;">
+                        SSH / RDP Access
                       </span>
                     </td>
                   </tr>
                 </table>
               </td>
+            </tr>
+            <!-- Accent rule (Sky → Lavender) -->
+            <tr>
+              <td height="3" bgcolor="${BRAND.sky}" style="height:3px;background:${BRAND.sky};background-image:linear-gradient(90deg,${BRAND.sky} 0%,${BRAND.lavender} 100%);font-size:0;line-height:0;">&nbsp;</td>
             </tr>
 
             <!-- Body -->

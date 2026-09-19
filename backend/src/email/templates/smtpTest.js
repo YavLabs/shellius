@@ -4,7 +4,7 @@ import { renderLayout } from '../layout.js';
 /**
  * smtpTest email template.
  *
- * Sent from Settings → Notifications → "Send test email" so an admin can
+ * Sent from Administration → Email → "Send test email" so an admin can
  * confirm the SMTP configuration is reachable end-to-end and that the
  * styled HTML layout renders correctly in their inbox.
  *
@@ -26,7 +26,7 @@ export function render({ recipientName, orgName, host, port, useTls, when }) {
   const safeWhen = esc(when || new Date().toISOString());
 
   const bodyHtml = `
-    <h1 style="margin:0 0 16px;font:600 22px/1.3 -apple-system,sans-serif;color:#0a0a0a">
+    <h1 style="margin:0 0 16px;font:600 22px/1.3 -apple-system,sans-serif;color:#09090C">
       SMTP test successful
     </h1>
     <p style="margin:0 0 16px;font:400 15px/1.5 -apple-system,sans-serif;color:#3f3f46">

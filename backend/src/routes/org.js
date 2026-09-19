@@ -56,7 +56,10 @@ const updateAccessSettingsSchema = Joi.object({
   prodApprovalBypassMinRole: Joi.string().valid('admin', 'super_admin', 'none'),
   // Personal vault switch (docs/personal-vault.md).
   personalVaultEnabled: Joi.boolean(),
-}).or('prodBypassEnabled', 'prodApprovalBypassMinRole', 'personalVaultEnabled');
+  // Require single sign-on (docs/auth-hardening.md): refuse password sign-in
+  // for everyone except roles holding settings.sso.
+  ssoRequired: Joi.boolean(),
+}).or('prodBypassEnabled', 'prodApprovalBypassMinRole', 'personalVaultEnabled', 'ssoRequired');
 
 // GET /api/org/access-settings — org.access_settings
 router.get(

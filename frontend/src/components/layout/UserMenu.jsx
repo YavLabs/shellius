@@ -2,7 +2,7 @@ import { useState, useRef, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   User as UserIcon,
-  Settings as SettingsIcon,
+  ShieldCheck,
   Upload,
   Terminal,
   Keyboard,
@@ -11,6 +11,7 @@ import {
 import { useAuth } from '@/context/AuthContext';
 import Avatar from '@/components/ui/Avatar';
 import { canAccessRoute } from '@/lib/commands';
+import { canSeeAdministration } from '@/lib/adminSections';
 
 /**
  * UserMenu — the shared dropdown that opens from the topbar avatar
@@ -31,7 +32,7 @@ import { canAccessRoute } from '@/lib/commands';
  * Items always shown:
  *   - User identity header (name + email)
  *   - Profile       → /profile
- *   - Settings      → /settings     (roles with any settings permission)
+ *   - Administration → /admin      (only when at least one section is visible)
  *   - Bulk import   → /bulk-import  (import.run)
  *   - Install CLI   → /install-cli
  *   - Keyboard shortcuts → opens the ShortcutsDialog
@@ -75,7 +76,7 @@ function UserMenu({ trigger, align = 'right', verticalAlign = 'below' }) {
     navigate(path);
   };
 
-  const canSettings = canAccessRoute(user, '/settings');
+  const canAdmin = canSeeAdministration(user);
   const canImport = canAccessRoute(user, '/bulk-import');
 
   // Position classes for the dropdown panel.
@@ -103,13 +104,13 @@ function UserMenu({ trigger, align = 'right', verticalAlign = 'below' }) {
             </div>
           </div>
 
-          {/* Profile / Settings */}
+          {/* Profile / Administration */}
           <MenuItem icon={UserIcon} label="Profile" onClick={() => go('/profile')} />
-          {canSettings && (
+          {canAdmin && (
             <MenuItem
-              icon={SettingsIcon}
-              label="Settings"
-              onClick={() => go('/settings')}
+              icon={ShieldCheck}
+              label="Administration"
+              onClick={() => go('/admin')}
             />
           )}
           {canImport && (

@@ -14,7 +14,7 @@ import { log as auditLog, ACTIONS } from './auditService.js';
 import * as terminalService from './terminalService.js';
 import logger from '../utils/logger.js';
 import { permissionsForUser } from './roleService.js';
-import { isVaultEnabled } from './orgService.js';
+import { isVaultEnabled, passwordSignInBlocked, isSsoRequired } from './orgService.js';
 
 const REFRESH_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 
@@ -46,6 +46,33 @@ function maskEmail(email) {
 
 function invalidCredentials() {
   return new ApiError(401, 'Invalid email or password', { code: 'INVALID_CREDENTIALS' });
+}
+
+/** Password sign-in refused because the org requires single sign-on. */
+/**
+ * Every failed password sign-in in an organization that requires SSO gets
+ * this one error — whether the password was wrong or the account may not use
+ * one — so the response never reveals which accounts are exempt (hold
+ * settings.sso). Lockout behaves the same for both.
+ */
+function lockedError(user) {
+  const retryAfterSeconds = Math.max(1, Math.ceil((user.lockedUntil.getTime() - Date.now()) / 1000));
+  return new ApiError(423, 'Account is locked due to too many failed sign-in attempts', {
+    code: 'ACCOUNT_LOCKED',
+    details: { retryAfterSeconds },
+  });
+}
+
+export function ssoRequiredLoginError() {
+  return new ApiError(401, "Password sign-in didn't work. Your organization signs in with single sign-on — use your SSO provider. If you're allowed to use a password, check it and try again.", {
+    code: 'SSO_REQUIRED',
+  });
+}
+
+export function ssoRequiredError() {
+  return new ApiError(403, 'Your organization signs in with single sign-on. Use your SSO provider to sign in.', {
+    code: 'SSO_REQUIRED',
+  });
 }
 
 /**
@@ -90,7 +117,7 @@ async function userDto(user) {
 // Lockout helpers
 // ---------------------------------------------------------------------------
 
-async function recordFailedLogin(user, ipAddress, userAgent) {
+export async function recordFailedLogin(user, ipAddress, userAgent) {
   const threshold = config.auth.lockoutThreshold;
   const newCount = (user.failedLoginCount || 0) + 1;
   const data = { failedLoginCount: newCount, lastFailedLoginAt: new Date() };
@@ -114,7 +141,7 @@ async function recordFailedLogin(user, ipAddress, userAgent) {
   }
 }
 
-async function resetFailedLogin(user) {
+export async function resetFailedLogin(user) {
   if (user.failedLoginCount || user.lockedUntil) {
     await prisma.user.update({ where: { id: user.id }, data: { failedLoginCount: 0, lockedUntil: null } });
   }
@@ -288,10 +315,42 @@ export async function login(email, password, ipAddress, userAgent) {
     throw invalidCredentials();
   }
 
-  const withPassword = candidates.filter((c) => !!c.passwordHash);
-  if (withPassword.length === 0) {
+  const hasPasswordRows = candidates.filter((c) => !!c.passwordHash);
+  if (hasPasswordRows.length === 0) {
     await dummyCompare(password);
     throw invalidCredentials();
+  }
+
+  // Require-SSO orgs (Organization.settings.access.ssoRequired): a password
+  // is never checked for a user whose role doesn't hold settings.sso — the
+  // password can't be used, so it can't be guessed either.
+  const withPassword = [];
+  let ssoBlocked = null;
+  for (const c of hasPasswordRows) {
+    // eslint-disable-next-line no-await-in-loop
+    if (await passwordSignInBlocked(c)) {
+      if (!ssoBlocked) ssoBlocked = c;
+    } else {
+      withPassword.push(c);
+    }
+  }
+  if (withPassword.length === 0) {
+    await dummyCompare(password);
+    if (ssoBlocked.lockedUntil && ssoBlocked.lockedUntil > new Date()) {
+      throw lockedError(ssoBlocked);
+    }
+    await recordFailedLogin(ssoBlocked, ipAddress, userAgent);
+    await auditLog({
+      orgId: ssoBlocked.orgId,
+      actorId: null,
+      action: ACTIONS.auth.sso_required_blocked,
+      resourceType: 'User',
+      resourceId: ssoBlocked.id,
+      metadata: { context: 'password_login' },
+      ipAddress,
+      userAgent,
+    });
+    throw ssoRequiredLoginError();
   }
 
   let matched = null;
@@ -310,16 +369,7 @@ export async function login(email, password, ipAddress, userAgent) {
   }
 
   if (!matched) {
-    if (lockedCandidate) {
-      const retryAfterSeconds = Math.max(
-        1,
-        Math.ceil((lockedCandidate.lockedUntil.getTime() - Date.now()) / 1000)
-      );
-      throw new ApiError(423, 'Account is locked due to too many failed sign-in attempts', {
-        code: 'ACCOUNT_LOCKED',
-        details: { retryAfterSeconds },
-      });
-    }
+    if (lockedCandidate) throw lockedError(lockedCandidate);
 
     await Promise.all(withPassword.map((c) => recordFailedLogin(c, ipAddress, userAgent)));
     const primary = withPassword[0];
@@ -333,6 +383,8 @@ export async function login(email, password, ipAddress, userAgent) {
       ipAddress,
       userAgent,
     });
+    // Same answer as a blocked account (see ssoRequiredLoginError).
+    if (await isSsoRequired(primary.orgId)) throw ssoRequiredLoginError();
     throw invalidCredentials();
   }
 
@@ -417,18 +469,39 @@ export async function completeMfaLogin({ mfaToken, method, code, ipAddress, user
  * @param {string} email
  * @returns {Promise<{ hasPassword: boolean, ssoLinked: boolean }>}
  */
-export async function getLoginState(email) {
+export async function getLoginState(email, orgId = null) {
   const normalizedEmail = String(email || '').trim().toLowerCase();
   const users = await prisma.user.findMany({
     where: { email: normalizedEmail, status: { not: 'deleted' } },
-    select: { passwordHash: true, ssoProvider: true },
+    select: { id: true, orgId: true, role: true, roleId: true, passwordHash: true, ssoProvider: true },
   });
+  // The org-wide "require SSO" switch is policy, not a secret — report it
+  // for unknown emails too so the response doesn't reveal whether the
+  // account exists.
+  const orgSsoRequired = orgId ? await isSsoRequired(orgId) : false;
+  // Require-SSO org: identical answer for every address (known, unknown,
+  // exempt or not) so this endpoint can't be used to find the exempt
+  // administrators. They use "Sign in with a password instead" on the SSO
+  // screen; login() still enforces the exemption.
+  if (orgSsoRequired) return { hasPassword: false, ssoLinked: false, ssoRequired: true };
   if (users.length === 0) {
-    return { hasPassword: false, ssoLinked: false };
+    return { hasPassword: false, ssoLinked: false, ssoRequired: orgSsoRequired };
+  }
+  const usable = [];
+  for (const u of users) {
+    // eslint-disable-next-line no-await-in-loop
+    if (!(await passwordSignInBlocked(u))) usable.push(u);
+  }
+  const ssoLinked = users.some((u) => !!u.ssoProvider);
+  if (usable.length === 0) {
+    // Every matching account is in an org that requires SSO and none is
+    // exempt — the password field is never shown.
+    return { hasPassword: false, ssoLinked, ssoRequired: true };
   }
   return {
-    hasPassword: users.some((u) => !!u.passwordHash),
-    ssoLinked: users.some((u) => !!u.ssoProvider),
+    hasPassword: usable.some((u) => !!u.passwordHash),
+    ssoLinked,
+    ssoRequired: false,
   };
 }
 
@@ -631,6 +704,9 @@ export async function getProfile(userId) {
       backupCodesRemaining: (user.mfaBackupCodes || []).length,
     },
     hasPassword: !!user.passwordHash,
+    // The org requires SSO and this user isn't exempt: no password sign-in,
+    // reset or set (Profile hides "Set a password").
+    passwordBlockedBySso: await passwordSignInBlocked(user),
     ssoProvider: user.ssoProvider || null,
   };
 }
@@ -639,6 +715,9 @@ export default {
   login,
   mfaGate,
   completeMfaLogin,
+  recordFailedLogin,
+  resetFailedLogin,
+  ssoRequiredError,
   getLoginState,
   issueSession,
   refresh,

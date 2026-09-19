@@ -20,6 +20,8 @@ const RESOURCES = [
   ['sso.provider', 'SSO provider'],
   ['sso', 'SSO settings'],
   ['mfa', 'MFA'],
+  ['auth.identity', 'SSO account'],
+  ['auth.password', 'password'],
   ['auth', 'account'],
   ['user', 'user'],
   ['group', 'group'],
@@ -31,6 +33,7 @@ const RESOURCES = [
   ['ca', 'certificate authority'],
   ['session', 'session'],
   ['org', 'organization settings'],
+  ['email_provider', 'email provider'],
   ['smtp', 'email settings'],
   ['storage', 'storage settings'],
   ['import', 'bulk import'],
@@ -76,10 +79,20 @@ const VERBS = {
   prod_bypass: 'got direct production access',
   break_glass: 'used break-glass access',
   ticket: 'started',
+  set: 'set',
+  linked: 'linked',
+  unlinked: 'unlinked',
+  link_pending: 'asked to link',
+  link_failed: 'failed to link',
+  connect_started: 'started connecting',
+  sso_required_blocked: 'was refused password sign-in (SSO required)',
+  activate: 'activated',
+  deactivate: 'deactivated',
+  google_connect: 'connected a Google account to',
 };
 
 // Actions whose sentence reads better without the resource noun.
-const NO_OBJECT = new Set(['login', 'logout', 'login_failed', 'account_locked', 'sso_login']);
+const NO_OBJECT = new Set(['login', 'logout', 'login_failed', 'account_locked', 'sso_login', 'sso_required_blocked']);
 
 function resourceFor(action) {
   const match = RESOURCES.filter(([prefix]) => action === prefix || action.startsWith(`${prefix}.`))
@@ -152,6 +165,7 @@ export function auditCategoryLabel(category) {
     certificate: 'Certificate',
     org: 'Organization',
     smtp: 'Email',
+    email_provider: 'Email',
   };
   if (map[category]) return map[category];
   const s = humanise(category);

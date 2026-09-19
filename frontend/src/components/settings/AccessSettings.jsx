@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import { Link } from 'react-router-dom';
-import { ShieldCheck, Lock } from 'lucide-react';
+import { ShieldCheck, Lock, KeyRound } from 'lucide-react';
 import { SectionCard } from './shared';
 import { SwitchField } from '@/components/ui/switch';
 import RolesWithPermission from '@/components/roles/RolesWithPermission';
@@ -52,6 +52,21 @@ function AccessSettings() {
     }
   };
 
+  const toggleSsoRequired = async (next) => {
+    setSaving(true);
+    setError('');
+    const previous = settings;
+    setSettings((s) => ({ ...s, ssoRequired: next }));
+    try {
+      setSettings(await updateAccessSettings({ ssoRequired: next }));
+    } catch (err) {
+      setSettings(previous);
+      setError(err.response?.data?.error?.message || err.message || 'Failed to save access settings');
+    } finally {
+      setSaving(false);
+    }
+  };
+
   const togglePersonalVault = async (next) => {
     setSaving(true);
     setError('');
@@ -69,8 +84,8 @@ function AccessSettings() {
 
   return (
     <SectionCard
-      title="Access"
-      description="Organization-wide rules for how production access requests are handled."
+      title="Access rules"
+      description="Organization-wide rules for production access, sign-in and the personal vault."
     >
       {loading ? (
         <div className="space-y-3 py-2">
@@ -113,7 +128,7 @@ function AccessSettings() {
             <div className="mb-2 flex items-center justify-between gap-2">
               <p className="text-sm font-medium text-foreground">Roles with “Production without approval”</p>
               {can('roles.view') && (
-                <Link to="/roles" className="text-xs font-medium text-primary hover:underline">
+                <Link to="/admin/roles" className="text-xs font-medium text-primary hover:underline">
                   Manage roles
                 </Link>
               )}
@@ -128,6 +143,36 @@ function AccessSettings() {
                 Not in effect while the switch above is off.
               </p>
             )}
+          </div>
+
+          <div className="space-y-2">
+            <SwitchField
+              bordered
+              label={
+                <span className="flex items-center gap-1.5">
+                  <KeyRound className="h-3.5 w-3.5 text-muted-foreground" /> Require single sign-on
+                </span>
+              }
+              description={
+                settings?.ssoRequired
+                  ? 'On: everyone signs in with an SSO provider. Password sign-in, password resets and adding a password are refused — except for roles with the “Single sign-on” permission, so an administrator can still get in if the identity provider breaks.'
+                  : 'Off: people with a password can sign in with it as well as with SSO.'
+              }
+              checked={!!settings?.ssoRequired}
+              disabled={saving || (!settings?.ssoRequired && !settings?.ssoProvidersActive)}
+              onCheckedChange={toggleSsoRequired}
+            />
+            {!settings?.ssoRequired && !settings?.ssoProvidersActive && (
+              <p className="px-1 text-xs text-muted-foreground">Add and enable a single sign-on provider first.</p>
+            )}
+            <div className="rounded-lg border border-border p-4">
+              <p className="mb-2 text-sm font-medium text-foreground">Roles that can still sign in with a password</p>
+              <RolesWithPermission
+                permission="settings.sso"
+                roles={settings?.rolesExemptFromSso || []}
+                emptyText="No role holds the “Single sign-on” permission."
+              />
+            </div>
           </div>
 
           <SwitchField

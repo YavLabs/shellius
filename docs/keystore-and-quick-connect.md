@@ -278,7 +278,7 @@ usernames, fingerprints.
 ### Deep-link actions (used by Quick Actions + command palette)
 
 Pages open their create/import modals from `?action=`:
-`/customers?action=new`, `/servers?action=new`, `/users?action=invite`,
+`/customers?action=new`, `/servers?action=new`, `/admin/users?action=invite`,
 `/policies?action=new`, `/access-requests?action=new`,
 `/keystore?tab=identities&action=new`, `/keystore?tab=keys&action=generate`,
 `/keystore?tab=keys&action=import`, `/keystore?tab=deployments&action=deploy`.
