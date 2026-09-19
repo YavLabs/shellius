@@ -362,23 +362,45 @@ function SidebarBody({ collapsed, onToggle, onNavigate }) {
   );
 }
 
+// Pages that want the full width: the sidebar collapses automatically when
+// you arrive. You can still expand it there (until you leave the page), and
+// your saved preference for every other page is left untouched.
+const AUTO_COLLAPSE_ROUTES = ['/terminals', '/admin'];
+const isAutoCollapseRoute = (path) => AUTO_COLLAPSE_ROUTES.some((r) => path === r || path.startsWith(`${r}/`));
+
 function Sidebar() {
-  const [collapsed, setCollapsed] = useState(() => {
+  // Saved preference (persisted) — applies everywhere except the routes above.
+  const [savedCollapsed, setSavedCollapsed] = useState(() => {
     try {
       return localStorage.getItem(COLLAPSED_KEY) === 'true';
     } catch {
       return false;
     }
   });
+  // On an auto-collapse route: null = collapsed by default; true/false once
+  // the user toggles it there. Reset each time they arrive from elsewhere.
+  const [routeOverride, setRouteOverride] = useState(null);
   const [mobileOpen, setMobileOpen] = useState(false);
   const location = useLocation();
+  const onAutoCollapseRoute = isAutoCollapseRoute(location.pathname);
+  const collapsed = onAutoCollapseRoute ? routeOverride ?? true : savedCollapsed;
 
   useEffect(() => {
     setMobileOpen(false);
   }, [location.pathname]);
 
+  // Arriving on (or leaving) an auto-collapse route starts fresh; moving
+  // between its own sub-pages (e.g. Administration tabs) keeps the choice.
+  useEffect(() => {
+    setRouteOverride(null);
+  }, [onAutoCollapseRoute]);
+
   const toggleCollapsed = useCallback(() => {
-    setCollapsed((prev) => {
+    if (onAutoCollapseRoute) {
+      setRouteOverride(!collapsed);
+      return;
+    }
+    setSavedCollapsed((prev) => {
       const next = !prev;
       try {
         localStorage.setItem(COLLAPSED_KEY, String(next));
@@ -387,7 +409,7 @@ function Sidebar() {
       }
       return next;
     });
-  }, []);
+  }, [onAutoCollapseRoute, collapsed]);
 
   return (
     <TooltipProvider delayDuration={200}>
