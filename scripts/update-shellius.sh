@@ -27,8 +27,9 @@
 #   HEALTH_URL [http://localhost:8100/api/health]  KEEP_BACKUPS [0 = keep all]
 #
 # Secrets: database URLs are never printed and are passed to containers via
-# the environment, not on the command line. Backups are created mode 600
-# (the code zip contains .env.prod).
+# the environment, not on the command line. Backups are private (folders
+# 700, files 600 — the code zip contains .env.prod); the code itself keeps
+# normal permissions because the images copy them.
 # =============================================================================
 set -Eeuo pipefail
 
@@ -79,8 +80,12 @@ while [ $# -gt 0 ]; do
   shift
 done
 
-umask 077
-mkdir -p "$PREV_ROOT"
+# Normal permissions for the code we clone and build (the images copy them:
+# a private checkout makes /app unreadable to the container's user). Only
+# the backups are private — see private_dir.
+umask 022
+private_dir() { mkdir -p "$1" && chmod 700 "$1"; }
+private_dir "$PREV_ROOT"
 
 # One run at a time.
 exec 9>"$PREV_ROOT/.update.lock"
@@ -208,12 +213,22 @@ ok "Database: direct connection via $PG_DIRECT_IP"
 confirm "Continue?"
 
 SWAPPED=0
+RETAGGED=0
 STAGE_ROOT=$(mktemp -d "$HOME/.shellius-stage.XXXXXX")
 STAGE="$STAGE_ROOT/$(basename "$APP_DIR")"
 on_exit() {
   local rc=$?
   rm -rf "$STAGE_ROOT"
   if [ $rc -ne 0 ] && [ "$SWAPPED" = 0 ]; then
+    # Put the previous images back under their normal tags, so a later
+    # restart doesn't pick up an unfinished build.
+    if [ "$RETAGGED" = 1 ]; then
+      for img in "${BUILT_IMAGES[@]}"; do
+        docker image inspect "${img%%:*}:rollback-$CUR_VER" >/dev/null 2>&1 \
+          && docker tag "${img%%:*}:rollback-$CUR_VER" "$img" || true
+      done
+      printf '%sRestored the %s images.%s\n' "$Y" "$CUR_VER" "$N" >&2
+    fi
     printf '\n%sStopped before the switch — the running version (%s) was not changed.%s\n' "$Y" "$CUR_VER" "$N" >&2
   fi
 }
@@ -229,18 +244,26 @@ for img in "${BUILT_IMAGES[@]}"; do
   if docker image inspect "$img" >/dev/null 2>&1; then
     docker tag "$img" "${img%%:*}:rollback-$CUR_VER"
     info "Kept $img as ${img%%:*}:rollback-$CUR_VER"
+    RETAGGED=1
   fi
 done
 (cd "$STAGE" && APP_VERSION="$NEW_VER" GIT_SHA="$TAG" compose build)
-ok "Built $NEW_VER"
+# The images run as non-root users: make sure they can read their own files.
+docker run --rm --entrypoint sh shellius-backend:local -c 'test -r /app/package.json && test -r /app/src/server.js' \
+  || die "The new backend image can't read its own files (permissions) — not deploying it."
+docker run --rm --entrypoint sh shellius-frontend:local -c 'test -r /usr/share/nginx/html/index.html' \
+  || die "The new frontend image can't read its own files (permissions) — not deploying it."
+ok "Built $NEW_VER (images checked)"
 
 step "4/6 Back up to $BK_DIR"
-mkdir -p "$BK_DIR"
+private_dir "$BK_DIR"
 DUMP_URL="$DUMP_URL" docker run --rm -e DUMP_URL "$PG_IMAGE" sh -c 'pg_dump "$DUMP_URL"' | gzip >"$BK_DIR/$BK_NAME.sql.gz"
 gzip -t "$BK_DIR/$BK_NAME.sql.gz" || die "The database dump is corrupt."
 [ "$(gzip -cd "$BK_DIR/$BK_NAME.sql.gz" | head -c 4096 | wc -c)" -ge 1024 ] || die "The database dump is empty."
+chmod 600 "$BK_DIR/$BK_NAME.sql.gz"
 ok "Database → $BK_NAME.sql.gz ($(du -h "$BK_DIR/$BK_NAME.sql.gz" | cut -f1))"
 (cd "$(dirname "$APP_DIR")" && zip -qry "$BK_DIR/$BK_NAME-code.zip" "$(basename "$APP_DIR")")
+chmod 600 "$BK_DIR/$BK_NAME-code.zip"
 ok "Code → $BK_NAME-code.zip ($(du -h "$BK_DIR/$BK_NAME-code.zip" | cut -f1), includes $ENV_FILE)"
 
 step "5/6 Database migrations"
