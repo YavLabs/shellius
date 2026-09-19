@@ -9,6 +9,10 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 Tracked here as work lands on `main`; moved into a dated section on release
 (`node scripts/version.mjs bump <major|minor|patch>`).
 
+### Fixed
+
+- Fields that draw their own focus style, such as the command palette search, no longer show an extra accent outline when focused. Buttons and links keep their keyboard focus ring.
+
 ## [1.5.0] - 2026-09-19
 
 ### Added

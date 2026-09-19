@@ -408,8 +408,12 @@ input[type='checkbox']:indeterminate {
 .app-main h1 svg {
   color: hsl(var(--brand));
 }
-/* Focus and selection use the accent. */
-:focus-visible {
+/* Focus and selection use the accent. :where() keeps this at zero
+   specificity, so an element's own outline styling wins — in particular
+   Tailwind's outline-none (a transparent outline), which this rule used to
+   recolour, drawing a box around fields that style their own focus (the
+   command palette search, for one). */
+:where(:focus-visible) {
   outline-color: hsl(var(--ring));
 }
 ::selection {
