@@ -44,6 +44,10 @@ import { sessionTabMeta } from '@/components/workspace/RunningSessionsList';
 import { isServerOnboarded } from '@/lib/serverStatus';
 import { relativeTime } from '@/utils/time';
 import { cn } from '@/lib/utils';
+import useIsMobile from '@/hooks/useIsMobile';
+import { CardIcon, MobileCard } from '@/components/mobile/MobileCard';
+import { envAccent } from '@/lib/mobileCard';
+import { SectionTitle, ViewAllLink } from '@/components/mobile/MobileNavList';
 
 // Widget (dashboard) shows a few per group and links to the full page.
 const WIDGET_ACTIVE_LIMIT = 3;
@@ -70,9 +74,9 @@ function untilText(date) {
 }
 
 const btnPrimary =
-  'inline-flex h-7 min-w-[5.5rem] shrink-0 items-center justify-center gap-1 rounded-md bg-primary px-2.5 text-xs font-medium text-primary-foreground transition-colors hover:bg-primary/90 disabled:opacity-60';
+  'inline-flex h-9 min-w-[5.5rem] shrink-0 items-center justify-center gap-1 rounded-md bg-primary md:h-7 px-2.5 text-xs font-medium text-primary-foreground transition-colors hover:bg-primary/90 disabled:opacity-60';
 const btnSecondary =
-  'inline-flex h-7 min-w-[5.5rem] shrink-0 items-center justify-center gap-1 rounded-md border border-border px-2.5 text-xs font-medium text-foreground transition-colors hover:bg-accent disabled:opacity-60';
+  'inline-flex h-9 min-w-[5.5rem] shrink-0 items-center justify-center gap-1 rounded-md border md:h-7 border-border px-2.5 text-xs font-medium text-foreground transition-colors hover:bg-accent disabled:opacity-60';
 
 function RowMenu({ label, children }) {
   return (
@@ -81,7 +85,7 @@ function RowMenu({ label, children }) {
         <button
           type="button"
           aria-label={label}
-          className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground"
+          className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground md:h-7 md:w-7"
         >
           <MoreHorizontal className="h-3.5 w-3.5" />
         </button>
@@ -110,10 +114,30 @@ function SectionHeader({ icon: Icon, title, hint, count, viewAllTo }) {
 }
 
 // Leading icon says what it is (server / Quick Connect / live terminal); the
-// corner dot says its state.
-function Row({ icon: Icon, iconTone = 'text-muted-foreground', dot, title, badges, sub, actions }) {
+// corner dot says its state. Phones: the list pages' card (MobileCard) —
+// environment as tint + bottom-left label, the action under a divider, the
+// rest in "⋯".
+function Row({ icon: Icon, iconTone = 'text-muted-foreground', dot, dotLabel, title, badges, sub, mobileSub, action, menu, accent, corner }) {
+  const isMobile = useIsMobile();
+  if (isMobile) {
+    return (
+      <li>
+        <MobileCard
+          leading={<CardIcon icon={Icon} className={iconTone} status={dot} statusLabel={dotLabel} />}
+          title={title}
+          secondary={mobileSub ?? sub}
+          corner={corner}
+          menu={menu}
+          accent={accent}
+          actions={action}
+          reserveActions
+        />
+      </li>
+    );
+  }
   return (
-    <li className="flex items-center gap-3 border-b border-border/70 py-2.5 last:border-0">
+    // Mobile: the actions wrap under the text so names aren't squeezed.
+    <li className="flex flex-wrap items-start gap-x-3 gap-y-2 border-b border-border/70 py-3 last:border-0 md:flex-nowrap md:items-center md:py-2.5">
       <span className="relative flex h-7 w-7 shrink-0 items-center justify-center rounded-md bg-muted" aria-hidden="true">
         <Icon className={cn('h-3.5 w-3.5', iconTone)} />
         {dot && <span className={cn('absolute -bottom-0.5 -right-0.5 h-2 w-2 rounded-full ring-2 ring-card', dot)} />}
@@ -123,9 +147,12 @@ function Row({ icon: Icon, iconTone = 'text-muted-foreground', dot, title, badge
           {title}
           {badges}
         </div>
-        {sub && <p className="mt-0.5 truncate text-[11px] text-muted-foreground">{sub}</p>}
+        {sub && <p className="mt-0.5 break-words text-[11px] text-muted-foreground md:truncate">{sub}</p>}
       </div>
-      <div className="flex shrink-0 items-center gap-1">{actions}</div>
+      <div className="ml-10 flex shrink-0 basis-[calc(100%-2.5rem)] items-center gap-1 md:ml-0 md:basis-auto">
+        {action}
+        {menu}
+      </div>
     </li>
   );
 }
@@ -144,7 +171,8 @@ function Row({ icon: Icon, iconTone = 'text-muted-foreground', dot, title, badge
  *
  * Everything is your own data only (both APIs are user-scoped).
  */
-export function RecentConnections({ variant = 'widget' }) {
+// `showQuickConnect={false}`: the host page already offers Quick connect (Connect hub).
+export function RecentConnections({ variant = 'widget', showQuickConnect = true }) {
   const isPage = variant === 'page';
   const navigate = useNavigate();
   const { allowed: qcAllowed, openQuickConnect } = useQuickConnect();
@@ -205,6 +233,12 @@ export function RecentConnections({ variant = 'widget' }) {
   }, [servers, history]);
 
   const allActive = liveSessions || [];
+  // Phones show fewer rows (the dashboard stacks everything in one column).
+  const isMobile = useIsMobile();
+  const recentLimit = isMobile ? 3 : WIDGET_RECENT_LIMIT;
+  // The dashboard widget on a phone: section title outside, no inner headings.
+  const compact = isMobile && !isPage;
+  const activeLimit = isMobile ? 2 : WIDGET_ACTIVE_LIMIT;
 
   // Page: filter by text and type. Widget: first few of each group.
   const q = query.trim().toLowerCase();
@@ -214,7 +248,7 @@ export function RecentConnections({ variant = 'widget' }) {
         (s) => kind !== 'qc' || s.authMethod === 'quick_connect'
       ).filter((s) => kind !== 'server' || s.authMethod !== 'quick_connect')
         .filter((s) => matches(s.label, s.host, s.username, s.server?.displayName, s.server?.hostname))
-    : allActive.slice(0, WIDGET_ACTIVE_LIMIT);
+    : allActive.slice(0, activeLimit);
   const recentFiltered = isPage
     ? recent
         .filter((r) => kind === 'all' || r.kind === kind)
@@ -223,7 +257,7 @@ export function RecentConnections({ variant = 'widget' }) {
             ? matches(r.server.displayName, r.server.hostname, r.server.ipAddress, r.server.environment)
             : matches(r.item.host, r.item.username, r.item.server?.displayName, r.item.credential?.name)
         )
-    : recent.slice(0, WIDGET_RECENT_LIMIT);
+    : recent.slice(0, recentLimit);
 
   // ── Actions ────────────────────────────────────────────────────────────────
   const withBusy = async (id, fn) => {
@@ -312,13 +346,46 @@ export function RecentConnections({ variant = 'widget' }) {
   const noMatches = isPage && !empty && !loading && active.length === 0 && recentFiltered.length === 0;
 
   return (
-    <div className={cn('flex flex-col rounded-lg border border-border bg-card p-5', !isPage && 'h-full')}>
-      <div className="mb-3 flex flex-wrap items-start justify-between gap-2">
+    // Phones: no frame around the widget — its rows are cards themselves.
+    <div
+      className={cn(
+        'flex flex-col rounded-lg border border-border bg-card p-5 max-md:rounded-none max-md:border-0 max-md:bg-transparent max-md:p-0',
+        !isPage && 'h-full'
+      )}
+    >
+      {compact ? (
+        // Phones (dashboard): one section title with "View all" and the menu.
+        <SectionTitle
+          title="Recent connections"
+          action={
+            <>
+              <ViewAllLink to="/connections" />
+                    <RowMenu label="Recent connections options">
+                      <DropdownMenuItem onSelect={() => navigate('/terminals')}>
+                        <SquareTerminal className="mr-2 h-4 w-4" /> Open terminals
+                      </DropdownMenuItem>
+                      <DropdownMenuItem onSelect={() => navigate('/sessions')}>
+                        <History className="mr-2 h-4 w-4" /> Session history
+                      </DropdownMenuItem>
+                      {qcAllowed && history.length > 0 && (
+                        <>
+                          <DropdownMenuSeparator />
+                          <DropdownMenuItem onSelect={() => setConfirmClear(true)} className="text-destructive focus:text-destructive">
+                            <Trash2 className="mr-2 h-4 w-4" /> Clear Quick Connect history
+                          </DropdownMenuItem>
+                        </>
+                      )}
+                    </RowMenu>
+            </>
+          }
+        />
+      ) : (
+      <div className="mb-3 flex flex-wrap items-start justify-between gap-2 ">
         {isPage ? (
-          <div className="flex min-w-0 flex-1 flex-wrap items-center gap-2">
-            <div className="relative w-full max-w-xs">
+          <div className="flex min-w-0 flex-1 basis-full flex-wrap items-center gap-2 md:basis-0">
+            <div className="relative w-full md:max-w-xs">
               <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
-              <Input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search servers, hosts, users…" className="h-8 pl-8 text-sm" />
+              <Input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search servers, hosts, users…" className="h-11 pl-8 text-base md:h-8 md:text-sm" />
             </div>
             <div className="inline-flex rounded-md border border-border p-0.5" role="group" aria-label="Type">
               {KIND_FILTERS.filter((f) => f.id !== 'qc' || qcAllowed).map((f) => (
@@ -327,7 +394,7 @@ export function RecentConnections({ variant = 'widget' }) {
                   type="button"
                   aria-pressed={kind === f.id}
                   onClick={() => setKind(f.id)}
-                  className={cn('h-7 rounded px-2.5 text-xs font-medium', kind === f.id ? 'bg-accent text-foreground' : 'text-muted-foreground hover:text-foreground')}
+                  className={cn('h-9 whitespace-nowrap rounded px-2.5 text-xs font-medium md:h-7', kind === f.id ? 'bg-accent text-foreground' : 'text-muted-foreground hover:text-foreground')}
                 >
                   {f.label}
                 </button>
@@ -340,7 +407,7 @@ export function RecentConnections({ variant = 'widget' }) {
                   type="button"
                   aria-pressed={days === d}
                   onClick={() => setDays(d)}
-                  className={cn('h-7 rounded px-2.5 text-xs font-medium', days === d ? 'bg-accent text-foreground' : 'text-muted-foreground hover:text-foreground')}
+                  className={cn('h-9 whitespace-nowrap rounded px-2.5 text-xs font-medium md:h-7', days === d ? 'bg-accent text-foreground' : 'text-muted-foreground hover:text-foreground')}
                 >
                   {d} days
                 </button>
@@ -350,11 +417,12 @@ export function RecentConnections({ variant = 'widget' }) {
         ) : (
           <div>
             <h2 className="text-sm font-semibold text-foreground">Recent connections</h2>
-            <p className="mt-0.5 text-xs text-muted-foreground">Active sessions and the last 7 days</p>
+            <p className="mt-0.5 text-xs text-muted-foreground max-md:hidden">Active sessions and the last 7 days</p>
           </div>
         )}
         <div className="flex shrink-0 items-center gap-1.5">
-          {qcAllowed && (
+          {/* Phones: Quick connect is on the Connect tab and the "+" sheet. */}
+          {qcAllowed && showQuickConnect && !isMobile && (
             <button
               type="button"
               onClick={() => openQuickConnect()}
@@ -381,6 +449,7 @@ export function RecentConnections({ variant = 'widget' }) {
           </RowMenu>
         </div>
       </div>
+      )}
 
       {actionError && (
         <div className="mb-3 flex items-start gap-2 rounded-md border border-destructive/50 bg-destructive/10 px-3 py-2 text-xs text-destructive">
@@ -417,7 +486,7 @@ export function RecentConnections({ variant = 'widget' }) {
 
       {noMatches && <p className="py-8 text-center text-sm text-muted-foreground">No connections match these filters.</p>}
 
-      <div className={cn('min-h-0 flex-1 space-y-3', !isPage && 'overflow-y-auto')}>
+      <div className={cn('min-h-0 flex-1 space-y-3', !isPage && !compact && 'overflow-y-auto')}>
         {/* ── Active now ─────────────────────────────────────────────── */}
         {active.length > 0 && (
           <section aria-label="Active sessions" id={isPage ? 'active' : undefined}>
@@ -425,9 +494,9 @@ export function RecentConnections({ variant = 'widget' }) {
               icon={PlugZap}
               title="Active now"
               count={isPage ? active.length : allActive.length}
-              viewAllTo={!isPage && allActive.length > WIDGET_ACTIVE_LIMIT ? '/connections#active' : null}
+              viewAllTo={!isPage && !compact && allActive.length > activeLimit ? '/connections#active' : null}
             />
-            <ul>
+            <ul className="max-md:grid max-md:auto-rows-fr max-md:gap-2">
               {active.map((s) => {
                 const place = placeOf.get(s.id);
                 const name = s.label || s.server?.displayName || s.host;
@@ -441,6 +510,8 @@ export function RecentConnections({ variant = 'widget' }) {
                     icon={SquareTerminal}
                     iconTone="text-foreground"
                     dot={place ? 'bg-emerald-500' : 'bg-amber-500'}
+                    dotLabel={place ? 'Open' : 'In the background'}
+                    accent={envAccent(s.server?.environment)}
                     title={<span className="truncate text-sm font-medium text-foreground">{name}</span>}
                     badges={
                       <>
@@ -449,9 +520,7 @@ export function RecentConnections({ variant = 'widget' }) {
                       </>
                     }
                     sub={sub}
-                    actions={
-                      <>
-                        {place ? (
+                    action={<>{place ? (
                           <button type="button" className={btnSecondary} onClick={() => attachSession(s.id, sessionTabMeta(s))}>
                             <ArrowUpRight className="h-3.5 w-3.5" /> Go to terminal
                           </button>
@@ -459,14 +528,12 @@ export function RecentConnections({ variant = 'widget' }) {
                           <button type="button" className={btnPrimary} disabled={busy} onClick={() => attachSession(s.id, sessionTabMeta(s))}>
                             <PlugZap className="h-3.5 w-3.5" /> Connect now
                           </button>
-                        )}
-                        <RowMenu label={`Options for ${name}`}>
+                        )}</>}
+                    menu={<RowMenu label={`Options for ${name}`}>
                           <DropdownMenuItem onSelect={() => setEndTarget(s)} className="text-destructive focus:text-destructive">
                             <Square className="mr-2 h-4 w-4" /> End session
                           </DropdownMenuItem>
-                        </RowMenu>
-                      </>
-                    }
+                        </RowMenu>}
                   />
                 );
               })}
@@ -477,15 +544,18 @@ export function RecentConnections({ variant = 'widget' }) {
         {/* ── Recent ─────────────────────────────────────────────────── */}
         {recentFiltered.length > 0 && (
           <section aria-label="Recent connections" id={isPage ? 'recent' : undefined}>
+            {/* Phones: only needed to tell it apart from "Active now". */}
+            {(!compact || active.length > 0) && (
             <SectionHeader
               icon={History}
               title="Recent"
               // Widget fetches only a few, so it can't know the true total.
               count={isPage ? recentFiltered.length : undefined}
               hint={isPage ? (days === 30 && qcAllowed ? 'Last 30 days · Quick Connect history is kept 7 days' : `Last ${days} days`) : 'Last 7 days'}
-              viewAllTo={!isPage && recent.length > WIDGET_RECENT_LIMIT ? '/connections#recent' : null}
+              viewAllTo={!isPage && !compact && recent.length > recentLimit ? '/connections#recent' : null}
             />
-            <ul>
+            )}
+            <ul className="max-md:grid max-md:auto-rows-fr max-md:gap-2">
               {recentFiltered.map((r) => {
                 if (r.kind === 'server') {
                   const { server } = r;
@@ -501,6 +571,9 @@ export function RecentConnections({ variant = 'widget' }) {
                       key={r.key}
                       icon={Server}
                       dot={intent?.hasActiveAccess ? 'bg-emerald-500' : intent?.hasPendingRequest ? 'bg-amber-500' : null}
+                      dotLabel={intent?.hasActiveAccess ? 'Access granted' : intent?.hasPendingRequest ? 'Request pending' : undefined}
+                      accent={envAccent(server.environment)}
+                      mobileSub={`${server.ipAddress || server.hostname} · ${relativeTime(r.lastConnectedAt)}`}
                       title={
                         <Link to={`/servers/${server.id}`} className="truncate text-sm font-medium text-foreground hover:underline">
                           {server.displayName || server.hostname}
@@ -514,9 +587,7 @@ export function RecentConnections({ variant = 'widget' }) {
                           {intent?.hasActiveAccess && intent.expiresAt && ` · access ends ${untilText(intent.expiresAt)}`}
                         </>
                       }
-                      actions={
-                        <>
-                          <button
+                      action={<><button
                             type="button"
                             className={action.cls}
                             disabled={busy || !onboarded}
@@ -525,8 +596,8 @@ export function RecentConnections({ variant = 'widget' }) {
                           >
                             {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <ActionIcon className="h-3.5 w-3.5" />}
                             {action.label}
-                          </button>
-                          <RowMenu label={`Options for ${server.displayName || server.hostname}`}>
+                          </button></>}
+                    menu={<RowMenu label={`Options for ${server.displayName || server.hostname}`}>
                             <DropdownMenuItem onSelect={() => navigate(`/servers/${server.id}`)}>
                               <Server className="mr-2 h-4 w-4" /> View server
                             </DropdownMenuItem>
@@ -535,9 +606,7 @@ export function RecentConnections({ variant = 'widget' }) {
                                 <KeyRound className="mr-2 h-4 w-4" /> New access request
                               </DropdownMenuItem>
                             )}
-                          </RowMenu>
-                        </>
-                      }
+                          </RowMenu>}
                     />
                   );
                 }
@@ -551,6 +620,8 @@ export function RecentConnections({ variant = 'widget' }) {
                     icon={Zap}
                     iconTone="text-amber-500"
                     dot={failed ? 'bg-red-500' : null}
+                    dotLabel={failed ? 'Last attempt failed' : undefined}
+                    mobileSub={`${auth ? auth.label : item.credential?.name || 'Identity'} · ${failed ? 'failed ' : ''}${relativeTime(item.lastConnectedAt)}`}
                     title={
                       <span className="truncate font-mono text-[13px] text-foreground" title={failed ? item.lastError : undefined}>
                         {item.username}@{item.host}
@@ -570,13 +641,11 @@ export function RecentConnections({ variant = 'widget' }) {
                         {item.connectCount > 1 && ` · ×${item.connectCount}`}
                       </>
                     }
-                    actions={
-                      <>
-                        <button type="button" className={btnSecondary} disabled={busy} onClick={() => reconnectQc(item)}>
+                    action={<><button type="button" className={btnSecondary} disabled={busy} onClick={() => reconnectQc(item)}>
                           {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Zap className="h-3.5 w-3.5" />}
                           Connect again
-                        </button>
-                        <RowMenu label={`Options for ${item.username}@${item.host}`}>
+                        </button></>}
+                    menu={<RowMenu label={`Options for ${item.username}@${item.host}`}>
                           <DropdownMenuItem onSelect={() => copySsh(item)}>
                             {copiedId === item.id ? <Check className="mr-2 h-4 w-4" /> : <Copy className="mr-2 h-4 w-4" />}
                             Copy ssh command
@@ -588,9 +657,7 @@ export function RecentConnections({ variant = 'widget' }) {
                           <DropdownMenuItem onSelect={() => removeQc(item)} className="text-destructive focus:text-destructive">
                             <Trash2 className="mr-2 h-4 w-4" /> Remove from history
                           </DropdownMenuItem>
-                        </RowMenu>
-                      </>
-                    }
+                        </RowMenu>}
                   />
                 );
               })}

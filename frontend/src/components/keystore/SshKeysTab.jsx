@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useImperativeHandle, useState, forwardRef } from 'react';
 import { Pencil, Trash2, Copy, Download, Send, RefreshCw, Key, FileKey, Lock } from 'lucide-react';
 import DataTable from '@/components/shared/DataTable';
+import { CardIcon, CardStatus } from '@/components/mobile/MobileCard';
 import ConfirmDialog from '@/components/shared/ConfirmDialog';
 import EmptyState from '@/components/ui/EmptyState';
 import { Badge } from '@/components/ui/badge';
@@ -119,6 +120,15 @@ const SshKeysTab = forwardRef(function SshKeysTab({ canManage, scope = 'org', ca
       label: 'Name',
       sortable: true,
       searchAccessor: (r) => `${r.name} ${r.fingerprint}`,
+      mobile: {
+        slot: 'title',
+        render: (r) => (
+          <span className="flex min-w-0 items-center gap-1.5">
+            <span className="min-w-0 truncate">{r.name}</span>
+            {scope === 'personal' && <Lock className="h-3 w-3 shrink-0 text-muted-foreground" aria-label="Private" />}
+          </span>
+        ),
+      },
       render: (r) => (
         <div>
           <span className="flex items-center gap-1.5 font-medium text-foreground">
@@ -135,6 +145,12 @@ const SshKeysTab = forwardRef(function SshKeysTab({ canManage, scope = 'org', ca
     {
       key: 'keyType',
       label: 'Type',
+      // Phones: "Ed25519 · 2 identities" under the name.
+      mobile: {
+        slot: 'secondary',
+        order: 1,
+        render: (r) => `${labelize(KEY_TYPE_LABELS, r.keyType)}${r.bits ? ` ${r.bits}` : ''}`,
+      },
       render: (r) => (
         <span className="text-xs text-muted-foreground">
           {labelize(KEY_TYPE_LABELS, r.keyType)}
@@ -145,12 +161,14 @@ const SshKeysTab = forwardRef(function SshKeysTab({ canManage, scope = 'org', ca
     {
       key: 'fingerprint',
       label: 'Fingerprint',
+      mobile: 'hidden',
       render: (r) => <span className="font-mono text-xs text-muted-foreground">{r.fingerprint}</span>,
     },
     {
       key: 'source',
       label: 'Source',
       hideBelow: 'md',
+      mobile: 'hidden',
       render: (r) => (
         <div className="flex flex-col gap-1">
           <Badge tone={keySourceTone(r.source).tone}>{keySourceTone(r.source).label}</Badge>
@@ -166,6 +184,11 @@ const SshKeysTab = forwardRef(function SshKeysTab({ canManage, scope = 'org', ca
       key: 'credentialCount',
       label: 'Used by',
       sortable: true,
+      mobile: {
+        slot: 'secondary',
+        order: 2,
+        render: (r) => `${r.credentialCount ?? 0} ${(r.credentialCount ?? 0) === 1 ? 'identity' : 'identities'}`,
+      },
       render: (r) => <span className="tabular-nums">{r.credentialCount ?? 0} identities</span>,
     },
     {
@@ -240,6 +263,14 @@ const SshKeysTab = forwardRef(function SshKeysTab({ canManage, scope = 'org', ca
           onRowClick={(r) => setDetailId(r.id)}
           searchPlaceholder="Search keys..."
           emptyMessage="No keys match your search"
+          mobile={{
+            leading: () => <CardIcon icon={scope === 'personal' ? Lock : Key} />,
+            // Signed keys: a quiet "Cert" next to the "⋯" menu instead of a chip.
+            corner: (r) =>
+              r.certificate ? (
+                <CardStatus tone={r.certificate.expired ? 'danger' : 'success'} label={r.certificate.expired ? 'Cert expired' : 'Cert'} />
+              ) : null,
+          }}
         />
       )}
 

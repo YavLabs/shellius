@@ -12,6 +12,8 @@ const ROUTE_TITLES = {
   '/sessions': 'Sessions',
   '/audit-log': 'Audit Log',
   '/notifications': 'Notifications',
+  '/connect': 'Connect',
+  '/activity': 'Activity',
   '/admin': 'Administration',
   '/terminal': 'Terminal',
   '/login': 'Sign in',

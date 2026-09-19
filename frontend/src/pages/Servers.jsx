@@ -17,11 +17,13 @@ import {
   Send,
 } from 'lucide-react';
 import DataTable from '@/components/shared/DataTable';
+import { CardIcon } from '@/components/mobile/MobileCard';
 import Modal from '@/components/shared/Modal';
 import ConfirmDialog from '@/components/shared/ConfirmDialog';
 import DeleteServerDialog from '@/components/servers/DeleteServerDialog';
 import EnvironmentBadge from '@/components/shared/EnvironmentBadge';
-import HealthStatusDot from '@/components/shared/HealthStatusDot';
+import HealthStatusDot, { HEALTH_COLORS, HEALTH_LABELS } from '@/components/shared/HealthStatusDot';
+import { envAccent } from '@/lib/mobileCard';
 import ServerForm from '@/components/servers/ServerForm';
 import BootstrapModal from '@/components/servers/BootstrapModal';
 import UninstallHostModal from '@/components/servers/UninstallHostModal';
@@ -324,6 +326,17 @@ function Servers() {
       label: 'Name',
       sortable: true,
       searchAccessor: (r) => `${r.displayName || ''} ${r.hostname} ${r.ipAddress || ''}`,
+      mobile: {
+        slot: 'title',
+        render: (r) => (
+          <span className="break-words">
+            {r.displayName || r.hostname}
+            {r.authMode === 'credential' && (
+              <KeyRound className="ml-1.5 inline h-3.5 w-3.5 align-[-2px] text-amber-600 dark:text-amber-400" aria-label="Stored identity" />
+            )}
+          </span>
+        ),
+      },
       render: (r) => {
         const proto = r.protocol || r.type || 'SSH';
         const ProtoIcon = proto === 'RDP' ? Monitor : TerminalIcon;
@@ -355,6 +368,14 @@ function Servers() {
       key: 'ipAddress',
       label: 'IP',
       sortable: true,
+      mobile: {
+        slot: 'secondary',
+        render: (r) => (
+          <span className="break-all font-mono text-[11px]">
+            {[r.displayName ? r.hostname : null, r.ipAddress].filter(Boolean).join(' · ') || '-'}
+          </span>
+        ),
+      },
       render: (r) => <span className="font-mono text-xs text-muted-foreground">{r.ipAddress}</span>,
     },
     {
@@ -362,6 +383,7 @@ function Servers() {
       label: 'Customer',
       sortable: true,
       searchAccessor: (r) => r.customer?.name || '',
+      mobile: { slot: 'meta', order: 1, render: (r) => r.customer?.name || null },
       render: (r) =>
         r.customer ? (
           <button
@@ -379,12 +401,29 @@ function Servers() {
       label: 'Env',
       sortable: true,
       searchAccessor: (r) => r.environment || '',
+      // Phones: the card tint + bottom-left label (DataTable `mobile.accent`).
+      mobile: 'hidden',
       render: (r) => <EnvironmentBadge environment={r.environment} />,
     },
     {
       key: 'protocol',
       label: 'Protocol',
       sortable: true,
+      mobile: {
+        slot: 'leading',
+        render: (r) => {
+          const ProtoIcon = (r.protocol || r.type) === 'RDP' || r.protocol === 'rdp' ? Monitor : TerminalIcon;
+          const health = r.healthStatus || 'unknown';
+          return (
+            <CardIcon
+              icon={ProtoIcon}
+              title={r.protocol}
+              status={HEALTH_COLORS[health] || HEALTH_COLORS.unknown}
+              statusLabel={HEALTH_LABELS[health] || 'Unknown'}
+            />
+          );
+        },
+      },
       render: (r) => (
         <span className="text-xs uppercase text-muted-foreground">{r.protocol}</span>
       ),
@@ -393,6 +432,15 @@ function Servers() {
       key: 'health',
       label: 'Health',
       searchAccessor: (r) => r.healthStatus || '',
+      // Phones: a dot on the card icon; spelled out only when something's wrong.
+      mobile: {
+        slot: 'meta',
+        order: 2,
+        render: (r) =>
+          r.healthStatus === 'unhealthy' || r.healthStatus === 'maintenance' ? (
+            <HealthStatusDot status={r.healthStatus} showLabel />
+          ) : null,
+      },
       render: (r) => <HealthStatusDot status={r.healthStatus} showLabel />,
     },
     {
@@ -415,6 +463,7 @@ function Servers() {
       key: 'quickConnect',
       label: '',
       className: 'w-36',
+      mobile: 'action',
       render: (r) => <QuickConnectButton server={r} currentUser={user} />,
     },
     {
@@ -478,25 +527,25 @@ function Servers() {
       <PageHeader
         icon={ServerIcon}
         title="Servers"
-        subtitle="Manage target servers across customers." helpKey="servers">
-        <div className="flex items-center gap-2">
-          <QuickConnectHeaderButton />
-          <Button variant="outline" onClick={() => fetch()} disabled={loading}>
-            <RefreshCw className={`mr-2 h-4 w-4 ${loading ? 'animate-spin' : ''}`} /> Refresh
-          </Button>
-          {canCreate && (
-            <Button
-              onClick={() => {
-                setEditing(null);
-                setNewServerCustomerId('');
-                setFormOpen(true);
-              }}
-            >
-              <Plus className="mr-2 h-4 w-4" /> Add Server
-            </Button>
-          )}
-        </div>
-      </PageHeader>
+        subtitle="Manage target servers across customers."
+        helpKey="servers"
+        actions={[
+          // Quick connect has its own entry in the mobile bottom-nav sheet.
+          { key: 'quick-connect', label: 'Quick connect', desktop: <QuickConnectHeaderButton />, mobile: false },
+          { key: 'refresh', label: 'Refresh', icon: RefreshCw, variant: 'outline', onClick: () => fetch(), disabled: loading, spin: loading },
+          {
+            key: 'add',
+            label: 'Add Server',
+            icon: Plus,
+            hidden: !canCreate,
+            onClick: () => {
+              setEditing(null);
+              setNewServerCustomerId('');
+              setFormOpen(true);
+            },
+          },
+        ]}
+      />
 
       {error && (
         <div className="rounded-md border border-destructive/50 bg-destructive/10 px-3 py-2 text-sm text-destructive">
@@ -512,11 +561,13 @@ function Servers() {
         searchPlaceholder="Search name, hostname or IP..."
         onSearchChange={handleSearchChange}
         filters={filterSlot}
+        onResetFilters={() => { setEnvironment(''); setHealthStatus(''); setCustomerFilter(''); setPage(1); }}
         selectable={canBulk}
         selectedIds={selected}
         onSelectionChange={setSelected}
         bulkActions={bulkActionsSlot}
         onRowClick={(r) => navigate(`/servers/${r.id}`)}
+        mobile={{ accent: (r) => envAccent(r.environment) }}
         serverPagination={{
           page,
           total,

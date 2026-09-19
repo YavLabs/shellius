@@ -13,15 +13,8 @@ import {
   markNotificationRead,
 } from '@/services/notificationService';
 import { relativeTime } from '@/utils/time';
+import { RELATED_ROUTE } from '@/lib/notificationRoutes';
 
-const RELATED_ROUTE = {
-  AccessRequest: () => `/access-requests`,
-  Certificate: () => `/certificates`,
-  Session: () => `/sessions`,
-  Server: (id) => `/servers/${id}`,
-  Customer: (id) => `/customers/${id}`,
-  User: () => `/admin/users`,
-};
 
 function Notifications() {
   const navigate = useNavigate();
@@ -90,6 +83,15 @@ function Notifications() {
       key: 'status',
       label: '',
       className: 'w-8',
+      mobile: {
+        slot: 'leading',
+        render: (n) => (
+          <span
+            className={`mt-1.5 inline-block h-2.5 w-2.5 rounded-full ${n.isRead ? 'bg-muted-foreground/20' : 'bg-primary'}`}
+            title={n.isRead ? 'Read' : 'Unread'}
+          />
+        ),
+      },
       render: (n) =>
         n.isRead ? (
           <span className="h-2 w-2 rounded-full bg-transparent" />
@@ -102,6 +104,7 @@ function Notifications() {
       label: 'Type',
       sortable: true,
       searchAccessor: (n) => n.type || '',
+      mobile: 'hidden',
       render: (n) => (
         <Badge tone="info" variant="outline">
           {formatLabel(n.type || 'info')}
@@ -111,6 +114,12 @@ function Notifications() {
     {
       key: 'body',
       label: 'Message',
+      mobile: {
+        slot: 'title',
+        render: (n) => (
+          <span className={n.isRead ? 'font-normal text-muted-foreground' : undefined}>{n.body || n.title || '—'}</span>
+        ),
+      },
       render: (n) => (
         <button
           onClick={() => openNotification(n)}
@@ -124,6 +133,7 @@ function Notifications() {
       key: 'related',
       label: 'Related',
       hideBelow: 'md',
+      mobile: 'hidden',
       render: (n) => (
         <span className="text-xs text-muted-foreground">
           {n.relatedType ? `${n.relatedType}` : '—'}
@@ -134,6 +144,7 @@ function Notifications() {
       key: 'created',
       label: 'When',
       sortable: true,
+      mobile: { slot: 'secondary', render: (n) => relativeTime(n.createdAt) },
       render: (n) => (
         <span className="text-xs text-muted-foreground">{relativeTime(n.createdAt)}</span>
       ),
@@ -151,13 +162,18 @@ function Notifications() {
             ? `${unreadCount} unread notification${unreadCount === 1 ? '' : 's'}`
             : 'Recent system notifications and alerts.'
         }
-      >
-        {unreadCount > 0 && (
-          <Button variant="outline" size="sm" onClick={handleMarkAll}>
-            <CheckCheck className="mr-2 h-4 w-4" /> Mark all read
-          </Button>
-        )}
-      </PageHeader>
+        actions={[
+          {
+            key: 'mark-all',
+            label: 'Mark all read',
+            icon: CheckCheck,
+            variant: 'outline',
+            size: 'sm',
+            onClick: handleMarkAll,
+            hidden: unreadCount === 0,
+          },
+        ]}
+      />
 
       {error && (
         <div className="rounded-md border border-destructive/50 bg-destructive/10 px-3 py-2 text-sm text-destructive">
@@ -172,6 +188,7 @@ function Notifications() {
         emptyMessage={filter === 'unread' ? 'No unread notifications.' : 'No notifications yet.'}
         searchPlaceholder="Search notifications..."
         filters={filterSlot}
+        mobile={{ onCardClick: (n) => openNotification(n) }}
       />
     </div>
   );

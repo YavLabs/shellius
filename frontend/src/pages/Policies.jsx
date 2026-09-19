@@ -13,6 +13,7 @@ import DeletePolicyDialog from '@/components/policies/DeletePolicyDialog';
 import EnvironmentBadge from '@/components/shared/EnvironmentBadge';
 import { Badge } from '@/components/ui/badge';
 import { policyEffectTone } from '@/lib/badgeTones';
+import { CardStatus } from '@/components/mobile/MobileCard';
 import PolicyForm from '@/components/policies/PolicyForm';
 import PolicyEvaluator from '@/components/policies/PolicyEvaluator';
 import PageHeader from '@/components/common/PageHeader';
@@ -173,6 +174,12 @@ function Policies() {
       key: 'name',
       label: 'Name',
       sortable: true,
+      mobile: {
+        slot: 'title',
+        render: (r) => (
+          r.name
+        ),
+      },
       render: (r) => (
         <div>
           <p className="text-sm font-medium text-foreground">{r.name}</p>
@@ -187,11 +194,14 @@ function Policies() {
       label: 'Effect',
       sortable: true,
       searchAccessor: (r) => r.effect || '',
+      // Phones: quiet effect next to the "⋯" menu (DataTable `mobile.corner`).
+      mobile: 'hidden',
       render: (r) => <EffectBadge effect={r.effect} />,
     },
     {
       key: 'scope',
       label: 'Scope',
+      mobile: { slot: 'secondary', order: 1 },
       render: (r) => (
         <span className="text-sm text-muted-foreground">
           {r.customerId ? customerMap[r.customerId] || r.customerId : 'Org-wide'}
@@ -202,6 +212,7 @@ function Policies() {
       key: 'environments',
       label: 'Environments',
       hideBelow: 'md',
+      mobile: 'hidden',
       render: (r) => {
         const envs = r.targetEnvironments || [];
         if (envs.length === 0) return <span className="text-xs text-muted-foreground">All</span>;
@@ -229,6 +240,11 @@ function Policies() {
       key: 'priority',
       label: 'Priority',
       sortable: true,
+      mobile: {
+        slot: 'secondary',
+        order: 2,
+        render: (r) => `Priority ${r.priority ?? 0}${r.isActive ? '' : ' · Inactive'}`,
+      },
       render: (r) => (
         <span className="font-mono text-xs text-muted-foreground">{r.priority ?? 0}</span>
       ),
@@ -237,6 +253,7 @@ function Policies() {
       key: 'isActive',
       label: 'Status',
       searchAccessor: (r) => (r.isActive ? 'active' : 'inactive'),
+      mobile: 'hidden',
       render: (r) =>
         r.isActive ? <Badge tone="success">Active</Badge> : <Badge tone="neutral">Inactive</Badge>,
     },
@@ -269,13 +286,21 @@ function Policies() {
       <PageHeader
         icon={Shield}
         title="Policies"
-        subtitle="Access control policies governing who can reach which servers." helpKey="policies">
-        {canAdmin && (
-          <Button onClick={() => { setEditing(null); setFormOpen(true); }}>
-            <Plus className="mr-2 h-4 w-4" /> New Policy
-          </Button>
-        )}
-      </PageHeader>
+        subtitle="Access control policies governing who can reach which servers."
+        helpKey="policies"
+        actions={[
+          {
+            key: 'new',
+            label: 'New Policy',
+            icon: Plus,
+            hidden: !canAdmin,
+            onClick: () => {
+              setEditing(null);
+              setFormOpen(true);
+            },
+          },
+        ]}
+      />
 
       {error && (
         <div className="rounded-md border border-destructive/50 bg-destructive/10 px-3 py-2 text-sm text-destructive">
@@ -290,6 +315,8 @@ function Policies() {
         emptyMessage="No policies found. Create one to control server access."
         searchPlaceholder="Search by policy name..."
         filters={filterSlot}
+        onResetFilters={() => { setEffectFilter(''); setCustomerFilter(''); setActiveFilter(''); setPage(1); }}
+        mobile={{ corner: (r) => <CardStatus {...policyEffectTone(r.effect)} /> }}
         serverPagination={{
           page,
           total,

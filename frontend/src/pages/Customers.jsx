@@ -5,6 +5,7 @@ import Badge from '@/components/shared/Badge';
 import Modal from '@/components/shared/Modal';
 import ConfirmDialog from '@/components/shared/ConfirmDialog';
 import DataTable from '@/components/shared/DataTable';
+import { CardIcon } from '@/components/mobile/MobileCard';
 import CustomerForm from '@/components/customers/CustomerForm';
 import PageHeader from '@/components/common/PageHeader';
 import { Button } from '@/components/ui/button';
@@ -75,6 +76,7 @@ function Customers() {
       key: 'name',
       label: 'Name',
       sortable: true,
+      mobile: { slot: 'title', render: (c) => c.name },
       render: (c) => (
         <button
           onClick={() => navigate(`/customers/${c.id}`)}
@@ -90,12 +92,17 @@ function Customers() {
       key: 'slug',
       label: 'Slug',
       sortable: true,
+      mobile: 'hidden',
       render: (c) => <code className="text-xs text-muted-foreground">{c.slug}</code>,
     },
     {
       key: 'description',
       label: 'Description',
       hideBelow: 'md',
+      mobile: {
+        slot: 'secondary',
+        render: (c) => (c.description ? <span className="line-clamp-2">{c.description}</span> : null),
+      },
       render: (c) => (
         <span className="text-sm text-muted-foreground line-clamp-1">{c.description || '—'}</span>
       ),
@@ -105,6 +112,8 @@ function Customers() {
       label: 'Servers',
       sortable: true,
       searchAccessor: (c) => String(c._count?.servers ?? 0),
+      // Phones: next to the "⋯" menu (DataTable `mobile.corner`).
+      mobile: 'hidden',
       render: (c) => (
         <span className="flex items-center gap-1.5 text-sm text-muted-foreground">
           <Server className="h-3.5 w-3.5" />
@@ -116,6 +125,8 @@ function Customers() {
       key: 'status',
       label: 'Status',
       searchAccessor: (c) => (c.isActive ? 'active' : 'inactive'),
+      // Phones: Active / Inactive sections instead of a chip on each card.
+      mobile: 'hidden',
       render: (c) => (
         <Badge variant={c.isActive ? 'success' : 'default'}>
           {c.isActive ? 'Active' : 'Inactive'}
@@ -147,18 +158,16 @@ function Customers() {
 
   return (
     <div className="space-y-6 p-6">
-      <PageHeader icon={Building2} title="Customers" subtitle="Organize servers and access by tenant." helpKey="customers">
-        <div className="flex items-center gap-2">
-          <Button variant="outline" onClick={() => fetch()} disabled={loading}>
-            <RefreshCw className={`mr-2 h-4 w-4 ${loading ? 'animate-spin' : ''}`} /> Refresh
-          </Button>
-          {canCreate && (
-            <Button onClick={() => setCreateOpen(true)}>
-              <Plus className="mr-2 h-4 w-4" /> Add Customer
-            </Button>
-          )}
-        </div>
-      </PageHeader>
+      <PageHeader
+        icon={Building2}
+        title="Customers"
+        subtitle="Organize servers and access by tenant."
+        helpKey="customers"
+        actions={[
+          { key: 'refresh', label: 'Refresh', icon: RefreshCw, variant: 'outline', onClick: () => fetch(), disabled: loading, spin: loading },
+          { key: 'add', label: 'Add Customer', icon: Plus, onClick: () => setCreateOpen(true), hidden: !canCreate },
+        ]}
+      />
 
       {error && (
         <div className="rounded-md border border-destructive/50 bg-destructive/10 px-3 py-2 text-sm text-destructive">
@@ -173,6 +182,17 @@ function Customers() {
         emptyMessage="No customers yet. Create your first customer to get started."
         searchPlaceholder="Search customers..."
         onRowClick={(c) => navigate(`/customers/${c.id}`)}
+        mobile={{
+          leading: () => <CardIcon icon={Building2} />,
+          corner: (c) => (
+            <span className="flex items-center gap-1 tabular-nums" title="Servers" aria-label={`${c._count?.servers ?? 0} servers`}>
+              <Server className="h-3.5 w-3.5" />
+              {c._count?.servers ?? 0}
+            </span>
+          ),
+          group: (c) => (c.isActive ? { key: 'active', label: 'Active' } : { key: 'inactive', label: 'Inactive' }),
+          groupOrder: ['active', 'inactive'],
+        }}
       />
 
       <Modal open={createOpen} onClose={() => setCreateOpen(false)} title="Add customer">

@@ -1,6 +1,8 @@
-import { useEffect } from 'react';
+import { useEffect, useId } from 'react';
 import { createPortal } from 'react-dom';
 import { X } from 'lucide-react';
+import useIsMobile from '@/hooks/useIsMobile';
+import BottomSheet, { stopUnlessPassthrough } from '@/components/mobile/BottomSheet';
 
 /**
  * Modal — renders into a React portal at document.body so it lives outside
@@ -20,13 +22,14 @@ import { X } from 'lucide-react';
  * event, so the widget's own handlers never fire). Such widgets opt out by
  * wrapping themselves in a `data-modal-passthrough` element so their clicks
  * reach their handlers. All other content still gets the row-click protection.
+ *
+ * On phones (below `md`) the same modal opens as a bottom sheet
+ * (components/mobile/BottomSheet.jsx, docs/plans/1.5.1-mobile.md §3). Button
+ * rows inside `children` marked `data-sheet-footer` become its sticky footer.
  */
-function stopUnlessPassthrough(e) {
-  if (e.target.closest?.('[data-modal-passthrough]')) return;
-  e.stopPropagation();
-}
-
 function Modal({ open, onClose, title, children, footer, size = 'md' }) {
+  const isMobile = useIsMobile();
+  const titleId = useId();
   useEffect(() => {
     if (!open) return;
     const onKey = (e) => {
@@ -43,6 +46,14 @@ function Modal({ open, onClose, title, children, footer, size = 'md' }) {
   if (!open) return null;
   if (typeof document === 'undefined') return null;
 
+  if (isMobile) {
+    return (
+      <BottomSheet open={open} onClose={onClose} title={title} footer={footer} closeOnEscape={false}>
+        {children}
+      </BottomSheet>
+    );
+  }
+
   const sizes = {
     sm: 'max-w-sm',
     md: 'max-w-lg',
@@ -58,11 +69,14 @@ function Modal({ open, onClose, title, children, footer, size = 'md' }) {
     >
       <div className="absolute inset-0 bg-black/50 backdrop-blur-sm" onClick={onClose} />
       <div
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby={titleId}
         className={`relative z-10 w-full ${sizes[size] || sizes.md} max-h-[90vh] overflow-hidden rounded-lg border border-border bg-card shadow-lg flex flex-col`}
         onClick={stopUnlessPassthrough}
       >
         <div className="flex items-center justify-between border-b border-border px-5 py-3">
-          <h3 className="text-base font-semibold text-foreground">{title}</h3>
+          <h3 id={titleId} className="text-base font-semibold text-foreground">{title}</h3>
           <button
             onClick={onClose}
             className="rounded-md p-1 text-muted-foreground hover:bg-accent hover:text-foreground"

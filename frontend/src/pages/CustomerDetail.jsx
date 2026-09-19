@@ -22,11 +22,13 @@ import {
   Shield,
 } from 'lucide-react';
 import DataTable from '@/components/shared/DataTable';
+import { CardIcon, MobileCardSkeleton } from '@/components/mobile/MobileCard';
 import Modal from '@/components/shared/Modal';
 import ConfirmDialog from '@/components/shared/ConfirmDialog';
 import DeleteCustomerDialog from '@/components/customers/DeleteCustomerDialog';
 import EnvironmentBadge from '@/components/shared/EnvironmentBadge';
-import HealthStatusDot from '@/components/shared/HealthStatusDot';
+import HealthStatusDot, { HEALTH_COLORS, HEALTH_LABELS } from '@/components/shared/HealthStatusDot';
+import { envAccent } from '@/lib/mobileCard';
 import CustomerForm from '@/components/customers/CustomerForm';
 import ServerForm from '@/components/servers/ServerForm';
 import { Button } from '@/components/ui/button';
@@ -48,6 +50,8 @@ import { listServers, createServer } from '@/services/serverService';
 import { listSessions } from '@/services/sessionService';
 import { relativeTime, formatDateTime } from '@/utils/time';
 import Skeleton from '@/components/ui/Skeleton';
+import MobilePageHeader from '@/components/mobile/MobilePageHeader';
+import useIsMobile from '@/hooks/useIsMobile';
 import { useAuth } from '@/context/AuthContext';
 import { can } from '@/lib/permissions';
 import { ENVIRONMENT_LABELS } from '@/lib/labels';
@@ -56,17 +60,25 @@ import { ENVIRONMENT_LABELS } from '@/lib/labels';
 // Sub-components
 // ---------------------------------------------------------------------------
 
-function StatTile({ icon: Icon, label, value, iconClass, loading }) {
+// `shortLabel`: phones, where two tiles share a row and a long label wrapped.
+function StatTile({ icon: Icon, label, shortLabel, value, iconClass, loading }) {
   return (
-    <div className="flex items-center gap-3 rounded-lg border border-border bg-card p-4">
+    <div className="flex items-center gap-3 rounded-lg border border-border bg-card p-4 max-md:p-3">
       <div
         className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-md ${iconClass}`}
       >
         <Icon className="h-4 w-4" />
       </div>
       <div className="min-w-0">
-        <p className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
-          {label}
+        <p className="truncate text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+          {shortLabel ? (
+            <>
+              <span className="md:hidden">{shortLabel}</span>
+              <span className="max-md:hidden">{label}</span>
+            </>
+          ) : (
+            label
+          )}
         </p>
         {loading ? (
           <Skeleton className="mt-1 h-5 w-10" />
@@ -153,6 +165,7 @@ function CustomerDetail() {
   const canAddServer = can(user, 'servers.create');
   const canManage = can(user, 'customers.update');
   const canDelete = can(user, 'customers.delete');
+  const isMobile = useIsMobile();
 
   const [customer, setCustomer] = useState(null);
   const [stats, setStats] = useState(null);
@@ -261,6 +274,7 @@ function CustomerDetail() {
       label: 'Server',
       sortable: true,
       searchAccessor: (r) => `${r.displayName || ''} ${r.hostname} ${r.ipAddress || ''}`,
+      mobile: { slot: 'title', render: (r) => r.displayName || r.hostname },
       render: (r) => {
         const proto = r.protocol || r.type || 'SSH';
         const ProtoIcon = proto === 'RDP' ? Monitor : TerminalIcon;
@@ -283,6 +297,14 @@ function CustomerDetail() {
     {
       key: 'ipAddress',
       label: 'IP',
+      mobile: {
+        slot: 'secondary',
+        render: (r) => (
+          <span className="break-all font-mono text-[11px]">
+            {[r.displayName && r.displayName !== r.hostname ? r.hostname : null, r.ipAddress].filter(Boolean).join(' · ') || '-'}
+          </span>
+        ),
+      },
       render: (r) => (
         <span className="font-mono text-xs text-muted-foreground">{r.ipAddress || '-'}</span>
       ),
@@ -290,6 +312,20 @@ function CustomerDetail() {
     {
       key: 'protocol',
       label: 'Proto',
+      mobile: {
+        slot: 'leading',
+        render: (r) => {
+          const health = r.healthStatus || 'unknown';
+          return (
+            <CardIcon
+              icon={r.protocol === 'rdp' ? Monitor : TerminalIcon}
+              title={r.protocol}
+              status={HEALTH_COLORS[health] || HEALTH_COLORS.unknown}
+              statusLabel={HEALTH_LABELS[health] || 'Unknown'}
+            />
+          );
+        },
+      },
       render: (r) => (
         <span className="text-xs uppercase tracking-wide text-muted-foreground">
           {r.protocol || 'SSH'}
@@ -301,18 +337,30 @@ function CustomerDetail() {
       label: 'Env',
       sortable: true,
       searchAccessor: (r) => r.environment || '',
+      // Phones: the card tint + bottom-left label (DataTable `mobile.accent`).
+      mobile: 'hidden',
       render: (r) => <EnvironmentBadge environment={r.environment} />,
     },
     {
       key: 'health',
       label: 'Health',
       searchAccessor: (r) => r.healthStatus || '',
+      // Phones: a dot on the card icon; spelled out only when something's wrong.
+      mobile: {
+        slot: 'meta',
+        order: 2,
+        render: (r) =>
+          r.healthStatus === 'unhealthy' || r.healthStatus === 'maintenance' ? (
+            <HealthStatusDot status={r.healthStatus} showLabel />
+          ) : null,
+      },
       render: (r) => <HealthStatusDot status={r.healthStatus} showLabel />,
     },
     {
       key: 'lastCheck',
       label: 'Last check',
       hideBelow: 'md',
+      mobile: { slot: 'meta', order: 3, render: (r) => (r.lastHealthCheck ? `Checked ${relativeTime(r.lastHealthCheck)}` : null) },
       render: (r) => (
         <span className="text-xs text-muted-foreground">
           {relativeTime(r.lastHealthCheck)}
@@ -361,7 +409,10 @@ function CustomerDetail() {
           <div className="border-b border-border px-5 py-3">
             <Skeleton className="h-4 w-24" />
           </div>
-          <div className="p-4">
+          <div className="p-3 md:hidden">
+            <MobileCardSkeleton count={4} withLeading />
+          </div>
+          <div className="hidden p-4 md:block">
             <table className="w-full">
               <tbody>
                 {[...Array(5)].map((_, i) => (
@@ -416,6 +467,22 @@ function CustomerDetail() {
 
       {/* ---- ZONE 1: HERO ---- */}
 
+      {isMobile ? (
+        <MobilePageHeader
+          back={{ to: '/customers', label: 'Back to Customers' }}
+          icon={Building2}
+          title={customer.name}
+          // Phones: one line — the description, or the slug without one.
+          // Server counts per environment are in the tiles below.
+          subtitle={customer.description || <span className="font-mono">{customer.slug}</span>}
+          actions={[
+            { key: 'add-server', label: 'Add server', icon: Plus, onClick: () => setAddServerOpen(true), hidden: !canAddServer },
+            { key: 'edit', label: 'Edit customer', icon: Pencil, variant: 'outline', onClick: () => setEditOpen(true), hidden: !canManage },
+            { key: 'delete', label: 'Delete customer', icon: Trash2, variant: 'destructive', onClick: () => setConfirmDelete(true), hidden: !canDelete },
+          ]}
+        />
+      ) : (
+      <>
       {/* Back link */}
       <Link
         to="/customers"
@@ -490,12 +557,15 @@ function CustomerDetail() {
           )}
         </div>
       </div>
+      </>
+      )}
 
       {/* Stat tiles */}
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
         <StatTile
           icon={Server}
           label="Total servers"
+          shortLabel="Servers"
           value={total}
           iconClass="bg-primary/10 text-primary"
         />
@@ -503,6 +573,7 @@ function CustomerDetail() {
           <StatTile
             icon={Activity}
             label="Active sessions"
+            shortLabel="Sessions"
             value={activeSessions}
             iconClass="bg-emerald-500/10 text-emerald-500"
           />
@@ -516,6 +587,7 @@ function CustomerDetail() {
         <StatTile
           icon={Clock}
           label="Last health check"
+          shortLabel="Last check"
           value={lastHealthCheck ? relativeTime(new Date(lastHealthCheck)) : 'Never'}
           iconClass="bg-muted-foreground/10 text-muted-foreground"
         />
@@ -526,8 +598,9 @@ function CustomerDetail() {
 
         {/* LEFT: servers table (2/3) */}
         <div className="lg:col-span-2">
-          <div className="rounded-lg border border-border bg-card overflow-hidden">
-            <div className="flex items-center justify-between border-b border-border px-5 py-3">
+          {/* Mobile: the cards sit directly on the page (no card-in-card). */}
+          <div className="md:overflow-hidden md:rounded-lg md:border md:border-border md:bg-card">
+            <div className="flex items-center justify-between pb-3 md:border-b md:border-border md:px-5 md:py-3">
               <h3 className="text-sm font-semibold text-foreground">
                 Servers
                 <span className="ml-2 text-muted-foreground font-normal">
@@ -544,7 +617,7 @@ function CustomerDetail() {
             {/* Padding around the DataTable so the inner content (search,
                 filters, rows, pagination) never butts up against the card
                 borders. */}
-            <div className="p-4">
+            <div className="md:p-4">
               <DataTable
                 columns={serverColumns}
                 data={filteredServers}
@@ -556,6 +629,7 @@ function CustomerDetail() {
                 searchPlaceholder="Search hostname or IP..."
                 filters={filterSlot}
                 onRowClick={(r) => navigate(`/servers/${r.id}`)}
+                mobile={{ accent: (r) => envAccent(r.environment) }}
               />
             </div>
           </div>

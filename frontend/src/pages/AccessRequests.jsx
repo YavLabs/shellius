@@ -18,6 +18,7 @@ import ServerName, { serverSearchString } from '@/components/shared/ServerName';
 import Badge from '@/components/shared/Badge';
 import EnvironmentBadge from '@/components/shared/EnvironmentBadge';
 import UserCell from '@/components/shared/UserCell';
+import Avatar from '@/components/ui/Avatar';
 import Modal from '@/components/shared/Modal';
 import RequestForm from '@/components/access-requests/RequestForm';
 import ApprovalCard from '@/components/access-requests/ApprovalCard';
@@ -35,6 +36,9 @@ import { relativeTime, formatDateTime } from '@/utils/time';
 import { ACCESS_REQUEST_STATUS_LABELS } from '@/lib/labels';
 import { PENDING_REVIEWS_EVENT } from '@/hooks/usePendingReviewCount';
 import { can } from '@/lib/permissions';
+import { envAccent } from '@/lib/mobileCard';
+import { CardStatus } from '@/components/mobile/MobileCard';
+import { statusTone } from '@/lib/badgeTones';
 
 
 
@@ -232,7 +236,11 @@ function AccessRequests() {
   const isAdmin = can(user, 'access_requests.view_all');
   const tabs = isAdmin ? [...TABS, { key: 'all', label: 'All' }] : TABS;
 
-  const [activeTab, setActiveTab] = useState('mine');
+  // ?tab=to-review (Activity's "To review" tile) opens that tab.
+  const [activeTab, setActiveTab] = useState(() => {
+    const t = new URLSearchParams(window.location.search).get('tab');
+    return t === 'to-review' || (t === 'all' && isAdmin) ? t : 'mine';
+  });
   const [requests, setRequests] = useState([]);
   const [total, setTotal] = useState(0);
   const [pendingReviewCount, setPendingReviewCount] = useState(0);
@@ -358,6 +366,10 @@ function AccessRequests() {
       label: 'Server',
       sortable: true,
       searchAccessor: (r) => serverSearchString(r.server),
+      mobile: {
+        slot: 'title',
+        render: (r) => r.server?.displayName || r.server?.hostname || r.serverId,
+      },
       render: (r) => (
         <div className="flex items-center gap-2">
           <ServerName server={r.server} fallback={r.serverId} />
@@ -371,6 +383,11 @@ function AccessRequests() {
           label: 'Requester',
           sortable: true,
           searchAccessor: (r) => r.requester?.name || r.requester?.email || '',
+          mobile: {
+            slot: 'secondary',
+            order: 1,
+            render: (r) => r.requester?.name || r.requester?.email || r.requesterId || 'Unknown user',
+          },
           render: (r) => <UserCell user={r.requester} fallback={r.requesterId || 'Unknown user'} />,
         }]
       : []),
@@ -378,6 +395,7 @@ function AccessRequests() {
       ? [{
           key: 'reviewer',
           label: 'Reviewer',
+          mobile: 'hidden',
           render: (r) => (
             <span className="text-sm text-muted-foreground">
               {r.reviewer?.name || r.reviewer?.email || '-'}
@@ -389,6 +407,8 @@ function AccessRequests() {
       key: 'reason',
       label: 'Reason',
       hideBelow: 'md',
+      // Phones: in the request details (tap the card).
+      mobile: 'hidden',
       render: (r) => (
         <span className="block max-w-xs truncate text-sm text-muted-foreground" title={r.reason}>
           {r.reason}
@@ -398,6 +418,7 @@ function AccessRequests() {
     {
       key: 'duration',
       label: 'Duration',
+      mobile: 'hidden',
       render: (r) => (
         <span className="text-sm text-muted-foreground">{formatDuration(r.requestedDuration)}</span>
       ),
@@ -407,6 +428,8 @@ function AccessRequests() {
       label: 'Status',
       sortable: true,
       searchAccessor: (r) => r.status || '',
+      // Phones: quiet status next to the "⋯" menu (DataTable `mobile.corner`).
+      mobile: 'hidden',
       render: (r) => <StatusBadge status={r.status} />,
     },
     {
@@ -414,6 +437,11 @@ function AccessRequests() {
       label: 'Created',
       sortable: true,
       hideBelow: 'lg',
+      mobile: {
+        slot: 'secondary',
+        order: 2,
+        render: (r) => `${relativeTime(r.createdAt)} · ${formatDuration(r.requestedDuration)}`,
+      },
       render: (r) => (
         <span className="text-xs text-muted-foreground">{relativeTime(r.createdAt)}</span>
       ),
@@ -426,6 +454,7 @@ function AccessRequests() {
         {
           label: 'Quick Connect',
           icon: Zap,
+          primary: true,
           hidden: (r) => !isConnectable(r),
           onClick: (r) => quickConnect(r),
         },
@@ -451,17 +480,13 @@ function AccessRequests() {
       <PageHeader
         icon={KeyRound}
         title="Access Requests"
-        subtitle="Request temporary access to servers or review pending requests." helpKey="access-requests">
-        <div className="flex items-center gap-2">
-          <Button variant="outline" onClick={() => fetchRequests()} disabled={loading}>
-            <RefreshCw className={`mr-2 h-4 w-4 ${loading ? 'animate-spin' : ''}`} /> Refresh
-          </Button>
-          <Button onClick={() => setFormOpen(true)}>
-            <Plus className="mr-2 h-4 w-4" />
-            New request
-          </Button>
-        </div>
-      </PageHeader>
+        subtitle="Request temporary access to servers or review pending requests."
+        helpKey="access-requests"
+        actions={[
+          { key: 'refresh', label: 'Refresh', icon: RefreshCw, variant: 'outline', onClick: () => fetchRequests(), disabled: loading, spin: loading },
+          { key: 'new', label: 'New request', icon: Plus, onClick: () => setFormOpen(true) },
+        ]}
+      />
 
       {/* Tabs */}
       <div className="flex items-center gap-1 border-b border-border">
@@ -505,6 +530,15 @@ function AccessRequests() {
         }
         searchPlaceholder="Search servers or requesters..."
         filters={filterSlot}
+        mobile={{
+          onCardClick: (r) => openDetail(r.id),
+          accent: (r) => envAccent(r.server?.environment),
+          corner: (r) => <CardStatus {...statusTone(r.status)} />,
+          leading: (r) =>
+            activeTab !== 'mine' ? (
+              <Avatar name={r.requester?.name} email={r.requester?.email} avatarUrl={r.requester?.avatarUrl} size="md" />
+            ) : undefined,
+        }}
         serverPagination={{
           page,
           total,

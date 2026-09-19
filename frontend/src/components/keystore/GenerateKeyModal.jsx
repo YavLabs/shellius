@@ -122,7 +122,7 @@ function GenerateKeyModal({ open, onClose, onSaved, scope = 'org' }) {
           </label>
           <PasswordInput className={inputCls} value={passphrase} onChange={(e) => setPassphrase(e.target.value)} autoComplete="new-password" />
         </div>
-        <div className="flex justify-end gap-2 pt-1">
+        <div data-sheet-footer className="flex justify-end gap-2 pt-1">
           <Button type="button" variant="outline" onClick={onClose}>
             Cancel
           </Button>

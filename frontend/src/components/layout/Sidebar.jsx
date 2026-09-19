@@ -16,7 +16,6 @@ import {
   ChevronUp,
   PanelLeft,
   PanelLeftClose,
-  Menu,
   X,
   Lock,
 } from 'lucide-react';
@@ -27,6 +26,9 @@ import { cn } from '@/lib/utils';
 import { canAccessRoute } from '@/lib/commands';
 import BrandLogo, { BrandMark } from '@/components/common/BrandLogo';
 import UserMenu from '@/components/layout/UserMenu';
+import ThemeSegmented from '@/components/layout/ThemeSegmented';
+import useIsMobile from '@/hooks/useIsMobile';
+import { APP_VERSION } from '@/version';
 import Avatar from '@/components/ui/Avatar';
 import {
   Tooltip,
@@ -35,6 +37,7 @@ import {
   TooltipTrigger,
 } from '@/components/ui/tooltip';
 import usePendingReviewCount from '@/hooks/usePendingReviewCount';
+import { NAV_SECTIONS } from '@/lib/navSections';
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -49,50 +52,7 @@ const COLLAPSED_WIDTH = 'w-14';
 // Grouped navigation config
 // ---------------------------------------------------------------------------
 
-const NAV_SECTIONS = [
-  {
-    label: 'Overview',
-    items: [
-      { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard, to: '/' },
-      { id: 'terminals', label: 'Terminals', icon: SquareTerminal, to: '/terminals' },
-    ],
-  },
-  {
-    label: 'Inventory',
-    items: [
-      { id: 'customers', label: 'Customers', icon: Building2, to: '/customers' },
-      { id: 'servers', label: 'Servers', icon: Server, to: '/servers' },
-      { id: 'my-hosts', label: 'My hosts', icon: Lock, to: '/my-hosts' },
-    ],
-  },
-  {
-    label: 'Access',
-    items: [
-      { id: 'access-requests', label: 'Access requests', icon: KeyRound, to: '/access-requests' },
-      { id: 'policies', label: 'Policies', icon: Shield, to: '/policies' },
-      {
-        id: 'certificates',
-        label: 'Certificates',
-        icon: FileKey,
-        to: '/certificates',
-      },
-      {
-        id: 'keystore',
-        label: 'Keystore',
-        icon: KeySquare,
-        to: '/keystore',
-      },
-    ],
-  },
-  {
-    label: 'Audit',
-    items: [
-      { id: 'sessions', label: 'Sessions', icon: Terminal, to: '/sessions' },
-      { id: 'audit-log', label: 'Audit log', icon: ScrollText, to: '/audit-log' },
-      { id: 'notifications', label: 'Notifications', icon: Bell, to: '/notifications' },
-    ],
-  },
-];
+// NAV_SECTIONS lives in lib/navSections.js (the phone "More" sheet uses it too).
 
 // Profile and Administration (users, roles, groups and org settings) live in
 // the shared UserMenu dropdown that opens from both the topbar avatar AND the
@@ -121,7 +81,7 @@ function SectionHeader({ label, collapsed }) {
 // NavItem
 // ---------------------------------------------------------------------------
 
-function NavItem({ to, icon: Icon, label, badge, collapsed, exact = false, onNavigate }) {
+function NavItem({ to, icon: Icon, label, badge, collapsed, exact = false, onNavigate, touch = false }) {
   const item = (
     <NavLink
       to={to}
@@ -130,7 +90,9 @@ function NavItem({ to, icon: Icon, label, badge, collapsed, exact = false, onNav
       aria-label={collapsed ? label : undefined}
       className={({ isActive }) =>
         cn(
-          'group flex items-center py-1.5 text-sm transition-colors duration-150',
+          'group flex items-center text-sm transition-colors duration-150',
+          // Phone drawer: 44px touch targets.
+          touch ? 'min-h-11 py-2' : 'py-1.5',
           // Phase 18B: in collapsed mode strip gap-3 (no label to space against)
           // and force-center the icon in the rail.
           collapsed
@@ -181,7 +143,7 @@ function NavItem({ to, icon: Icon, label, badge, collapsed, exact = false, onNav
 // Sidebar
 // ---------------------------------------------------------------------------
 
-function SidebarBody({ collapsed, onToggle, onNavigate }) {
+function SidebarBody({ collapsed, onToggle, onNavigate, mobile = false, onClose }) {
   const { user } = useAuth();
   const { unreadCount } = useNotifications();
   const { liveCount } = useTerminalWorkspace();
@@ -223,6 +185,7 @@ function SidebarBody({ collapsed, onToggle, onNavigate }) {
         collapsed={collapsed}
         exact={item.to === '/'}
         onNavigate={onNavigate}
+        touch={mobile}
       />
     );
   };
@@ -231,7 +194,7 @@ function SidebarBody({ collapsed, onToggle, onNavigate }) {
     <div
       className={cn(
         'flex h-full flex-col border-r border-border bg-card transition-all duration-200',
-        collapsed ? COLLAPSED_WIDTH : EXPANDED_WIDTH
+        mobile ? 'w-72' : collapsed ? COLLAPSED_WIDTH : EXPANDED_WIDTH
       )}
     >
       {/* Logo + collapse toggle */}
@@ -241,7 +204,21 @@ function SidebarBody({ collapsed, onToggle, onNavigate }) {
           collapsed ? 'justify-center' : 'justify-between'
         )}
       >
-        {collapsed ? (
+        {mobile ? (
+          <>
+            <Link to="/" onClick={onNavigate}>
+              <BrandLogo size="sm" nudge />
+            </Link>
+            <button
+              type="button"
+              onClick={onClose}
+              className="-mr-1.5 flex h-11 w-11 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent/50 hover:text-foreground"
+              aria-label="Close navigation"
+            >
+              <X className="h-5 w-5" />
+            </button>
+          </>
+        ) : collapsed ? (
           <Tooltip>
             <TooltipTrigger asChild>
               <button
@@ -303,7 +280,18 @@ function SidebarBody({ collapsed, onToggle, onNavigate }) {
           topbar avatar uses. Profile / Administration / Bulk import / Install CLI /
           Keyboard shortcuts / Sign out all live in the shared menu now.
           Theme selection lives in the topbar's standalone ThemeMenu. */}
-      <div className="shrink-0 border-t border-border px-2 py-3">
+      {mobile && (
+        <div className="shrink-0 space-y-2 border-t border-border px-3 py-3">
+          <ThemeSegmented />
+          <p className="flex items-center justify-center gap-3 text-[11px] text-muted-foreground">
+            <Link to="/legal/privacy" onClick={onNavigate} className="hover:text-foreground">Privacy</Link>
+            <Link to="/legal/terms" onClick={onNavigate} className="hover:text-foreground">Terms</Link>
+            <Link to="/legal/eula" onClick={onNavigate} className="hover:text-foreground">EULA</Link>
+            <span>v{APP_VERSION}</span>
+          </p>
+        </div>
+      )}
+      <div className="shrink-0 border-t border-border px-2 py-3 pb-[max(0.75rem,env(safe-area-inset-bottom))]">
         {user && (
           <UserMenu
             align="left"
@@ -357,7 +345,7 @@ function SidebarBody({ collapsed, onToggle, onNavigate }) {
 const AUTO_COLLAPSE_ROUTES = ['/terminals', '/admin'];
 const isAutoCollapseRoute = (path) => AUTO_COLLAPSE_ROUTES.some((r) => path === r || path.startsWith(`${r}/`));
 
-function Sidebar() {
+function Sidebar({ mobileOpen = false, onMobileOpenChange }) {
   // Saved preference (persisted) — applies everywhere except the routes above.
   const [savedCollapsed, setSavedCollapsed] = useState(() => {
     try {
@@ -369,14 +357,27 @@ function Sidebar() {
   // On an auto-collapse route: null = collapsed by default; true/false once
   // the user toggles it there. Reset each time they arrive from elsewhere.
   const [routeOverride, setRouteOverride] = useState(null);
-  const [mobileOpen, setMobileOpen] = useState(false);
+  // The phone drawer's open state lives in AppLayout: the menu button that
+  // opens it sits in the Topbar.
+  const setMobileOpen = useCallback((open) => onMobileOpenChange?.(open), [onMobileOpenChange]);
+  const isMobile = useIsMobile();
   const location = useLocation();
   const onAutoCollapseRoute = isAutoCollapseRoute(location.pathname);
   const collapsed = onAutoCollapseRoute ? routeOverride ?? true : savedCollapsed;
 
   useEffect(() => {
     setMobileOpen(false);
-  }, [location.pathname]);
+  }, [location.pathname, setMobileOpen]);
+
+  // Escape closes the drawer.
+  useEffect(() => {
+    if (!mobileOpen) return undefined;
+    const onKey = (e) => {
+      if (e.key === 'Escape') setMobileOpen(false);
+    };
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, [mobileOpen, setMobileOpen]);
 
   // Arriving on (or leaving) an auto-collapse route starts fresh; moving
   // between its own sub-pages (e.g. Administration tabs) keeps the choice.
@@ -402,51 +403,37 @@ function Sidebar() {
 
   return (
     <TooltipProvider delayDuration={200}>
-      {/* Mobile hamburger */}
-      <button
-        onClick={() => setMobileOpen(true)}
-        className="fixed left-4 top-4 z-40 flex items-center justify-center rounded-md border border-border bg-card p-2 text-muted-foreground shadow-sm md:hidden"
-        aria-label="Open navigation"
-      >
-        <Menu className="h-5 w-5" />
-      </button>
-
-      {/* Mobile overlay */}
-      {mobileOpen && (
-        <div
-          className="fixed inset-0 z-40 bg-black/50 md:hidden"
-          onClick={() => setMobileOpen(false)}
-        />
+      {isMobile && (
+        <>
+          {/* Phone drawer (opened from the Topbar menu button) */}
+          {mobileOpen && (
+            <div className="fixed inset-0 z-40 bg-black/50 animate-in fade-in-0" onClick={() => setMobileOpen(false)} aria-hidden="true" />
+          )}
+          <aside
+            className={cn(
+              'fixed inset-y-0 left-0 z-50 flex max-w-[85vw] flex-col shadow-2xl transition-[transform,visibility] duration-200',
+              mobileOpen ? 'translate-x-0' : 'invisible -translate-x-full'
+            )}
+            aria-label="Navigation"
+            aria-hidden={!mobileOpen}
+          >
+            <SidebarBody
+              collapsed={false}
+              mobile
+              onToggle={() => {}}
+              onClose={() => setMobileOpen(false)}
+              onNavigate={() => setMobileOpen(false)}
+            />
+          </aside>
+        </>
       )}
 
-      {/* Mobile drawer */}
-      <aside
-        className={cn(
-          'fixed inset-y-0 left-0 z-50 flex flex-col transition-transform duration-200 md:hidden',
-          mobileOpen ? 'translate-x-0' : '-translate-x-full'
-        )}
-        aria-label="Navigation"
-      >
-        <div className="relative">
-          <button
-            onClick={() => setMobileOpen(false)}
-            className="absolute right-2 top-3 z-10 rounded-md p-1 text-muted-foreground hover:bg-accent transition-colors md:hidden"
-            aria-label="Close navigation"
-          >
-            <X className="h-4 w-4" />
-          </button>
-        </div>
-        <SidebarBody
-          collapsed={false}
-          onToggle={() => {}}
-          onNavigate={() => setMobileOpen(false)}
-        />
-      </aside>
-
       {/* Desktop */}
-      <aside className="hidden h-screen md:flex md:shrink-0" aria-label="Navigation">
-        <SidebarBody collapsed={collapsed} onToggle={toggleCollapsed} />
-      </aside>
+      {!isMobile && (
+        <aside className="hidden h-screen md:flex md:shrink-0" aria-label="Navigation">
+          <SidebarBody collapsed={collapsed} onToggle={toggleCollapsed} />
+        </aside>
+      )}
     </TooltipProvider>
   );
 }

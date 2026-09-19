@@ -292,7 +292,7 @@ function RequestForm({ open, onClose, onSuccess, initialServerId = '' }) {
           </div>
         )}
 
-        <div className="flex justify-end gap-2 pt-2">
+        <div data-sheet-footer className="flex justify-end gap-2 pt-2">
           <button
             type="button"
             onClick={onClose}

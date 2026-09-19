@@ -20,7 +20,9 @@ import {
 import DataTable from '@/components/shared/DataTable';
 import { Badge } from '@/components/ui/badge';
 import { roleTone, statusTone } from '@/lib/badgeTones';
+import { CardStatus } from '@/components/mobile/MobileCard';
 import UserCell from '@/components/shared/UserCell';
+import Avatar from '@/components/ui/Avatar';
 import Modal from '@/components/shared/Modal';
 import ConfirmDialog from '@/components/shared/ConfirmDialog';
 import DeleteUserDialog from '@/components/users/DeleteUserDialog';
@@ -314,6 +316,12 @@ function Users() {
       label: 'Name',
       sortable: true,
       searchAccessor: (r) => `${r.name || ''} ${r.email || ''}`,
+      mobile: {
+        slot: 'title',
+        render: (r) => (
+          r.name || r.email
+        ),
+      },
       render: (r) => <UserCell user={r} />,
     },
     {
@@ -321,6 +329,8 @@ function Users() {
       label: 'Role',
       sortable: true,
       searchAccessor: (r) => r.roleInfo?.name || r.role || '',
+      // Phones: plain text, no chip.
+      mobile: { slot: 'meta', order: 1, render: (r) => r.roleInfo?.name || roleTone(r.role).label },
       render: (r) => (
         <Badge tone={roleTone(r.role).tone}>{r.roleInfo?.name || roleTone(r.role).label}</Badge>
       ),
@@ -330,6 +340,8 @@ function Users() {
       label: 'Status',
       sortable: true,
       searchAccessor: (r) => r.status || '',
+      // Phones: quiet status next to the "⋯" menu (DataTable `mobile.corner`).
+      mobile: 'hidden',
       render: (r) => (
         <div className="flex flex-wrap items-center gap-1.5">
           <Badge tone={statusTone(r.status).tone}>{statusTone(r.status).label}</Badge>
@@ -345,6 +357,16 @@ function Users() {
       key: 'mfa',
       label: 'MFA',
       hideBelow: 'md',
+      mobile: {
+        slot: 'meta',
+        order: 3,
+        render: (r) =>
+          r.mfaEnabled ? (
+            <span className="inline-flex items-center gap-1 text-emerald-600 dark:text-emerald-400">
+              <ShieldCheck className="h-3.5 w-3.5" /> MFA
+            </span>
+          ) : null,
+      },
       render: (r) =>
         r.mfaEnabled ? (
           <span className="inline-flex items-center gap-1 text-xs font-medium text-emerald-600 dark:text-emerald-400">
@@ -364,6 +386,10 @@ function Users() {
       key: 'lastLogin',
       label: 'Last login',
       hideBelow: 'lg',
+      mobile: {
+        slot: 'secondary',
+        render: (r) => (r.name ? r.email : null),
+      },
       render: (r) => <span className="text-muted-foreground">{formatDate(r.lastLoginAt || r.lastLogin)}</span>,
     },
     {
@@ -430,13 +456,13 @@ function Users() {
 
   return (
     <div className="space-y-6">
-      <PageHeader icon={UsersIcon} title="Users" subtitle="Manage user accounts, roles, and access." helpKey="users">
-        {can('users.invite') && (
-          <Button onClick={openCreate}>
-            <Plus className="mr-2 h-4 w-4" /> Add User
-          </Button>
-        )}
-      </PageHeader>
+      <PageHeader
+        icon={UsersIcon}
+        title="Users"
+        subtitle="Manage user accounts, roles, and access."
+        helpKey="users"
+        actions={[{ key: 'add', label: 'Add User', icon: Plus, onClick: openCreate, hidden: !can('users.invite') }]}
+      />
 
       {error && (
         <div className="rounded-md border border-destructive/50 bg-destructive/10 px-3 py-2 text-sm text-destructive">
@@ -457,6 +483,16 @@ function Users() {
         emptyMessage="No users found"
         searchPlaceholder="Search by name or email..."
         filters={filterSlot}
+        onResetFilters={() => { setRole(''); setStatus(''); setPage(1); }}
+        mobile={{
+          leading: (r) => <Avatar name={r.name} email={r.email} avatarUrl={r.avatarUrl} size="md" />,
+          corner: (r) =>
+            isLocked(r) ? <CardStatus tone="danger" label="Locked" /> : <CardStatus {...statusTone(r.status)} />,
+          onCardClick:
+            can('users.update') || can('users.assign_role') || can('users.suspend')
+              ? (r) => manageable(r) && openEdit(r)
+              : undefined,
+        }}
         serverPagination={{
           page,
           total,
@@ -537,7 +573,7 @@ function Users() {
               <span className="flex-1 break-all font-mono text-xs text-foreground">{urlModal.url}</span>
               <CopyUrlButton url={urlModal.url} />
             </div>
-            <div className="flex justify-end">
+            <div data-sheet-footer className="flex justify-end">
               <Button variant="outline" size="sm" onClick={() => setUrlModal(null)}>Close</Button>
             </div>
           </div>

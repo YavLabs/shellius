@@ -1,8 +1,7 @@
 import { useCallback, useEffect, useImperativeHandle, useRef, useState, forwardRef } from 'react';
-import { ChevronDown, ChevronRight, RefreshCw, History } from 'lucide-react';
+import { ChevronDown, ChevronRight, RefreshCw, History, Send, Trash2 } from 'lucide-react';
+import { CardIcon, CardStatus } from '@/components/mobile/MobileCard';
 import EmptyState from '@/components/ui/EmptyState';
-import { Badge } from '@/components/ui/badge';
-import Avatar from '@/components/ui/Avatar';
 import { statusTone } from '@/lib/badgeTones';
 import DeployWizardModal from './DeployWizardModal';
 import { listDeploymentBatches, listDeployments, retryDeployment } from '@/services/keystoreService';
@@ -10,16 +9,35 @@ import { formatDateTime, relativeTime } from '@/utils/time';
 
 const ACTION_LABEL = { deploy: 'Export', remove: 'Remove', rotate: 'Rotate' };
 
-function ProgressBar({ counts }) {
-  const total = counts?.total || 0;
-  if (!total) return <div className="h-2 w-full rounded-full bg-muted" />;
+const ACTION_ICON = { deploy: Send, remove: Trash2, rotate: RefreshCw };
+
+/** Quiet result counts: dot + number per outcome (no chips, no bar). */
+function ResultCounts({ counts }) {
+  const parts = [
+    ['success', 'succeeded', 'bg-emerald-500'],
+    ['failed', 'failed', 'bg-red-500'],
+    ['running', 'running', 'bg-blue-500'],
+    ['pending', 'waiting', 'bg-muted-foreground/60'],
+  ].filter(([k]) => (counts?.[k] || 0) > 0);
+  if (!parts.length) return <span className="text-xs text-muted-foreground">No servers</span>;
   return (
-    <div className="flex h-2 w-full overflow-hidden rounded-full bg-muted">
-      <div className="bg-emerald-500" style={{ width: `${((counts.success || 0) / total) * 100}%` }} />
-      <div className="bg-destructive" style={{ width: `${((counts.failed || 0) / total) * 100}%` }} />
-      <div className="bg-blue-500" style={{ width: `${((counts.running || 0) / total) * 100}%` }} />
-    </div>
+    <span className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs tabular-nums text-muted-foreground">
+      {parts.map(([k, label, dot]) => (
+        <span key={k} className="inline-flex items-center gap-1.5">
+          <span className={`h-1.5 w-1.5 rounded-full ${dot}`} aria-hidden="true" />
+          {counts[k]} {label}
+        </span>
+      ))}
+
+    </span>
   );
+}
+
+/** One status for a whole export: running, some failed, or done. */
+function batchStatus(counts) {
+  if ((counts?.running || 0) + (counts?.pending || 0) > 0) return { tone: 'warning', label: 'Running' };
+  if (counts?.failed) return { tone: 'danger', label: `${counts.failed} failed` };
+  return { tone: 'success', label: 'Done' };
 }
 
 function DeploymentRow({ deployment, canRetry, onRetry }) {
@@ -33,7 +51,7 @@ function DeploymentRow({ deployment, canRetry, onRetry }) {
         <button
           type="button"
           onClick={() => hasDetail && setOpen((o) => !o)}
-          className="flex min-w-0 flex-1 items-center gap-2 text-left text-sm"
+          className="flex min-h-10 min-w-0 flex-1 items-center gap-2 text-left text-sm md:min-h-0"
         >
           {hasDetail ? (
             open ? <ChevronDown className="h-3.5 w-3.5 shrink-0 text-muted-foreground" /> : <ChevronRight className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
@@ -42,12 +60,12 @@ function DeploymentRow({ deployment, canRetry, onRetry }) {
           )}
           <span className="truncate text-foreground">{deployment.server?.displayName || deployment.server?.hostname}</span>
         </button>
-        <Badge tone={meta.tone} className="shrink-0">{meta.label}</Badge>
+        <CardStatus tone={meta.tone} label={meta.label} />
         {canRetry && deployment.status === 'failed' && (
           <button
             type="button"
             onClick={() => onRetry(deployment)}
-            className="flex shrink-0 items-center gap-1 text-xs text-primary hover:underline"
+            className="flex min-h-10 shrink-0 items-center gap-1 px-1 text-xs text-primary hover:underline md:min-h-0 md:px-0"
           >
             <RefreshCw className="h-3 w-3" /> Retry
           </button>
@@ -121,32 +139,34 @@ function BatchRow({ batch, canRetry, onChanged, defaultOpen, highlighted, rowRef
         highlighted ? 'border-primary ring-2 ring-primary/40' : 'border-border'
       }`}
     >
-      <button
-        type="button"
-        onClick={() => setOpen((o) => !o)}
-        className="flex w-full items-center gap-4 px-4 py-3 text-left"
-      >
-        {open ? <ChevronDown className="h-4 w-4 shrink-0 text-muted-foreground" /> : <ChevronRight className="h-4 w-4 shrink-0 text-muted-foreground" />}
+      {/* Same structure as the list cards: what and who on top, the
+          result and the "Servers" toggle in an action row under a divider. */}
+      <div className="flex items-start gap-3 p-3.5 md:px-4">
+        <CardIcon icon={ACTION_ICON[batch.action] || Send} />
         <div className="min-w-0 flex-1">
-          <div className="flex flex-wrap items-center gap-2">
-            <Badge tone="neutral">{ACTION_LABEL[batch.action] || batch.action}</Badge>
-            <span className="truncate text-sm font-medium text-foreground">{batch.sshKey?.name}</span>
-            <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
-              <Avatar name={batch.deployedBy?.name} email={batch.deployedBy?.email} avatarUrl={batch.deployedBy?.avatarUrl} size="xs" />
-              by {batch.deployedBy?.name || 'system'} · {relativeTime(batch.createdAt)}
-            </span>
+          <div className="flex min-w-0 items-center gap-2">
+            <span className="min-w-0 flex-1 truncate font-semibold leading-5 text-foreground">{batch.sshKey?.name || 'SSH key'}</span>
+            <CardStatus {...batchStatus(batch.counts)} />
           </div>
-          <div className="mt-2 flex items-center gap-3">
-            <div className="max-w-xs flex-1">
-              <ProgressBar counts={batch.counts} />
-            </div>
-            <span className="shrink-0 text-xs text-muted-foreground tabular-nums">
-              {(batch.counts?.success || 0)}/{batch.counts?.total || 0} succeeded
-              {batch.counts?.failed ? `, ${batch.counts.failed} failed` : ''}
-            </span>
-          </div>
+          <p className="mt-0.5 truncate text-xs leading-4 text-muted-foreground">
+            {ACTION_LABEL[batch.action] || batch.action} · {batch.deployedBy?.name || 'system'} · {relativeTime(batch.createdAt)}
+          </p>
         </div>
-      </button>
+      </div>
+      <div className="flex items-center gap-3 border-t border-border py-1.5 pl-3.5 pr-1.5 md:pl-4">
+        <div className="min-w-0 flex-1">
+          <ResultCounts counts={batch.counts} />
+        </div>
+        <button
+          type="button"
+          onClick={() => setOpen((o) => !o)}
+          aria-expanded={open}
+          className="inline-flex h-9 shrink-0 items-center gap-1 rounded-md px-2.5 text-xs font-medium text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+        >
+          Servers
+          {open ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
+        </button>
+      </div>
       {open && (
         <div className="border-t border-border">
           {loadError ? (

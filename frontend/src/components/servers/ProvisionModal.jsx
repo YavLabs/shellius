@@ -3,8 +3,11 @@ import { X, Terminal, Upload, Key, Lock, CheckCircle2, AlertCircle, Loader2 } fr
 import { provisionServer } from '@/services/serverService';
 import PasswordInput from '@/components/ui/PasswordInput';
 import { Checkbox } from '@/components/ui/checkbox';
+import useIsMobile from '@/hooks/useIsMobile';
+import BottomSheet from '@/components/mobile/BottomSheet';
 
 function ProvisionModal({ server, onClose }) {
+  const isMobile = useIsMobile();
   const [step, setStep] = useState('form'); // 'form' | 'running' | 'done' | 'error'
   const [privateKey, setPrivateKey] = useState('');
   const [passphrase, setPassphrase] = useState('');
@@ -49,6 +52,209 @@ function ProvisionModal({ server, onClose }) {
     }
   };
 
+  const body = (
+    <>
+      {step === 'form' && (
+        <div className="space-y-5 p-4 md:p-6">
+          <div className="rounded-lg border border-border bg-muted/30 px-4 py-3 text-sm text-muted-foreground">
+            Shellius will SSH into{' '}
+            <span className="font-mono text-foreground">{server?.ipAddress}</span> using your
+            private key and install the agent automatically. Your key is used once in memory and
+            never stored.
+          </div>
+
+          <div className="space-y-2">
+            <label className="block text-sm font-medium text-foreground">
+              <Key className="mr-1.5 inline h-3.5 w-3.5" />
+              SSH Private Key
+              <span className="ml-1 font-normal text-muted-foreground">
+                (key and/or password required)
+              </span>
+            </label>
+            <textarea
+              rows={8}
+              className="w-full rounded-md border border-input bg-background px-3 py-2 font-mono text-xs text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring"
+              value={privateKey}
+              onChange={(e) => setPrivateKey(e.target.value)}
+              placeholder={'-----BEGIN OPENSSH PRIVATE KEY-----\n...\n-----END OPENSSH PRIVATE KEY-----'}
+              spellCheck={false}
+            />
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() => fileRef.current?.click()}
+                className="inline-flex items-center gap-1.5 rounded-md border border-input bg-background px-3 py-1.5 text-xs font-medium text-foreground hover:bg-accent"
+              >
+                <Upload className="h-3.5 w-3.5" />
+                Upload key file
+              </button>
+              <input
+                ref={fileRef}
+                type="file"
+                className="hidden"
+                onChange={handleFileUpload}
+                accept=".pem,.key,.pub,*"
+              />
+              <span className="text-xs text-muted-foreground">or paste above</span>
+            </div>
+            <PasswordInput
+              className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring"
+              value={passphrase}
+              onChange={(e) => setPassphrase(e.target.value)}
+              placeholder="Key passphrase (if the key is encrypted)"
+              autoComplete="new-password"
+            />
+          </div>
+
+          <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+            <div className="space-y-2">
+              <label className="block text-sm font-medium text-foreground">SSH User</label>
+              <input
+                className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
+                value={sshUser}
+                onChange={(e) => setSshUser(e.target.value)}
+              />
+            </div>
+            <div className="space-y-2">
+              <label className="block text-sm font-medium text-foreground">
+                <Lock className="mr-1.5 inline h-3.5 w-3.5" />
+                SSH Password
+              </label>
+              <PasswordInput
+                className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                placeholder="login password (if no key)"
+                autoComplete="new-password"
+              />
+            </div>
+          </div>
+
+          <div className="space-y-3">
+            <label className="flex cursor-pointer items-center gap-2 text-sm font-medium text-foreground">
+              <Checkbox checked={needsSudo} onChange={(e) => setNeedsSudo(e.target.checked)} />
+              <Lock className="h-3.5 w-3.5" />
+              Sudo requires a password
+            </label>
+            {needsSudo && (
+              <PasswordInput
+                className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring"
+                value={sudoPassword}
+                onChange={(e) => setSudoPassword(e.target.value)}
+                placeholder="sudo password"
+                autoComplete="new-password"
+              />
+            )}
+          </div>
+        </div>
+      )}
+
+      {(step === 'running' || step === 'done' || step === 'error') && (
+        <div className="flex h-full flex-col">
+          <div className="flex-1 overflow-y-auto bg-ink p-4 font-mono text-xs text-ink-fg/80 max-md:min-h-[50dvh]">
+            {logs.map((line, i) => (
+              <div
+                key={i}
+                className={`leading-5 ${
+                  line.startsWith('[shellius]')
+                    ? 'text-emerald-400'
+                    : line.startsWith('[stderr]')
+                    ? 'text-red-400'
+                    : 'text-ink-fg/80'
+                }`}
+              >
+                {line}
+              </div>
+            ))}
+            {step === 'running' && (
+              <div className="mt-1 flex items-center gap-2 text-ink-muted">
+                <Loader2 className="h-3 w-3 animate-spin" />
+                <span>Running bootstrap...</span>
+              </div>
+            )}
+            <div ref={logsEndRef} />
+          </div>
+          {(step === 'done' || step === 'error') && (
+            <div
+              className={`flex items-center gap-3 border-t border-border px-4 py-3 ${
+                step === 'done' ? 'bg-emerald-500/10' : 'bg-destructive/10'
+              }`}
+            >
+              {step === 'done' ? (
+                <>
+                  <CheckCircle2 className="h-4 w-4 text-emerald-500" />
+                  <span className="text-sm font-medium text-emerald-700 dark:text-emerald-400">
+                    Provisioning completed successfully
+                  </span>
+                </>
+              ) : (
+                <>
+                  <AlertCircle className="h-4 w-4 text-destructive" />
+                  <span className="text-sm font-medium text-destructive">{errorMsg}</span>
+                </>
+              )}
+            </div>
+          )}
+        </div>
+      )}
+    </>
+  );
+
+  const footerActions = (
+    <>
+      {step === 'form' && (
+        <>
+          <button
+            onClick={onClose}
+            className="h-9 rounded-md border border-input bg-background px-4 text-sm font-medium text-foreground hover:bg-accent"
+          >
+            Cancel
+          </button>
+          <button
+            onClick={handleStart}
+            disabled={!privateKey.trim() && !password}
+            className="inline-flex h-9 items-center gap-2 rounded-md bg-primary px-4 text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
+          >
+            <Terminal className="h-4 w-4" />
+            Start provisioning
+          </button>
+        </>
+      )}
+      {(step === 'done' || step === 'error') && (
+        <button
+          onClick={onClose}
+          className="h-9 rounded-md bg-primary px-4 text-sm font-medium text-primary-foreground hover:bg-primary/90"
+        >
+          Close
+        </button>
+      )}
+      {step === 'running' && (
+        <span className="text-sm text-muted-foreground">Provisioning in progress...</span>
+      )}
+    </>
+  );
+
+  // Phones: a bottom sheet (docs/plans/1.5.1-mobile.md §3).
+  if (isMobile) {
+    return (
+      <BottomSheet
+        open
+        onClose={onClose}
+        title={
+          <span className="block">
+            Auto-Provision Server
+            <span className="block truncate text-xs font-normal text-muted-foreground">{server?.hostname}</span>
+          </span>
+        }
+        icon={<Terminal className="h-5 w-5 text-primary" />}
+        bodyClassName="px-0 pt-0"
+        footer={<div className="flex items-center justify-end gap-2">{footerActions}</div>}
+      >
+        {body}
+      </BottomSheet>
+    );
+  }
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
       <div className="relative flex h-[85vh] w-full max-w-2xl flex-col overflow-hidden rounded-lg border border-border bg-background shadow-2xl">
@@ -71,182 +277,12 @@ function ProvisionModal({ server, onClose }) {
 
         {/* Body */}
         <div className="flex-1 overflow-y-auto">
-          {step === 'form' && (
-            <div className="space-y-5 p-6">
-              <div className="rounded-lg border border-border bg-muted/30 px-4 py-3 text-sm text-muted-foreground">
-                Shellius will SSH into{' '}
-                <span className="font-mono text-foreground">{server?.ipAddress}</span> using your
-                private key and install the agent automatically. Your key is used once in memory and
-                never stored.
-              </div>
-
-              <div className="space-y-2">
-                <label className="block text-sm font-medium text-foreground">
-                  <Key className="mr-1.5 inline h-3.5 w-3.5" />
-                  SSH Private Key
-                  <span className="ml-1 font-normal text-muted-foreground">
-                    (key and/or password required)
-                  </span>
-                </label>
-                <textarea
-                  rows={8}
-                  className="w-full rounded-md border border-input bg-background px-3 py-2 font-mono text-xs text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring"
-                  value={privateKey}
-                  onChange={(e) => setPrivateKey(e.target.value)}
-                  placeholder={'-----BEGIN OPENSSH PRIVATE KEY-----\n...\n-----END OPENSSH PRIVATE KEY-----'}
-                  spellCheck={false}
-                />
-                <div className="flex items-center gap-2">
-                  <button
-                    type="button"
-                    onClick={() => fileRef.current?.click()}
-                    className="inline-flex items-center gap-1.5 rounded-md border border-input bg-background px-3 py-1.5 text-xs font-medium text-foreground hover:bg-accent"
-                  >
-                    <Upload className="h-3.5 w-3.5" />
-                    Upload key file
-                  </button>
-                  <input
-                    ref={fileRef}
-                    type="file"
-                    className="hidden"
-                    onChange={handleFileUpload}
-                    accept=".pem,.key,.pub,*"
-                  />
-                  <span className="text-xs text-muted-foreground">or paste above</span>
-                </div>
-                <PasswordInput
-                  className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring"
-                  value={passphrase}
-                  onChange={(e) => setPassphrase(e.target.value)}
-                  placeholder="Key passphrase (if the key is encrypted)"
-                  autoComplete="new-password"
-                />
-              </div>
-
-              <div className="grid grid-cols-2 gap-4">
-                <div className="space-y-2">
-                  <label className="block text-sm font-medium text-foreground">SSH User</label>
-                  <input
-                    className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
-                    value={sshUser}
-                    onChange={(e) => setSshUser(e.target.value)}
-                  />
-                </div>
-                <div className="space-y-2">
-                  <label className="block text-sm font-medium text-foreground">
-                    <Lock className="mr-1.5 inline h-3.5 w-3.5" />
-                    SSH Password
-                  </label>
-                  <PasswordInput
-                    className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring"
-                    value={password}
-                    onChange={(e) => setPassword(e.target.value)}
-                    placeholder="login password (if no key)"
-                    autoComplete="new-password"
-                  />
-                </div>
-              </div>
-
-              <div className="space-y-3">
-                <label className="flex cursor-pointer items-center gap-2 text-sm font-medium text-foreground">
-                  <Checkbox checked={needsSudo} onChange={(e) => setNeedsSudo(e.target.checked)} />
-                  <Lock className="h-3.5 w-3.5" />
-                  Sudo requires a password
-                </label>
-                {needsSudo && (
-                  <PasswordInput
-                    className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring"
-                    value={sudoPassword}
-                    onChange={(e) => setSudoPassword(e.target.value)}
-                    placeholder="sudo password"
-                    autoComplete="new-password"
-                  />
-                )}
-              </div>
-            </div>
-          )}
-
-          {(step === 'running' || step === 'done' || step === 'error') && (
-            <div className="flex h-full flex-col">
-              <div className="flex-1 overflow-y-auto bg-ink p-4 font-mono text-xs text-ink-fg/80">
-                {logs.map((line, i) => (
-                  <div
-                    key={i}
-                    className={`leading-5 ${
-                      line.startsWith('[shellius]')
-                        ? 'text-emerald-400'
-                        : line.startsWith('[stderr]')
-                        ? 'text-red-400'
-                        : 'text-ink-fg/80'
-                    }`}
-                  >
-                    {line}
-                  </div>
-                ))}
-                {step === 'running' && (
-                  <div className="mt-1 flex items-center gap-2 text-ink-muted">
-                    <Loader2 className="h-3 w-3 animate-spin" />
-                    <span>Running bootstrap...</span>
-                  </div>
-                )}
-                <div ref={logsEndRef} />
-              </div>
-              {(step === 'done' || step === 'error') && (
-                <div
-                  className={`flex items-center gap-3 border-t border-border px-4 py-3 ${
-                    step === 'done' ? 'bg-emerald-500/10' : 'bg-destructive/10'
-                  }`}
-                >
-                  {step === 'done' ? (
-                    <>
-                      <CheckCircle2 className="h-4 w-4 text-emerald-500" />
-                      <span className="text-sm font-medium text-emerald-700 dark:text-emerald-400">
-                        Provisioning completed successfully
-                      </span>
-                    </>
-                  ) : (
-                    <>
-                      <AlertCircle className="h-4 w-4 text-destructive" />
-                      <span className="text-sm font-medium text-destructive">{errorMsg}</span>
-                    </>
-                  )}
-                </div>
-              )}
-            </div>
-          )}
+          {body}
         </div>
 
         {/* Footer */}
         <div className="flex items-center justify-end gap-2 border-t border-border px-6 py-4">
-          {step === 'form' && (
-            <>
-              <button
-                onClick={onClose}
-                className="h-9 rounded-md border border-input bg-background px-4 text-sm font-medium text-foreground hover:bg-accent"
-              >
-                Cancel
-              </button>
-              <button
-                onClick={handleStart}
-                disabled={!privateKey.trim() && !password}
-                className="inline-flex h-9 items-center gap-2 rounded-md bg-primary px-4 text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
-              >
-                <Terminal className="h-4 w-4" />
-                Start provisioning
-              </button>
-            </>
-          )}
-          {(step === 'done' || step === 'error') && (
-            <button
-              onClick={onClose}
-              className="h-9 rounded-md bg-primary px-4 text-sm font-medium text-primary-foreground hover:bg-primary/90"
-            >
-              Close
-            </button>
-          )}
-          {step === 'running' && (
-            <span className="text-sm text-muted-foreground">Provisioning in progress...</span>
-          )}
+          {footerActions}
         </div>
       </div>
     </div>

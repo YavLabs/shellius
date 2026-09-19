@@ -336,7 +336,7 @@ function IdentityFormModal({ open, onClose, identity, onSaved, scope = 'org' }) 
           </div>
         )}
 
-        <div className="flex justify-end gap-2 pt-1">
+        <div data-sheet-footer className="flex justify-end gap-2 pt-1">
           <Button type="button" variant="outline" onClick={onClose}>
             Cancel
           </Button>

@@ -26,6 +26,8 @@ import Notifications from './pages/Notifications';
 import Terminal from './pages/Terminal';
 import Terminals from './pages/Terminals';
 import Connections from './pages/Connections';
+import ConnectHub from './pages/ConnectHub';
+import ActivityHub from './pages/ActivityHub';
 import Device from './pages/Device';
 import Profile from './pages/Profile';
 import Register from './pages/Register';
@@ -76,6 +78,9 @@ function App() {
                   <Route path="/dashboard" element={<Dashboard />} />
                   <Route path="/terminals" element={<Terminals />} />
                   <Route path="/connections" element={<Connections />} />
+                  {/* Phone bottom-navigation hubs (lib/mobileNav.js); plain pages on desktop. */}
+                  <Route path="/connect" element={<ConnectHub />} />
+                  <Route path="/activity" element={<ActivityHub />} />
                   <Route path="/access-requests" element={<AccessRequests />} />
                   <Route path="/notifications" element={<Notifications />} />
                   <Route path="/profile" element={<Profile />} />

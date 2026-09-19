@@ -131,7 +131,7 @@ function HostConnectAuthModal({ open, onClose, host, onConnected }) {
           </div>
         </div>
 
-        <div className="flex justify-end gap-2 pt-1">
+        <div data-sheet-footer className="flex justify-end gap-2 pt-1">
           <Button type="button" variant="outline" onClick={onClose}>
             Cancel
           </Button>

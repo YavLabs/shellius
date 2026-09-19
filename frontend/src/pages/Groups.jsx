@@ -5,6 +5,7 @@ import Modal from '@/components/shared/Modal';
 import ConfirmDialog from '@/components/shared/ConfirmDialog';
 import DeleteGroupDialog from '@/components/groups/DeleteGroupDialog';
 import DataTable from '@/components/shared/DataTable';
+import { CardIcon } from '@/components/mobile/MobileCard';
 import PageHeader from '@/components/common/PageHeader';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -48,6 +49,7 @@ function Groups() {
       key: 'name',
       label: 'Name',
       sortable: true,
+      mobile: { slot: 'title', render: (g) => g.name },
       render: (g) => (
         <button
           onClick={() => navigate(`/admin/groups/${g.id}`)}
@@ -63,6 +65,10 @@ function Groups() {
       key: 'description',
       label: 'Description',
       hideBelow: 'md',
+      mobile: {
+        slot: 'secondary',
+        render: (g) => (g.description ? <span className="line-clamp-2">{g.description}</span> : null),
+      },
       render: (g) => (
         <span className="text-sm text-muted-foreground line-clamp-1">{g.description || '—'}</span>
       ),
@@ -72,6 +78,8 @@ function Groups() {
       label: 'Members',
       sortable: true,
       searchAccessor: (g) => String(g._count?.memberships ?? g.memberCount ?? 0),
+      // Phones: next to the "⋯" menu (DataTable `mobile.corner`).
+      mobile: 'hidden',
       render: (g) => (
         <span className="text-sm text-foreground">
           {g._count?.memberships ?? g.memberCount ?? 0}
@@ -83,6 +91,7 @@ function Groups() {
       label: 'Created',
       sortable: true,
       hideBelow: 'lg',
+      mobile: 'hidden',
       render: (g) => (
         <span className="text-xs text-muted-foreground">{relativeTime(g.createdAt)}</span>
       ),
@@ -114,13 +123,15 @@ function Groups() {
 
   return (
     <div className="space-y-6">
-      <PageHeader icon={UsersRound} title="Groups" subtitle="Organize users into access groups." helpKey="groups">
-        {canManage && (
-          <Button onClick={() => setCreateOpen(true)}>
-            <Plus className="mr-2 h-4 w-4" /> Create Group
-          </Button>
-        )}
-      </PageHeader>
+      <PageHeader
+        icon={UsersRound}
+        title="Groups"
+        subtitle="Organize users into access groups."
+        helpKey="groups"
+        actions={[
+          { key: 'create', label: 'Create Group', icon: Plus, onClick: () => setCreateOpen(true), hidden: !canManage },
+        ]}
+      />
 
       {error && (
         <div className="rounded-md border border-destructive/50 bg-destructive/10 px-3 py-2 text-sm text-destructive">
@@ -135,6 +146,18 @@ function Groups() {
         emptyMessage="No groups yet. Create your first one to get started."
         searchPlaceholder="Search groups..."
         onRowClick={(g) => navigate(`/admin/groups/${g.id}`)}
+        mobile={{
+          leading: () => <CardIcon icon={UsersRound} />,
+          corner: (g) => {
+            const n = g._count?.memberships ?? g.memberCount ?? 0;
+            return (
+              <span className="flex items-center gap-1 tabular-nums" title="Members" aria-label={`${n} members`}>
+                <UsersRound className="h-3.5 w-3.5" />
+                {n}
+              </span>
+            );
+          },
+        }}
       />
 
       <CreateGroupModal
@@ -218,7 +241,7 @@ function CreateGroupModal({ open, onClose, onCreated }) {
             onChange={(e) => setDescription(e.target.value)}
           />
         </div>
-        <div className="flex justify-end gap-2 pt-2">
+        <div data-sheet-footer className="flex justify-end gap-2 pt-2">
           <Button type="button" variant="outline" onClick={onClose}>Cancel</Button>
           <Button type="submit" disabled={submitting}>
             {submitting ? 'Creating...' : 'Create group'}

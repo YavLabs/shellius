@@ -26,7 +26,9 @@ function Footer() {
   ].filter(Boolean);
 
   return (
-    <footer className="shrink-0 border-t border-border/40 bg-card/50 px-6 py-3">
+    // Hidden on phones (the bottom navigation takes the space); the legal
+    // links are in the menu drawer there.
+    <footer className="hidden shrink-0 border-t border-border/40 bg-card/50 px-6 py-3 md:block">
       <div className="flex flex-col gap-2 text-xs text-muted-foreground sm:flex-row sm:items-center sm:justify-between">
         <p className="flex items-center gap-1.5">
           &copy; {new Date().getFullYear()} {orgName} &middot;{' '}

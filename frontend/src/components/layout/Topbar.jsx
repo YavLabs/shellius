@@ -1,5 +1,5 @@
 import { useLocation } from 'react-router-dom';
-import { Search } from 'lucide-react';
+import { Menu, Search } from 'lucide-react';
 import { useAuth } from '@/context/AuthContext';
 import { useCommandPalette } from '@/context/CommandPaletteContext';
 import NotificationBell from '@/components/layout/NotificationBell';
@@ -8,6 +8,8 @@ import UserMenu from '@/components/layout/UserMenu';
 import QuickConnectButton from '@/components/quickConnect/QuickConnectButton';
 import QuickActionsMenu from '@/components/command/QuickActionsMenu';
 import Avatar from '@/components/ui/Avatar';
+import useIsMobile from '@/hooks/useIsMobile';
+import { cn } from '@/lib/utils';
 import { Tooltip, TooltipContent, TooltipTrigger, TooltipProvider } from '@/components/ui/tooltip';
 
 const isMac =
@@ -29,6 +31,8 @@ const routeNames = {
   '/keystore': 'Keystore',
   '/terminals': 'Terminals',
   '/connections': 'Recent connections',
+  '/connect': 'Connect',
+  '/activity': 'Activity',
   '/dashboard': 'Dashboard',
   '/profile': 'Profile',
   '/notifications': 'Notifications',
@@ -42,24 +46,71 @@ function pageNameFor(pathname) {
   return routeNames[section] || 'Shellius';
 }
 
-function Topbar() {
+function AccountButton({ user, className }) {
+  return (
+    <TooltipProvider delayDuration={300}>
+      <UserMenu
+        align="right"
+        verticalAlign="below"
+        trigger={({ open, onClick }) => (
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <button
+                type="button"
+                onClick={onClick}
+                aria-haspopup="menu"
+                aria-expanded={open}
+                aria-label={`Account menu (${user?.name || 'User'})`}
+                className={cn(
+                  'flex shrink-0 items-center justify-center rounded-full focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background',
+                  className
+                )}
+              >
+                <Avatar name={user?.name} email={user?.email} avatarUrl={user?.avatarUrl} size="md" />
+              </button>
+            </TooltipTrigger>
+            <TooltipContent side="bottom">Account menu ({user?.name || 'User'})</TooltipContent>
+          </Tooltip>
+        )}
+      />
+    </TooltipProvider>
+  );
+}
+
+/**
+ * Top bar (desktop and tablet). Phones have no top bar: navigation, search,
+ * notifications and the account live in the bottom navigation (Connect,
+ * Activity, More) and the "+" sheet (docs/plans/1.5.1-mobile.md).
+ */
+function Topbar({ onOpenNav }) {
   const location = useLocation();
   const { user } = useAuth();
   const { openPalette } = useCommandPalette();
+  const isMobile = useIsMobile();
 
   const pageName = pageNameFor(location.pathname);
 
+  if (isMobile) return null;
+
   return (
-    <header className="flex h-14 shrink-0 items-center justify-between gap-3 border-b border-border bg-card pl-16 pr-3 sm:pr-4 md:pl-6">
-      {/* Breadcrumb */}
-      <div className="flex min-w-0 items-center gap-2 text-sm">
-        <span className="hidden text-muted-foreground sm:inline">Shellius</span>
-        <span className="hidden text-muted-foreground/50 sm:inline">/</span>
-        <span className="truncate font-medium text-foreground">{pageName}</span>
+    <header className="flex h-14 shrink-0 items-center justify-between gap-1 border-b border-border bg-card pl-1 pr-1 md:gap-3 md:pl-6 md:pr-4">
+      {/* Breadcrumb (phones: menu button + page title) */}
+      <div className="flex min-w-0 items-center gap-1 text-sm md:gap-2">
+        <button
+          type="button"
+          onClick={onOpenNav}
+          aria-label="Open navigation"
+          className="flex h-11 w-11 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground md:hidden"
+        >
+          <Menu className="h-5 w-5" />
+        </button>
+        <span className="hidden text-muted-foreground md:inline">Shellius</span>
+        <span className="hidden text-muted-foreground/50 md:inline">/</span>
+        <span className="truncate text-base font-semibold text-foreground md:text-sm md:font-medium">{pageName}</span>
       </div>
 
       {/* Actions */}
-      <div className="flex shrink-0 items-center gap-2">
+      <div className="flex shrink-0 items-center md:gap-2">
         {/* Global search trigger — opens the command palette. */}
         <button
           type="button"
@@ -77,54 +128,38 @@ function Topbar() {
           type="button"
           onClick={openPalette}
           aria-label="Search"
-          className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground md:hidden"
+          className="flex h-11 w-11 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground md:hidden"
         >
-          <Search className="h-4 w-4" />
+          <Search className="h-[18px] w-[18px]" />
         </button>
 
-        <div aria-hidden="true" className="mx-1 hidden h-6 w-px shrink-0 bg-border sm:block" />
+        <div aria-hidden="true" className="mx-1 hidden h-6 w-px shrink-0 bg-border md:block" />
 
-        {/* Quick actions (secondary) */}
-        <QuickActionsMenu />
+        {/* Quick actions (secondary) and Quick Connect (primary). Phones:
+            both live in the bottom navigation's centre sheet. The Quick
+            Connect button stays mounted (display: none) for its g q shortcut. */}
+        <div className="hidden md:contents">
+          <QuickActionsMenu />
+        </div>
+        <div className="hidden md:contents">
+          <QuickConnectButton />
+        </div>
 
-        {/* Quick Connect (primary) */}
-        <QuickConnectButton />
+        <div aria-hidden="true" className="mx-1 hidden h-6 w-px shrink-0 bg-border md:block" />
 
-        <div aria-hidden="true" className="mx-1 hidden h-6 w-px shrink-0 bg-border sm:block" />
-
-        {/* Theme */}
-        <ThemeMenu />
+        {/* Theme (phones: in the menu drawer and the account menu) */}
+        <div className="hidden md:contents">
+          <ThemeMenu />
+        </div>
 
         {/* Notifications */}
         <NotificationBell />
 
-        <div aria-hidden="true" className="mx-1 hidden h-6 w-px shrink-0 bg-border sm:block" />
+        <div aria-hidden="true" className="mx-1 hidden h-6 w-px shrink-0 bg-border md:block" />
 
         {/* User dropdown — avatar only trigger. Profile / Administration / Bulk
             import / Install CLI / Keyboard shortcuts / Sign out live inside. */}
-        <TooltipProvider delayDuration={300}>
-          <UserMenu
-            align="right"
-            verticalAlign="below"
-            trigger={({ open, onClick }) => (
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <button
-                    type="button"
-                    onClick={onClick}
-                    aria-haspopup="menu"
-                    aria-expanded={open}
-                    aria-label={`Account menu (${user?.name || 'User'})`}
-                    className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
-                  >
-                    <Avatar name={user?.name} email={user?.email} avatarUrl={user?.avatarUrl} size="md" />
-                  </button>
-                </TooltipTrigger>
-                <TooltipContent side="bottom">Account menu ({user?.name || 'User'})</TooltipContent>
-              </Tooltip>
-            )}
-          />
-        </TooltipProvider>
+        <AccountButton user={user} className="h-9 w-9" />
       </div>
     </header>
   );

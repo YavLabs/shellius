@@ -88,7 +88,7 @@ function RoleList({ catalog, roles, onNew, onCopy, onDelete }) {
         {roles.map((r) => {
           const kind = roleKind(r);
           return (
-            <li key={r.id} className="group flex items-center gap-4 px-4 py-3 hover:bg-accent/30">
+            <li key={r.id} className="group flex items-center gap-3 px-3 py-3 hover:bg-accent/30 md:gap-4 md:px-4">
               <span
                 className={cn(
                   'flex h-9 w-9 shrink-0 items-center justify-center rounded-md',
@@ -103,7 +103,16 @@ function RoleList({ catalog, roles, onNew, onCopy, onDelete }) {
                   <Badge tone={kind.tone}>{kind.label}</Badge>
                   {!r.isSystem && <span className="text-[11px] text-muted-foreground">based on {BASE_LABEL[r.baseRole]}</span>}
                 </span>
-                <span className="mt-0.5 block truncate text-xs text-muted-foreground">{r.description || '—'}</span>
+                <span className="mt-0.5 block text-xs text-muted-foreground line-clamp-2 md:truncate">{r.description || '—'}</span>
+                <span className="mt-1 flex items-center gap-2 text-[11px] tabular-nums text-muted-foreground sm:hidden">
+                  {r.permissions.length}/{total} permissions
+                  {r.sensitivePermissions?.length > 0 && (
+                    <span className="flex items-center gap-0.5 text-amber-600 dark:text-amber-400">
+                      <AlertTriangle className="h-3 w-3" />
+                      {r.sensitivePermissions.length}
+                    </span>
+                  )}
+                </span>
               </Link>
               <div className="hidden w-40 shrink-0 sm:block">
                 <div className="flex items-center justify-between text-[11px] text-muted-foreground">
@@ -118,14 +127,14 @@ function RoleList({ catalog, roles, onNew, onCopy, onDelete }) {
                   )}
                 </div>
               </div>
-              <span className="flex w-16 shrink-0 items-center justify-end gap-1 text-xs tabular-nums text-muted-foreground" title="Users">
+              <span className="flex w-auto shrink-0 items-center justify-end gap-1 text-xs tabular-nums text-muted-foreground md:w-16" title="Users">
                 <UsersIcon className="h-3.5 w-3.5" />
                 {r.userCount}
               </span>
               {can('roles.manage') && (
                 <DropdownMenu>
                   <DropdownMenuTrigger asChild>
-                    <Button variant="ghost" size="icon" className="h-8 w-8" aria-label={`Actions for ${r.name}`}>
+                    <Button variant="ghost" size="icon" className="-mr-2 h-10 w-10 md:mr-0 md:h-8 md:w-8" aria-label={`Actions for ${r.name}`}>
                       <MoreHorizontal className="h-4 w-4" />
                     </Button>
                   </DropdownMenuTrigger>
@@ -278,6 +287,13 @@ function RoleDetail({ id, catalog, roles, reloadList }) {
             </p>
           </>
         }
+        actions={[
+          // Phones: every role action goes into the header's "⋯" menu (desktop keeps the buttons below).
+          { key: 'edit', label: 'Edit details', icon: Pencil, variant: 'outline', onClick: () => setEditMeta(true), hidden: !can('roles.manage') || !canEdit, desktop: null },
+          { key: 'duplicate', label: 'Duplicate', icon: Copy, variant: 'outline', onClick: () => setCopyOpen(true), hidden: !can('roles.manage') || !role.assignable, desktop: null },
+          { key: 'reset', label: 'Reset to defaults', icon: RotateCcw, variant: 'outline', onClick: () => setResetOpen(true), hidden: !can('roles.manage') || !canEdit || !role.isSystem, desktop: null },
+          { key: 'delete', label: 'Delete', icon: Trash2, variant: 'destructive', onClick: () => setDeleteOpen(true), hidden: !can('roles.manage') || !canEdit || role.isSystem, desktop: null },
+        ]}
       >
         {can('roles.manage') && (
           <div className="flex flex-wrap items-center gap-2">
@@ -457,7 +473,25 @@ function Roles() {
 
   return (
     <div className="space-y-6">
-      <PageHeader icon={ShieldCheck} title="Roles" subtitle="What each role can do. Every user has one role." helpKey="roles">
+      <PageHeader
+        icon={ShieldCheck}
+        title="Roles"
+        subtitle="What each role can do. Every user has one role."
+        helpKey="roles"
+        actions={[
+          // Phones: the List / Matrix switch goes into the "⋯" menu (desktop keeps the controls below).
+          {
+            key: 'view',
+            label: 'View',
+            desktop: null,
+            items: [
+              { key: 'list', label: 'List', icon: List, checked: view === 'list', onClick: () => setView('list') },
+              { key: 'matrix', label: 'Matrix', icon: LayoutGrid, checked: view === 'matrix', onClick: () => setView('matrix') },
+            ],
+          },
+          { key: 'new', label: 'New role', icon: Plus, onClick: () => setNewOpen(true), hidden: !can('roles.manage'), desktop: null },
+        ]}
+      >
         <div className="flex items-center gap-2">
           <div className="flex rounded-md border border-border p-0.5" role="tablist" aria-label="View">
             {[

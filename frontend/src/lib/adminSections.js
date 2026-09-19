@@ -39,6 +39,7 @@ export const ADMIN_SECTIONS = [
     key: 'users',
     group: 'people',
     label: 'Users',
+    description: 'Invite people, change roles, suspend accounts',
     icon: Users,
     anyOf: ['users.view'],
     detail: true,
@@ -48,6 +49,7 @@ export const ADMIN_SECTIONS = [
     key: 'roles',
     group: 'people',
     label: 'Roles',
+    description: 'What each role is allowed to do',
     icon: ShieldCheck,
     anyOf: ['roles.view'],
     detail: true,
@@ -57,6 +59,7 @@ export const ADMIN_SECTIONS = [
     key: 'groups',
     group: 'people',
     label: 'Groups',
+    description: 'Organize users into access groups',
     icon: UsersRound,
     anyOf: ['groups.view'],
     detail: true,
@@ -66,6 +69,7 @@ export const ADMIN_SECTIONS = [
     key: 'sso',
     group: 'authentication',
     label: 'Single sign-on',
+    description: 'Sign in with Google, Okta, Entra ID and more',
     icon: KeyRound,
     anyOf: ['settings.sso'],
     keywords: ['sso', 'okta', 'google', 'oidc', 'saml', 'github', 'entra', 'azure ad', 'auth0', 'identity provider', 'idp', 'login'],
@@ -74,6 +78,7 @@ export const ADMIN_SECTIONS = [
     key: 'mfa',
     group: 'authentication',
     label: 'Two-factor',
+    description: 'Require authenticator codes at sign-in',
     icon: Smartphone,
     anyOf: ['settings.mfa'],
     keywords: ['mfa', '2fa', 'totp', 'two-factor', 'authenticator', 'otp', 'one-time code'],
@@ -82,6 +87,7 @@ export const ADMIN_SECTIONS = [
     key: 'access',
     group: 'authentication',
     label: 'Access rules',
+    description: 'Production approvals, bypass and sign-in rules',
     icon: Lock,
     anyOf: ['org.access_settings'],
     keywords: ['production', 'prod', 'approval', 'bypass', 'require sso', 'personal vault'],
@@ -90,6 +96,7 @@ export const ADMIN_SECTIONS = [
     key: 'organization',
     group: 'organization',
     label: 'General',
+    description: 'Name, domain and branding',
     icon: Building2,
     anyOf: ['org.update'],
     keywords: ['organization', 'org', 'name', 'domain', 'logo', 'company'],
@@ -98,6 +105,7 @@ export const ADMIN_SECTIONS = [
     key: 'ca',
     group: 'organization',
     label: 'Certificate authority',
+    description: 'The SSH certificate authority and its keys',
     icon: Shield,
     anyOf: ['ca.view'],
     keywords: ['ca', 'certificate', 'ssh ca', 'rotate', 'fingerprint', 'public key'],
@@ -106,6 +114,7 @@ export const ADMIN_SECTIONS = [
     key: 'quick-connect',
     group: 'organization',
     label: 'Quick Connect',
+    description: 'Ad-hoc SSH connections to unsaved hosts',
     icon: Zap,
     anyOf: ['quick_connect.settings'],
     keywords: ['quick connect', 'ad-hoc', 'adhoc', 'ssh'],
@@ -114,6 +123,7 @@ export const ADMIN_SECTIONS = [
     key: 'email',
     group: 'integrations',
     label: 'Email',
+    description: 'Provider for invites and notifications',
     icon: Mail,
     anyOf: ['settings.smtp'],
     keywords: ['email', 'smtp', 'mail', 'sendgrid', 'mailgun', 'postmark', 'resend', 'gmail', 'microsoft 365', 'office 365', 'outlook'],
@@ -122,6 +132,7 @@ export const ADMIN_SECTIONS = [
     key: 'storage',
     group: 'integrations',
     label: 'Storage',
+    description: 'Where session recordings are kept',
     icon: HardDrive,
     anyOf: ['settings.storage'],
     keywords: ['storage', 's3', 'minio', 'azure blob', 'bucket', 'recordings'],
@@ -169,13 +180,15 @@ export function sectionKeyFromPath(pathname) {
  * Where a visit to /admin[/<key>] should go for this viewer:
  *   { redirect: '/' }             — no visible section at all (dashboard)
  *   { redirect: '/admin/<first>' } — bare /admin
+ *   { list: true }                 — bare /admin with `listOnBare` (phones:
+ *                                    the section list is its own screen)
  *   { redirect: '/admin' }         — unknown section, or one they can't see
  *   { section }                    — render it
  */
-export function resolveAdminRoute(user, key) {
+export function resolveAdminRoute(user, key, { listOnBare = false } = {}) {
   const visible = visibleSections(user);
   if (visible.length === 0) return { redirect: '/' };
-  if (!key) return { redirect: sectionPath(visible[0].key) };
+  if (!key) return listOnBare ? { list: true } : { redirect: sectionPath(visible[0].key) };
   const section = visible.find((s) => s.key === key);
   if (!section) return { redirect: ADMIN_BASE };
   return { section };

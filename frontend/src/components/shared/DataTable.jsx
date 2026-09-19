@@ -22,6 +22,8 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
+import useIsMobile from '@/hooks/useIsMobile';
+import MobileDataList from '@/components/mobile/MobileDataList';
 
 const PAGE_SIZE_OPTIONS = [10, 20, 50, 100];
 
@@ -130,6 +132,15 @@ function useDebounced(value, delay) {
  *   - Row selection: `selectable`, `selectedIds`, `onSelectionChange`, `bulkActions` slot
  *   - Sticky header
  *   - Responsive: `hideBelow:'md'|'lg'` on column hides it on narrow viewports
+ *
+ * Mobile (< md, docs/plans/1.5.1-mobile.md §5): no table — a card list with a
+ * full-width search, a "Filters" sheet (the `filters` slot), a "Sort" menu,
+ * "Load more" / compact paging and a bulk bar above the bottom navigation.
+ * Card fields come from each column's `mobile` config (see lib/mobileCard.js);
+ * actions with `primary: true` become buttons on the card. Table-level
+ * options go in the `mobile` prop: { leading(row), maxMeta, maxPrimary,
+ * cardClassName(row), onCardClick(row) (tap target when there's no onRowClick) }. `activeFilterCount` / `onResetFilters` drive the
+ * Filters badge and the sheet's Reset button.
  */
 function DataTable({
   // Core
@@ -178,7 +189,14 @@ function DataTable({
 
   // className for the wrapper
   className,
+
+  // Mobile card list options (see header comment)
+  mobile,
+  activeFilterCount,
+  onResetFilters,
 }) {
+  const isMobile = useIsMobile();
+
   // -------------------------------------------------------------------
   // Search
   // -------------------------------------------------------------------
@@ -405,6 +423,57 @@ function DataTable({
     }
     return base;
   }, [columns, selectable]);
+
+  // -------------------------------------------------------------------
+  // Mobile: card list instead of the table
+  // -------------------------------------------------------------------
+  if (isMobile) {
+    const selectSort = (key) => {
+      if (isServerSort) {
+        const dir = serverSort.sortKey === key && serverSort.sortDir === 'asc' ? 'desc' : 'asc';
+        serverSort.onSortChange(key, dir);
+      } else if (localSortKey === key) {
+        setLocalSortDir(localSortDir === 'asc' ? 'desc' : 'asc');
+      } else {
+        setLocalSortKey(key);
+        setLocalSortDir('asc');
+      }
+    };
+    return (
+      <MobileDataList
+        className={className}
+        columns={columns}
+        rows={isServerPagination ? data : processedData}
+        loading={loading}
+        emptyContent={emptyState ?? emptyMessage}
+        search={searchRaw}
+        onSearch={setSearchRaw}
+        searchPlaceholder={searchPlaceholder}
+        filters={filters}
+        activeFilterCount={activeFilterCount}
+        onResetFilters={onResetFilters}
+        sortKey={sortKey}
+        sortDir={sortDir}
+        onSortSelect={selectSort}
+        onSortClear={isServerSort ? undefined : () => { setLocalSortKey(null); setLocalSortDir('asc'); }}
+        server={isServerPagination}
+        page={page}
+        pageSize={pageSize}
+        total={total}
+        totalPages={totalPages}
+        startRow={startRow}
+        endRow={endRow}
+        onPage={goToPage}
+        onLoadMore={() => setLocalPage((p) => p + 1)}
+        selectable={selectable}
+        selectedIds={selectedIds}
+        onSelectionChange={onSelectionChange}
+        bulkActions={bulkActions}
+        onRowClick={onRowClick}
+        options={mobile}
+      />
+    );
+  }
 
   // -------------------------------------------------------------------
   // Render

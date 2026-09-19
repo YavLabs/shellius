@@ -12,6 +12,7 @@ import { useAuth } from '@/context/AuthContext';
 import Avatar from '@/components/ui/Avatar';
 import { canAccessRoute } from '@/lib/commands';
 import { canSeeAdministration } from '@/lib/adminSections';
+import ThemeSegmented from '@/components/layout/ThemeSegmented';
 
 /**
  * UserMenu — the shared dropdown that opens from the topbar avatar
@@ -38,7 +39,9 @@ import { canSeeAdministration } from '@/lib/adminSections';
  *   - Keyboard shortcuts → opens the ShortcutsDialog
  *   - Sign out (destructive)
  *
- * Theme selection lives in the standalone ThemeMenu (topbar), not here.
+ * Theme selection lives in the standalone ThemeMenu (topbar); on phones,
+ * where the topbar has no theme menu, a Light / Dark / System control
+ * appears here instead.
  */
 function UserMenu({ trigger, align = 'right', verticalAlign = 'below' }) {
   const [open, setOpen] = useState(false);
@@ -128,17 +131,25 @@ function UserMenu({ trigger, align = 'right', verticalAlign = 'below' }) {
             label="Install CLI"
             onClick={() => go('/install-cli')}
           />
-          <MenuItem
-            icon={Keyboard}
-            label="Keyboard shortcuts"
-            onClick={() => {
-              close();
-              window.dispatchEvent(new CustomEvent('shellius:open-shortcuts'));
-            }}
-          />
+          {/* No keyboard shortcuts on phones. */}
+          <div className="max-md:hidden">
+            <MenuItem
+              icon={Keyboard}
+              label="Keyboard shortcuts"
+              onClick={() => {
+                close();
+                window.dispatchEvent(new CustomEvent('shellius:open-shortcuts'));
+              }}
+            />
+          </div>
+
+          {/* Theme — phones only (desktop has the topbar ThemeMenu) */}
+          <div className="border-t border-border px-3 py-2 md:hidden">
+            <ThemeSegmented />
+          </div>
 
           {/* Sign out */}
-          <div className="my-1 border-t border-border" />
+          <div className="my-1 border-t border-border max-md:mt-0" />
           <MenuItem
             icon={LogOut}
             label="Sign out"
@@ -162,8 +173,8 @@ function MenuItem({ icon: Icon, label, onClick, destructive = false }) {
       role="menuitem"
       className={
         destructive
-          ? 'flex w-full items-center gap-2 px-3 py-2 text-sm text-destructive transition-colors hover:bg-destructive/10 focus:bg-destructive/10'
-          : 'flex w-full items-center gap-2 px-3 py-2 text-sm text-muted-foreground hover:bg-accent hover:text-foreground transition-colors'
+          ? 'flex w-full items-center gap-2 px-3 py-2 text-sm text-destructive transition-colors hover:bg-destructive/10 focus:bg-destructive/10 max-md:min-h-11'
+          : 'flex w-full items-center gap-2 px-3 py-2 text-sm text-muted-foreground hover:bg-accent hover:text-foreground transition-colors max-md:min-h-11'
       }
     >
       <Icon className={destructive ? 'h-4 w-4 text-destructive' : 'h-4 w-4'} />

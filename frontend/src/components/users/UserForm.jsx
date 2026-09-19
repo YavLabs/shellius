@@ -251,7 +251,7 @@ function UserForm({ user, onSubmit, onCancel }) {
         />
       </div>
 
-      <div className="flex justify-end gap-2 pt-2">
+      <div data-sheet-footer className="flex justify-end gap-2 pt-2">
         <button
           type="button"
           onClick={onCancel}

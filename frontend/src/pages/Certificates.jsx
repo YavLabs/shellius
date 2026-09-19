@@ -12,6 +12,7 @@ import ConfirmDialog from '@/components/shared/ConfirmDialog';
 import CertStatusBadge from '@/components/shared/CertStatusBadge';
 import EnvironmentBadge from '@/components/shared/EnvironmentBadge';
 import UserCell from '@/components/shared/UserCell';
+import Avatar from '@/components/ui/Avatar';
 import { Badge } from '@/components/ui/badge';
 import PageHeader from '@/components/common/PageHeader';
 import { Button } from '@/components/ui/button';
@@ -21,6 +22,9 @@ import { useAuth } from '@/context/AuthContext';
 import { formatDateTime } from '@/utils/time';
 import { CERT_STATUS_LABELS } from '@/lib/labels';
 import { can } from '@/lib/permissions';
+import { envAccent } from '@/lib/mobileCard';
+import { certificateStatusTone } from '@/lib/badgeTones';
+import { CardStatus } from '@/components/mobile/MobileCard';
 
 
 function downloadBlob(filename, content) {
@@ -224,6 +228,7 @@ function Certificates() {
       key: 'serial',
       label: 'Serial',
       sortable: true,
+      mobile: 'hidden',
       render: (r) => (
         <span className="font-mono text-xs text-muted-foreground">
           {r.serial ? r.serial.slice(0, 16) + (r.serial.length > 16 ? '…' : '') : '-'}
@@ -235,6 +240,7 @@ function Certificates() {
       label: 'Issued to',
       sortable: true,
       searchAccessor: (r) => `${r.issuedTo?.name || ''} ${r.issuedTo?.email || ''}`,
+      mobile: { slot: 'secondary', order: 1, render: (r) => r.issuedTo?.name || r.issuedTo?.email || r.userId },
       render: (r) => <UserCell user={r.issuedTo} subtitle={r.issuedTo?.email || r.userId} />,
     },
     {
@@ -242,6 +248,12 @@ function Certificates() {
       label: 'Server',
       sortable: true,
       searchAccessor: (r) => `${r.issuedFor?.hostname || ''} ${r.issuedFor?.environment || ''}`,
+      mobile: {
+        slot: 'title',
+        render: (r) => (
+          <span className="min-w-0 break-all">{r.issuedFor?.hostname || 'Any server'}</span>
+        ),
+      },
       render: (r) =>
         r.issuedFor ? (
           <span className="flex items-center gap-2">
@@ -256,6 +268,7 @@ function Certificates() {
       key: 'principals',
       label: 'Principals',
       hideBelow: 'md',
+      mobile: 'hidden',
       render: (r) => {
         const list = Array.isArray(r.principals) ? r.principals : [];
         const display = list.slice(0, 3).join(', ');
@@ -272,6 +285,7 @@ function Certificates() {
       key: 'validBefore',
       label: 'Valid until',
       sortable: true,
+      mobile: { slot: 'meta', order: 2 },
       render: (r) => <ExpiryPill validBefore={r.validBefore} />,
     },
     {
@@ -279,6 +293,8 @@ function Certificates() {
       label: 'Status',
       sortable: true,
       searchAccessor: (r) => r.status || '',
+      // Phones: quiet status next to the "⋯" menu (DataTable `mobile.corner`).
+      mobile: 'hidden',
       render: (r) => <CertStatusBadge status={r.status} />,
     },
     {
@@ -333,6 +349,12 @@ function Certificates() {
         emptyMessage="No certificates found"
         searchPlaceholder="Search by user, server, or serial..."
         filters={filterSlot}
+        mobile={{
+          onCardClick: (r) => setDetailCert(r),
+          accent: (r) => envAccent(r.issuedFor?.environment),
+          corner: (r) => <CardStatus {...certificateStatusTone(r.status)} />,
+          leading: (r) => <Avatar name={r.issuedTo?.name} email={r.issuedTo?.email} avatarUrl={r.issuedTo?.avatarUrl} size="md" />,
+        }}
         serverPagination={{
           page,
           total,

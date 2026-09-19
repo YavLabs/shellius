@@ -27,9 +27,14 @@ import { BRAND, FONT_STACK } from './brand.js';
 export function renderLogo() {
   const chip = `<td width="32" height="32" align="center" valign="middle" bgcolor="${BRAND.sky}"
                             style="width:32px;height:32px;background:${BRAND.sky};background-image:linear-gradient(135deg,${BRAND.sky} 0%,${BRAND.lavender} 100%);border-radius:9px;font:800 17px/32px Menlo,Consolas,'Courier New',monospace;color:${BRAND.ink};letter-spacing:-0.08em;text-align:center;">&gt;_</td>`;
-  const letters = `font:800 21px/1 ${FONT_STACK};color:${BRAND.light};letter-spacing:-0.02em;vertical-align:middle;`;
-  const bar = `<td width="7" height="15" bgcolor="${BRAND.sky}"
-                                  style="width:7px;height:15px;background:${BRAND.sky};background-image:linear-gradient(135deg,${BRAND.sky} 0%,${BRAND.lavender} 100%);border-radius:1px;font-size:0;line-height:0;">&nbsp;</td>`;
+  // SHELL, the bar and US share one text line: the bar is an inline-block
+  // sitting on the baseline at about cap height (0.76em, nudged 0.05em below the baseline), like the app's wordmark,
+  // so it lines up with the letters in every client's font. Outlook's Word
+  // renderer ignores inline-block sizes, so it gets a Sky block glyph instead.
+  // The margins are uneven on purpose: in the system fonts mail clients use,
+  // a bold L has almost no right side-bearing while U has a wide left one,
+  // so equal margins leave a visibly bigger gap before U.
+  const bar = `<!--[if mso]><span style="color:${BRAND.sky};">&#9646;</span><![endif]--><!--[if !mso]><!--><span style="display:inline-block;width:0.34em;height:0.76em;margin:0 0.01em 0 0.14em;vertical-align:-0.05em;background:${BRAND.sky};background-image:linear-gradient(135deg,${BRAND.sky} 0%,${BRAND.lavender} 100%);border-radius:1px;"></span><!--<![endif]-->`;
   return `<table role="presentation" cellpadding="0" cellspacing="0" border="0" aria-label="Shellius">
                         <tr>
                           <td style="padding:0 10px 0 0;vertical-align:middle;">
@@ -37,13 +42,7 @@ export function renderLogo() {
                               ${chip}
                             </tr></table>
                           </td>
-                          <td style="${letters}">SHELL</td>
-                          <td style="vertical-align:middle;padding:1px 2px 0 2px;">
-                            <table role="presentation" cellpadding="0" cellspacing="0" border="0"><tr>
-                              ${bar}
-                            </tr></table>
-                          </td>
-                          <td style="${letters}">US</td>
+                          <td style="font:800 21px/1 ${FONT_STACK};color:${BRAND.light};letter-spacing:-0.02em;vertical-align:middle;white-space:nowrap;">SHELL${bar}US</td>
                         </tr>
                       </table>`;
 }

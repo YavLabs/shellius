@@ -41,7 +41,7 @@ const TONE_OUTLINE = {
   accent: 'border-violet-500/40 bg-transparent text-violet-700 dark:text-violet-400',
 };
 
-const TONE_DOT = {
+export const TONE_DOT = {
   neutral: 'bg-muted-foreground/60',
   success: 'bg-emerald-500',
   warning: 'bg-amber-500',

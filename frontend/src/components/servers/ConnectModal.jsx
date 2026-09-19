@@ -219,7 +219,7 @@ function ConnectModal({ open, onClose, server, intent, currentUser }) {
         )}
 
         {/* Footer */}
-        <div className="flex items-center justify-end gap-2 pt-1">
+        <div data-sheet-footer className="flex items-center justify-end gap-2 pt-1">
           <Button variant="outline" onClick={onClose}>
             Cancel
           </Button>
