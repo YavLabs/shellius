@@ -24,8 +24,8 @@ Files
   shellius-lockup-dark-bg.svg horizontal lockup for dark backgrounds
   shellius-lockup-light-bg.svg horizontal lockup for light backgrounds
 
-Note: the lockup files reference Space Grotesk as live text. Convert the text to
-outlines before sending the logo outside the team.
+Note: the lockup lettering is outlined (Space Grotesk 700, the app wordmark's
+spacing), so the files render the same everywhere with no font installed.
 
 Clear space  = the chip's corner radius (18 units on the 64 grid) on all sides.
 Minimum size = 16px for the mark, 96px wide for the full lockup.
