@@ -9,6 +9,8 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 Tracked here as work lands on `main`; moved into a dated section on release
 (`node scripts/version.mjs bump <major|minor|patch>`).
 
+## [1.4.0] - 2026-09-19
+
 ### Changed
 
 - **New look across the app**, following the Shellius brand guideline (`frontend/public/brand/README.txt`).
@@ -20,6 +22,8 @@ Tracked here as work lands on `main`; moved into a dated section on release
 - **Sign-in pages redesigned.** Sign-in shows the centred logo and a single email field. The other sign-in pages show the logo top-left. All of them have a faint animated terminal background.
 - **Web terminal, RDP viewer and command snippets** use the brand terminal colours (Ink background, Sky cursor).
 - Text fields, selects and buttons share one size and corner radius across the app.
+- **Terminal workspace**: tabs are rounded pills with no divider below them. The workspace has padding around it. The sessions panel is a rounded card.
+- Sign-in with a single SSO provider uses the same "or continue with" button as several providers.
 
 ## [1.3.0] - 2026-09-19
 
