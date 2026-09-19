@@ -44,6 +44,9 @@ import { sessionTabMeta } from '@/components/workspace/RunningSessionsList';
 import { isServerOnboarded } from '@/lib/serverStatus';
 import { relativeTime } from '@/utils/time';
 import { cn } from '@/lib/utils';
+import useIsMobile from '@/hooks/useIsMobile';
+import { CardIcon, MobileCard } from '@/components/mobile/MobileCard';
+import { envAccent } from '@/lib/mobileCard';
 
 // Widget (dashboard) shows a few per group and links to the full page.
 const WIDGET_ACTIVE_LIMIT = 3;
@@ -110,8 +113,27 @@ function SectionHeader({ icon: Icon, title, hint, count, viewAllTo }) {
 }
 
 // Leading icon says what it is (server / Quick Connect / live terminal); the
-// corner dot says its state.
-function Row({ icon: Icon, iconTone = 'text-muted-foreground', dot, title, badges, sub, actions }) {
+// corner dot says its state. Phones: the list pages' card (MobileCard) —
+// environment as tint + bottom-left label, the action under a divider, the
+// rest in "⋯".
+function Row({ icon: Icon, iconTone = 'text-muted-foreground', dot, dotLabel, title, badges, sub, mobileSub, action, menu, accent, corner }) {
+  const isMobile = useIsMobile();
+  if (isMobile) {
+    return (
+      <li>
+        <MobileCard
+          leading={<CardIcon icon={Icon} className={iconTone} status={dot} statusLabel={dotLabel} />}
+          title={title}
+          secondary={mobileSub ?? sub}
+          corner={corner}
+          menu={menu}
+          accent={accent}
+          actions={action}
+          reserveActions
+        />
+      </li>
+    );
+  }
   return (
     // Mobile: the actions wrap under the text so names aren't squeezed.
     <li className="flex flex-wrap items-start gap-x-3 gap-y-2 border-b border-border/70 py-3 last:border-0 md:flex-nowrap md:items-center md:py-2.5">
@@ -126,7 +148,10 @@ function Row({ icon: Icon, iconTone = 'text-muted-foreground', dot, title, badge
         </div>
         {sub && <p className="mt-0.5 break-words text-[11px] text-muted-foreground md:truncate">{sub}</p>}
       </div>
-      <div className="ml-10 flex shrink-0 basis-[calc(100%-2.5rem)] items-center gap-1 md:ml-0 md:basis-auto">{actions}</div>
+      <div className="ml-10 flex shrink-0 basis-[calc(100%-2.5rem)] items-center gap-1 md:ml-0 md:basis-auto">
+        {action}
+        {menu}
+      </div>
     </li>
   );
 }
@@ -207,6 +232,10 @@ export function RecentConnections({ variant = 'widget', showQuickConnect = true 
   }, [servers, history]);
 
   const allActive = liveSessions || [];
+  // Phones show fewer rows (the dashboard stacks everything in one column).
+  const isMobile = useIsMobile();
+  const recentLimit = isMobile ? 3 : WIDGET_RECENT_LIMIT;
+  const activeLimit = isMobile ? 2 : WIDGET_ACTIVE_LIMIT;
 
   // Page: filter by text and type. Widget: first few of each group.
   const q = query.trim().toLowerCase();
@@ -216,7 +245,7 @@ export function RecentConnections({ variant = 'widget', showQuickConnect = true 
         (s) => kind !== 'qc' || s.authMethod === 'quick_connect'
       ).filter((s) => kind !== 'server' || s.authMethod !== 'quick_connect')
         .filter((s) => matches(s.label, s.host, s.username, s.server?.displayName, s.server?.hostname))
-    : allActive.slice(0, WIDGET_ACTIVE_LIMIT);
+    : allActive.slice(0, activeLimit);
   const recentFiltered = isPage
     ? recent
         .filter((r) => kind === 'all' || r.kind === kind)
@@ -225,7 +254,7 @@ export function RecentConnections({ variant = 'widget', showQuickConnect = true 
             ? matches(r.server.displayName, r.server.hostname, r.server.ipAddress, r.server.environment)
             : matches(r.item.host, r.item.username, r.item.server?.displayName, r.item.credential?.name)
         )
-    : recent.slice(0, WIDGET_RECENT_LIMIT);
+    : recent.slice(0, recentLimit);
 
   // ── Actions ────────────────────────────────────────────────────────────────
   const withBusy = async (id, fn) => {
@@ -314,8 +343,14 @@ export function RecentConnections({ variant = 'widget', showQuickConnect = true 
   const noMatches = isPage && !empty && !loading && active.length === 0 && recentFiltered.length === 0;
 
   return (
-    <div className={cn('flex flex-col rounded-lg border border-border bg-card p-5', !isPage && 'h-full')}>
-      <div className="mb-3 flex flex-wrap items-start justify-between gap-2">
+    // Phones: no frame around the widget — its rows are cards themselves.
+    <div
+      className={cn(
+        'flex flex-col rounded-lg border border-border bg-card p-5 max-md:rounded-none max-md:border-0 max-md:bg-transparent max-md:p-0',
+        !isPage && 'h-full'
+      )}
+    >
+      <div className="mb-3 flex flex-wrap items-start justify-between gap-2 max-md:mb-1 max-md:items-center">
         {isPage ? (
           <div className="flex min-w-0 flex-1 basis-full flex-wrap items-center gap-2 md:basis-0">
             <div className="relative w-full md:max-w-xs">
@@ -352,11 +387,12 @@ export function RecentConnections({ variant = 'widget', showQuickConnect = true 
         ) : (
           <div>
             <h2 className="text-sm font-semibold text-foreground">Recent connections</h2>
-            <p className="mt-0.5 text-xs text-muted-foreground">Active sessions and the last 7 days</p>
+            <p className="mt-0.5 text-xs text-muted-foreground max-md:hidden">Active sessions and the last 7 days</p>
           </div>
         )}
         <div className="flex shrink-0 items-center gap-1.5">
-          {qcAllowed && showQuickConnect && (
+          {/* Phones: Quick connect is on the Connect tab and the "+" sheet. */}
+          {qcAllowed && showQuickConnect && !isMobile && (
             <button
               type="button"
               onClick={() => openQuickConnect()}
@@ -427,9 +463,9 @@ export function RecentConnections({ variant = 'widget', showQuickConnect = true 
               icon={PlugZap}
               title="Active now"
               count={isPage ? active.length : allActive.length}
-              viewAllTo={!isPage && allActive.length > WIDGET_ACTIVE_LIMIT ? '/connections#active' : null}
+              viewAllTo={!isPage && allActive.length > activeLimit ? '/connections#active' : null}
             />
-            <ul>
+            <ul className="max-md:grid max-md:auto-rows-fr max-md:gap-2">
               {active.map((s) => {
                 const place = placeOf.get(s.id);
                 const name = s.label || s.server?.displayName || s.host;
@@ -443,6 +479,8 @@ export function RecentConnections({ variant = 'widget', showQuickConnect = true 
                     icon={SquareTerminal}
                     iconTone="text-foreground"
                     dot={place ? 'bg-emerald-500' : 'bg-amber-500'}
+                    dotLabel={place ? 'Open' : 'In the background'}
+                    accent={envAccent(s.server?.environment)}
                     title={<span className="truncate text-sm font-medium text-foreground">{name}</span>}
                     badges={
                       <>
@@ -451,9 +489,7 @@ export function RecentConnections({ variant = 'widget', showQuickConnect = true 
                       </>
                     }
                     sub={sub}
-                    actions={
-                      <>
-                        {place ? (
+                    action={<>{place ? (
                           <button type="button" className={btnSecondary} onClick={() => attachSession(s.id, sessionTabMeta(s))}>
                             <ArrowUpRight className="h-3.5 w-3.5" /> Go to terminal
                           </button>
@@ -461,14 +497,12 @@ export function RecentConnections({ variant = 'widget', showQuickConnect = true 
                           <button type="button" className={btnPrimary} disabled={busy} onClick={() => attachSession(s.id, sessionTabMeta(s))}>
                             <PlugZap className="h-3.5 w-3.5" /> Connect now
                           </button>
-                        )}
-                        <RowMenu label={`Options for ${name}`}>
+                        )}</>}
+                    menu={<RowMenu label={`Options for ${name}`}>
                           <DropdownMenuItem onSelect={() => setEndTarget(s)} className="text-destructive focus:text-destructive">
                             <Square className="mr-2 h-4 w-4" /> End session
                           </DropdownMenuItem>
-                        </RowMenu>
-                      </>
-                    }
+                        </RowMenu>}
                   />
                 );
               })}
@@ -485,9 +519,9 @@ export function RecentConnections({ variant = 'widget', showQuickConnect = true 
               // Widget fetches only a few, so it can't know the true total.
               count={isPage ? recentFiltered.length : undefined}
               hint={isPage ? (days === 30 && qcAllowed ? 'Last 30 days · Quick Connect history is kept 7 days' : `Last ${days} days`) : 'Last 7 days'}
-              viewAllTo={!isPage && recent.length > WIDGET_RECENT_LIMIT ? '/connections#recent' : null}
+              viewAllTo={!isPage && recent.length > recentLimit ? '/connections#recent' : null}
             />
-            <ul>
+            <ul className="max-md:grid max-md:auto-rows-fr max-md:gap-2">
               {recentFiltered.map((r) => {
                 if (r.kind === 'server') {
                   const { server } = r;
@@ -503,6 +537,9 @@ export function RecentConnections({ variant = 'widget', showQuickConnect = true 
                       key={r.key}
                       icon={Server}
                       dot={intent?.hasActiveAccess ? 'bg-emerald-500' : intent?.hasPendingRequest ? 'bg-amber-500' : null}
+                      dotLabel={intent?.hasActiveAccess ? 'Access granted' : intent?.hasPendingRequest ? 'Request pending' : undefined}
+                      accent={envAccent(server.environment)}
+                      mobileSub={`${server.ipAddress || server.hostname} · ${relativeTime(r.lastConnectedAt)}`}
                       title={
                         <Link to={`/servers/${server.id}`} className="truncate text-sm font-medium text-foreground hover:underline">
                           {server.displayName || server.hostname}
@@ -516,9 +553,7 @@ export function RecentConnections({ variant = 'widget', showQuickConnect = true 
                           {intent?.hasActiveAccess && intent.expiresAt && ` · access ends ${untilText(intent.expiresAt)}`}
                         </>
                       }
-                      actions={
-                        <>
-                          <button
+                      action={<><button
                             type="button"
                             className={action.cls}
                             disabled={busy || !onboarded}
@@ -527,8 +562,8 @@ export function RecentConnections({ variant = 'widget', showQuickConnect = true 
                           >
                             {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <ActionIcon className="h-3.5 w-3.5" />}
                             {action.label}
-                          </button>
-                          <RowMenu label={`Options for ${server.displayName || server.hostname}`}>
+                          </button></>}
+                    menu={<RowMenu label={`Options for ${server.displayName || server.hostname}`}>
                             <DropdownMenuItem onSelect={() => navigate(`/servers/${server.id}`)}>
                               <Server className="mr-2 h-4 w-4" /> View server
                             </DropdownMenuItem>
@@ -537,9 +572,7 @@ export function RecentConnections({ variant = 'widget', showQuickConnect = true 
                                 <KeyRound className="mr-2 h-4 w-4" /> New access request
                               </DropdownMenuItem>
                             )}
-                          </RowMenu>
-                        </>
-                      }
+                          </RowMenu>}
                     />
                   );
                 }
@@ -553,6 +586,8 @@ export function RecentConnections({ variant = 'widget', showQuickConnect = true 
                     icon={Zap}
                     iconTone="text-amber-500"
                     dot={failed ? 'bg-red-500' : null}
+                    dotLabel={failed ? 'Last attempt failed' : undefined}
+                    mobileSub={`${auth ? auth.label : item.credential?.name || 'Identity'} · ${failed ? 'failed ' : ''}${relativeTime(item.lastConnectedAt)}`}
                     title={
                       <span className="truncate font-mono text-[13px] text-foreground" title={failed ? item.lastError : undefined}>
                         {item.username}@{item.host}
@@ -572,13 +607,11 @@ export function RecentConnections({ variant = 'widget', showQuickConnect = true 
                         {item.connectCount > 1 && ` · ×${item.connectCount}`}
                       </>
                     }
-                    actions={
-                      <>
-                        <button type="button" className={btnSecondary} disabled={busy} onClick={() => reconnectQc(item)}>
+                    action={<><button type="button" className={btnSecondary} disabled={busy} onClick={() => reconnectQc(item)}>
                           {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Zap className="h-3.5 w-3.5" />}
                           Connect again
-                        </button>
-                        <RowMenu label={`Options for ${item.username}@${item.host}`}>
+                        </button></>}
+                    menu={<RowMenu label={`Options for ${item.username}@${item.host}`}>
                           <DropdownMenuItem onSelect={() => copySsh(item)}>
                             {copiedId === item.id ? <Check className="mr-2 h-4 w-4" /> : <Copy className="mr-2 h-4 w-4" />}
                             Copy ssh command
@@ -590,9 +623,7 @@ export function RecentConnections({ variant = 'widget', showQuickConnect = true 
                           <DropdownMenuItem onSelect={() => removeQc(item)} className="text-destructive focus:text-destructive">
                             <Trash2 className="mr-2 h-4 w-4" /> Remove from history
                           </DropdownMenuItem>
-                        </RowMenu>
-                      </>
-                    }
+                        </RowMenu>}
                   />
                 );
               })}

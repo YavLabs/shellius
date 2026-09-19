@@ -5,6 +5,9 @@ import EnvironmentBadge from '@/components/shared/EnvironmentBadge';
 import { Badge } from '@/components/ui/badge';
 import { getMyAccess } from '@/services/policyService';
 import { cn } from '@/lib/utils';
+import useIsMobile from '@/hooks/useIsMobile';
+import { CardIcon, CardStatus, MobileCard } from '@/components/mobile/MobileCard';
+import { envAccent } from '@/lib/mobileCard';
 
 function formatMaxTtl(seconds) {
   if (!seconds || seconds <= 0) return '-';
@@ -21,6 +24,26 @@ function AccessRow({ entry }) {
   const requiresApproval = entry.requiresApproval;
   const principals = Array.isArray(entry.principals) ? entry.principals : [];
   const serverId = entry.server?.id || entry.serverId;
+  const isMobile = useIsMobile();
+  const ttl = formatMaxTtl(entry.maxTtl);
+
+  // Phones: the same card as the list pages — status by the corner, the
+  // environment as the card's tint and bottom-left label.
+  if (isMobile) {
+    const who = principals.length ? `${principals.slice(0, 2).join(', ')}${principals.length > 2 ? ` +${principals.length - 2}` : ''}` : null;
+    return (
+      <MobileCard
+        leading={<CardIcon icon={Server} />}
+        title={entry.server?.hostname || entry.serverId}
+        secondary={[who, ttl !== '-' ? ttl : null].filter(Boolean).join(' · ') || null}
+        corner={
+          requiresApproval ? <CardStatus tone="warning" label="Needs approval" /> : <CardStatus tone="success" label="Direct" />
+        }
+        accent={envAccent(entry.server?.environment)}
+        onClick={serverId ? () => navigate(`/servers/${serverId}`) : undefined}
+      />
+    );
+  }
 
   return (
     <button
@@ -107,7 +130,9 @@ function MyAccessWidget({ wide = false }) {
   }, []);
 
   const totalCount = entries.length;
-  const visible = showAll ? entries : entries.slice(0, LIMIT);
+  const isMobile = useIsMobile();
+  const limit = isMobile ? 5 : LIMIT;
+  const visible = showAll ? entries : entries.slice(0, limit);
   const groups = {};
   visible.forEach((e) => {
     (groups[e.customerName] = groups[e.customerName] || []).push(e);
@@ -115,11 +140,12 @@ function MyAccessWidget({ wide = false }) {
   const customerNames = Object.keys(groups);
 
   return (
-    <div className="rounded-lg border border-border bg-card p-5">
-      <div className="flex items-center justify-between mb-4">
+    // Phones: no frame around the widget — its rows are cards themselves.
+    <div className="rounded-lg border border-border bg-card p-5 max-md:rounded-none max-md:border-0 max-md:bg-transparent max-md:p-0">
+      <div className="flex items-center justify-between mb-4 max-md:mb-3">
         <div>
           <h2 className="text-sm font-semibold text-foreground">My access</h2>
-          <p className="text-xs text-muted-foreground mt-0.5">
+          <p className="text-xs text-muted-foreground mt-0.5 max-md:hidden">
             Servers you are permitted to access
           </p>
         </div>
@@ -154,13 +180,13 @@ function MyAccessWidget({ wide = false }) {
         <div className="space-y-4">
           {/* Expanded lists scroll inside the card instead of stretching the
               page; full-width (wide) cards use two columns of customers. */}
-          <div className={cn(showAll && 'max-h-[640px] overflow-y-auto pr-1', wide ? 'grid grid-cols-1 gap-x-8 gap-y-4 lg:grid-cols-2' : 'space-y-4')}>
+          <div className={cn(showAll && !isMobile && 'max-h-[640px] overflow-y-auto pr-1', wide ? 'grid grid-cols-1 gap-x-8 gap-y-4 lg:grid-cols-2' : 'space-y-4')}>
           {customerNames.map((customerName) => (
             <div key={customerName}>
-              <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground mb-1">
+              <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground mb-1 max-md:mb-1.5 max-md:px-1">
                 {customerName}
               </p>
-              <div>
+              <div className="max-md:grid max-md:auto-rows-fr max-md:gap-2">
                 {groups[customerName].map((entry) => (
                   <AccessRow key={entry.serverId || entry.id} entry={entry} />
                 ))}
@@ -169,11 +195,11 @@ function MyAccessWidget({ wide = false }) {
           ))}
           </div>
 
-          {totalCount > LIMIT && (
+          {totalCount > limit && (
             <button
               type="button"
               onClick={() => setShowAll((s) => !s)}
-              className="w-full rounded-md border border-border py-2 text-xs font-medium text-muted-foreground hover:bg-accent/40 hover:text-foreground transition-colors"
+              className="w-full rounded-md border border-border py-2 text-xs font-medium text-muted-foreground max-md:h-11 max-md:bg-card max-md:text-sm hover:bg-accent/40 hover:text-foreground transition-colors"
             >
               {showAll ? 'Show less' : `View all ${totalCount} servers`}
             </button>

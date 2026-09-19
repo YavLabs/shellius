@@ -31,6 +31,65 @@ import Avatar from '@/components/ui/Avatar';
 import { useQuickConnect } from '@/context/QuickConnectContext';
 import { QUICK_ACTIONS, isQuickActionVisible } from '@/lib/commands';
 import { cn } from '@/lib/utils';
+import useIsMobile from '@/hooks/useIsMobile';
+
+// Environment colours for the phone servers tile's split bar.
+const ENV_BAR = { prod: 'fill-rose-500', staging: 'fill-amber-500', dev: 'fill-sky-500', demo: 'fill-muted-foreground/50' };
+const ENV_ORDER = ['prod', 'staging', 'dev', 'demo'];
+
+/**
+ * Phone metric tile: icon + number on one row, label under it. Four fit in
+ * a 2×2 grid in the height one desktop metric card takes.
+ */
+function StatTile({ icon: Icon, label, value, to, loading, tone = 'primary', children }) {
+  const navigate = useNavigate();
+  const tones = {
+    primary: 'bg-[hsl(var(--brand)/0.12)] text-primary',
+    emerald: 'bg-emerald-500/15 text-emerald-600 dark:text-emerald-300',
+    amber: 'bg-amber-500/15 text-amber-600 dark:text-amber-300',
+    violet: 'bg-violet-500/15 text-violet-600 dark:text-violet-300',
+  };
+  return (
+    <button
+      type="button"
+      onClick={to ? () => navigate(to) : undefined}
+      disabled={!to}
+      className="flex min-w-0 flex-col gap-2 rounded-lg border border-border bg-card p-3 text-left transition-colors active:bg-accent disabled:opacity-100"
+    >
+      <span className="flex items-center justify-between gap-2">
+        <span className={cn('flex h-7 w-7 shrink-0 items-center justify-center rounded-md', tones[tone])}>
+          <Icon className="h-3.5 w-3.5" aria-hidden="true" />
+        </span>
+        {loading ? <Skeleton className="h-6 w-8" /> : <span className="text-xl font-semibold tabular-nums text-foreground">{value}</span>}
+      </span>
+      <span className="truncate text-xs font-medium text-muted-foreground">{label}</span>
+      {children}
+    </button>
+  );
+}
+
+/** Proportional environment split (Prod · Staging · Dev · Demo) as one thin bar. */
+function EnvSplit({ byEnv }) {
+  const parts = ENV_ORDER.map((env) => [env, byEnv?.[env] || 0]).filter(([, n]) => n > 0);
+  const total = parts.reduce((sum, [, n]) => sum + n, 0);
+  if (!total) return null;
+  return (
+    // SVG so each segment's width is an attribute (no inline styles).
+    <svg
+      viewBox={`0 0 ${total} 1`}
+      preserveAspectRatio="none"
+      className="h-1.5 w-full overflow-hidden rounded-full"
+      role="img"
+      aria-label={parts.map(([env, n]) => `${n} ${env}`).join(', ')}
+    >
+      <title>{parts.map(([env, n]) => `${env.toUpperCase()} ${n}`).join(' · ')}</title>
+      {parts.map(([env, n], i) => {
+        const x = parts.slice(0, i).reduce((sum, [, m]) => sum + m, 0);
+        return <rect key={env} x={x} y={0} width={n} height={1} className={ENV_BAR[env]} />;
+      })}
+    </svg>
+  );
+}
 
 
 // Badge for audit action verbs — reuses the shared audit category tone map.
@@ -84,6 +143,7 @@ function Dashboard() {
   const allCerts = can(user, 'certificates.view_all');
   const { liveCount } = useTerminalWorkspace();
   const { allowed: quickConnectAllowed } = useQuickConnect();
+  const isMobile = useIsMobile();
 
   const [statsLoading, setStatsLoading] = useState(true);
   const [serverStats, setServerStats] = useState({ total: 0, byEnv: {} });
@@ -149,7 +209,8 @@ function Dashboard() {
   // Everything below renders only what this role can use, and each row's
   // grid adapts to the cards actually present, so nothing leaves a hole.
   const metricCount = 4;
-  const showQuickActions = QUICK_ACTIONS.some((a) => isQuickActionVisible(a, user, quickConnectAllowed));
+  // Phones: the bottom navigation's "+" is the quick actions list.
+  const showQuickActions = !isMobile && QUICK_ACTIONS.some((a) => isQuickActionVisible(a, user, quickConnectAllowed));
 
   return (
     <div className="space-y-6 p-6">
@@ -160,8 +221,38 @@ function Dashboard() {
         subtitle="Overview of your infrastructure and access management."
       helpKey="dashboard" />
 
+      {/* Phones: the four metrics as a compact 2×2 grid. */}
+      {isMobile && (
+        <div className="grid grid-cols-2 gap-2">
+          <StatTile icon={Server} label="Servers" value={serverStats.total} loading={statsLoading} to="/servers">
+            {!statsLoading && <EnvSplit byEnv={byEnv} />}
+          </StatTile>
+          {allSessions ? (
+            <StatTile icon={Terminal} label="Active sessions" value={activeSessions} loading={statsLoading} tone="emerald" to="/sessions?tab=active" />
+          ) : (
+            <StatTile icon={Terminal} label="My live sessions" value={liveCount} tone="emerald" to="/terminals" />
+          )}
+          <StatTile
+            icon={KeyRound}
+            label="To review"
+            value={pendingRequests}
+            loading={statsLoading}
+            tone="amber"
+            to="/access-requests?tab=to-review"
+          />
+          <StatTile
+            icon={FileKey}
+            label={allCerts ? 'Certificates' : 'My certificates'}
+            value={activeCerts}
+            loading={statsLoading}
+            tone="violet"
+            to={allCerts ? '/certificates?status=ACTIVE' : undefined}
+          />
+        </div>
+      )}
+
       {/* Metric cards — the grid follows however many render (permissions). */}
-      <div className={cn('grid grid-cols-1 gap-4', METRIC_COLS[Math.min(metricCount, 4)])}>
+      <div className={cn('grid grid-cols-1 gap-4 max-md:hidden', METRIC_COLS[Math.min(metricCount, 4)])}>
         <MetricCard
           title="Total servers"
           value={serverStats.total}
@@ -265,11 +356,11 @@ function Dashboard() {
         <MyAccessWidget wide={!isAdmin} />
 
         {isAdmin && (
-          <div className="flex flex-col rounded-lg border border-border bg-card p-5">
+          <div className="flex flex-col rounded-lg border border-border bg-card p-5 max-md:p-4">
             <div className="mb-3 flex items-center justify-between">
               <div>
                 <h2 className="text-sm font-semibold text-foreground">Recent activity</h2>
-                <p className="mt-0.5 text-xs text-muted-foreground">Latest audit events across the organization</p>
+                <p className="mt-0.5 text-xs text-muted-foreground max-md:hidden">Latest audit events across the organization</p>
               </div>
             </div>
 
@@ -290,7 +381,7 @@ function Dashboard() {
                 <p className="py-8 text-center text-sm text-muted-foreground">No recent activity yet.</p>
               ) : (
                 <ul className="divide-y divide-border/60">
-                  {auditItems.map((item) => (
+                  {(isMobile ? auditItems.slice(0, 5) : auditItems).map((item) => (
                     <AuditRow key={item.id} item={item} />
                   ))}
                 </ul>

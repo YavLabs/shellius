@@ -35,6 +35,7 @@ Tracked here as work lands on `main`; moved into a dated section on release
   - The footer is hidden.
   - The theme switch is three icons with a "Theme" label, in the More sheet and the account menu.
 - **Page headers on phones.** The title stays on one line with the help button at the end and the description right under it. The main create action moves to the "+" button, and the other actions (Refresh, Export, Edit, Delete, …) are in a "⋯" menu. The header, toolbar and list are spaced evenly. Server and customer pages have a back button before the title and their details (hostname, environment, slug, server counts) under it.
+- **Dashboard on phones.** The four metrics are a compact 2×2 grid, and the server count shows its Prod / Staging / Dev / Demo split as one thin bar. The Quick actions card is hidden, because "+" has the same list. Recent connections and My access use the same cards as the list pages (environment tint, status by the corner, action under a divider) and sit without a frame around them. The dashboard shows fewer rows on phones: 3 recent connections, 5 servers in My access and 5 audit events, each with a link to the full list.
 - **Administration on phones.** `/admin` shows the list of sections, grouped like a phone's Settings app, with a one-line description each and the search box on top. A section opens full width with "‹ Administration" to go back, instead of the dropdown. Going back still asks before discarding unsaved changes.
 - Desktop and tablet layouts are unchanged.
 
