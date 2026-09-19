@@ -63,7 +63,7 @@ export default function FilterSheet({ open, onClose, title = 'Filters', activeCo
           </Button>
         </div>
         {/* Controls stack full width; the page's fixed desktop widths are overridden. */}
-        <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto px-4 pb-4 [&>*]:!w-full [&>*]:!max-w-none">
+        <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto px-4 pb-4 [&>*]:!w-full [&>*]:!max-w-none [&_button.field-soft]:h-11">
           {children}
         </div>
         <div className="flex gap-2 border-t border-border px-4 pt-3 pb-[calc(0.75rem+env(safe-area-inset-bottom))]">

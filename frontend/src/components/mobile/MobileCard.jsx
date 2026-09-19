@@ -112,7 +112,8 @@ export function MobileCard({
   const clickable = typeof onClick === 'function';
   return (
     <div
-      role={clickable ? 'button' : undefined}
+      // No role="button": the card holds its own buttons (menu, actions), and
+      // nested interactive roles confuse screen readers. Keyboard: Tab + Enter.
       tabIndex={clickable ? 0 : undefined}
       onClick={clickable ? onClick : undefined}
       onKeyDown={
@@ -136,7 +137,7 @@ export function MobileCard({
       {selectable && (
         // 44px hit area around the 16px checkbox.
         <label
-          className="-my-3 -ml-3 flex w-11 shrink-0 cursor-pointer items-start justify-center pt-[1.1rem]"
+          className="-my-3 -ml-3 -mr-2 flex w-11 shrink-0 cursor-pointer items-start justify-center pt-[1.1rem]"
           onClick={stop}
         >
           <Checkbox checked={!!selected} onChange={() => onSelectChange?.(!selected)} aria-label={selectLabel} />
@@ -160,6 +161,18 @@ export function MobileCard({
         )}
       </div>
     </div>
+  );
+}
+
+/** Leading icon tile (for rows without an avatar). */
+export function CardIcon({ icon: Icon, className, title }) {
+  return (
+    <span
+      className={cn('flex h-9 w-9 shrink-0 items-center justify-center rounded-md border border-border bg-muted/50 text-muted-foreground', className)}
+      title={title}
+    >
+      {Icon && <Icon className="h-4 w-4" />}
+    </span>
   );
 }
 

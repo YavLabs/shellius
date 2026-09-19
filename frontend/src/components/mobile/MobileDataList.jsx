@@ -85,6 +85,9 @@ export default function MobileDataList({
     onSelectionChange(selectedIds.includes(id) ? selectedIds.filter((x) => x !== id) : [...selectedIds, id]);
   };
 
+  // Tables without a row click on desktop may still give the card a tap target.
+  const cardClick = options?.onCardClick || onRowClick;
+
   const hasControls = filters || sorts.length > 0 || selectable;
 
   const renderCard = (row, idx) => {
@@ -128,7 +131,7 @@ export default function MobileDataList({
         })}
         actions={actionNodes.length > 0 ? actionNodes : null}
         menu={menu.length > 0 ? <CardActionMenu actions={menu} row={row} /> : null}
-        onClick={onRowClick ? () => onRowClick(row) : undefined}
+        onClick={cardClick ? () => cardClick(row) : undefined}
         selectable={selectable}
         selected={isSelected}
         onSelectChange={() => toggleRow(row.id)}

@@ -139,7 +139,7 @@ function useDebounced(value, delay) {
  * Card fields come from each column's `mobile` config (see lib/mobileCard.js);
  * actions with `primary: true` become buttons on the card. Table-level
  * options go in the `mobile` prop: { leading(row), maxMeta, maxPrimary,
- * cardClassName(row) }. `activeFilterCount` / `onResetFilters` drive the
+ * cardClassName(row), onCardClick(row) (tap target when there's no onRowClick) }. `activeFilterCount` / `onResetFilters` drive the
  * Filters badge and the sheet's Reset button.
  */
 function DataTable({

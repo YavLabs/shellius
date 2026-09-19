@@ -178,7 +178,7 @@ export function MobileBulkBar({ children }) {
     <>
       <div aria-hidden="true" className="h-40" />
       <div className="fixed inset-x-0 bottom-[calc(64px+env(safe-area-inset-bottom))] z-30 px-3 pb-2">
-        <div className="max-h-[45dvh] overflow-y-auto rounded-xl border border-border bg-card/95 p-2 shadow-lg backdrop-blur [&_button]:min-h-10">
+        <div className="max-h-[45dvh] overflow-y-auto rounded-lg bg-card shadow-lg ring-1 ring-black/5 [&_button]:min-h-10">
           {children}
         </div>
       </div>
