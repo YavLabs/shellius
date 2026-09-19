@@ -276,11 +276,11 @@
 .dark .auth-ring {
   opacity: var(--od, 0.17);
 }
-.auth-ring-1 { --size: min(560px, 100vw); top: -14%; left: -10%; --dx: 60px; --dy: 40px; --dur: 58s; }
-.auth-ring-2 { --size: min(640px, 110vw); top: -18%; right: -12%; --dx: -50px; --dy: 60px; --dur: 66s; --delay: -14s; }
-.auth-ring-3 { --size: min(500px, 95vw); bottom: -18%; left: 4%; --dx: 50px; --dy: -50px; --dur: 62s; --delay: -26s; }
-.auth-ring-4 { --size: min(580px, 105vw); bottom: -16%; right: -8%; --dx: -60px; --dy: -40px; --dur: 72s; --delay: -8s; }
-.auth-ring-5 { --size: min(300px, 60vw); top: 30%; left: 76%; --dx: -30px; --dy: 40px; --dur: 84s; --delay: -40s; --o: 0.12; --od: 0.1; --blur: 40px; }
+.auth-ring-1 { --size: min(620px, 110vw); top: -26%; left: 14%; --dx: 60px; --dy: 40px; --dur: 58s; }
+.auth-ring-2 { --size: min(520px, 95vw); top: 24%; right: -16%; --dx: -50px; --dy: 60px; --dur: 66s; --delay: -14s; }
+.auth-ring-3 { --size: min(440px, 85vw); top: 40%; left: -14%; --dx: 50px; --dy: -50px; --dur: 62s; --delay: -26s; }
+.auth-ring-4 { --size: min(680px, 115vw); bottom: -34%; left: 44%; --dx: -60px; --dy: -40px; --dur: 72s; --delay: -8s; }
+.auth-ring-5 { --size: min(280px, 55vw); top: -6%; right: 6%; --dx: -30px; --dy: 40px; --dur: 84s; --delay: -40s; --o: 0.12; --od: 0.1; --blur: 40px; }
 
 @keyframes auth-drift {
   0% { transform: translate3d(0, 0, 0) rotate(0deg) scale(1); }
