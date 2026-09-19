@@ -4,7 +4,7 @@ import asyncHandler from '../utils/asyncHandler.js';
 import ApiError from '../utils/ApiError.js';
 import authenticate from '../middleware/auth.js';
 import tenant from '../middleware/tenant.js';
-import requireRole from '../middleware/rbac.js';
+import { requirePermission } from '../middleware/rbac.js';
 import audit from '../middleware/audit.js';
 import * as orgService from '../services/orgService.js';
 
@@ -23,7 +23,6 @@ const updateOrgSchema = Joi.object({
   name: Joi.string().min(1).max(255),
   domain: Joi.string().hostname().allow(null, ''),
   logoUrl: Joi.string().uri().allow(null, ''),
-  settings: Joi.object(),
 }).min(1);
 
 router.use(authenticate, tenant);
@@ -37,10 +36,10 @@ router.get(
   })
 );
 
-// PUT /api/org — admin+
+// PUT /api/org — org.update (name, domain, logo only)
 router.put(
   '/',
-  requireRole('admin'),
+  requirePermission('org.update'),
   audit('org.update', 'Organization'),
   validate(updateOrgSchema),
   asyncHandler(async (req, res) => {
@@ -50,24 +49,27 @@ router.put(
 );
 
 // Joi schema for PUT /api/org/access-settings
+// prodBypassEnabled: org-wide switch for access.prod_bypass.
+// prodApprovalBypassMinRole: legacy spelling, still accepted.
 const updateAccessSettingsSchema = Joi.object({
-  prodApprovalBypassMinRole: Joi.string().valid('admin', 'super_admin', 'none').required(),
-});
+  prodBypassEnabled: Joi.boolean(),
+  prodApprovalBypassMinRole: Joi.string().valid('admin', 'super_admin', 'none'),
+}).or('prodBypassEnabled', 'prodApprovalBypassMinRole');
 
-// GET /api/org/access-settings — admin+
+// GET /api/org/access-settings — org.access_settings
 router.get(
   '/access-settings',
-  requireRole('admin'),
+  requirePermission('org.access_settings'),
   asyncHandler(async (req, res) => {
     const settings = await orgService.getAccessSettings(req.orgId);
     res.json({ success: true, data: settings });
   })
 );
 
-// PUT /api/org/access-settings — super_admin only
+// PUT /api/org/access-settings — org.access_settings
 router.put(
   '/access-settings',
-  requireRole('super_admin'),
+  requirePermission('org.access_settings'),
   audit('org.access_settings.update', 'Organization'),
   validate(updateAccessSettingsSchema),
   asyncHandler(async (req, res) => {

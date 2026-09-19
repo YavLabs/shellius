@@ -4,7 +4,7 @@ import asyncHandler from '../utils/asyncHandler.js';
 import ApiError from '../utils/ApiError.js';
 import authenticate from '../middleware/auth.js';
 import tenant from '../middleware/tenant.js';
-import requireRole from '../middleware/rbac.js';
+import { requirePermission } from '../middleware/rbac.js';
 import audit from '../middleware/audit.js';
 import * as groupService from '../services/groupService.js';
 
@@ -35,7 +35,7 @@ router.use(authenticate, tenant);
 
 router.get(
   '/',
-  requireRole('super_admin', 'admin', 'manager'),
+  requirePermission('groups.view'),
   asyncHandler(async (req, res) => {
     const groups = await groupService.listGroups(req.orgId);
     res.json({ success: true, data: { groups } });
@@ -44,7 +44,7 @@ router.get(
 
 router.get(
   '/:id',
-  requireRole('super_admin', 'admin', 'manager'),
+  requirePermission('groups.view'),
   asyncHandler(async (req, res) => {
     const group = await groupService.getGroup(req.orgId, req.params.id);
     res.json({ success: true, data: { group } });
@@ -53,7 +53,8 @@ router.get(
 
 router.post(
   '/',
-  requireRole('super_admin', 'admin'),
+  requirePermission('groups.manage'),
+  audit('group.create', 'Group'),
   validate(createSchema),
   asyncHandler(async (req, res) => {
     const group = await groupService.createGroup(req.orgId, req.body);
@@ -63,7 +64,8 @@ router.post(
 
 router.put(
   '/:id',
-  requireRole('super_admin', 'admin'),
+  requirePermission('groups.manage'),
+  audit('group.update', 'Group'),
   validate(updateSchema),
   asyncHandler(async (req, res) => {
     const group = await groupService.updateGroup(req.orgId, req.params.id, req.body);
@@ -73,7 +75,7 @@ router.put(
 
 router.get(
   '/:id/delete-impact',
-  requireRole('super_admin', 'admin'),
+  requirePermission('groups.manage'),
   asyncHandler(async (req, res) => {
     const impact = await groupService.getGroupDeleteImpact(req.orgId, req.params.id);
     res.json({ success: true, data: impact });
@@ -82,7 +84,8 @@ router.get(
 
 router.delete(
   '/:id',
-  requireRole('super_admin', 'admin'),
+  requirePermission('groups.manage'),
+  audit('group.delete', 'Group'),
   asyncHandler(async (req, res) => {
     await groupService.deleteGroup(req.orgId, req.params.id);
     res.json({ success: true, data: { success: true } });
@@ -91,7 +94,7 @@ router.delete(
 
 router.post(
   '/:id/members',
-  requireRole('super_admin', 'admin'),
+  requirePermission('groups.manage'),
   audit('group.member.added', 'Group'),
   validate(memberSchema),
   asyncHandler(async (req, res) => {
@@ -107,7 +110,7 @@ router.post(
 
 router.delete(
   '/:id/members/:userId',
-  requireRole('super_admin', 'admin'),
+  requirePermission('groups.manage'),
   audit('group.member.removed', 'Group'),
   asyncHandler(async (req, res) => {
     await groupService.removeMember(req.orgId, req.params.id, req.params.userId);

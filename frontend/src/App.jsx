@@ -3,7 +3,7 @@ import { AuthProvider } from './context/AuthContext';
 import { ThemeProvider } from './context/ThemeContext';
 import { NotificationProvider } from './context/NotificationContext';
 import ProtectedRoute from './components/ProtectedRoute';
-import RoleRoute from './components/RoleRoute';
+import PermissionRoute from './components/PermissionRoute';
 import AppLayout from './components/layout/AppLayout';
 import ErrorBoundary from './components/ErrorBoundary';
 import Login from './pages/Login';
@@ -27,6 +27,7 @@ import AuditLog from './pages/AuditLog';
 import Notifications from './pages/Notifications';
 import Terminal from './pages/Terminal';
 import Terminals from './pages/Terminals';
+import Connections from './pages/Connections';
 import Device from './pages/Device';
 import Profile from './pages/Profile';
 import Register from './pages/Register';
@@ -37,6 +38,7 @@ import InstallCli from './pages/InstallCli';
 import ApproveRequest from './pages/ApproveRequest';
 import BulkImport from './pages/BulkImport';
 import Keystore from './pages/Keystore';
+import Roles from './pages/Roles';
 import MfaSetup from './pages/MfaSetup';
 
 function App() {
@@ -70,24 +72,23 @@ function App() {
                 <Route element={<AppLayout />}>
                   <Route index element={<Dashboard />} />
                   <Route path="/dashboard" element={<Dashboard />} />
-                  {/* Inventory + access — viewable by members */}
-                  <Route path="/customers" element={<Customers />} />
-                  <Route path="/customers/:id" element={<CustomerDetail />} />
-                  <Route path="/servers" element={<Servers />} />
-                  <Route path="/servers/:id" element={<ServerDetail />} />
                   <Route path="/terminals" element={<Terminals />} />
+                  <Route path="/connections" element={<Connections />} />
                   <Route path="/access-requests" element={<AccessRequests />} />
                   <Route path="/notifications" element={<Notifications />} />
                   <Route path="/profile" element={<Profile />} />
                   <Route path="/install-cli" element={<InstallCli />} />
-                  {/* Manager+ */}
-                  <Route element={<RoleRoute minRole="manager" />}>
+                  {/* Permission-gated pages — see ROUTE_ACCESS in lib/commands.js */}
+                  <Route element={<PermissionRoute />}>
+                    <Route path="/customers" element={<Customers />} />
+                    <Route path="/customers/:id" element={<CustomerDetail />} />
+                    <Route path="/servers" element={<Servers />} />
+                    <Route path="/servers/:id" element={<ServerDetail />} />
                     <Route path="/sessions" element={<Sessions />} />
                     <Route path="/keystore" element={<Keystore />} />
-                  </Route>
-                  {/* Admin+ */}
-                  <Route element={<RoleRoute minRole="admin" />}>
                     <Route path="/users" element={<Users />} />
+                    <Route path="/roles" element={<Roles />} />
+                    <Route path="/roles/:id" element={<Roles />} />
                     <Route path="/groups" element={<Groups />} />
                     <Route path="/groups/:id" element={<GroupDetail />} />
                     <Route path="/bulk-import" element={<BulkImport />} />

@@ -4,9 +4,10 @@ import api from '@/services/api';
 import PasswordInput from '@/components/ui/PasswordInput';
 import SearchableSelect from '@/components/ui/SearchableSelect';
 import Avatar from '@/components/ui/Avatar';
-import { ROLE_LABELS, USER_STATUS_LABELS } from '@/lib/labels';
+import { USER_STATUS_LABELS } from '@/lib/labels';
+import { useAuth } from '@/context/AuthContext';
+import { listRoles } from '@/services/roleService';
 
-const ROLES = ['super_admin', 'admin', 'manager', 'member'];
 const STATUSES = ['active', 'invited', 'suspended', 'deactivated'];
 
 function UserForm({ user, onSubmit, onCancel }) {
@@ -14,7 +15,13 @@ function UserForm({ user, onSubmit, onCancel }) {
   const [name, setName] = useState(user?.name || '');
   const [email, setEmail] = useState(user?.email || '');
   const [password, setPassword] = useState('');
-  const [role, setRole] = useState(user?.role || 'member');
+  const { user: me, can } = useAuth();
+  const isSelf = isEdit && user?.id === me?.id;
+  // Roles come from the API (built-in + custom). Only roles whose
+  // permissions you hold yourself are offered (the API enforces the same).
+  const [roles, setRoles] = useState([]);
+  const [roleId, setRoleId] = useState(user?.roleId || '');
+  const canAssign = can('users.assign_role') && !isSelf;
   const [status, setStatus] = useState(user?.status || 'active');
   const [managerId, setManagerId] = useState(user?.managerId || '');
   const [managers, setManagers] = useState([]);
@@ -23,6 +30,15 @@ function UserForm({ user, onSubmit, onCancel }) {
   const [ssoEnabled, setSsoEnabled] = useState(false);
   const [error, setError] = useState('');
   const [submitting, setSubmitting] = useState(false);
+
+  useEffect(() => {
+    listRoles()
+      .then((all) => {
+        setRoles(all);
+        if (!user?.roleId) setRoleId(all.find((r) => r.key === 'member')?.id || '');
+      })
+      .catch(() => setRoles([]));
+  }, [user?.roleId]);
 
   // Load candidate managers (everyone except the user being edited).
   useEffect(() => {
@@ -58,11 +74,15 @@ function UserForm({ user, onSubmit, onCancel }) {
       return;
     }
 
-    const payload = { name: name.trim(), email: email.trim(), role };
-    if (managerId) payload.managerId = managerId;
+    // Only send what changed — each field has its own permission.
+    const payload = { name: name.trim() };
+    if (!isEdit || email.trim() !== user.email) payload.email = email.trim();
+    if (canAssign && roleId && roleId !== user?.roleId) payload.roleId = roleId;
+    if (managerId !== (user?.managerId || '')) payload.managerId = managerId || null;
+    if (!isEdit && !managerId) delete payload.managerId;
 
     if (isEdit) {
-      payload.status = status;
+      if (status !== user.status) payload.status = status;
     } else if (ssoEnabled) {
       // SSO configured — no password; send the "sign in with SSO" invite.
       payload.sendInvite = true;
@@ -164,15 +184,28 @@ function UserForm({ user, onSubmit, onCancel }) {
       <div>
         <label className="mb-1.5 block text-sm font-medium text-foreground">Role <span className="text-destructive">*</span></label>
         <SearchableSelect
-          value={role}
-          onChange={(v) => setRole(v)}
-          options={ROLES.map((r) => ({ value: r, label: ROLE_LABELS[r] || r }))}
-          searchable={false}
+          value={roleId}
+          onChange={(v) => setRoleId(v)}
+          options={roles
+            .filter((r) => r.assignable || r.id === user?.roleId)
+            .map((r) => ({ value: r.id, label: r.name, sublabel: r.description || undefined, disabled: !r.assignable }))}
+          searchable={roles.length > 6}
           clearable={false}
+          disabled={!canAssign}
+          renderOption={(o) => (
+            <span className="min-w-0">
+              <span className="block truncate">{o.label}</span>
+              {o.sublabel && <span className="block truncate text-xs text-muted-foreground">{o.sublabel}</span>}
+            </span>
+          )}
         />
+        {isSelf && <p className="mt-1 text-[11px] text-muted-foreground">You can’t change your own role.</p>}
+        {!isSelf && !can('users.assign_role') && (
+          <p className="mt-1 text-[11px] text-muted-foreground">Changing roles needs the “Assign roles” permission.</p>
+        )}
       </div>
 
-      {isEdit && (
+      {isEdit && !isSelf && can('users.suspend') && (
         <div>
           <label className="mb-1.5 block text-sm font-medium text-foreground">Status</label>
           <SearchableSelect

@@ -31,6 +31,7 @@ import { useQuickConnect } from '@/context/QuickConnectContext';
 import { relativeTime, formatDateTime } from '@/utils/time';
 import { extractCommands, formatOffset } from '@/utils/castCommands';
 import { SESSION_STATUS_LABELS } from '@/lib/labels';
+import { can } from '@/lib/permissions';
 
 // A session row is "connectable" from this page when it's the caller's own
 // still-ACTIVE session — matches the terminal hub's "caller's own sessions
@@ -39,10 +40,6 @@ function isOwnActiveSession(session, user) {
   return session?.status === 'ACTIVE' && !!user && (session.user?.id === user.id || session.userId === user.id);
 }
 
-const ROLE_RANK = { super_admin: 4, admin: 3, manager: 2, member: 1 };
-function isAtLeast(user, role) {
-  return (ROLE_RANK[user?.role] || 0) >= (ROLE_RANK[role] || 0);
-}
 
 const SESSION_STATUS_META = {
   ACTIVE: { label: 'Active', variant: 'success' },
@@ -395,7 +392,12 @@ function SessionDetailDrawer({ sessionId, open, onClose, currentUser, sessionCon
           )}
         </dl>
       )}
-      {!loading && session && (session.recordingKey || session.recordingPath) && (
+      {!loading && session && (session.recordingKey || session.recordingPath) && !can(currentUser, 'sessions.view_recordings') && (
+        <p className="mt-4 text-xs text-muted-foreground">
+          A recording exists for this session. Watching recordings needs its own permission.
+        </p>
+      )}
+      {!loading && session && (session.recordingKey || session.recordingPath) && can(currentUser, 'sessions.view_recordings') && (
         <div className="mt-4">
           <div className="mb-2 flex items-center justify-between">
             <div className="flex items-center gap-1.5 text-xs font-medium uppercase tracking-wide text-muted-foreground">
@@ -435,7 +437,7 @@ const SESSION_STATUSES = ['ACTIVE', 'ENDED', 'TERMINATED'];
 
 function Sessions() {
   const { user } = useAuth();
-  const canTerminate = isAtLeast(user, 'admin');
+  const canTerminate = can(user, 'sessions.terminate');
   const sessionConnect = useSessionConnect();
 
   const [activeTab, setActiveTab] = useState('all');
@@ -529,7 +531,7 @@ function Sessions() {
         <div className="flex items-center gap-2">
           <SessionTarget session={r} />
           {r.server?.environment && <EnvironmentBadge environment={r.server.environment} />}
-          {(r.recordingKey || r.recordingPath) && (
+          {(r.recordingKey || r.recordingPath) && can(user, 'sessions.view_recordings') && (
             <button
               type="button"
               onClick={(e) => { e.stopPropagation(); openDetail(r.id); }}

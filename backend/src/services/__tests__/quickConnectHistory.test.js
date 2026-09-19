@@ -9,6 +9,7 @@
 import prisma from '../../config/db.js';
 import * as quickConnectService from '../quickConnectService.js';
 import { dbReachable, createTestOrg, createTestUser, cleanupOrg } from './testDbHelper.js';
+import { defaultPermissionsFor } from '../../config/permissions.js';
 
 describe('quickConnectService — Quick Connect history', () => {
   let reachable;
@@ -217,7 +218,7 @@ describe('quickConnectService — Quick Connect history', () => {
     });
 
     await expect(
-      quickConnectService.reconnectFromHistory(org.id, { id: user.id, role: 'manager' }, row.id)
+      quickConnectService.reconnectFromHistory(org.id, { id: user.id, role: 'admin', permissions: new Set(defaultPermissionsFor('admin')) }, row.id)
     ).rejects.toMatchObject({ statusCode: 409, code: 'SECRET_REQUIRED' });
   });
 
@@ -228,7 +229,7 @@ describe('quickConnectService — Quick Connect history', () => {
     });
 
     await expect(
-      quickConnectService.reconnectFromHistory(org.id, { id: user.id, role: 'manager' }, row.id)
+      quickConnectService.reconnectFromHistory(org.id, { id: user.id, role: 'admin', permissions: new Set(defaultPermissionsFor('admin')) }, row.id)
     ).rejects.toMatchObject({ statusCode: 409, code: 'SECRET_REQUIRED' });
   });
 
@@ -241,7 +242,7 @@ describe('quickConnectService — Quick Connect history', () => {
       authType: 'credential', credentialId: credential.id, sessionId: 's10', status: 'connected',
     });
 
-    const result = await quickConnectService.reconnectFromHistory(org.id, { id: user.id, role: 'manager' }, row.id);
+    const result = await quickConnectService.reconnectFromHistory(org.id, { id: user.id, role: 'admin', permissions: new Set(defaultPermissionsFor('admin')) }, row.id);
     expect(result.ticket).toEqual(expect.any(String));
     expect(result.expiresIn).toBe(60);
   }, 15000);
@@ -262,7 +263,7 @@ describe('quickConnectService — Quick Connect history', () => {
     });
 
     await expect(
-      quickConnectService.reconnectFromHistory(org.id, { id: user.id, role: 'manager' }, row.id)
+      quickConnectService.reconnectFromHistory(org.id, { id: user.id, role: 'admin', permissions: new Set(defaultPermissionsFor('admin')) }, row.id)
     ).rejects.toMatchObject({ statusCode: 403, code: 'PROD_HOST_REQUIRES_APPROVAL' });
   }, 15000);
 });

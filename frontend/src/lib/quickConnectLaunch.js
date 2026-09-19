@@ -4,7 +4,7 @@
  * The default path for every "Connect" entry point is now an in-app
  * TerminalWorkspaceContext tab (see context/TerminalWorkspaceContext.jsx) —
  * call sites (components/quickConnect/QuickConnectModal.jsx,
- * components/dashboard/RecentQuickConnectsWidget.jsx,
+ * components/dashboard/RecentConnectionsWidget.jsx,
  * components/workspace/NewConnectionDialog.jsx) call
  * `useTerminalWorkspace().openTab({ ticket }, meta)` directly, which
  * navigates to /terminals.

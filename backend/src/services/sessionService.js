@@ -295,4 +295,45 @@ export async function terminate(orgId, sessionId, byUserId) {
   return updated;
 }
 
-export default { create, end, list, listActive, getById, terminate };
+/**
+ * The caller's own recently used servers (dashboard "Recent connections").
+ * SSH sessions opened through access requests / saved servers in the last
+ * `days` days, one row per server, newest first. Quick Connect sessions are
+ * excluded (they have their own history, with auth type and identity).
+ * Scoped to org + user: never another user's activity.
+ *
+ * @returns {Promise<Array<{ server, lastConnectedAt, connectCount }>>}
+ */
+export async function listRecentServersForUser(orgId, userId, { days = 7, limit = 8 } = {}) {
+  if (!orgId || !userId) throw new ApiError(400, 'orgId and userId are required');
+  const since = new Date(Date.now() - Math.min(Math.max(days, 1), 30) * 86400 * 1000);
+  const rows = await prisma.session.groupBy({
+    by: ['serverId'],
+    where: {
+      orgId,
+      userId,
+      sessionType: 'SSH',
+      serverId: { not: null },
+      authMethod: { not: 'quick_connect' },
+      startedAt: { gte: since },
+    },
+    _max: { startedAt: true },
+    _count: { _all: true },
+    orderBy: { _max: { startedAt: 'desc' } },
+    take: Math.min(Math.max(limit, 1), 50),
+  });
+  if (rows.length === 0) return [];
+  const servers = await prisma.server.findMany({
+    where: { orgId, id: { in: rows.map((r) => r.serverId) } },
+    select: {
+      id: true, displayName: true, hostname: true, ipAddress: true, port: true,
+      environment: true, authMode: true, provisionStatus: true, protocol: true, agentId: true, agentLastSeen: true,
+    },
+  });
+  const byId = new Map(servers.map((sv) => [sv.id, sv]));
+  return rows
+    .filter((r) => byId.has(r.serverId))
+    .map((r) => ({ server: byId.get(r.serverId), lastConnectedAt: r._max.startedAt, connectCount: r._count._all }));
+}
+
+export default { create, end, list, listActive, getById, terminate, listRecentServersForUser };

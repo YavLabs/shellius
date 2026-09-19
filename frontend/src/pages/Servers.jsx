@@ -40,7 +40,7 @@ import {
 } from '@/services/serverService';
 import { listCustomers } from '@/services/customerService';
 import { useAuth } from '@/context/AuthContext';
-import { roleAtLeast } from '@/lib/permissions';
+import { can } from '@/lib/permissions';
 import { relativeTime } from '@/utils/time';
 import { ENVIRONMENT_LABELS, HEALTH_STATUS_LABELS } from '@/lib/labels';
 
@@ -50,10 +50,13 @@ const HEALTH_STATUSES = ['healthy', 'unhealthy', 'unknown', 'maintenance'];
 function Servers() {
   const navigate = useNavigate();
   const { user } = useAuth();
-  // Managers onboard/manage servers; only admins delete (matches the API).
-  const canManage = roleAtLeast(user, 'manager');
-  const canDelete = roleAtLeast(user, 'admin');
-  const canDeployKeys = roleAtLeast(user, 'admin');
+  // Each action follows its own permission (same keys the API checks).
+  const canCreate = can(user, 'servers.create');
+  const canEdit = can(user, 'servers.update');
+  const canOnboard = can(user, 'servers.onboard');
+  const canDelete = can(user, 'servers.delete');
+  const canDeployKeys = can(user, 'keystore.deploy');
+  const canBulk = canEdit || can(user, 'servers.change_environment') || canDeployKeys;
 
   const [servers, setServers] = useState([]);
   const [total, setTotal] = useState(0);
@@ -86,7 +89,7 @@ function Servers() {
   // Deep link: /servers?action=new[&customerId=] — open the create modal,
   // optionally prefilling the customer.
   useEffect(() => {
-    if (searchParams.get('action') === 'new' && canManage) {
+    if (searchParams.get('action') === 'new' && canCreate) {
       setEditing(null);
       setNewServerCustomerId(searchParams.get('customerId') || '');
       setFormOpen(true);
@@ -186,7 +189,7 @@ function Servers() {
     { value: 'osType', label: 'OS Type' },
     { value: 'isActive', label: 'Status' },
     { value: 'sshUser', label: 'SSH User' },
-  ];
+  ].filter((f) => canEdit && (f.value !== 'environment' || can(user, 'servers.change_environment')));
   const bulkValueOptions = {
     environment: ENVIRONMENTS.map((e) => ({ value: e, label: ENVIRONMENT_LABELS[e] || e })),
     customerId: customers.map((c) => ({ value: c.id, label: c.name })),
@@ -253,6 +256,7 @@ function Servers() {
       <div className="flex flex-col gap-2 rounded-lg border border-border bg-accent/30 px-4 py-2.5 sm:flex-row sm:items-center sm:justify-between">
         <span className="text-sm text-foreground">{selected.length} selected</span>
         <div className="flex flex-wrap items-center gap-2">
+          {BULK_FIELDS.length > 0 && (
           <SearchableSelect
             className="w-[160px]"
             value={bulkField}
@@ -265,6 +269,7 @@ function Servers() {
             searchable={false}
             clearable={false}
           />
+          )}
           {bulkField && bulkField !== 'sshUser' && (
             <SearchableSelect
               className="w-[180px]"
@@ -284,13 +289,15 @@ function Servers() {
               placeholder="SSH user (e.g. ubuntu)"
             />
           )}
-          <Button
-            size="sm"
-            onClick={() => bulkField && bulkValue !== '' && setBulkConfirm(true)}
-            disabled={!bulkField || bulkValue === ''}
-          >
-            Apply
-          </Button>
+          {BULK_FIELDS.length > 0 && (
+            <Button
+              size="sm"
+              onClick={() => bulkField && bulkValue !== '' && setBulkConfirm(true)}
+              disabled={!bulkField || bulkValue === ''}
+            >
+              Apply
+            </Button>
+          )}
           {canDeployKeys && (
             <Button variant="outline" size="sm" onClick={() => setDeployWizardOpen(true)}>
               <Send className="mr-1 h-4 w-4" /> Export key to servers
@@ -420,7 +427,7 @@ function Servers() {
           icon: Eye,
           onClick: (r) => navigate(`/servers/${r.id}`),
         },
-        ...(canManage
+        ...(canEdit
           ? [
               {
                 label: 'Edit',
@@ -430,6 +437,10 @@ function Servers() {
                   setFormOpen(true);
                 },
               },
+            ]
+          : []),
+        ...(canOnboard
+          ? [
               {
                 label: 'Bootstrap host',
                 icon: Download,
@@ -473,7 +484,7 @@ function Servers() {
           <Button variant="outline" onClick={() => fetch()} disabled={loading}>
             <RefreshCw className={`mr-2 h-4 w-4 ${loading ? 'animate-spin' : ''}`} /> Refresh
           </Button>
-          {canManage && (
+          {canCreate && (
             <Button
               onClick={() => {
                 setEditing(null);
@@ -501,7 +512,7 @@ function Servers() {
         searchPlaceholder="Search name, hostname or IP..."
         onSearchChange={handleSearchChange}
         filters={filterSlot}
-        selectable
+        selectable={canBulk}
         selectedIds={selected}
         onSelectionChange={setSelected}
         bulkActions={bulkActionsSlot}

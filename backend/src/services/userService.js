@@ -7,24 +7,30 @@ import * as terminalService from './terminalService.js';
 import { cleanupPolicySubjects } from './policyService.js';
 import * as authService from './authService.js';
 import { parseAvatarDataUrl } from '../utils/avatar.js';
+import { log as auditLog } from './auditService.js';
+import { assertCanActOnRole, getSystemRole, resolveRole, hasPermission } from './roleService.js';
 
-const ROLE_RANK = { super_admin: 4, admin: 3, manager: 2, member: 1 };
+const ROLE_BRIEF = { select: { id: true, key: true, name: true, isSystem: true, baseRole: true, permissions: true } };
 
 function strip(user) {
   if (!user) return user;
-  const { passwordHash, mfaTotpSecretEnc, mfaTotpPendingEnc, mfaBackupCodes, ssoSub, ...rest } = user;
+  const { passwordHash, mfaTotpSecretEnc, mfaTotpPendingEnc, mfaBackupCodes, ssoSub, assignedRole, ...rest } = user;
   return {
     ...rest,
+    ...(assignedRole !== undefined
+      ? { roleInfo: assignedRole ? { id: assignedRole.id, key: assignedRole.key, name: assignedRole.name, isSystem: assignedRole.isSystem } : null }
+      : {}),
     mfaEnabled: !!(user.mfaTotpEnabled || user.mfaEmailEnabled || (user.mfaBackupCodes || []).length > 0),
   };
 }
 
-export async function listUsers(orgId, { page = 1, pageSize = 25, role, status, managerId, search } = {}) {
+export async function listUsers(orgId, { page = 1, pageSize = 25, role, roleId, status, managerId, search } = {}) {
   page = parseInt(page, 10) || 1;
   pageSize = Math.min(parseInt(pageSize, 10) || 25, 100);
 
   const where = { orgId, status: { not: 'deleted' } };
   if (role) where.role = role;
+  if (roleId) where.roleId = roleId;
   if (status) where.status = status; // caller-supplied status overrides the default filter
   if (managerId) where.managerId = managerId;
   if (search) {
@@ -40,7 +46,7 @@ export async function listUsers(orgId, { page = 1, pageSize = 25, role, status, 
       skip: (page - 1) * pageSize,
       take: pageSize,
       orderBy: { createdAt: 'desc' },
-      include: { manager: { select: { id: true, name: true } } },
+      include: { manager: { select: { id: true, name: true } }, assignedRole: ROLE_BRIEF },
     }),
     prisma.user.count({ where }),
   ]);
@@ -54,30 +60,57 @@ export async function getUser(orgId, userId) {
     include: {
       manager: { select: { id: true, name: true, email: true } },
       directReports: { select: { id: true, name: true, email: true, role: true, status: true } },
+      assignedRole: ROLE_BRIEF,
     },
   });
   if (!user) throw new ApiError(404, 'User not found');
   return strip(user);
 }
 
-export async function createUser(orgId, data, actorRole) {
-  const { email, name, password, role = 'member', managerId, status } = data;
+/**
+ * Resolve the role a create/update asks for: `roleId` (id or key) wins over
+ * the legacy `role` (tier key). Returns null when neither was given.
+ */
+async function requestedRole(orgId, data) {
+  const ref = data.roleId || data.role;
+  if (!ref) return null;
+  const role = await resolveRole(orgId, ref);
+  if (!role) throw new ApiError(400, 'Unknown role');
+  return role;
+}
+
+/**
+ * Throws unless `actor` may manage `target`: you can only act on a user whose
+ * role you could assign yourself (its permissions are a subset of yours and
+ * its base tier isn't above yours). Self is always allowed here — callers
+ * restrict what self may change.
+ */
+export async function assertCanManageUser(orgId, actor, target, what = 'manage this user') {
+  if (!actor || target.id === actor.userId) return;
+  const role = target.assignedRole || (target.roleId ? await prisma.role.findFirst({ where: { id: target.roleId, orgId } }) : null);
+  assertCanActOnRole(actor, role || { baseRole: target.role, permissions: [], isSystem: false }, what);
+}
+
+async function activeSuperAdminCount(orgId, excludeUserId) {
+  return prisma.user.count({
+    where: { orgId, role: 'super_admin', status: 'active', deletedAt: null, NOT: { id: excludeUserId } },
+  });
+}
+
+export async function createUser(orgId, data, actor) {
+  const { email, name, password, managerId, status } = data;
   // password is optional when the invite flow is used
   if (!email || !name) {
     throw new ApiError(400, 'email and name are required');
   }
 
-  if (!ROLE_RANK[actorRole] || ROLE_RANK[actorRole] < ROLE_RANK.admin) {
-    throw new ApiError(403, 'Insufficient permissions to create users');
-  }
-  if (!ROLE_RANK[role]) {
-    throw new ApiError(400, 'Invalid role');
-  }
-  if (ROLE_RANK[role] > ROLE_RANK[actorRole]) {
-    throw new ApiError(403, 'Cannot create a user with a higher role than your own');
-  }
-  if (role === 'super_admin' && actorRole !== 'super_admin') {
-    throw new ApiError(403, 'Only super_admin can create super_admin');
+  const member = await getSystemRole(orgId, 'member');
+  const role = (await requestedRole(orgId, data)) || member;
+  if (actor && role.id !== member.id) {
+    if (!hasPermission(actor.permissions, 'users.assign_role')) {
+      throw new ApiError(403, "You don't have permission to assign roles", { code: 'PERMISSION_DENIED' });
+    }
+    assertCanActOnRole(actor, role, 'assign this role');
   }
 
   if (managerId) {
@@ -95,10 +128,12 @@ export async function createUser(orgId, data, actorRole) {
         email,
         name,
         passwordHash,
-        role,
+        role: role.baseRole,
+        roleId: role.id,
         status: userStatus,
         managerId: managerId || null,
       },
+      include: { assignedRole: ROLE_BRIEF },
     });
     return strip(user);
   } catch (err) {
@@ -124,32 +159,70 @@ async function wouldCreateCycle(orgId, userId, newManagerId) {
   return false;
 }
 
-export async function updateUser(orgId, userId, data, actorUserId, actorRole) {
-  const existing = await prisma.user.findFirst({ where: { id: userId, orgId } });
+/**
+ * Update a user.
+ *
+ * `actor` is { userId, tier, permissions, roleId } (roleService.actorFromReq)
+ * or null for trusted internal callers. Self-service may only change `name`;
+ * everything else needs the matching permission AND the right to manage the
+ * target (F-01): users.update (name/email/manager/avatar), users.assign_role
+ * (roleId/role), users.suspend (status). A password can't be set for another
+ * user — send a reset link instead. The last active super admin can't be
+ * demoted or suspended.
+ */
+export async function updateUser(orgId, userId, data, actor, meta = {}) {
+  const existing = await prisma.user.findFirst({ where: { id: userId, orgId }, include: { assignedRole: ROLE_BRIEF } });
   if (!existing) throw new ApiError(404, 'User not found');
-
-  const updateData = {};
-
-  if (data.name !== undefined) updateData.name = data.name;
-  if (data.email !== undefined) updateData.email = data.email;
-  if (data.avatarUrl !== undefined) updateData.avatarUrl = data.avatarUrl;
-
-  if (data.role !== undefined && data.role !== existing.role) {
-    if (!['super_admin', 'admin'].includes(actorRole)) {
-      throw new ApiError(403, 'Only admins can change roles');
+  const isSelf = actor && actor.userId === userId;
+  const need = (perm, field) => {
+    if (actor && !hasPermission(actor.permissions, perm)) {
+      throw new ApiError(403, `You don't have permission to change '${field}'`, { code: 'PERMISSION_DENIED' });
     }
-    if (!ROLE_RANK[data.role]) throw new ApiError(400, 'Invalid role');
-    if (ROLE_RANK[data.role] > ROLE_RANK[actorRole]) {
-      throw new ApiError(403, 'Cannot elevate role above your own');
-    }
-    updateData.role = data.role;
+  };
+
+  if (actor && isSelf) {
+    const bad = Object.keys(data).filter((k) => data[k] !== undefined && k !== 'name');
+    if (bad.length > 0) throw new ApiError(403, `You cannot change '${bad[0]}' on your own account here`);
+  }
+  if (actor && !isSelf) await assertCanManageUser(orgId, actor, existing, 'edit this user');
+  if (data.password !== undefined && actor) {
+    throw new ApiError(400, "Passwords can't be set for other users — send a password reset link instead");
   }
 
-  if (data.status !== undefined) {
-    if (!['super_admin', 'admin'].includes(actorRole)) {
-      throw new ApiError(403, 'Only admins can change status');
+  const updateData = {};
+  const changes = {};
+
+  for (const field of ['name', 'email', 'avatarUrl']) {
+    if (data[field] !== undefined && data[field] !== existing[field]) {
+      if (!isSelf) need('users.update', field);
+      updateData[field] = data[field];
+      changes[field] = field === 'avatarUrl' ? true : { from: existing[field], to: data[field] };
+    }
+  }
+
+  const newRole = await requestedRole(orgId, data);
+  if (newRole && newRole.id !== existing.roleId) {
+    need('users.assign_role', 'role');
+    if (actor) assertCanActOnRole(actor, newRole, 'assign this role');
+    if (existing.role === 'super_admin' && newRole.baseRole !== 'super_admin' && existing.status === 'active') {
+      if ((await activeSuperAdminCount(orgId, userId)) === 0) {
+        throw new ApiError(409, 'This is the only active super admin — make someone else super admin first');
+      }
+    }
+    updateData.roleId = newRole.id;
+    updateData.role = newRole.baseRole;
+    changes.role = { from: existing.assignedRole?.name || existing.role, to: newRole.name };
+  }
+
+  if (data.status !== undefined && data.status !== existing.status) {
+    need('users.suspend', 'status');
+    if (existing.role === 'super_admin' && existing.status === 'active') {
+      if ((await activeSuperAdminCount(orgId, userId)) === 0) {
+        throw new ApiError(409, 'This is the only active super admin — it cannot be suspended');
+      }
     }
     updateData.status = data.status;
+    changes.status = { from: existing.status, to: data.status };
   }
 
   if (data.managerId !== undefined) {
@@ -163,13 +236,39 @@ export async function updateUser(orgId, userId, data, actorUserId, actorRole) {
       if (cycle) throw new ApiError(400, 'Circular manager reference detected');
       updateData.managerId = data.managerId;
     }
+    if (updateData.managerId !== undefined && updateData.managerId !== existing.managerId) {
+      if (!isSelf) need('users.update', 'managerId');
+      changes.managerId = { from: existing.managerId, to: updateData.managerId };
+    } else {
+      delete updateData.managerId;
+    }
   }
 
-  if (data.password) {
+  // Trusted internal callers (actor === null, e.g. seed) may still set one.
+  if (data.password && !actor) {
     updateData.passwordHash = await bcrypt.hash(data.password, config.bcryptRounds);
   }
 
-  const updated = await prisma.user.update({ where: { id: userId }, data: updateData });
+  if (Object.keys(updateData).length === 0) return strip(existing);
+
+  const updated = await prisma.user.update({
+    where: { id: userId },
+    data: updateData,
+    include: { assignedRole: ROLE_BRIEF },
+  });
+
+  if (actor && Object.keys(changes).length > 0) {
+    const action = changes.role ? 'user.role_changed' : changes.status ? 'user.status_changed' : 'user.updated';
+    await auditLog({
+      orgId,
+      actorId: actor.userId,
+      action,
+      resourceType: 'User',
+      resourceId: userId,
+      metadata: { changes },
+      ...meta,
+    });
+  }
 
   // Role or status changes must take effect immediately — kill every
   // outstanding session/access-token for the affected user rather than
@@ -185,9 +284,10 @@ export async function updateUser(orgId, userId, data, actorUserId, actorRole) {
 // Admin: unlock a locked-out account
 // ---------------------------------------------------------------------------
 
-export async function unlockUser(orgId, userId) {
+export async function unlockUser(orgId, userId, actor = null) {
   const user = await prisma.user.findFirst({ where: { id: userId, orgId } });
   if (!user) throw new ApiError(404, 'User not found');
+  await assertCanManageUser(orgId, actor, user, 'unlock this user');
   const updated = await prisma.user.update({
     where: { id: userId },
     data: { failedLoginCount: 0, lockedUntil: null },
@@ -199,12 +299,10 @@ export async function unlockUser(orgId, userId) {
 // Admin: revoke every session for a user ("sign out everywhere")
 // ---------------------------------------------------------------------------
 
-export async function adminRevokeSessions(orgId, userId, actorRole) {
+export async function adminRevokeSessions(orgId, userId, actor = null) {
   const user = await prisma.user.findFirst({ where: { id: userId, orgId } });
   if (!user) throw new ApiError(404, 'User not found');
-  if (ROLE_RANK[user.role] > ROLE_RANK[actorRole]) {
-    throw new ApiError(403, 'Cannot revoke sessions for a user with a higher role than your own');
-  }
+  await assertCanManageUser(orgId, actor, user, 'sign this user out');
   await authService.revokeAllSessions(userId, orgId, 'admin_revoked');
   return { success: true };
 }
@@ -253,9 +351,10 @@ export async function getUserDeleteImpact(orgId, userId) {
  *
  * @param {object} [options] - { reassignReportsTo?: string }
  */
-export async function deleteUser(orgId, userId, options = {}, callerId = null) {
+export async function deleteUser(orgId, userId, options = {}, callerId = null, actor = null) {
   const existing = await prisma.user.findFirst({ where: { id: userId, orgId } });
   if (!existing) throw new ApiError(404, 'User not found');
+  await assertCanManageUser(orgId, actor, existing, 'delete this user');
 
   if (existing.role === 'super_admin') {
     const superAdminCount = await prisma.user.count({
@@ -606,6 +705,7 @@ export async function softDeleteSelf(orgId, userId) {
  * @returns {Promise<object>} stripped user row
  */
 export async function createPendingUser(orgId, { email, name, passwordHash }) {
+  const member = await getSystemRole(orgId, 'member');
   try {
     const user = await prisma.user.create({
       data: {
@@ -614,6 +714,7 @@ export async function createPendingUser(orgId, { email, name, passwordHash }) {
         name,
         passwordHash,
         role: 'member',
+        roleId: member.id,
         status: 'pending_verification',
         passwordChangedAt: new Date(),
       },

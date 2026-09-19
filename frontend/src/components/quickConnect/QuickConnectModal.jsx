@@ -11,7 +11,7 @@ import { createQuickConnectTicket, saveQuickConnectServer, getHistory } from '@/
 import { listCredentials } from '@/services/keystoreService';
 import { useAuth } from '@/context/AuthContext';
 import { useTerminalWorkspace } from '@/context/TerminalWorkspaceContext';
-import { roleAtLeast } from '@/lib/permissions';
+import { useQuickConnect } from '@/context/QuickConnectContext';
 
 const AUTH_TABS = [
   { value: 'password', label: 'Password' },
@@ -44,9 +44,15 @@ function parseHostPaste(raw) {
 
 function QuickConnectModal({ open, onClose, prefill }) {
   const navigate = useNavigate();
-  const { user: currentUser } = useAuth();
+  const { can } = useAuth();
+  const { canUseStoredIdentity } = useQuickConnect();
   const { openTab, reconnectTab, tabs } = useTerminalWorkspace();
-  const canCreateIdentity = roleAtLeast(currentUser, 'admin');
+  // What this role may do here (the API enforces the same rules):
+  const canBindIdentity = can('servers.manage_credentials');
+  const canCreateIdentity = canBindIdentity && can('keystore.manage');
+  const canSaveServer = can('quick_connect.save_server');
+  const authTabs = AUTH_TABS.filter((t) => t.value !== 'credential' || canUseStoredIdentity);
+  const defaultIdentityMode = canBindIdentity ? 'existing' : 'none';
 
   const [host, setHost] = useState('');
   const [port, setPort] = useState('22');
@@ -64,7 +70,7 @@ function QuickConnectModal({ open, onClose, prefill }) {
   const [expectedHostKey, setExpectedHostKey] = useState('');
 
   const [saveOn, setSaveOn] = useState(false);
-  const [saveValues, setSaveValues] = useState({ identityMode: 'existing', environment: 'dev' });
+  const [saveValues, setSaveValues] = useState({ identityMode: defaultIdentityMode, environment: 'dev' });
 
   const [recent, setRecent] = useState([]);
   const [connecting, setConnecting] = useState(false);
@@ -85,14 +91,17 @@ function QuickConnectModal({ open, onClose, prefill }) {
     setAdvancedOpen(false);
     setExpectedHostKey('');
     setSaveOn(false);
-    setSaveValues({ identityMode: 'existing', environment: 'dev' });
+    setSaveValues({ identityMode: defaultIdentityMode, environment: 'dev' });
     setError(null);
     getHistory({ limit: 8 })
       .then(setRecent)
       .catch(() => setRecent([]));
-    listCredentials()
-      .then(setIdentities)
-      .catch(() => setIdentities([]));
+    if (can('keystore.view')) {
+      listCredentials()
+        .then(setIdentities)
+        .catch(() => setIdentities([]));
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, prefill]);
 
   const handleHostPaste = (e) => {
@@ -320,7 +329,7 @@ function QuickConnectModal({ open, onClose, prefill }) {
 
         <div>
           <div className="flex gap-4 border-b border-border">
-            {AUTH_TABS.map((t) => (
+            {authTabs.map((t) => (
               <button
                 key={t.value}
                 type="button"
@@ -411,23 +420,25 @@ function QuickConnectModal({ open, onClose, prefill }) {
           )}
         </div>
 
-        <label className="flex items-center gap-2 text-sm text-foreground">
-          <input
-            type="checkbox"
-            checked={saveOn}
-            onChange={(e) => setSaveOn(e.target.checked)}
-            className="rounded border-border accent-primary"
-          />
-          Save as server
-        </label>
+        {canSaveServer && (
+          <label className="flex items-center gap-2 text-sm text-foreground">
+            <input
+              type="checkbox"
+              checked={saveOn}
+              onChange={(e) => setSaveOn(e.target.checked)}
+              className="rounded border-border accent-primary"
+            />
+            Save as server
+          </label>
+        )}
 
-        {saveOn && (
+        {saveOn && canSaveServer && (
           <SaveServerFields
             values={saveValues}
             onChange={setSaveValues}
             identities={identities}
             canCreateIdentity={canCreateIdentity}
-            identityModes={['existing', 'new', 'none']}
+            identityModes={canBindIdentity ? ['existing', 'new', 'none'] : ['none']}
           />
         )}
 

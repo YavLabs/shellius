@@ -977,7 +977,7 @@ func (m AppModel) renderProfile() string {
 		field("Org", m.cfg.OrgSlug)
 	}
 	if m.cfg.Role != "" {
-		field("Role", m.cfg.Role)
+		field("Role", m.cfg.DisplayRole())
 	}
 	if m.cfg.ServerURL != "" {
 		field("Server URL", m.cfg.ServerURL)

@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { CheckCircle, Wifi, WifiOff, XCircle } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -12,6 +12,8 @@ import {
   testDraftSsoProvider,
   testSavedSsoProvider,
 } from '@/services/ssoConfigService';
+import { SwitchField } from '@/components/ui/switch';
+import { listRoles } from '@/services/roleService';
 
 // Mirrors the shadcn <Input> default styling so PasswordInput (raw input) matches.
 const SHADCN_INPUT_CLS =
@@ -66,6 +68,23 @@ export default function ProviderForm({ preset, existingProvider, orgGroups, onSa
   const [isActive, setIsActive] = useState(existingProvider?.isActive ?? true);
 
   const [defaultRole, setDefaultRole] = useState(existingProvider?.defaultRole || 'member');
+  // Roles SSO may hand out automatically: never Super admin, never a role
+  // with sensitive permissions (the API refuses those too).
+  const [roleOptions, setRoleOptions] = useState([
+    { value: 'member', label: 'Member' },
+    { value: 'manager', label: 'Manager' },
+  ]);
+  useEffect(() => {
+    listRoles()
+      .then((roles) =>
+        setRoleOptions(
+          roles
+            .filter((r) => !r.locked && (r.sensitivePermissions || []).length === 0)
+            .map((r) => ({ value: r.key, label: r.name }))
+        )
+      )
+      .catch(() => {});
+  }, []);
   const [defaultGroupId, setDefaultGroupId] = useState(existingProvider?.defaultGroupId || '');
   const [autoProvision, setAutoProvision] = useState(existingProvider?.autoProvision ?? true);
   const [allowedDomains, setAllowedDomains] = useState(existingProvider?.allowedDomains || []);
@@ -242,26 +261,13 @@ export default function ProviderForm({ preset, existingProvider, orgGroups, onSa
       )}
 
       {/* Active toggle */}
-      <div className="flex items-center gap-2 pt-1">
-        <button
-          role="switch"
-          aria-checked={isActive}
-          type="button"
-          onClick={() => setIsActive((v) => !v)}
-          className={[
-            'relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none focus:ring-2 focus:ring-ring',
-            isActive ? 'bg-primary' : 'bg-muted-foreground/30',
-          ].join(' ')}
-        >
-          <span
-            className={[
-              'pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out',
-              isActive ? 'translate-x-5' : 'translate-x-0',
-            ].join(' ')}
-          />
-        </button>
-        <span className="text-sm text-foreground">Active — shown as a sign-in button</span>
-      </div>
+      <SwitchField
+        bordered
+        label="Active"
+        description="Shown as a sign-in button on the login page."
+        checked={isActive}
+        onCheckedChange={setIsActive}
+      />
 
       {/* Security gating */}
       <div className="rounded-md border border-border p-4 space-y-4">
@@ -277,24 +283,12 @@ export default function ProviderForm({ preset, existingProvider, orgGroups, onSa
           <DomainChipsInput domains={allowedDomains} onChange={setAllowedDomains} />
         </div>
 
-        <label className="flex items-start gap-3 cursor-pointer">
-          <input
-            type="checkbox"
-            checked={requireVerifiedEmail}
-            onChange={(e) => setRequireVerifiedEmail(e.target.checked)}
-            className="mt-0.5 h-4 w-4 accent-primary"
-          />
-          <span>
-            <span className="text-sm font-medium text-foreground">
-              Require verified email for account linking
-            </span>
-            <span className="block text-xs text-muted-foreground">
-              On (recommended): a sign-in only links to an existing password account when the
-              identity provider confirms the email address is verified. Off: link on email match
-              alone.
-            </span>
-          </span>
-        </label>
+        <SwitchField
+          label="Require verified email for account linking"
+          description="On (recommended): a sign-in only links to an existing password account when the identity provider confirms the email address is verified. Off: link on email match alone."
+          checked={requireVerifiedEmail}
+          onCheckedChange={setRequireVerifiedEmail}
+        />
       </div>
 
       {/* Provisioning */}
@@ -306,21 +300,12 @@ export default function ProviderForm({ preset, existingProvider, orgGroups, onSa
           </p>
         </div>
 
-        <label className="flex items-start gap-3 cursor-pointer">
-          <input
-            type="checkbox"
-            checked={autoProvision}
-            onChange={(e) => setAutoProvision(e.target.checked)}
-            className="mt-0.5 h-4 w-4 accent-primary"
-          />
-          <span>
-            <span className="text-sm font-medium text-foreground">Auto-provision new users</span>
-            <span className="block text-xs text-muted-foreground">
-              On: any verified sign-in gets an account. Off: only invited / existing users can sign
-              in — others are told to contact an admin.
-            </span>
-          </span>
-        </label>
+        <SwitchField
+          label="Auto-provision new users"
+          description="On: any verified sign-in gets an account. Off: only invited / existing users can sign in — others are told to contact an admin."
+          checked={autoProvision}
+          onCheckedChange={setAutoProvision}
+        />
 
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
           <div>
@@ -331,11 +316,7 @@ export default function ProviderForm({ preset, existingProvider, orgGroups, onSa
               onChange={(v) => setDefaultRole(v)}
               searchable={false}
               clearable={false}
-              options={[
-                { value: 'member', label: 'Member' },
-                { value: 'manager', label: 'Manager' },
-                { value: 'admin', label: 'Admin' },
-              ]}
+              options={roleOptions}
             />
           </div>
           <div>

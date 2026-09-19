@@ -27,7 +27,6 @@ import MfaTab from '@/components/settings/MfaTab';
 import AccessSettings from '@/components/settings/AccessSettings';
 import { getPublicKey, getStatus, rotate } from '@/services/caService';
 import { getOrg, updateOrg } from '@/services/orgService';
-import { getMyPreferences, updateMyPreferences } from '@/services/userPreferencesService';
 import {
   getSmtpConfig,
   saveSmtpConfig,
@@ -42,11 +41,10 @@ import {
 } from '@/services/storageConfigService';
 import { useAuth } from '@/context/AuthContext';
 import { formatDateTime } from '@/utils/time';
+import { SwitchField } from '@/components/ui/switch';
+import { can } from '@/lib/permissions';
 
-const ROLE_RANK = { super_admin: 4, admin: 3, manager: 2, member: 1 };
-function isAtLeast(user, role) {
-  return (ROLE_RANK[user?.role] || 0) >= (ROLE_RANK[role] || 0);
-}
+
 
 // Mirrors the shadcn <Input> default styling so PasswordInput (raw input) matches.
 const SHADCN_INPUT_CLS =
@@ -187,7 +185,7 @@ function OrgTab() {
 
 function CaTab() {
   const { user } = useAuth();
-  const isSuperAdmin = isAtLeast(user, 'super_admin');
+  const canRotate = can(user, 'ca.rotate');
 
   const [status, setStatus] = useState(null);
   const [publicKey, setPublicKey] = useState(null);
@@ -298,7 +296,7 @@ function CaTab() {
             </div>
           )}
 
-          {isSuperAdmin && (
+          {canRotate && (
             <div className="mt-5 border-t border-border pt-4">
               <div className="flex items-start gap-3 rounded-md border border-amber-500/40 bg-amber-500/10 px-4 py-3">
                 <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-amber-600 dark:text-amber-400" />
@@ -549,15 +547,13 @@ function SmtpCard() {
             </div>
           </div>
 
-          <label className="flex items-center gap-2 text-sm">
-            <input
-              type="checkbox"
-              checked={useTls}
-              onChange={(e) => setUseTls(e.target.checked)}
-              className="h-4 w-4 accent-primary"
-            />
-            <span className="text-foreground">Use TLS</span>
-          </label>
+          <SwitchField
+            bordered
+            label="Use TLS"
+            description="Connect over TLS (implicit TLS on 465, STARTTLS otherwise)."
+            checked={useTls}
+            onCheckedChange={setUseTls}
+          />
 
           {testResult && (
             <div
@@ -591,133 +587,8 @@ function SmtpCard() {
   );
 }
 
-function NotificationsTab() {
-  const [emailEnabled, setEmailEnabled] = useState(true);
-  const [expiringSoonAlerts, setExpiringSoonAlerts] = useState(true);
-  const [loading, setLoading] = useState(true);
-  const [saving, setSaving] = useState(false);
-  const [saved, setSaved] = useState(false);
-  const [error, setError] = useState('');
-
-  useEffect(() => {
-    setLoading(true);
-    getMyPreferences()
-      .then((prefs) => {
-        if (prefs) {
-          setEmailEnabled(prefs.emailNotifications ?? true);
-          setExpiringSoonAlerts(prefs.expiringSoonAlerts ?? true);
-        }
-      })
-      .catch(() => {
-        // Silently fall back to defaults
-      })
-      .finally(() => setLoading(false));
-  }, []);
-
-  const handleSave = async () => {
-    setSaving(true);
-    setError('');
-    try {
-      await updateMyPreferences({
-        emailNotifications: emailEnabled,
-        expiringSoonAlerts,
-      });
-      setSaved(true);
-      setTimeout(() => setSaved(false), 3000);
-    } catch (err) {
-      setError(err.response?.data?.error?.message || err.message || 'Failed to save preferences');
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  return (
-    <div className="space-y-6">
-    <SmtpCard />
-    <SectionCard
-      title="Notification preferences"
-      description="Control how you receive alerts from Shellius."
-    >
-      {loading ? (
-        <div className="space-y-3 py-2">
-          {[1, 2].map((i) => (
-            <div key={i} className="h-16 animate-pulse rounded bg-muted" />
-          ))}
-        </div>
-      ) : (
-        <div className="space-y-4">
-          {error && (
-            <div className="rounded-md border border-destructive/50 bg-destructive/10 px-3 py-2 text-sm text-destructive">
-              {error}
-            </div>
-          )}
-          {saved && (
-            <div className="rounded-md border border-emerald-500/40 bg-emerald-500/10 px-3 py-2 text-sm text-emerald-700 dark:text-emerald-300">
-              Preferences saved.
-            </div>
-          )}
-
-          <div className="flex items-center justify-between rounded-lg border border-border p-4">
-            <div>
-              <p className="text-sm font-medium text-foreground">Email notifications</p>
-              <p className="text-xs text-muted-foreground">
-                Receive email alerts for access request approvals, certificate expiry, and
-                session activity.
-              </p>
-            </div>
-            <button
-              onClick={() => setEmailEnabled((v) => !v)}
-              role="switch"
-              aria-checked={emailEnabled}
-              className={[
-                'relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none focus:ring-2 focus:ring-ring',
-                emailEnabled ? 'bg-primary' : 'bg-muted-foreground/30',
-              ].join(' ')}
-            >
-              <span
-                className={[
-                  'pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out',
-                  emailEnabled ? 'translate-x-5' : 'translate-x-0',
-                ].join(' ')}
-              />
-            </button>
-          </div>
-
-          <div className="flex items-center justify-between rounded-lg border border-border p-4">
-            <div>
-              <p className="text-sm font-medium text-foreground">Expiring soon alerts</p>
-              <p className="text-xs text-muted-foreground">
-                Get notified when certificates and access requests are approaching expiry.
-              </p>
-            </div>
-            <button
-              onClick={() => setExpiringSoonAlerts((v) => !v)}
-              role="switch"
-              aria-checked={expiringSoonAlerts}
-              className={[
-                'relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none focus:ring-2 focus:ring-ring',
-                expiringSoonAlerts ? 'bg-primary' : 'bg-muted-foreground/30',
-              ].join(' ')}
-            >
-              <span
-                className={[
-                  'pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out',
-                  expiringSoonAlerts ? 'translate-x-5' : 'translate-x-0',
-                ].join(' ')}
-              />
-            </button>
-          </div>
-
-          <div className="pt-1">
-            <Button onClick={handleSave} disabled={saving}>
-              {saving ? 'Saving...' : 'Save preferences'}
-            </Button>
-          </div>
-        </div>
-      )}
-    </SectionCard>
-    </div>
-  );
+function EmailServerTab() {
+  return <SmtpCard />;
 }
 
 
@@ -932,25 +803,21 @@ function StorageTab() {
           </div>
 
           {!isAzure && (
-            <div className="flex flex-wrap gap-5">
-              <label className="flex items-center gap-2 text-sm">
-                <input
-                  type="checkbox"
-                  checked={useSsl}
-                  onChange={(e) => setUseSsl(e.target.checked)}
-                  className="h-4 w-4 accent-primary"
-                />
-                <span className="text-foreground">Use SSL/TLS</span>
-              </label>
-              <label className="flex items-center gap-2 text-sm">
-                <input
-                  type="checkbox"
-                  checked={forcePathStyle}
-                  onChange={(e) => setForcePathStyle(e.target.checked)}
-                  className="h-4 w-4 accent-primary"
-                />
-                <span className="text-foreground">Force path-style addressing (MinIO)</span>
-              </label>
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+              <SwitchField
+                bordered
+                label="Use SSL/TLS"
+                description="Connect to the endpoint over HTTPS."
+                checked={useSsl}
+                onCheckedChange={setUseSsl}
+              />
+              <SwitchField
+                bordered
+                label="Force path-style addressing"
+                description="Needed for MinIO and most self-hosted S3."
+                checked={forcePathStyle}
+                onCheckedChange={setForcePathStyle}
+              />
             </div>
           )}
 
@@ -986,15 +853,17 @@ function StorageTab() {
   );
 }
 
+// Each tab needs one permission (keep in sync with ROUTE_ACCESS['/settings']
+// in lib/commands.js). Personal notification preferences live on Profile.
 const TABS = [
-  { key: 'org', label: 'Organization', icon: Building2, minRole: 'admin' },
-  { key: 'ca', label: 'CA Management', icon: Shield, minRole: 'super_admin' },
-  { key: 'sso', label: 'SSO', icon: Wifi, minRole: 'super_admin' },
-  { key: 'access', label: 'Access', icon: Lock, minRole: 'admin' },
-  { key: 'storage', label: 'Storage', icon: HardDrive, minRole: 'super_admin' },
-  { key: 'mfa', label: 'MFA', icon: ShieldCheck, minRole: 'super_admin' },
-  { key: 'quickconnect', label: 'Quick Connect', icon: Zap, minRole: 'admin' },
-  { key: 'notifications', label: 'Notifications', icon: Bell, minRole: 'super_admin' },
+  { key: 'org', label: 'Organization', icon: Building2, perm: 'org.update', Component: OrgTab },
+  { key: 'ca', label: 'CA Management', icon: Shield, perm: 'ca.view', Component: CaTab },
+  { key: 'sso', label: 'SSO', icon: Wifi, perm: 'settings.sso', Component: SsoTab },
+  { key: 'access', label: 'Access', icon: Lock, perm: 'org.access_settings', Component: AccessSettings },
+  { key: 'storage', label: 'Storage', icon: HardDrive, perm: 'settings.storage', Component: StorageTab },
+  { key: 'mfa', label: 'MFA', icon: ShieldCheck, perm: 'settings.mfa', Component: MfaTab },
+  { key: 'quickconnect', label: 'Quick Connect', icon: Zap, perm: 'quick_connect.settings', Component: QuickConnectSettings },
+  { key: 'email', label: 'Email server', icon: Bell, perm: 'settings.smtp', Component: EmailServerTab },
 ];
 
 // ---------------------------------------------------------------------------
@@ -1003,8 +872,10 @@ const TABS = [
 
 function Settings() {
   const { user } = useAuth();
-  const [activeTab, setActiveTab] = useState('org');
-  const visibleTabs = TABS.filter((tab) => !tab.minRole || isAtLeast(user, tab.minRole));
+  const visibleTabs = TABS.filter((tab) => can(user, tab.perm));
+  const [chosenTab, setActiveTab] = useState(null);
+  const activeTab = visibleTabs.some((t) => t.key === chosenTab) ? chosenTab : visibleTabs[0]?.key;
+  const Active = visibleTabs.find((t) => t.key === activeTab)?.Component;
 
   return (
     <div className="space-y-6 p-6">
@@ -1037,14 +908,7 @@ function Settings() {
       </div>
 
       {/* Tab content */}
-      {activeTab === 'org' && isAtLeast(user, 'admin') && <OrgTab />}
-      {activeTab === 'ca' && isAtLeast(user, 'super_admin') && <CaTab />}
-      {activeTab === 'sso' && isAtLeast(user, 'super_admin') && <SsoTab />}
-      {activeTab === 'access' && isAtLeast(user, 'admin') && <AccessSettings />}
-      {activeTab === 'storage' && isAtLeast(user, 'super_admin') && <StorageTab />}
-      {activeTab === 'mfa' && isAtLeast(user, 'super_admin') && <MfaTab />}
-      {activeTab === 'quickconnect' && isAtLeast(user, 'admin') && <QuickConnectSettings />}
-      {activeTab === 'notifications' && isAtLeast(user, 'super_admin') && <NotificationsTab />}
+      {Active && <Active />}
     </div>
   );
 }

@@ -147,7 +147,7 @@ export default function DeleteCustomerDialog({ customer, open, onClose, onDelete
           {hasPolicies && (
             <div className="rounded-md border border-amber-500/30 bg-amber-500/5 px-3 py-2 text-xs text-amber-700 dark:text-amber-400">
               <AlertTriangle className="mr-1 inline h-3.5 w-3.5" />
-              {impact.policyCount} policy(ies) scoped to this customer will become org-wide.
+              {impact.policyCount} policy(ies) scoped to this customer will be switched off (they would otherwise apply org-wide).
             </div>
           )}
 

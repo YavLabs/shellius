@@ -257,7 +257,9 @@ func (c *Client) ListHosts() ([]Host, error) {
 		return nil, err
 	}
 
-	isSuperAdmin := c.Config.Role == "super_admin"
+	// Prod needs an approved request unless the role may skip it
+	// (access.prod_bypass — Admin by default, configurable per role).
+	skipsProdApproval := c.Config.Has("access.prod_bypass")
 
 	hosts := make([]Host, 0, len(data.Items))
 	for _, s := range data.Items {
@@ -265,7 +267,7 @@ func (c *Client) ListHosts() ([]Host, error) {
 			continue
 		}
 		accessStatus := "direct"
-		if s.Environment == "prod" && !isSuperAdmin {
+		if s.Environment == "prod" && !skipsProdApproval {
 			accessStatus = "requires_approval"
 		}
 		port := s.Port

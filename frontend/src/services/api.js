@@ -58,6 +58,12 @@ api.interceptors.response.use(
     // Org enforces MFA and this user hasn't enrolled yet — every route except
     // the handful the backend exempts (auth/me, logout, refresh, sessions,
     // /mfa/*) returns this until they finish setup.
+    // The UI offered something our role no longer allows (an admin changed
+    // it) — ask AuthContext to re-read our permissions.
+    if (status === 403 && (code === 'PERMISSION_DENIED' || code === 'ROLE_ESCALATION')) {
+      window.dispatchEvent(new CustomEvent('shellius:permissions-stale'));
+    }
+
     if (status === 403 && code === 'MFA_SETUP_REQUIRED') {
       if (window.location.pathname !== '/mfa-setup') {
         window.location.href = '/mfa-setup';

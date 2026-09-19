@@ -7,7 +7,7 @@ import IdentitiesTab from '@/components/keystore/IdentitiesTab';
 import SshKeysTab from '@/components/keystore/SshKeysTab';
 import DeploymentsTab from '@/components/keystore/DeploymentsTab';
 import { useAuth } from '@/context/AuthContext';
-import { can, roleAtLeast } from '@/lib/permissions';
+import { can } from '@/lib/permissions';
 
 const TABS = [
   { key: 'identities', label: 'Identities' },
@@ -20,8 +20,9 @@ function Keystore() {
   const [searchParams, setSearchParams] = useSearchParams();
   const initialTab = TABS.some((t) => t.key === searchParams.get('tab')) ? searchParams.get('tab') : 'identities';
   const [activeTab, setActiveTab] = useState(initialTab);
-  const canManage = can(user, 'manageKeystore');
-  const isAdmin = roleAtLeast(user, 'admin');
+  const canManage = can(user, 'keystore.manage');
+  const canDeploy = can(user, 'keystore.deploy');
+  const isAdmin = canManage;
 
   const identitiesRef = useRef(null);
   const keysRef = useRef(null);
@@ -61,7 +62,7 @@ function Keystore() {
     if (action === 'new' && tab === 'identities' && isAdmin) controller.openNew?.();
     if (action === 'import' && tab === 'keys' && isAdmin) controller.openImport?.();
     if (action === 'generate' && tab === 'keys' && isAdmin) controller.openGenerate?.();
-    if (action === 'deploy' && tab === 'deployments' && isAdmin) controller.openDeploy?.();
+    if (action === 'deploy' && tab === 'deployments' && canDeploy) controller.openDeploy?.();
     if (highlight) controller.highlight?.(highlight);
 
     const next = new URLSearchParams(searchParams);
@@ -69,9 +70,15 @@ function Keystore() {
     next.delete('highlight');
     setSearchParams(next, { replace: true });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [searchParams, activeTab, isAdmin]);
+  }, [searchParams, activeTab, isAdmin, canDeploy]);
 
-  const headerActions = !isAdmin ? null : activeTab === 'identities' ? (
+  const headerActions = activeTab === 'deployments' ? (
+    canDeploy ? (
+      <Button onClick={() => deploymentsRef.current?.openDeploy?.()}>
+        <Send className="mr-2 h-4 w-4" /> Export to servers
+      </Button>
+    ) : null
+  ) : !isAdmin ? null : activeTab === 'identities' ? (
     <Button onClick={() => identitiesRef.current?.openNew?.()}>
       <Plus className="mr-2 h-4 w-4" /> New identity
     </Button>
@@ -84,10 +91,6 @@ function Keystore() {
         <Plus className="mr-2 h-4 w-4" /> Generate key
       </Button>
     </div>
-  ) : activeTab === 'deployments' ? (
-    <Button onClick={() => deploymentsRef.current?.openDeploy?.()}>
-      <Send className="mr-2 h-4 w-4" /> Export to servers
-    </Button>
   ) : null;
 
   return (

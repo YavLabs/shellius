@@ -4,6 +4,7 @@ import { Button } from '@/components/ui/button';
 import SaveServerFields from './SaveServerFields';
 import { listCredentials } from '@/services/keystoreService';
 import { saveQuickConnectServer } from '@/services/quickConnectService';
+import { useAuth } from '@/context/AuthContext';
 
 /**
  * SaveServerModal — "Save as server" after an already-open Quick Connect
@@ -12,7 +13,10 @@ import { saveQuickConnectServer } from '@/services/quickConnectService';
  * existing saved identity, or none (certificate mode, bootstrap later).
  */
 function SaveServerModal({ open, onClose, connection, onSaved }) {
-  const [values, setValues] = useState({ identityMode: 'existing', environment: 'dev' });
+  const { can } = useAuth();
+  // Binding a stored identity to the new server is its own permission.
+  const canBindIdentity = can('servers.manage_credentials') && can('keystore.view');
+  const [values, setValues] = useState({ identityMode: canBindIdentity ? 'existing' : 'none', environment: 'dev' });
   const [identities, setIdentities] = useState([]);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
@@ -20,16 +24,18 @@ function SaveServerModal({ open, onClose, connection, onSaved }) {
   useEffect(() => {
     if (!open) return;
     setValues({
-      identityMode: 'existing',
+      identityMode: canBindIdentity ? 'existing' : 'none',
       environment: 'dev',
       hostname: connection?.host || '',
       displayName: '',
     });
     setError('');
-    listCredentials()
-      .then(setIdentities)
-      .catch(() => setIdentities([]));
-  }, [open, connection]);
+    if (canBindIdentity) {
+      listCredentials()
+        .then(setIdentities)
+        .catch(() => setIdentities([]));
+    }
+  }, [open, connection, canBindIdentity]);
 
   const handleSave = async () => {
     setError('');
@@ -79,7 +85,7 @@ function SaveServerModal({ open, onClose, connection, onSaved }) {
           onChange={setValues}
           identities={identities}
           canCreateIdentity={false}
-          identityModes={['existing', 'none']}
+          identityModes={canBindIdentity ? ['existing', 'none'] : ['none']}
         />
         <div className="flex justify-end gap-2 pt-1">
           <Button type="button" variant="outline" onClick={onClose}>

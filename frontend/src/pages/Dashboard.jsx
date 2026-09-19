@@ -12,14 +12,15 @@ import {
 import PageHeader from '@/components/common/PageHeader';
 import MyAccessWidget from '@/components/dashboard/MyAccessWidget';
 import MetricCard from '@/components/dashboard/MetricCard';
-import RecentQuickConnectsWidget from '@/components/dashboard/RecentQuickConnectsWidget';
+import RecentConnectionsWidget from '@/components/dashboard/RecentConnectionsWidget';
 import QuickActionsWidget from '@/components/dashboard/QuickActionsWidget';
 import { useAuth } from '@/context/AuthContext';
-import { useQuickConnect } from '@/context/QuickConnectContext';
 import { getServerStats } from '@/services/serverService';
 import { listSessions } from '@/services/sessionService';
 import { listAccessRequests } from '@/services/accessRequestService';
-import { listCertificates } from '@/services/certificateService';
+import { listCertificates, getMyCerts } from '@/services/certificateService';
+import { useTerminalWorkspace } from '@/context/TerminalWorkspaceContext';
+import { can } from '@/lib/permissions';
 import { listAudit } from '@/services/auditService';
 import { relativeTime } from '@/utils/time';
 import Skeleton from '@/components/ui/Skeleton';
@@ -28,10 +29,6 @@ import { auditCategoryTone, environmentTone } from '@/lib/badgeTones';
 import { describeAuditEvent, auditSentence, auditCategoryLabel } from '@/lib/auditFormat';
 import Avatar from '@/components/ui/Avatar';
 
-const ROLE_RANK = { super_admin: 4, admin: 3, manager: 2, member: 1 };
-function isAtLeast(user, role) {
-  return (ROLE_RANK[user?.role] || 0) >= (ROLE_RANK[role] || 0);
-}
 
 // Badge for audit action verbs — reuses the shared audit category tone map.
 function AuditRow({ item }) {
@@ -69,8 +66,12 @@ function AuditRow({ item }) {
 function Dashboard() {
   const navigate = useNavigate();
   const { user } = useAuth();
-  const isAdmin = isAtLeast(user, 'admin');
-  const { allowed: quickConnectAllowed } = useQuickConnect();
+  const isAdmin = can(user, 'audit.view');
+  // Org-wide numbers need org-wide permissions; everyone else sees their own
+  // (instead of a misleading 0 from a refused request).
+  const allSessions = can(user, 'sessions.view_all');
+  const allCerts = can(user, 'certificates.view_all');
+  const { liveCount } = useTerminalWorkspace();
 
   const [statsLoading, setStatsLoading] = useState(true);
   const [serverStats, setServerStats] = useState({ total: 0, byEnv: {} });
@@ -86,9 +87,9 @@ function Dashboard() {
     try {
       const [srvStats, sessResp, reqResp, certResp] = await Promise.allSettled([
         getServerStats(),
-        listSessions({ limit: 1, status: 'ACTIVE' }),
+        allSessions ? listSessions({ limit: 1, status: 'ACTIVE' }) : Promise.reject(new Error('own only')),
         listAccessRequests({ tab: 'to-review', status: 'PENDING', limit: 1 }),
-        listCertificates({ status: 'ACTIVE', limit: 1 }),
+        allCerts ? listCertificates({ status: 'ACTIVE', limit: 1 }) : getMyCerts({ status: 'ACTIVE', limit: 1 }),
       ]);
 
       if (srvStats.status === 'fulfilled') setServerStats(srvStats.value);
@@ -109,7 +110,7 @@ function Dashboard() {
     } finally {
       setStatsLoading(false);
     }
-  }, []);
+  }, [allSessions, allCerts]);
 
   const loadAudit = useCallback(async () => {
     if (!isAdmin) {
@@ -160,29 +161,41 @@ function Dashboard() {
                 .map(([env, count]) => (
                   <Badge key={env} tone={environmentTone(env).tone} uppercase>
                     {env}
-                    <span className="normal-case tracking-normal text-foreground tabular-nums">{count}</span>
+                    <span className="font-semibold normal-case tracking-normal tabular-nums">{count}</span>
                   </Badge>
                 ))
             ) : null
           }
         />
 
-        <MetricCard
-          title="Active sessions"
-          value={activeSessions}
-          subtitle="Currently connected"
-          icon={Terminal}
-          accent="emerald"
-          loading={statsLoading}
-          to="/sessions?tab=active"
-          footer={
-            !statsLoading ? (
-              <span>
-                {activeSessions === 0 ? 'No one online right now' : 'View live sessions →'}
-              </span>
-            ) : null
-          }
-        />
+        {allSessions ? (
+          <MetricCard
+            title="Active sessions"
+            value={activeSessions}
+            subtitle="Currently connected"
+            icon={Terminal}
+            accent="emerald"
+            loading={statsLoading}
+            to="/sessions?tab=active"
+            footer={
+              !statsLoading ? (
+                <span>
+                  {activeSessions === 0 ? 'No one online right now' : 'View live sessions →'}
+                </span>
+              ) : null
+            }
+          />
+        ) : (
+          <MetricCard
+            title="My live sessions"
+            value={liveCount}
+            subtitle="Terminals you have open"
+            icon={Terminal}
+            accent="emerald"
+            to="/terminals"
+            footer={<span>{liveCount === 0 ? 'Nothing running' : 'Open terminals →'}</span>}
+          />
+        )}
 
         <MetricCard
           title="Pending requests"
@@ -202,13 +215,13 @@ function Dashboard() {
         />
 
         <MetricCard
-          title="Certificates issued"
+          title={allCerts ? 'Certificates issued' : 'My certificates'}
           value={activeCerts}
           subtitle="Currently active"
           icon={FileKey}
           accent="violet"
           loading={statsLoading}
-          to="/certificates?status=ACTIVE"
+          to={allCerts ? '/certificates?status=ACTIVE' : undefined}
           footer={
             !statsLoading ? (
               <span>Signed by the org CA</span>
@@ -217,13 +230,11 @@ function Dashboard() {
         />
       </div>
 
-      {/* Recent Quick Connects (wide) + Quick actions (narrow) */}
-      <div className={`grid grid-cols-1 gap-4 ${quickConnectAllowed ? 'lg:grid-cols-3' : ''}`}>
-        {quickConnectAllowed && (
-          <div className="lg:col-span-2">
-            <RecentQuickConnectsWidget />
-          </div>
-        )}
+      {/* Recent connections (wide: active sessions + last 7 days) + Quick actions (narrow) */}
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
+        <div className="lg:col-span-2">
+          <RecentConnectionsWidget />
+        </div>
         <div>
           <QuickActionsWidget />
         </div>

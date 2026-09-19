@@ -13,6 +13,7 @@ import * as mfaService from './mfaService.js';
 import { log as auditLog, ACTIONS } from './auditService.js';
 import * as terminalService from './terminalService.js';
 import logger from '../utils/logger.js';
+import { permissionsForUser } from './roleService.js';
 
 const REFRESH_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 
@@ -46,17 +47,39 @@ function invalidCredentials() {
   return new ApiError(401, 'Invalid email or password', { code: 'INVALID_CREDENTIALS' });
 }
 
-function userDto(user) {
-  const safe = stripUser(user);
+/**
+ * Role + effective permissions for the client (docs/rbac): the UI gates on
+ * `permissions`, never on the role name. `role` stays the base tier for
+ * older clients (the CLI).
+ */
+async function accessOf(user) {
+  const assigned =
+    user.assignedRole !== undefined
+      ? user.assignedRole
+      : user.roleId
+        ? await prisma.role.findFirst({ where: { id: user.roleId, orgId: user.orgId } })
+        : null;
   return {
-    id: safe.id,
-    email: safe.email,
-    name: safe.name,
-    role: safe.role,
-    status: safe.status,
-    orgId: safe.orgId,
-    organization: safe.organization,
-    avatarUrl: safe.avatarUrl,
+    roleInfo: assigned
+      ? { id: assigned.id, key: assigned.key, name: assigned.name, isSystem: assigned.isSystem, baseRole: assigned.baseRole }
+      : null,
+    permissions: permissionsForUser({ ...user, assignedRole: assigned }),
+  };
+}
+
+async function userDto(user) {
+  const safe = stripUser(user);
+  const { assignedRole: _r, ...rest } = safe;
+  return {
+    id: rest.id,
+    email: rest.email,
+    name: rest.name,
+    role: rest.role,
+    status: rest.status,
+    orgId: rest.orgId,
+    organization: rest.organization,
+    avatarUrl: rest.avatarUrl,
+    ...(await accessOf(user)),
   };
 }
 
@@ -218,7 +241,7 @@ export async function issueSession(user, ipAddress, userAgent, clientType = 'web
   return {
     accessToken,
     refreshToken,
-    user: userDto(user),
+    user: await userDto(user),
   };
 }
 
@@ -597,6 +620,7 @@ export async function getProfile(userId) {
 
   return {
     ...stripUser(user),
+    ...(await accessOf(user)),
     mfaSetupRequired: !!(cfg.enforced && !enrolled),
     mfa: {
       totpEnabled: !!user.mfaTotpEnabled,

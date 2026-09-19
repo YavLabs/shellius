@@ -14,12 +14,13 @@
  * the approver pool that production access requests route to.
  */
 
-// Role-style groups seeded for every org.
-// Role hierarchy: super_admin > admin > manager > member.
-// Groups (membership-based, used as policy subjects + approver pools):
+// Groups seeded for every org. Groups grant no permissions by themselves —
+// they are policy subjects and approver pools. What someone may DO comes from
+// their role (Settings → Roles); who skips prod approval is the role
+// permission "Production without approval" (access.prod_bypass).
 export const BASELINE_GROUPS = [
-  { name: 'Admin', description: 'Administrators — full access; no approval needed for production.' },
-  { name: 'Managers', description: 'Managers — can approve production access requests; their own prod access still requires approval unless the org lowers the bypass role.' },
+  { name: 'Admin', description: 'Administrators — matched by the admin production policies. Skipping prod approval comes from the role permission, not this group.' },
+  { name: 'Managers', description: 'Managers — can approve production access requests; their own prod access requires approval unless their role has "Production without approval".' },
   { name: 'Approvers', description: 'Designated approvers for production access requests.' },
   { name: 'Developers', description: 'Developers — self-serve dev/staging; production requires approval.' },
 ];
@@ -28,19 +29,16 @@ export const BASELINE_GROUPS = [
 // conventions plus a generic admin.
 const DEFAULT_PRINCIPALS = ['ubuntu', 'ec2-user', 'azureuser', 'root', 'admin'];
 
-// Approval-aware default policies (role-driven). Prod approval is gated by
-// Organization.settings.access.prodApprovalBypassMinRole (default 'admin') in
-// policyService.evaluate() — a matching ALLOW policy still supplies the
-// principals/TTL/routing, but its autoApprove flag is IGNORED for any
-// requester ranked below the bypass role; prod always requires approval for
-// them, no matter what the policy says.
-//   super_admin → bypasses all policy (full access), unless the org's bypass
-//     role is 'none'.
-//   admin → dev + prod without approval (bypass role default).
-//   manager → dev without approval; prod still requires approval under the
-//     default org setting (matches this policy for principals/routing, but
-//     is not exempted from review) — an org can lower the bypass role to
-//     include managers.
+// Approval-aware default policies. ROLE subjects match a user's base tier
+// (and custom role key). Prod approval is decided in policyService.evaluate()
+// by the requester's `access.prod_bypass` permission plus the org switch
+// (settings.access.prodBypassEnabled) — a matching ALLOW policy supplies the
+// principals/TTL/routing, but its autoApprove flag is IGNORED on prod.
+//   super_admin → access.bypass_policies: no matching policy needed off prod
+//     (DENY still applies); prod bypass unless the org switch is off.
+//   admin → dev + prod without approval (default role permissions).
+//   manager → dev without approval; prod requires approval unless their
+//     role is given "Production without approval".
 //   member / Developers → dev self-serve; prod requires approval (Approvers).
 export const BASELINE_POLICIES = [
   {
@@ -62,8 +60,8 @@ export const BASELINE_POLICIES = [
   {
     name: 'Production Access — Admins & Managers',
     description:
-      "Admins access production without approval (the org's default approval-bypass role). Managers are covered by this policy for " +
-      "principals/routing but still require approval unless an admin lowers the org's bypass role in Access Settings. 2 hour cert " +
+      'Admins access production without approval (their role has "Production without approval"). Managers are covered by this policy for ' +
+      'principals/routing but still require approval unless their role is given that permission in Settings → Roles. 2 hour cert ' +
       'lifetime. Higher precedence than the standard prod policy.',
     effect: 'ALLOW',
     targetEnvironments: ['prod'],

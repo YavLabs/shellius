@@ -221,11 +221,9 @@ describe('POST /api/policies/evaluate — route source-code audit', () => {
     const evaluateIdx = routeSrc.indexOf("'/evaluate'");
     expect(evaluateIdx).toBeGreaterThan(-1);
 
-    // Grab up to 500 chars after '/evaluate' to find the requireRole call
+    // Grab up to 500 chars after '/evaluate' to find the permission guard
     const block = routeSrc.slice(evaluateIdx, evaluateIdx + 500);
-    expect(block).toMatch(/requireRole\s*\(/);
-    // Must include admin (super_admin or admin)
-    expect(block).toMatch(/admin/);
+    expect(block).toMatch(/requirePermission\(\s*'policies\.view'\s*\)/);
   });
 
   test('route is registered before /:id to avoid shadowing', () => {

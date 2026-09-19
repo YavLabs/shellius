@@ -16,6 +16,9 @@ import * as rdpService from './rdpService.js';
 import * as mailer from './mailer.js';
 import * as inviteService from './inviteService.js';
 import { renderTemplate } from '../email/index.js';
+import { TIERS } from '../config/permissions.js';
+import { canBypassProdApproval, isProdBypassEnabled } from './orgService.js';
+import { usersWithPermission } from './roleService.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -40,12 +43,12 @@ export function isServerOnboarded(server) {
 }
 
 // ---------------------------------------------------------------------------
-// Role rank helper for revoke authorization
+// Permission helper — callers pass the requester's permission Set (from
+// req.user.permissions); see config/permissions.js.
 // ---------------------------------------------------------------------------
-const ROLE_RANK = { super_admin: 4, admin: 3, manager: 2, member: 1 };
-
-function isAdminOrAbove(role) {
-  return (ROLE_RANK[role] ?? 0) >= ROLE_RANK.admin;
+function has(permissions, key) {
+  if (!permissions) return false;
+  return permissions instanceof Set ? permissions.has(key) : permissions.includes(key);
 }
 
 function formatDurationLabel(seconds) {
@@ -146,7 +149,11 @@ async function resolveApprovers({ orgId, requesterId, policy, manager }) {
   if (policy) {
     const orFilters = [];
     if (policy.approverUserIds?.length) orFilters.push({ id: { in: policy.approverUserIds } });
-    if (policy.approverRoles?.length) orFilters.push({ role: { in: policy.approverRoles } });
+    if (policy.approverRoles?.length) {
+      // Role keys match the base tier or a custom role's own key.
+      orFilters.push({ role: { in: policy.approverRoles.filter((k) => TIERS.includes(k)) } });
+      orFilters.push({ assignedRole: { key: { in: policy.approverRoles } } });
+    }
     if (policy.approverGroupId) {
       orFilters.push({ groupMemberships: { some: { groupId: policy.approverGroupId } } });
     }
@@ -159,8 +166,14 @@ async function resolveApprovers({ orgId, requesterId, policy, manager }) {
     }
   }
 
-  // Fallback: the requester's direct manager.
-  if (byId.size === 0 && manager) add(manager);
+  // Fallback: the requester's direct manager, if still an active user.
+  if (byId.size === 0 && manager) {
+    const active = await prisma.user.findFirst({
+      where: { id: manager.id, orgId, status: 'active', deletedAt: null },
+      select: { id: true },
+    });
+    if (active) add(manager);
+  }
 
   return [...byId.values()];
 }
@@ -218,6 +231,7 @@ export async function submit({
   requestedPrincipal,
   protocol = 'SSH',
   callerRole,
+  callerPermissions,
 }) {
   if (!orgId) throw new ApiError(400, 'orgId is required');
   if (!requesterId) throw new ApiError(400, 'requesterId is required');
@@ -286,7 +300,7 @@ export async function submit({
     const legacyPrincipal = server.sshUser || 'root';
     const defaultPrincipal = jitPrincipal || legacyPrincipal;
 
-    const isAdminCaller = callerRole === 'admin' || callerRole === 'super_admin';
+    const isAdminCaller = has(callerPermissions, 'access.choose_principal');
     if (!requestedPrincipal) {
       requestedPrincipal = defaultPrincipal;
     } else if (!isAdminCaller) {
@@ -295,7 +309,7 @@ export async function submit({
       if (!allowed.has(requestedPrincipal)) {
         throw new ApiError(
           403,
-          `Principal "${requestedPrincipal}" is not allowed for this user. Allowed: ${[...allowed].join(', ')}. Admins can override.`
+          `Principal "${requestedPrincipal}" is not allowed for this user. Allowed: ${[...allowed].join(', ')}.`
         );
       }
     }
@@ -473,19 +487,24 @@ export async function submit({
         serverId,
         requestedPrincipal,
       });
-      const approvers = await resolveApprovers({
+      let approvers = await resolveApprovers({
         orgId,
         requesterId,
         policy: approverPolicy,
         manager: requester.manager,
       });
+      // No approver routing (e.g. the admin prod policies) and no manager:
+      // tell the people who can revoke it instead of nobody (G8).
+      if (approvers.length === 0) {
+        approvers = await usersWithPermission(orgId, 'access_requests.revoke_any', { excludeUserId: requesterId });
+      }
       for (const approver of approvers) {
         await notificationService.create({
           orgId,
           userId: approver.id,
           type: 'ACCESS_REQUEST_APPROVED',
           title: `Production access bypass — ${requester.name}`,
-          body: `${requester.name} (${callerRole}) was auto-approved for ${protocol} access to ${server.hostname} (prod) without review, per your organization's approval bypass setting. Reason: ${reason}`,
+          body: `${requester.name} (${callerRole}) was auto-approved for ${protocol} access to ${server.hostname} (prod) without review, because their role may skip production approval. Reason: ${reason}`,
           metadata: { accessRequestId: accessRequest.id, requesterId, serverId, bypass: true },
         });
       }
@@ -558,15 +577,34 @@ export async function review({ requestId, reviewerId, decision, approvedDuration
   if (accessRequest.status !== 'PENDING') {
     throw new ApiError(409, `Request is not pending (current status: ${accessRequest.status})`);
   }
+  // The approver set is a snapshot from submit time; make sure the approver
+  // is still an active member of this org (F-12 — email links used to work
+  // for suspended or deleted approvers).
+  const approverNow = await prisma.user.findFirst({
+    where: { id: reviewerId, orgId: accessRequest.orgId, status: 'active', deletedAt: null },
+    select: { id: true },
+  });
+  if (!approverNow) throw new ApiError(403, 'Your account can no longer approve requests');
 
   const now = new Date();
   let updated;
 
   if (decision === 'approve') {
-    const duration =
+    let duration =
       approvedDuration && approvedDuration > 0
         ? approvedDuration
         : accessRequest.requestedDuration;
+    // Never longer than the matching policy allows (G4: approvers could
+    // grant up to 7 days regardless of the policy's max session length).
+    const policy = await policyService.findApproverPolicy({
+      orgId: accessRequest.orgId,
+      userId: accessRequest.requesterId,
+      serverId: accessRequest.serverId,
+      requestedPrincipal: accessRequest.requestedPrincipal || undefined,
+    });
+    if (policy?.maxSessionDuration > 0 && duration > policy.maxSessionDuration) {
+      duration = policy.maxSessionDuration;
+    }
     const expiresAt = new Date(now.getTime() + duration * 1000);
 
     updated = await prisma.accessRequest.update({
@@ -667,6 +705,7 @@ export async function generateSshCredentials({
   requestId,
   callerId,
   callerRole,
+  callerPermissions,
   principalOverride,
 }) {
   if (!requestId) throw new ApiError(400, 'requestId is required');
@@ -700,12 +739,14 @@ export async function generateSshCredentials({
 
   const server = accessRequest.server;
   const legacySshUser = server.sshUser || 'root';
-  const isAdminCaller = callerRole === 'admin' || callerRole === 'super_admin';
+  const isAdminCaller = has(callerPermissions, 'access.choose_principal');
 
   // Phase 21A Part 2 — optional per-connect principal override.
-  //   - Non-admins may only pass an override that matches the AR's stored
-  //     principal or the legacy sshUser. Anything else → 403.
-  //   - Admins may pass any valid Linux username (still regex-validated).
+  //   - Without access.choose_principal only the AR's stored principal or the
+  //     legacy sshUser are allowed. Anything else → 403.
+  //   - With it, any login user the matching policy allows (F-18). On prod
+  //     the approver approved one principal, so switching needs the
+  //     prod-approval bypass as well.
   // If no override is passed, use the AR's stored principal as primary.
   let primaryPrincipal = accessRequest.requestedPrincipal;
   if (principalOverride) {
@@ -713,12 +754,23 @@ export async function generateSshCredentials({
     if (!LINUX_USER_RE.test(principalOverride)) {
       throw new ApiError(400, 'principalOverride is not a valid Linux username');
     }
-    if (!isAdminCaller) {
-      const allowedSet = new Set([accessRequest.requestedPrincipal, legacySshUser]);
-      if (!allowedSet.has(principalOverride)) {
+    const allowedSet = new Set([accessRequest.requestedPrincipal, legacySshUser]);
+    if (!allowedSet.has(principalOverride)) {
+      if (!isAdminCaller) {
+        throw new ApiError(403, `Principal "${principalOverride}" is not allowed for this connection.`);
+      }
+      const check = await policyService.evaluate({
+        orgId: accessRequest.orgId,
+        userId: callerId,
+        serverId: server.id,
+        requestedPrincipal: principalOverride,
+      });
+      if (!check.allowed || check.requiresApproval) {
         throw new ApiError(
           403,
-          `Principal "${principalOverride}" is not allowed for this connection. Admins can override.`
+          check.requiresApproval
+            ? `Connecting as "${principalOverride}" needs its own approved request.`
+            : `Principal "${principalOverride}" is not allowed by policy: ${check.reason}`
         );
       }
     }
@@ -984,27 +1036,35 @@ export async function generateRdpFile({ requestId, callerId }) {
 
 /**
  * Revoke an access request.
- * Caller must be admin+ OR the assigned reviewer.
+ * Caller needs access_requests.revoke_any, or must be one of the request's
+ * approvers (the one who decided or anyone else in the approver set).
  *
  * @param {object} params
  * @param {string} params.requestId
  * @param {string} params.callerId
- * @param {string} params.callerRole
+ * @param {string} params.orgId
+ * @param {Set<string>} params.callerPermissions
  * @param {string} [params.reason]
  * @returns {Promise<object>}
  */
-export async function revoke({ requestId, callerId, callerRole, reason }) {
+export async function revoke({ requestId, orgId, callerId, callerPermissions, reason }) {
   if (!requestId) throw new ApiError(400, 'requestId is required');
+  if (!orgId) throw new ApiError(400, 'orgId is required');
   if (!callerId) throw new ApiError(400, 'callerId is required');
 
-  const accessRequest = await prisma.accessRequest.findUnique({
-    where: { id: requestId },
-    include: { server: { select: { hostname: true } } },
+  // Org-scoped lookup (F-07: a bare findUnique let one org revoke another's).
+  const accessRequest = await prisma.accessRequest.findFirst({
+    where: { id: requestId, orgId },
+    include: { server: { select: { hostname: true } }, approvers: { select: { userId: true } } },
   });
 
   if (!accessRequest) throw new ApiError(404, 'Access request not found');
 
-  const canRevoke = isAdminOrAbove(callerRole) || accessRequest.reviewerId === callerId;
+  // Anyone who could approve it may also take it back.
+  const canRevoke =
+    has(callerPermissions, 'access_requests.revoke_any') ||
+    accessRequest.reviewerId === callerId ||
+    accessRequest.approvers.some((a) => a.userId === callerId);
   if (!canRevoke) {
     throw new ApiError(403, 'You do not have permission to revoke this access request');
   }
@@ -1103,19 +1163,19 @@ export async function getActiveByServerForUser(orgId, userId, serverId) {
  *
  * tab='mine'      → requests where requesterId === userId (all roles)
  * tab='to-review' → requests where reviewerId === userId AND status=PENDING
- * tab='all'       → all requests in org (admin+ only)
+ * tab='all'       → all requests in org (access_requests.view_all)
  *
  * @param {object} params
  * @param {string}  params.orgId
  * @param {string}  params.userId
- * @param {string}  params.role
+ * @param {Set<string>} params.permissions
  * @param {string}  [params.tab='mine']
  * @param {string}  [params.status]   optional status filter (PENDING, APPROVED, …)
  * @param {number}  [params.page=1]
  * @param {number}  [params.limit=25]
  * @returns {Promise<{ items: object[], total: number, page: number, limit: number }>}
  */
-export async function list({ orgId, userId, role, tab = 'mine', status, page = 1, limit = 25 }) {
+export async function list({ orgId, userId, permissions, tab = 'mine', status, page = 1, limit = 25 }) {
   if (!orgId) throw new ApiError(400, 'orgId is required');
   if (!userId) throw new ApiError(400, 'userId is required');
 
@@ -1124,8 +1184,8 @@ export async function list({ orgId, userId, role, tab = 'mine', status, page = 1
 
   let where;
   if (tab === 'all') {
-    if (!isAdminOrAbove(role)) {
-      throw new ApiError(403, 'Only admins can view all access requests');
+    if (!has(permissions, 'access_requests.view_all')) {
+      throw new ApiError(403, "You don't have permission to view all access requests");
     }
     where = { orgId };
   } else if (tab === 'to-review') {
@@ -1163,15 +1223,17 @@ export async function list({ orgId, userId, role, tab = 'mine', status, page = 1
 
 /**
  * Get a single access request.
- * Visible to the requester, reviewer, or admin+.
+ * Visible to the requester, any of its approvers, or holders of
+ * access_requests.view_all (secondary approvers used to get a 403 on the
+ * request they were asked to approve — UI-2.11).
  *
  * @param {object} params
  * @param {string} params.requestId
  * @param {string} params.callerId
- * @param {string} params.callerRole
+ * @param {Set<string>} params.callerPermissions
  * @returns {Promise<object>}
  */
-export async function getById({ requestId, orgId, callerId, callerRole }) {
+export async function getById({ requestId, orgId, callerId, callerPermissions }) {
   if (!requestId) throw new ApiError(400, 'requestId is required');
   if (!orgId) throw new ApiError(400, 'orgId is required');
   if (!callerId) throw new ApiError(400, 'callerId is required');
@@ -1179,21 +1241,31 @@ export async function getById({ requestId, orgId, callerId, callerRole }) {
   // Org-scoped: an admin's "can view any request" applies to their own org only.
   const accessRequest = await prisma.accessRequest.findFirst({
     where: { id: requestId, orgId },
-    include: REQUEST_INCLUDE,
+    include: { ...REQUEST_INCLUDE, approvers: { select: { userId: true } } },
   });
 
   if (!accessRequest) throw new ApiError(404, 'Access request not found');
 
+  const isApprover =
+    accessRequest.reviewerId === callerId || accessRequest.approvers.some((a) => a.userId === callerId);
   const canView =
-    isAdminOrAbove(callerRole) ||
-    accessRequest.requesterId === callerId ||
-    accessRequest.reviewerId === callerId;
+    has(callerPermissions, 'access_requests.view_all') || accessRequest.requesterId === callerId || isApprover;
 
   if (!canView) {
     throw new ApiError(403, 'You do not have permission to view this access request');
   }
 
-  return accessRequest;
+  // Tell the client what this caller may do with it, so the UI never offers
+  // a button the API will refuse (UI-2.9 / 2.10).
+  const { approvers, ...rest } = accessRequest;
+  return {
+    ...rest,
+    viewer: {
+      canReview: isApprover && accessRequest.status === 'PENDING' && accessRequest.requesterId !== callerId,
+      canRevoke:
+        accessRequest.status === 'APPROVED' && (has(callerPermissions, 'access_requests.revoke_any') || isApprover),
+    },
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -1442,11 +1514,11 @@ export default {
  * @param {object} params
  * @param {string} params.orgId
  * @param {string} params.userId
- * @param {string} params.userRole
+ * @param {Set<string>} params.permissions
  * @param {string} params.serverId
  * @returns {Promise<object>}
  */
-export async function getAccessIntent({ orgId, userId, userRole, serverId }) {
+export async function getAccessIntent({ orgId, userId, permissions, serverId }) {
   const server = await prisma.server.findFirst({
     where: { id: serverId, orgId },
     select: {
@@ -1458,8 +1530,8 @@ export async function getAccessIntent({ orgId, userId, userRole, serverId }) {
   });
   if (!server) throw new ApiError(404, 'Server not found');
 
-  const user = await prisma.user.findUnique({
-    where: { id: userId },
+  const user = await prisma.user.findFirst({
+    where: { id: userId, orgId },
     select: { id: true, email: true, name: true },
   });
   if (!user) throw new ApiError(404, 'User not found');
@@ -1507,6 +1579,7 @@ export async function getAccessIntent({ orgId, userId, userRole, serverId }) {
   if (p === 'rdp') protocol = 'RDP';
 
   const isProduction = server.environment === 'prod';
+  const skipsProdApproval = isProduction && (await canBypassProdApproval(orgId, permissions));
 
   return {
     hasActiveAccess: !!activeAr,
@@ -1514,9 +1587,11 @@ export async function getAccessIntent({ orgId, userId, userRole, serverId }) {
     hasPendingRequest: !!pendingAr && !activeAr,
     preferredPrincipal: preferred,
     allowedPrincipals: allowed,
-    adminCanOverride: userRole === 'admin' || userRole === 'super_admin',
+    adminCanOverride: has(permissions, 'access.choose_principal'),
     protocol,
-    requiresApproval: isProduction, // a partial signal; full eval still runs server-side on submit
+    // Prod: unless the caller may skip approval. Non-prod policies can also
+    // require approval — the full evaluation still runs on submit.
+    requiresApproval: isProduction && !skipsProdApproval,
     isProduction,
     jitEnabled: !!jitPolicy,
     breakGlass: !!activeAr?.breakGlass,
@@ -1612,14 +1687,16 @@ export async function getAccessIntentsBulk({ orgId, userId, serverIds }) {
 // ---------------------------------------------------------------------------
 
 /**
- * Create a pre-approved AccessRequest flagged breakGlass. Used by admins
- * for emergency access to any server in the org. Every invocation writes
- * a high-severity audit event and notifies every admin/super_admin.
+ * Create a pre-approved AccessRequest flagged breakGlass: self-approved
+ * emergency access to any server in the org (access.break_glass). Every
+ * invocation writes a high-severity audit event and notifies everyone who
+ * can revoke access (access_requests.revoke_any). When the org has turned
+ * the prod-approval bypass off, break-glass can't reach prod either (G5).
  *
  * @param {object} params
  * @param {string} params.orgId
- * @param {string} params.invokerId          - admin/super_admin initiating
- * @param {string} params.invokerRole        - must be admin or super_admin
+ * @param {string} params.invokerId
+ * @param {Set<string>} params.invokerPermissions - must include access.break_glass
  * @param {string} params.serverId
  * @param {string} params.reason             - mandatory, min 20 chars
  * @param {number} params.durationSeconds    - clamped to [300, 3600]
@@ -1628,13 +1705,13 @@ export async function getAccessIntentsBulk({ orgId, userId, serverIds }) {
 export async function createBreakGlass({
   orgId,
   invokerId,
-  invokerRole,
+  invokerPermissions,
   serverId,
   reason,
   durationSeconds = 3600,
 }) {
-  if (!['admin', 'super_admin'].includes(invokerRole)) {
-    throw new ApiError(403, 'Break-glass access requires admin or super_admin role');
+  if (!has(invokerPermissions, 'access.break_glass')) {
+    throw new ApiError(403, "You don't have permission to use break-glass access");
   }
   if (!reason || reason.trim().length < 20) {
     throw new ApiError(400, 'reason must be at least 20 characters');
@@ -1643,6 +1720,9 @@ export async function createBreakGlass({
 
   const server = await prisma.server.findFirst({ where: { id: serverId, orgId } });
   if (!server) throw new ApiError(404, 'Server not found');
+  if (server.environment === 'prod' && !(await isProdBypassEnabled(orgId))) {
+    throw new ApiError(403, 'Your organization requires approval for all production access, including break-glass');
+  }
 
   const invoker = await prisma.user.findFirst({
     where: { id: invokerId, orgId },
@@ -1684,17 +1764,9 @@ export async function createBreakGlass({
     severity: 'HIGH',
   });
 
-  // Fan out a notification to every admin + super_admin in the org.
+  // Fan out a notification to everyone who can revoke it.
   try {
-    const admins = await prisma.user.findMany({
-      where: {
-        orgId,
-        role: { in: ['admin', 'super_admin'] },
-        status: 'active',
-        deletedAt: null,
-      },
-      select: { id: true, email: true, name: true },
-    });
+    const admins = await usersWithPermission(orgId, 'access_requests.revoke_any');
     for (const admin of admins) {
       await notificationService.create({
         orgId,

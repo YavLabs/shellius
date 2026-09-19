@@ -19,7 +19,6 @@ import ConfirmDialog from '@/components/shared/ConfirmDialog';
 import UserCell from '@/components/shared/UserCell';
 import EnvironmentBadge from '@/components/shared/EnvironmentBadge';
 import EmptyState from '@/components/ui/EmptyState';
-import StatTile from '@/components/shared/StatTile';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import {
@@ -173,7 +172,13 @@ function KeyDetailModal({ open, onClose, keyId, canManage, onChanged }) {
   if (!open) return null;
 
   const source = key ? keySourceTone(key.source) : null;
-  const allTabs = key?.certificate ? [...TABS, { key: 'certificate', label: 'Certificate' }] : TABS;
+  // Counts live on the tabs (Identities (2), Servers (5), …) instead of a
+  // separate stat row.
+  const counts = { identities: stats.identityCount, servers: stats.serverCount, exports: stats.deploymentCount };
+  const allTabs = (key?.certificate ? [...TABS, { key: 'certificate', label: 'Certificate' }] : TABS).map((t) => ({
+    ...t,
+    count: counts[t.key],
+  }));
 
   return (
     <>
@@ -207,67 +212,58 @@ function KeyDetailModal({ open, onClose, keyId, canManage, onChanged }) {
                   )}
                 </div>
               </div>
-              <div className="flex shrink-0 flex-wrap items-center justify-end gap-1.5">
-                <Badge tone={source.tone}>{source.label}</Badge>
-                {key.originalFormat && (
-                  <Badge tone="neutral">{FORMAT_LABEL[key.originalFormat] || key.originalFormat}</Badge>
+              <div className="flex w-full flex-wrap items-center gap-2 sm:ml-auto sm:w-auto sm:justify-end">
+                {canManage && (
+                  <Button size="sm" onClick={() => setDeployTarget({ action: 'deploy' })}>
+                    <Send className="mr-1.5 h-3.5 w-3.5" /> Export to servers
+                  </Button>
                 )}
-                {key.certificate && (
-                  <Badge tone={key.certificate.expired ? 'danger' : 'success'} variant="outline" icon={ShieldCheck}>
-                    {key.certificate.expired ? 'Certificate expired' : 'Certificate'}
-                  </Badge>
-                )}
-              </div>
-            </div>
-
-            {/* Actions */}
-            <div className="flex flex-wrap items-center gap-2">
-              {canManage && (
-                <Button size="sm" onClick={() => setDeployTarget({ action: 'deploy' })}>
-                  <Send className="mr-1.5 h-3.5 w-3.5" /> Export to servers
+                <Button variant="outline" size="sm" onClick={copyPublicKey} aria-label="Copy public key" title="Copy public key">
+                  <Copy className="h-3.5 w-3.5 sm:mr-1.5" />
+                  <span className="hidden sm:inline">Copy public key</span>
                 </Button>
-              )}
-              <Button variant="outline" size="sm" onClick={copyPublicKey}>
-                <Copy className="mr-1.5 h-3.5 w-3.5" /> Copy public key
-              </Button>
-              <Button variant="outline" size="sm" onClick={downloadPublicKey}>
-                <Download className="mr-1.5 h-3.5 w-3.5" /> Download .pub
-              </Button>
-              {canManage && (
                 <DropdownMenu>
                   <DropdownMenuTrigger asChild>
-                    <Button variant="outline" size="icon" className="h-9 w-9">
+                    <Button variant="outline" size="icon" className="h-9 w-9" aria-label="More actions">
                       <MoreHorizontal className="h-4 w-4" />
                     </Button>
                   </DropdownMenuTrigger>
                   <DropdownMenuContent align="end" className="w-52">
-                    <DropdownMenuItem onClick={() => setEditOpen(true)}>
-                      <Pencil className="mr-2 h-4 w-4" /> Edit
+                    <DropdownMenuItem onClick={downloadPublicKey}>
+                      <Download className="mr-2 h-4 w-4" /> Download .pub
                     </DropdownMenuItem>
-                    <DropdownMenuItem onClick={() => setDeployTarget({ action: 'rotate' })}>
-                      <RefreshCw className="mr-2 h-4 w-4" /> Rotate…
-                    </DropdownMenuItem>
-                    <DropdownMenuItem
-                      onClick={() => {
-                        setDeleteError('');
-                        setExportConfirmOpen(true);
-                      }}
-                    >
-                      <FileKey className="mr-2 h-4 w-4" /> Export private key
-                    </DropdownMenuItem>
-                    <DropdownMenuSeparator />
-                    <DropdownMenuItem
-                      className="text-destructive focus:text-destructive"
-                      onClick={() => {
-                        setDeleteError('');
-                        setDeleteConfirmOpen(true);
-                      }}
-                    >
-                      <Trash2 className="mr-2 h-4 w-4" /> Delete
-                    </DropdownMenuItem>
+                    {canManage && (
+                      <>
+                        <DropdownMenuSeparator />
+                        <DropdownMenuItem onClick={() => setEditOpen(true)}>
+                          <Pencil className="mr-2 h-4 w-4" /> Edit
+                        </DropdownMenuItem>
+                        <DropdownMenuItem onClick={() => setDeployTarget({ action: 'rotate' })}>
+                          <RefreshCw className="mr-2 h-4 w-4" /> Rotate…
+                        </DropdownMenuItem>
+                        <DropdownMenuItem
+                          onClick={() => {
+                            setDeleteError('');
+                            setExportConfirmOpen(true);
+                          }}
+                        >
+                          <FileKey className="mr-2 h-4 w-4" /> Export private key
+                        </DropdownMenuItem>
+                        <DropdownMenuSeparator />
+                        <DropdownMenuItem
+                          className="text-destructive focus:text-destructive"
+                          onClick={() => {
+                            setDeleteError('');
+                            setDeleteConfirmOpen(true);
+                          }}
+                        >
+                          <Trash2 className="mr-2 h-4 w-4" /> Delete
+                        </DropdownMenuItem>
+                      </>
+                    )}
                   </DropdownMenuContent>
                 </DropdownMenu>
-              )}
+              </div>
             </div>
 
             {/* Details grid */}
@@ -317,13 +313,6 @@ function KeyDetailModal({ open, onClose, keyId, canManage, onChanged }) {
               </div>
             </div>
 
-            {/* Stats row */}
-            <div className="flex gap-3">
-              <StatTile label="Identities" value={stats.identityCount} />
-              <StatTile label="Servers" value={stats.serverCount} />
-              <StatTile label="Exports" value={stats.deploymentCount} />
-            </div>
-
             {/* Tabs */}
             <div>
               <div className="flex flex-wrap items-center gap-1 border-b border-border">
@@ -340,6 +329,7 @@ function KeyDetailModal({ open, onClose, keyId, canManage, onChanged }) {
                     ].join(' ')}
                   >
                     {t.label}
+                    {t.count > 0 && <span className="ml-1 tabular-nums text-muted-foreground">({t.count})</span>}
                   </button>
                 ))}
               </div>

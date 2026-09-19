@@ -36,3 +36,8 @@ export const getSessionRecovery = (id) =>
 // Connect spec for a new session replacing a lost one (action reconnect/attach).
 export const reconnectSession = (id) =>
   api.post(`/terminal/sessions/${id}/reconnect`).then((r) => r.data?.data?.connect);
+
+// Servers the caller connected to recently (own sessions, one row per server).
+// Returns [{ server, lastConnectedAt, connectCount }].
+export const getRecentServers = ({ days = 7, limit = 8 } = {}) =>
+  api.get('/terminal/recent-servers', { params: { days, limit } }).then((r) => r.data?.data?.items ?? []);

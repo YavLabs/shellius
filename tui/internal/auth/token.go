@@ -43,6 +43,8 @@ func SaveTokens(cfg *config.Config, token TokenResponse) error {
 	cfg.OrgID = token.User.OrgID
 	cfg.OrgSlug = token.User.OrgSlug
 	cfg.Role = token.User.Role
+	cfg.RoleName = token.User.RoleName
+	cfg.Permissions = token.User.Permissions
 	return cfg.Save()
 }
 

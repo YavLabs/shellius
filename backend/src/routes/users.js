@@ -4,7 +4,8 @@ import asyncHandler from '../utils/asyncHandler.js';
 import ApiError from '../utils/ApiError.js';
 import authenticate from '../middleware/auth.js';
 import tenant from '../middleware/tenant.js';
-import requireRole from '../middleware/rbac.js';
+import { requirePermission, can } from '../middleware/rbac.js';
+import { actorFromReq } from '../services/roleService.js';
 import audit from '../middleware/audit.js';
 import { tokenActionLimiter } from '../middleware/rateLimiter.js';
 import * as userService from '../services/userService.js';
@@ -23,7 +24,6 @@ const validate = (schema) => (req, res, next) => {
   next();
 };
 
-const ROLES = ['super_admin', 'admin', 'manager', 'member'];
 const STATUSES = ['active', 'invited', 'suspended', 'deactivated'];
 
 const profileUpdateSchema = Joi.object({
@@ -49,19 +49,22 @@ const createSchema = Joi.object({
   email: Joi.string().email({ tlds: { allow: false } }).required(),
   name: Joi.string().min(1).max(200).required(),
   password: Joi.string().min(8).max(200).optional(),
-  role: Joi.string().valid(...ROLES).default('member'),
+  // roleId: a role id or key. `role` (tier key) is the legacy spelling.
+  roleId: Joi.string().max(100),
+  role: Joi.string().max(100),
   managerId: Joi.string().allow(null),
   sendInvite: Joi.boolean().default(true),
 });
 
+// No password (use a reset link or /me/password) and no avatarUrl (use
+// /me/avatar, which validates the image) — see docs/rbac/rbac-audit.md F-01/F-08.
 const updateSchema = Joi.object({
   email: Joi.string().email({ tlds: { allow: false } }),
   name: Joi.string().min(1).max(200),
-  password: Joi.string().min(8).max(200),
-  role: Joi.string().valid(...ROLES),
+  roleId: Joi.string().max(100),
+  role: Joi.string().max(100),
   status: Joi.string().valid(...STATUSES),
   managerId: Joi.string().allow(null),
-  avatarUrl: Joi.string().uri().allow(null, ''),
 }).min(1);
 
 const sshKeySchema = Joi.object({
@@ -81,7 +84,7 @@ router.use(authenticate, tenant);
 
 router.get(
   '/',
-  requireRole('super_admin', 'admin'),
+  requirePermission('users.view'),
   asyncHandler(async (req, res) => {
     const result = await userService.listUsers(req.orgId, req.query);
     res.json({ success: true, data: result });
@@ -300,10 +303,14 @@ router.get(
   '/:id',
   asyncHandler(async (req, res) => {
     const { id } = req.params;
-    if (id !== req.user.userId && !['super_admin', 'admin'].includes(req.user.role)) {
+    const isSelf = id === req.user.userId;
+    if (!isSelf && !can(req, 'users.view') && !can(req, 'users.view_reports')) {
       throw new ApiError(403, 'Insufficient permissions');
     }
     const user = await userService.getUser(req.orgId, id);
+    if (!isSelf && !can(req, 'users.view') && user.managerId !== req.user.userId) {
+      throw new ApiError(403, 'Insufficient permissions');
+    }
     res.json({ success: true, data: { user } });
   })
 );
@@ -314,7 +321,7 @@ router.get(
 
 router.post(
   '/',
-  requireRole('super_admin', 'admin'),
+  requirePermission('users.invite'),
   validate(createSchema),
   asyncHandler(async (req, res) => {
     const { sendInvite: doSendInvite, ...userData } = req.body;
@@ -325,7 +332,7 @@ router.post(
       ? { ...userData, password: null, status: 'invited' }
       : { ...userData, status: 'active' };
 
-    const user = await userService.createUser(req.orgId, createData, req.user.role);
+    const user = await userService.createUser(req.orgId, createData, actorFromReq(req));
 
     await auditLog({
       orgId: req.orgId,
@@ -333,6 +340,7 @@ router.post(
       action: 'user.create',
       resourceType: 'User',
       resourceId: user.id,
+      metadata: { role: user.roleInfo?.name },
       ipAddress: req.ip,
       userAgent: req.headers['user-agent'],
     });
@@ -375,34 +383,19 @@ router.put(
   '/:id',
   validate(updateSchema),
   asyncHandler(async (req, res) => {
-    const { id } = req.params;
-    const isSelf = id === req.user.userId;
-    const isAdmin = ['super_admin', 'admin'].includes(req.user.role);
-    if (!isSelf && !isAdmin) throw new ApiError(403, 'Insufficient permissions');
-
-    if (isSelf && !isAdmin) {
-      const allowed = ['name', 'password', 'avatarUrl'];
-      for (const key of Object.keys(req.body)) {
-        if (!allowed.includes(key)) {
-          throw new ApiError(403, `You cannot change '${key}' on your own account`);
-        }
-      }
-    }
-
-    const user = await userService.updateUser(
-      req.orgId,
-      id,
-      req.body,
-      req.user.userId,
-      req.user.role
-    );
+    // Permission and target checks live in userService.updateUser so the
+    // import path gets the same rules.
+    const user = await userService.updateUser(req.orgId, req.params.id, req.body, actorFromReq(req), {
+      ipAddress: req.ip,
+      userAgent: req.headers['user-agent'],
+    });
     res.json({ success: true, data: { user } });
   })
 );
 
 router.get(
   '/:id/delete-impact',
-  requireRole('super_admin', 'admin'),
+  requirePermission('users.delete'),
   asyncHandler(async (req, res) => {
     const impact = await userService.getUserDeleteImpact(req.orgId, req.params.id);
     res.json({ success: true, data: impact });
@@ -411,13 +404,14 @@ router.get(
 
 router.delete(
   '/:id',
-  requireRole('super_admin'),
+  requirePermission('users.delete'),
   asyncHandler(async (req, res) => {
     await userService.deleteUser(
       req.orgId,
       req.params.id,
       { reassignReportsTo: req.body?.reassignReportsTo },
-      req.user.userId
+      req.user.userId,
+      actorFromReq(req)
     );
     res.json({ success: true, data: { success: true } });
   })
@@ -428,8 +422,10 @@ router.put(
   validate(sshKeySchema),
   asyncHandler(async (req, res) => {
     const { id } = req.params;
-    if (id !== req.user.userId && !['super_admin', 'admin'].includes(req.user.role)) {
-      throw new ApiError(403, 'Insufficient permissions');
+    if (id !== req.user.userId) {
+      if (!can(req, 'users.update')) throw new ApiError(403, 'Insufficient permissions');
+      const target = await userService.getUser(req.orgId, id);
+      await userService.assertCanManageUser(req.orgId, actorFromReq(req), target, "change this user's SSH key");
     }
     await userService.uploadSshKey(req.orgId, id, req.body.publicKey);
     res.json({ success: true, data: { success: true } });
@@ -440,8 +436,10 @@ router.delete(
   '/:id/ssh-key',
   asyncHandler(async (req, res) => {
     const { id } = req.params;
-    if (id !== req.user.userId && !['super_admin', 'admin'].includes(req.user.role)) {
-      throw new ApiError(403, 'Insufficient permissions');
+    if (id !== req.user.userId) {
+      if (!can(req, 'users.update')) throw new ApiError(403, 'Insufficient permissions');
+      const target = await userService.getUser(req.orgId, id);
+      await userService.assertCanManageUser(req.orgId, actorFromReq(req), target, "change this user's SSH key");
     }
     await userService.removeSshKey(req.orgId, id);
     res.json({ success: true, data: { success: true } });
@@ -450,8 +448,9 @@ router.delete(
 
 router.get(
   '/:id/reports',
-  requireRole('super_admin', 'admin'),
   asyncHandler(async (req, res) => {
+    const own = req.params.id === req.user.userId && can(req, 'users.view_reports');
+    if (!own && !can(req, 'users.view')) throw new ApiError(403, 'Insufficient permissions');
     const reports = await userService.getDirectReports(req.orgId, req.params.id);
     res.json({ success: true, data: { reports } });
   })
@@ -463,10 +462,16 @@ router.get(
 
 router.post(
   '/:id/resend-invite',
-  requireRole('super_admin', 'admin'),
+  requirePermission('users.invite'),
   asyncHandler(async (req, res) => {
     const user = await userService.getUser(req.orgId, req.params.id);
     if (!user) throw new ApiError(404, 'User not found');
+    await userService.assertCanManageUser(req.orgId, actorFromReq(req), user, 'invite this user');
+    // An invite sets the password and activates the account, so it is only
+    // for users who haven't accepted yet (F-02 / F-11).
+    if (user.status !== 'invited') {
+      throw new ApiError(409, 'This user has already joined — send a password reset link instead');
+    }
 
     const { rawToken } = await inviteService.createInvite(user.id, inviteService.TOKEN_TYPES.INVITE, 168);
     const inviteUrl = inviteService.buildTokenUrl(inviteService.TOKEN_TYPES.INVITE, rawToken, req);
@@ -512,10 +517,12 @@ router.post(
 
 router.post(
   '/:id/password-reset',
-  requireRole('super_admin', 'admin'),
+  requirePermission('users.reset_credentials'),
   asyncHandler(async (req, res) => {
     const user = await userService.getUser(req.orgId, req.params.id);
     if (!user) throw new ApiError(404, 'User not found');
+    await userService.assertCanManageUser(req.orgId, actorFromReq(req), user, "reset this user's password");
+    if (user.status !== 'active') throw new ApiError(409, 'Only active users can reset their password');
 
     const { rawToken } = await inviteService.createInvite(user.id, inviteService.TOKEN_TYPES.PASSWORD_RESET, 1);
     const resetUrl = inviteService.buildTokenUrl(inviteService.TOKEN_TYPES.PASSWORD_RESET, rawToken, req);
@@ -560,10 +567,10 @@ router.post(
 
 router.post(
   '/:id/unlock',
-  requireRole('super_admin', 'admin'),
+  requirePermission('users.reset_credentials'),
   audit('user.unlocked', 'User'),
   asyncHandler(async (req, res) => {
-    const user = await userService.unlockUser(req.orgId, req.params.id);
+    const user = await userService.unlockUser(req.orgId, req.params.id, actorFromReq(req));
     res.json({ success: true, data: { user } });
   })
 );
@@ -575,10 +582,10 @@ router.post(
 
 router.post(
   '/:id/revoke-sessions',
-  requireRole('super_admin', 'admin'),
+  requirePermission('users.revoke_sessions'),
   audit('user.sessions.revoked', 'User'),
   asyncHandler(async (req, res) => {
-    const result = await userService.adminRevokeSessions(req.orgId, req.params.id, req.user.role);
+    const result = await userService.adminRevokeSessions(req.orgId, req.params.id, actorFromReq(req));
     res.json({ success: true, data: result });
   })
 );

@@ -124,6 +124,10 @@ export async function pollDeviceRequest(deviceCode, ipAddress, userAgent) {
         name: user.name,
         role: user.role,
         orgId: user.orgId,
+        // Role name and permissions (e.g. access.prod_bypass) so the CLI can
+        // show the right access status instead of guessing from the role.
+        roleName: session.user.roleInfo?.name || null,
+        permissions: session.user.permissions,
       },
     };
   }

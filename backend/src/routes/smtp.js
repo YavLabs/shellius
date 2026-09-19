@@ -5,7 +5,7 @@ import asyncHandler from '../utils/asyncHandler.js';
 import ApiError from '../utils/ApiError.js';
 import authenticate from '../middleware/auth.js';
 import tenant from '../middleware/tenant.js';
-import requireRole from '../middleware/rbac.js';
+import { requirePermission } from '../middleware/rbac.js';
 import audit from '../middleware/audit.js';
 import * as smtpConfigService from '../services/smtpConfigService.js';
 import prisma from '../config/db.js';
@@ -34,7 +34,7 @@ const validate = (schema) => (req, res, next) => {
 // GET /api/settings/smtp — admin+; returns effective config with password masked
 router.get(
   '/',
-  requireRole('super_admin'),
+  requirePermission('settings.smtp'),
   asyncHandler(async (req, res) => {
     const effective = await smtpConfigService.getEffective(req.orgId);
     const { password, ...rest } = effective;
@@ -53,7 +53,7 @@ router.get(
 // PUT /api/settings/smtp — admin+; Joi validate, upsert, encrypt password
 router.put(
   '/',
-  requireRole('super_admin'),
+  requirePermission('settings.smtp'),
   audit('smtp.config.updated', 'SmtpConfig'),
   validate(smtpSchema),
   asyncHandler(async (req, res) => {
@@ -65,7 +65,7 @@ router.put(
 // DELETE /api/settings/smtp — admin+; drops the DB row, falls back to env defaults
 router.delete(
   '/',
-  requireRole('super_admin'),
+  requirePermission('settings.smtp'),
   audit('smtp.config.deleted', 'SmtpConfig'),
   asyncHandler(async (req, res) => {
     await smtpConfigService.remove(req.orgId);
@@ -76,7 +76,7 @@ router.delete(
 // POST /api/settings/smtp/test — admin+; sends a test email to the caller's own address
 router.post(
   '/test',
-  requireRole('super_admin'),
+  requirePermission('settings.smtp'),
   audit('smtp.config.test', 'SmtpConfig'),
   asyncHandler(async (req, res) => {
     const effective = await smtpConfigService.getEffective(req.orgId);

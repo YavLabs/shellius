@@ -134,9 +134,7 @@ const ROLE_MAP = {
   super_admin: { tone: 'accent', label: 'Super admin' },
   admin: { tone: 'info', label: 'Admin' },
   manager: { tone: 'info', label: 'Manager' },
-  operator: { tone: 'neutral', label: 'Operator' },
   member: { tone: 'neutral', label: 'Member' },
-  viewer: { tone: 'neutral', label: 'Viewer' },
 };
 
 export function roleTone(role) {

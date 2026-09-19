@@ -20,11 +20,8 @@ import { listCertificates, revokeCertificate } from '@/services/certificateServi
 import { useAuth } from '@/context/AuthContext';
 import { formatDateTime } from '@/utils/time';
 import { CERT_STATUS_LABELS } from '@/lib/labels';
+import { can } from '@/lib/permissions';
 
-const ROLE_RANK = { super_admin: 4, admin: 3, manager: 2, member: 1 };
-function isAtLeast(user, role) {
-  return (ROLE_RANK[user?.role] || 0) >= (ROLE_RANK[role] || 0);
-}
 
 function downloadBlob(filename, content) {
   const blob = new Blob([content], { type: 'application/octet-stream' });
@@ -144,7 +141,7 @@ const STATUSES = ['ACTIVE', 'REVOKED', 'EXPIRED'];
 
 function Certificates() {
   const { user } = useAuth();
-  const canAdmin = isAtLeast(user, 'admin');
+  const canAdmin = can(user, 'certificates.revoke');
 
   const [certs, setCerts] = useState([]);
   const [total, setTotal] = useState(0);

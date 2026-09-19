@@ -7,7 +7,7 @@ import asyncHandler from '../utils/asyncHandler.js';
 import ApiError from '../utils/ApiError.js';
 import authenticate from '../middleware/auth.js';
 import tenant from '../middleware/tenant.js';
-import requireRole from '../middleware/rbac.js';
+import { requirePermission } from '../middleware/rbac.js';
 import audit from '../middleware/audit.js';
 import logger from '../utils/logger.js';
 import * as sessionService from '../services/sessionService.js';
@@ -49,7 +49,7 @@ router.use(authenticate, tenant);
 
 router.get(
   '/',
-  requireRole('super_admin', 'admin', 'manager'),
+  requirePermission('sessions.view_all'),
   validateQuery(listQuerySchema),
   asyncHandler(async (req, res) => {
     const result = await sessionService.list({
@@ -70,7 +70,7 @@ router.get(
 
 router.get(
   '/active',
-  requireRole('super_admin', 'admin', 'manager'),
+  requirePermission('sessions.view_all'),
   asyncHandler(async (req, res) => {
     const sessions = await sessionService.listActive(req.orgId);
     // Match the shape of GET /api/sessions so the frontend can treat
@@ -93,7 +93,7 @@ router.get(
 
 router.get(
   '/:id',
-  requireRole('super_admin', 'admin', 'manager'),
+  requirePermission('sessions.view_all'),
   asyncHandler(async (req, res) => {
     const session = await sessionService.getById(req.orgId, req.params.id);
     res.json({ success: true, data: { session } });
@@ -106,7 +106,8 @@ router.get(
 
 router.get(
   '/:id/recording',
-  requireRole('super_admin', 'admin', 'manager'),
+  requirePermission('sessions.view_recordings'),
+  audit('session.recording.download', 'Session'),
   asyncHandler(async (req, res) => {
     const session = await sessionService.getById(req.orgId, req.params.id);
 
@@ -164,7 +165,7 @@ router.get(
 
 router.post(
   '/:id/terminate',
-  requireRole('super_admin', 'admin'),
+  requirePermission('sessions.terminate'),
   audit('session.terminate', 'Session'),
   asyncHandler(async (req, res) => {
     // terminateSession updates DB and force-closes in-memory WS/SSH handles

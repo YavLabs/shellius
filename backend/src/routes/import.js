@@ -10,7 +10,8 @@ import asyncHandler from '../utils/asyncHandler.js';
 import ApiError from '../utils/ApiError.js';
 import authenticate from '../middleware/auth.js';
 import tenant from '../middleware/tenant.js';
-import requireRole from '../middleware/rbac.js';
+import { requirePermission } from '../middleware/rbac.js';
+import { actorFromReq } from '../services/roleService.js';
 import audit from '../middleware/audit.js';
 import * as importService from '../services/importService.js';
 
@@ -35,7 +36,7 @@ function handleUpload(field) {
 // POST /api/import — upload + preview
 router.post(
   '/',
-  requireRole('super_admin', 'admin'),
+  requirePermission('import.run'),
   handleUpload('file'),
   audit('import.upload', 'ImportJob'),
   asyncHandler(async (req, res) => {
@@ -44,7 +45,6 @@ router.post(
     const { jobId, summary, source } = await importService.createImportJob({
       orgId: req.orgId,
       actorId: req.user.userId,
-      actorRole: req.user.role,
       buffer: req.file.buffer,
       filename: req.file.originalname,
       declaredType,
@@ -56,7 +56,7 @@ router.post(
 // GET /api/import/:id — job + rows + onboarding status
 router.get(
   '/:id',
-  requireRole('super_admin', 'admin'),
+  requirePermission('import.run'),
   asyncHandler(async (req, res) => {
     const data = await importService.getJob(req.orgId, req.params.id);
     if (!data) throw new ApiError(404, 'Import job not found');
@@ -73,7 +73,7 @@ const decisionSchema = Joi.object({
 // PATCH /api/import/:id/decisions — set overwrite|skip on conflict rows (bulk supported)
 router.patch(
   '/:id/decisions',
-  requireRole('super_admin', 'admin'),
+  requirePermission('import.run'),
   audit('import.decisions', 'ImportJob'),
   asyncHandler(async (req, res) => {
     const { error, value } = decisionSchema.validate(req.body, { stripUnknown: true });
@@ -92,14 +92,14 @@ router.patch(
 // POST /api/import/:id/commit — execute the plan + enqueue onboarding
 router.post(
   '/:id/commit',
-  requireRole('super_admin', 'admin'),
+  requirePermission('import.run'),
   audit('import.commit', 'ImportJob'),
   asyncHandler(async (req, res) => {
     const result = await importService.commitImportJob({
       orgId: req.orgId,
       jobId: req.params.id,
       actorId: req.user.userId,
-      actorRole: req.user.role,
+      actor: actorFromReq(req),
       req,
     });
     res.json({ success: true, data: result });
@@ -129,7 +129,7 @@ const TEMPLATES = {
     'win-01,Win Host,10.0.0.20,false,acme,prod,true,rdp,windows,Windows Server 2022,,,,,,Administrator,Rdp!Pass,role:rdp,azure,vm-win-01,eastus\n' +
     // inventory only — added but NOT onboarded (no credentials needed)
     'inventory-01,Unmanaged Box,10.0.0.30,false,acme,dev,false,ssh,linux,Ubuntu 22.04,ubuntu,,,,,,,note:not-onboarded,,,\n',
-  users: 'email,name,role,manager,sendInvite\njane@acme.com,Jane Doe,operator,,true\n',
+  users: 'email,name,role,manager,sendInvite\njane@acme.com,Jane Doe,member,,true\n',
   groups: 'name,description\nMembers,Standard members\n',
   policies:
     'name,effect,targetEnvironments,allowedPrincipals,maxSessionDuration,requireApproval,autoApprove,priority,subjectGroups,approverGroup,approverRoles\n' +
@@ -139,7 +139,7 @@ const TEMPLATES = {
 
 router.get(
   '/templates/:entity',
-  requireRole('super_admin', 'admin'),
+  requirePermission('import.run'),
   asyncHandler(async (req, res) => {
     const key = String(req.params.entity).replace(/\.csv$/i, '');
     const tpl = TEMPLATES[key];

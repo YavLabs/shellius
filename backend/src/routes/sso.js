@@ -15,8 +15,9 @@ import logger from '../utils/logger.js';
 import redis from '../config/redis.js';
 import authenticate from '../middleware/auth.js';
 import tenant from '../middleware/tenant.js';
-import requireRole from '../middleware/rbac.js';
+import { requirePermission } from '../middleware/rbac.js';
 import audit from '../middleware/audit.js';
+import { assertSsoDefaultRole } from '../services/roleService.js';
 
 const router = express.Router();
 
@@ -139,9 +140,9 @@ const ssoConfigSchema = Joi.object({
   redirectUri: Joi.string().uri(),
   scopes: Joi.string().max(500),
   isActive: Joi.boolean(),
-  // New-user provisioning policy. super_admin is deliberately excluded — a
-  // JIT-provisioned SSO account can never land as the root role.
-  defaultRole: Joi.string().valid('admin', 'manager', 'member'),
+  // New-user provisioning policy: a role key. Checked against the org's roles
+  // (never Super admin, never a role with sensitive permissions) below.
+  defaultRole: Joi.string().max(100),
   defaultGroupId: Joi.string().allow(null, ''),
   autoProvision: Joi.boolean(),
   // Email domains allowed to sign in / be provisioned via SSO. Empty = any.
@@ -183,13 +184,21 @@ const providerCreateSchema = Joi.object({
   clientSecret: Joi.string().min(1).max(2000).allow(''),
   issuerUrl: Joi.string().uri(),
   scopes: Joi.string().max(500),
-  defaultRole: Joi.string().valid('admin', 'manager', 'member').required(),
+  defaultRole: Joi.string().max(100).required(),
   defaultGroupId: Joi.string().allow(null, ''),
   autoProvision: Joi.boolean().required(),
   allowedDomains: Joi.array().items(Joi.string().pattern(DOMAIN_RE)).max(50).required(),
   allowedOrgs: Joi.array().items(Joi.string().min(1).max(100)).max(50).required(),
   requireVerifiedEmail: Joi.boolean().required(),
   isActive: Joi.boolean().required(),
+});
+
+// Resolve / vet body.defaultRole against this org's roles.
+const checkDefaultRole = asyncHandler(async (req, res, next) => {
+  if (req.body.defaultRole !== undefined) {
+    req.body.defaultRole = await assertSsoDefaultRole(req.orgId, req.body.defaultRole);
+  }
+  next();
 });
 
 const providerUpdateSchema = Joi.object({
@@ -199,7 +208,7 @@ const providerUpdateSchema = Joi.object({
   clientSecret: Joi.string().max(2000).allow(''),
   issuerUrl: Joi.string().uri().allow(''),
   scopes: Joi.string().max(500),
-  defaultRole: Joi.string().valid('admin', 'manager', 'member'),
+  defaultRole: Joi.string().max(100),
   defaultGroupId: Joi.string().allow(null, ''),
   autoProvision: Joi.boolean(),
   allowedDomains: Joi.array().items(Joi.string().pattern(DOMAIN_RE)).max(50),
@@ -227,7 +236,7 @@ router.get(
   '/config',
   authenticate,
   tenant,
-  requireRole('super_admin'),
+  requirePermission('settings.sso'),
   asyncHandler(async (req, res) => {
     const cfg = await ssoConfigService.get(req.orgId);
     const effective = await ssoConfigService.getEffective(req.orgId);
@@ -240,9 +249,10 @@ router.put(
   '/config',
   authenticate,
   tenant,
-  requireRole('super_admin'),
+  requirePermission('settings.sso'),
   audit('sso.config.update', 'SsoConfig'),
   validate(ssoConfigSchema),
+  checkDefaultRole,
   asyncHandler(async (req, res) => {
     const cfg = await ssoConfigService.upsert(req.orgId, req.body);
     res.json({ success: true, data: { config: cfg } });
@@ -254,7 +264,7 @@ router.post(
   '/config/test',
   authenticate,
   tenant,
-  requireRole('super_admin'),
+  requirePermission('settings.sso'),
   audit('sso.config.test', 'SsoConfig'),
   validate(ssoTestSchema),
   asyncHandler(async (req, res) => {
@@ -271,7 +281,7 @@ router.get(
   '/providers',
   authenticate,
   tenant,
-  requireRole('super_admin'),
+  requirePermission('settings.sso'),
   asyncHandler(async (req, res) => {
     const providers = await ssoConfigService.listProviders(req.orgId);
     res.json({ success: true, data: { providers } });
@@ -282,9 +292,10 @@ router.post(
   '/providers',
   authenticate,
   tenant,
-  requireRole('super_admin'),
+  requirePermission('settings.sso'),
   audit('sso.provider.create', 'SsoConfig'),
   validate(providerCreateSchema),
+  checkDefaultRole,
   asyncHandler(async (req, res) => {
     const provider = await ssoConfigService.createProvider(req.orgId, req.body);
     res.status(201).json({ success: true, data: { provider } });
@@ -297,7 +308,7 @@ router.post(
   '/providers/test',
   authenticate,
   tenant,
-  requireRole('super_admin'),
+  requirePermission('settings.sso'),
   audit('sso.provider.test', 'SsoConfig'),
   validate(providerTestDraftSchema),
   asyncHandler(async (req, res) => {
@@ -311,7 +322,7 @@ router.put(
   '/providers/order',
   authenticate,
   tenant,
-  requireRole('super_admin'),
+  requirePermission('settings.sso'),
   audit('sso.provider.reorder', 'SsoConfig'),
   validate(providerOrderSchema),
   asyncHandler(async (req, res) => {
@@ -324,7 +335,7 @@ router.post(
   '/providers/:id/test',
   authenticate,
   tenant,
-  requireRole('super_admin'),
+  requirePermission('settings.sso'),
   audit('sso.provider.test', 'SsoConfig'),
   asyncHandler(async (req, res) => {
     const result = await ssoConfigService.testProvider(req.orgId, { id: req.params.id });
@@ -336,9 +347,10 @@ router.patch(
   '/providers/:id',
   authenticate,
   tenant,
-  requireRole('super_admin'),
+  requirePermission('settings.sso'),
   audit('sso.provider.update', 'SsoConfig'),
   validate(providerUpdateSchema),
+  checkDefaultRole,
   asyncHandler(async (req, res) => {
     const provider = await ssoConfigService.updateProvider(req.orgId, req.params.id, req.body);
     res.json({ success: true, data: { provider } });
@@ -349,7 +361,7 @@ router.delete(
   '/providers/:id',
   authenticate,
   tenant,
-  requireRole('super_admin'),
+  requirePermission('settings.sso'),
   audit('sso.provider.delete', 'SsoConfig'),
   asyncHandler(async (req, res) => {
     const force = req.query.force === 'true';

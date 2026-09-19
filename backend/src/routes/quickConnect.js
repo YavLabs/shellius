@@ -5,7 +5,7 @@ import asyncHandler from '../utils/asyncHandler.js';
 import ApiError from '../utils/ApiError.js';
 import authenticate from '../middleware/auth.js';
 import tenant from '../middleware/tenant.js';
-import requireRole from '../middleware/rbac.js';
+import { requirePermission } from '../middleware/rbac.js';
 import audit from '../middleware/audit.js';
 import * as quickConnectService from '../services/quickConnectService.js';
 import { userRateLimiter } from '../middleware/rateLimiter.js';
@@ -25,7 +25,6 @@ router.use(authenticate, tenant);
 
 const settingsSchema = Joi.object({
   enabled: Joi.boolean().required(),
-  minRole: Joi.string().valid('super_admin', 'admin', 'manager', 'member').required(),
 });
 
 const ticketAuthSchema = Joi.alternatives().try(
@@ -86,14 +85,14 @@ const saveSchema = Joi.object({
 router.get(
   '/settings',
   asyncHandler(async (req, res) => {
-    const result = await quickConnectService.getSettings(req.orgId, req.user.role);
+    const result = await quickConnectService.getSettings(req.orgId, req.user);
     res.json({ success: true, data: result });
   })
 );
 
 router.put(
   '/settings',
-  requireRole('super_admin', 'admin'),
+  requirePermission('quick_connect.settings'),
   audit('quick_connect.settings.update', 'Organization'),
   validate(settingsSchema),
   asyncHandler(async (req, res) => {
@@ -110,7 +109,7 @@ router.post(
   asyncHandler(async (req, res) => {
     const result = await quickConnectService.createTicket(
       req.orgId,
-      { id: req.user.userId, role: req.user.role },
+      { id: req.user.userId, role: req.user.role, permissions: req.user.permissions },
       req.body
     );
     res.status(201).json({ success: true, data: result });
@@ -137,7 +136,7 @@ router.post(
   asyncHandler(async (req, res) => {
     const result = await quickConnectService.reconnectFromHistory(
       req.orgId,
-      { id: req.user.userId, role: req.user.role },
+      { id: req.user.userId, role: req.user.role, permissions: req.user.permissions },
       req.params.id
     );
     res.status(201).json({ success: true, data: result });
@@ -164,13 +163,13 @@ router.delete(
 
 router.post(
   '/save',
-  requireRole('super_admin', 'admin', 'manager'),
+  requirePermission('quick_connect.save_server'),
   audit('quick_connect.save', 'Server'),
   validate(saveSchema),
   asyncHandler(async (req, res) => {
     const result = await quickConnectService.saveAsServer(
       req.orgId,
-      { id: req.user.userId, role: req.user.role },
+      { id: req.user.userId, role: req.user.role, permissions: req.user.permissions },
       req.body
     );
     res.status(201).json({ success: true, data: result });

@@ -57,6 +57,7 @@ model Organization {
   sshKeys         SshKey[]
   credentials     Credential[]
   keyDeployments  KeyDeployment[]
+  roles           Role[]
   selfServiceRegistrationEnabled Boolean @default(false) @map("self_service_registration_enabled")
 
   @@map("organizations")
@@ -68,7 +69,11 @@ model User {
   email         String
   passwordHash  String?    @map("password_hash")
   name          String
+  // Base tier of the user's role, kept in sync with assignedRole.baseRole.
+  // Policies (ROLE subjects, approverRoles) and the CLI still read it; all
+  // permission checks use assignedRole.permissions.
   role          OrgRole    @default(member)
+  roleId        String?    @map("role_id")
   status        UserStatus @default(active)
   managerId     String?    @map("manager_id")
   sshPublicKey  String?    @map("ssh_public_key") @db.Text
@@ -84,6 +89,7 @@ model User {
   updatedAt           DateTime   @updatedAt @map("updated_at")
 
   organization  Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  assignedRole  Role?        @relation(fields: [roleId], references: [id], onDelete: Restrict)
   manager       User?        @relation("ManagerReports", fields: [managerId], references: [id], onDelete: SetNull)
   directReports User[]       @relation("ManagerReports")
   refreshTokens RefreshToken[]
@@ -123,7 +129,34 @@ model User {
   @@unique([orgId, jitUid], map: "user_org_jit_uid_unique")
   @@index([orgId])
   @@index([managerId])
+  @@index([roleId])
   @@map("users")
+}
+
+// A named set of permissions (keys from src/config/permissions.js). Every org
+// has four system roles (super_admin, admin, manager, member — key == tier)
+// plus any custom roles. super_admin always holds every permission.
+model Role {
+  id             String   @id @default(cuid())
+  orgId          String   @map("org_id")
+  key            String
+  name           String
+  description    String?
+  baseRole       OrgRole  @map("base_role")
+  permissions    String[] @default([])
+  isSystem       Boolean  @default(false) @map("is_system")
+  catalogVersion Int      @default(0) @map("catalog_version")
+  createdById    String?  @map("created_by_id")
+  createdAt      DateTime @default(now()) @map("created_at")
+  updatedAt      DateTime @updatedAt @map("updated_at")
+
+  organization Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  users        User[]
+
+  @@unique([orgId, key])
+  @@unique([orgId, name])
+  @@index([orgId])
+  @@map("roles")
 }
 
 model Customer {
@@ -343,7 +376,7 @@ model SsoConfig {
   redirectUri           String   @map("redirect_uri")
   scopes                String   @default("openid profile email")
   // New-user provisioning policy for SSO sign-ins.
-  defaultRole           String   @default("viewer") @map("default_role")
+  defaultRole           String   @default("member") @map("default_role")
   defaultGroupId        String?  @map("default_group_id")
   autoProvision         Boolean  @default(true) @map("auto_provision")
   // Email domains allowed to sign in / be provisioned via SSO. Empty = any.

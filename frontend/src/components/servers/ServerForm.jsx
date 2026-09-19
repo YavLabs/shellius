@@ -8,7 +8,6 @@ import SearchableSelect from '@/components/ui/SearchableSelect';
 import PasswordInput from '@/components/ui/PasswordInput';
 import IdentityFormModal from '@/components/keystore/IdentityFormModal';
 import { useAuth } from '@/context/AuthContext';
-import { roleAtLeast } from '@/lib/permissions';
 import { ENVIRONMENT_LABELS } from '@/lib/labels';
 
 const ENVIRONMENTS = ['demo', 'dev', 'staging', 'prod'];
@@ -88,8 +87,12 @@ function ServerForm({ server, customerId: initialCustomerId, onSubmit, onCancel 
   const [rdpPassword, setRdpPassword] = useState('');
 
   // ── SSH Authentication (certificate vs stored identity) ──────────────────
-  const { user: currentUser } = useAuth();
-  const canCreateIdentity = roleAtLeast(currentUser, 'admin');
+  const { can } = useAuth();
+  // Field-level permissions (the API enforces the same, docs/rbac F-05):
+  // binding identities / RDP passwords, and moving a server between
+  // environments, are separate from ordinary edits.
+  const canBindIdentity = can('servers.manage_credentials');
+  const canCreateIdentity = canBindIdentity && can('keystore.manage');
   const [authMode, setAuthMode] = useState(server?.authMode || 'certificate');
   const [credentialId, setCredentialId] = useState(server?.credentialId || '');
   const [identities, setIdentities] = useState([]);
@@ -121,9 +124,12 @@ function ServerForm({ server, customerId: initialCustomerId, onSubmit, onCancel 
         setCustomers(data.items || []);
       } catch { /* ignore */ }
     })();
-    listCredentials()
-      .then(setIdentities)
-      .catch(() => setIdentities([]));
+    if (canBindIdentity && can('keystore.view')) {
+      listCredentials()
+        .then(setIdentities)
+        .catch(() => setIdentities([]));
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const refreshIdentities = () => {
@@ -206,14 +212,16 @@ function ServerForm({ server, customerId: initialCustomerId, onSubmit, onCancel 
     // SSH user is only meaningful for SSH-capable servers
     if (includesSsh(protocol)) {
       payload.sshUser = sshUser.trim() || 'root';
-      payload.authMode = authMode;
-      payload.credentialId = authMode === 'credential' ? credentialId : undefined;
+      if (canBindIdentity) {
+        payload.authMode = authMode;
+        payload.credentialId = authMode === 'credential' ? credentialId : undefined;
+      }
     }
 
     // RDP credentials only for RDP-capable servers
     if (includesRdp(protocol)) {
       if (rdpUsername) payload.rdpUsername = rdpUsername.trim();
-      if (rdpPassword) payload.rdpPassword = rdpPassword;
+      if (rdpPassword && canBindIdentity) payload.rdpPassword = rdpPassword;
     }
 
     setSubmitting(true);
@@ -394,9 +402,14 @@ function ServerForm({ server, customerId: initialCustomerId, onSubmit, onCancel 
 
       {/* ── 3b. Authentication — SSH-capable servers only ───────────────── */}
       {includesSsh(protocol) && (
-        <div className="space-y-3">
+        <fieldset className="space-y-3" disabled={!canBindIdentity}>
           <h4 className={sectionCls}>Authentication</h4>
-          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+          {!canBindIdentity && (
+            <p className="text-xs text-muted-foreground">
+              Changing how this server authenticates needs the “Bind stored identities to servers” permission.
+            </p>
+          )}
+          <div className={`grid grid-cols-1 gap-3 sm:grid-cols-2 ${!canBindIdentity ? 'opacity-60' : ''}`}>
             <label
               className={`flex cursor-pointer items-start gap-3 rounded-md border p-3 text-sm transition-colors ${
                 authMode === 'certificate' ? 'border-primary bg-primary/5' : 'border-border hover:bg-accent/40'
@@ -468,7 +481,7 @@ function ServerForm({ server, customerId: initialCustomerId, onSubmit, onCancel 
               </div>
             </div>
           )}
-        </div>
+        </fieldset>
       )}
 
       {/* ── 4. RDP Credentials — only when RDP is involved ────────────── */}
@@ -499,6 +512,7 @@ function ServerForm({ server, customerId: initialCustomerId, onSubmit, onCancel 
                 onChange={(e) => setRdpPassword(e.target.value)}
                 placeholder={isEdit ? '••••••••' : 'Enter password'}
                 autoComplete="new-password"
+                disabled={!canBindIdentity}
               />
             </div>
           </div>
@@ -531,7 +545,11 @@ function ServerForm({ server, customerId: initialCustomerId, onSubmit, onCancel 
               options={ENVIRONMENTS.map((env) => ({ value: env, label: ENVIRONMENT_LABELS[env] || env }))}
               searchable={false}
               clearable={false}
+              disabled={isEdit && !can('servers.change_environment')}
             />
+            {isEdit && !can('servers.change_environment') && (
+              <p className="mt-1 text-[11px] text-muted-foreground">Changing the environment needs its own permission.</p>
+            )}
           </div>
         </div>
       </div>

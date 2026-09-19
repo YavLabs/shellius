@@ -4,7 +4,7 @@ import asyncHandler from '../utils/asyncHandler.js';
 import ApiError from '../utils/ApiError.js';
 import authenticate from '../middleware/auth.js';
 import tenant from '../middleware/tenant.js';
-import requireRole from '../middleware/rbac.js';
+import { requirePermission } from '../middleware/rbac.js';
 import audit from '../middleware/audit.js';
 import * as accessRequestService from '../services/accessRequestService.js';
 import * as rdpService from '../services/rdpService.js';
@@ -131,6 +131,7 @@ router.post(
       requestedPrincipal: req.body.requestedPrincipal,
       protocol: req.body.protocol,
       callerRole: req.user.role,
+      callerPermissions: req.user.permissions,
     });
     res.status(201).json({ success: true, data: { accessRequest } });
   })
@@ -138,7 +139,7 @@ router.post(
 
 // ---------------------------------------------------------------------------
 // GET /api/access-requests — any authenticated user
-// tab='all' requires admin+; enforced by the service
+// tab='all' requires access_requests.view_all; enforced by the service
 // ---------------------------------------------------------------------------
 
 router.get(
@@ -148,7 +149,7 @@ router.get(
     const result = await accessRequestService.list({
       orgId: req.orgId,
       userId: req.user.userId,
-      role: req.user.role,
+      permissions: req.user.permissions,
       tab: req.query.tab,
       status: req.query.status,
       page: req.query.page,
@@ -195,7 +196,7 @@ router.get(
     const intent = await accessRequestService.getAccessIntent({
       orgId: req.orgId,
       userId: req.user.userId,
-      userRole: req.user.role,
+      permissions: req.user.permissions,
       serverId,
     });
     res.json({ success: true, data: intent });
@@ -241,13 +242,13 @@ const breakGlassSchema = Joi.object({
 
 router.post(
   '/break-glass',
-  requireRole('admin', 'super_admin'),
+  requirePermission('access.break_glass'),
   validate(breakGlassSchema),
   asyncHandler(async (req, res) => {
     const ar = await accessRequestService.createBreakGlass({
       orgId: req.orgId,
       invokerId: req.user.userId,
-      invokerRole: req.user.role,
+      invokerPermissions: req.user.permissions,
       serverId: req.body.serverId,
       reason: req.body.reason,
       durationSeconds: req.body.durationSeconds,
@@ -268,7 +269,7 @@ router.get(
       requestId: req.params.id,
       orgId: req.orgId,
       callerId: req.user.userId,
-      callerRole: req.user.role,
+      callerPermissions: req.user.permissions,
     });
     res.json({ success: true, data: { accessRequest } });
   })
@@ -305,8 +306,9 @@ router.post(
   asyncHandler(async (req, res) => {
     const accessRequest = await accessRequestService.revoke({
       requestId: req.params.id,
+      orgId: req.orgId,
       callerId: req.user.userId,
-      callerRole: req.user.role,
+      callerPermissions: req.user.permissions,
       reason: req.body.reason,
     });
     res.json({ success: true, data: { accessRequest } });
@@ -439,7 +441,7 @@ router.post(
       requestId: id,
       orgId: req.orgId,
       callerId: req.user.userId,
-      callerRole: req.user.role,
+      callerPermissions: req.user.permissions,
     });
 
     if (accessRequest.requesterId !== req.user.userId) {
@@ -471,7 +473,7 @@ router.post(
       requestId: id,
       orgId: req.orgId,
       callerId: req.user.userId,
-      callerRole: req.user.role,
+      callerPermissions: req.user.permissions,
     });
 
     if (accessRequest.requesterId !== req.user.userId) {

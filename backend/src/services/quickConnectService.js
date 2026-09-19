@@ -6,7 +6,8 @@
  * connection details stored in Redis and bound to the issuing user — the
  * WebSocket terminal (terminalService.js) consumes it exactly once.
  *
- * Settings live in Organization.settings.quickConnect ({ enabled, minRole }).
+ * Settings live in Organization.settings.quickConnect ({ enabled }); who may
+ * use it is the quick_connect.use permission.
  *
  * Security:
  *   - Prod guard: any host matching a saved prod server's ipAddress/hostname
@@ -29,9 +30,17 @@ import * as sshKeysUtil from '../utils/sshKeys.js';
 import * as sshConnect from './sshConnect.js';
 import { resolveCredentialAuth } from './keystoreService.js';
 import { log as auditLog } from './auditService.js';
+import * as policyService from './policyService.js';
 
-const ROLE_RANK = { super_admin: 4, admin: 3, manager: 2, member: 1 };
-const VALID_ROLES = Object.keys(ROLE_RANK);
+// Who may use Quick Connect is the `quick_connect.use` permission (the old
+// settings.quickConnect.minRole was migrated onto the built-in roles by
+// roleService.syncSystemRoles). `user` objects passed in here carry
+// `permissions` (a Set from req.user.permissions).
+function has(user, key) {
+  const p = user?.permissions;
+  if (!p) return false;
+  return p instanceof Set ? p.has(key) : p.includes(key);
+}
 const TICKET_TTL_SECONDS = 60;
 const HISTORY_RETENTION_DAYS = 7;
 
@@ -54,22 +63,28 @@ async function loadQuickConnectSettings(orgId) {
   const qc = (org?.settings && org.settings.quickConnect) || {};
   return {
     enabled: qc.enabled !== undefined ? !!qc.enabled : true,
-    minRole: VALID_ROLES.includes(qc.minRole) ? qc.minRole : 'manager',
   };
 }
 
-export async function getSettings(orgId, callerRole) {
-  const { enabled, minRole } = await loadQuickConnectSettings(orgId);
-  const allowed = enabled && (ROLE_RANK[callerRole] ?? 0) >= (ROLE_RANK[minRole] ?? 0);
-  return { enabled, minRole, allowed };
+/**
+ * @param {string} orgId
+ * @param {{ permissions: Set<string> }} caller
+ */
+export async function getSettings(orgId, caller) {
+  const { enabled } = await loadQuickConnectSettings(orgId);
+  const allowed = enabled && has(caller, 'quick_connect.use');
+  return {
+    enabled,
+    allowed,
+    canUseStoredIdentity: allowed && has(caller, 'quick_connect.use_stored_identity'),
+    canSaveServer: has(caller, 'quick_connect.save_server'),
+  };
 }
 
-export async function updateSettings(orgId, { enabled, minRole }, actorId) {
-  if (!VALID_ROLES.includes(minRole)) {
-    throw new ApiError(400, `minRole must be one of: ${VALID_ROLES.join(', ')}`);
-  }
+export async function updateSettings(orgId, { enabled }, actorId) {
   const org = await prisma.organization.findUnique({ where: { id: orgId }, select: { settings: true } });
-  const settings = { ...(org?.settings || {}), quickConnect: { enabled: !!enabled, minRole } };
+  const { minRole: _legacy, ...previous } = org?.settings?.quickConnect || {};
+  const settings = { ...(org?.settings || {}), quickConnect: { ...previous, enabled: !!enabled } };
   await prisma.organization.update({ where: { id: orgId }, data: { settings } });
 
   await auditLog({
@@ -78,10 +93,10 @@ export async function updateSettings(orgId, { enabled, minRole }, actorId) {
     action: 'quick_connect.settings.update',
     resourceType: 'Organization',
     resourceId: orgId,
-    metadata: { enabled: !!enabled, minRole },
+    metadata: { enabled: !!enabled },
   });
 
-  return { enabled: !!enabled, minRole, allowed: true };
+  return { enabled: !!enabled };
 }
 
 // ---------------------------------------------------------------------------
@@ -180,12 +195,17 @@ function validateAuthShape(auth) {
 }
 
 export async function createTicket(orgId, user, { host, port, username, auth, expectedHostKey }) {
-  const settings = await getSettings(orgId, user.role);
+  const settings = await getSettings(orgId, user);
   if (!settings.enabled) {
     throw new ApiError(403, 'Quick Connect is disabled for this organization', { code: 'QUICK_CONNECT_DISABLED' });
   }
-  if ((ROLE_RANK[user.role] ?? 0) < (ROLE_RANK[settings.minRole] ?? 0)) {
+  if (!settings.allowed) {
     throw new ApiError(403, 'Your role does not permit Quick Connect', { code: 'QUICK_CONNECT_FORBIDDEN' });
+  }
+  if (auth?.type === 'credential' && !settings.canUseStoredIdentity) {
+    throw new ApiError(403, 'Your role does not permit using stored identities in Quick Connect', {
+      code: 'QUICK_CONNECT_FORBIDDEN',
+    });
   }
 
   if (!isValidHost(host)) throw new ApiError(400, 'host must be a valid hostname, IPv4, or IPv6 address');
@@ -219,6 +239,7 @@ export async function createTicket(orgId, user, { host, port, username, auth, ex
   // to on redemption (no re-resolution / DNS-rebinding window).
   const resolved = await sshConnect.resolveTarget(host);
   await assertNotProdHost(orgId, host, resolved.addresses);
+  await assertNotDeniedHost(orgId, user.id, host, resolved.addresses);
 
   const payload = {
     orgId,
@@ -325,11 +346,37 @@ export async function consumeTicket(ticket, { userId, orgId }) {
  * Mint a fresh single-use ticket from connection details already known to
  * the caller (terminalHub's "Duplicate" flow, reconstructed from a live
  * session's stored connectSpec). Thin wrapper around createTicket() so every
- * guard (role/minRole, target validation, prod guard) re-runs exactly as it
+ * guard (permissions, target validation, prod/DENY guards) re-runs exactly as it
  * would for a brand-new Quick Connect.
  */
 export async function createTicketFromSpec(orgId, user, { host, port, username, auth, expectedHostKey }) {
   return createTicket(orgId, user, { host, port, username, auth, expectedHostKey });
+}
+
+/**
+ * A saved (non-prod) server's DENY policies must also apply when someone
+ * reaches it through Quick Connect (G6) — otherwise Quick Connect is a way
+ * around "this group may never touch that host".
+ */
+async function assertNotDeniedHost(orgId, userId, host, resolvedIps = []) {
+  const candidates = [host, ...resolvedIps];
+  const servers = await prisma.server.findMany({
+    where: {
+      orgId,
+      OR: [{ ipAddress: { in: candidates } }, { hostname: { in: candidates, mode: 'insensitive' } }],
+    },
+    select: { id: true, hostname: true },
+    take: 20,
+  });
+  for (const server of servers) {
+    const result = await policyService.evaluate({ orgId, userId, serverId: server.id });
+    if (!result.allowed && result.policyId && /^Denied by policy/.test(result.reason || '')) {
+      throw new ApiError(403, `A policy denies you access to ${server.hostname}`, {
+        code: 'QUICK_CONNECT_DENIED_BY_POLICY',
+        details: { serverId: server.id },
+      });
+    }
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -356,6 +403,9 @@ export async function saveAsServer(orgId, actor, body) {
     let credentialId = null;
     let authMode = 'certificate';
 
+    if (identity.mode !== 'none' && !has(actor, 'servers.manage_credentials')) {
+      throw new ApiError(403, "You don't have permission to bind identities to servers", { code: 'PERMISSION_DENIED' });
+    }
     if (identity.mode === 'existing') {
       if (!identity.credentialId) throw new ApiError(400, 'identity.credentialId is required for mode "existing"');
       const cred = await tx.credential.findFirst({ where: { id: identity.credentialId, orgId } });
@@ -363,8 +413,8 @@ export async function saveAsServer(orgId, actor, body) {
       credentialId = cred.id;
       authMode = 'credential';
     } else if (identity.mode === 'new') {
-      if (!['admin', 'super_admin'].includes(actor.role)) {
-        throw new ApiError(403, 'Creating a new identity requires an admin');
+      if (!has(actor, 'keystore.manage')) {
+        throw new ApiError(403, "Creating a new identity requires the Manage Keystore permission");
       }
       if (!identity.name) throw new ApiError(400, 'identity.name is required for mode "new"');
       if (!identity.auth || !['password', 'key'].includes(identity.auth.type)) {
@@ -580,8 +630,8 @@ export async function clearHistory(orgId, userId) {
 /**
  * Re-issue a ticket for a history entry — only possible when the original
  * connection used a stored identity (nothing else is retained). Reuses
- * createTicket() end to end so every existing guard (role/minRole, target
- * guard, prod guard) re-runs exactly as it would for a fresh Quick Connect.
+ * createTicket() end to end so every existing guard (permissions, target
+ * guard, prod/DENY guards) re-runs exactly as it would for a fresh Quick Connect.
  */
 export async function reconnectFromHistory(orgId, user, id) {
   const row = await prisma.quickConnectHistory.findFirst({ where: { id, orgId, userId: user.id } });

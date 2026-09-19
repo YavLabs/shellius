@@ -24,7 +24,7 @@ Shellius is a centralized SSH and RDP access management platform with short-live
 ## Architecture Principles
 
 1. **Zero static keys (default)** — SSH access to bootstrapped hosts uses short-lived certificates signed by the Shellius CA. The **Keystore** (stored identities/keys for non-bootstrapped hosts, key deployment, Quick Connect) is the one sanctioned exception — see `docs/keystore-and-quick-connect.md`. Keystore secrets are encrypted at rest, never returned by list/get APIs, and only decrypted at connect/deploy time or on an audited admin export.
-2. **Prod requires approval below the org's bypass role** — `server.environment === 'prod'` requires manager approval for every requester UNLESS their role is at or above `Organization.settings.access.prodApprovalBypassMinRole` (`'admin'` default, or `'super_admin'` / `'none'`). A policy's `autoApprove` flag can never grant an unreviewed prod session to a requester below that role. Bypassed requests are still created (as `APPROVED`, reason required), audited (`access_request.prod_bypass`), and the server's approvers are notified after the fact — see `policyService.evaluate()` / `accessRequestService.submit()`.
+2. **Prod requires approval unless the requester's role may skip it** — `server.environment === 'prod'` requires approval for every requester UNLESS their role holds the `access.prod_bypass` permission (Admin and Super admin by default) AND the org switch `Organization.settings.access.prodBypassEnabled` is on (off = nobody skips, not even super admins). A policy's `autoApprove` flag can never grant an unreviewed prod session. Bypassed requests are still created (as `APPROVED`, reason required), audited (`access_request.prod_bypass`), and the server's approvers are notified after the fact — see `policyService.evaluate()` / `accessRequestService.submit()`.
 3. **Real-time access validation** — Target hosts run `check-principals` which calls the Shellius API on every SSH connection to verify the cert is still valid and access hasn't been revoked.
 4. **Multi-tenant via org_id scoping** — Every tenant-scoped table has `org_id`. All queries are scoped. Prisma middleware enforces this.
 5. **Audit everything** — All read/write/access/revoke actions logged with actor, target, timestamp, IP. AuditLog is immutable (no UPDATE/DELETE).
@@ -119,9 +119,15 @@ shellius/
 - **SshKey** — Keystore key pair (generated or imported); can be deployed/rotated across hosts via **KeyDeployment**
 - **AuditLog** — Immutable record of every action in the system
 
-## Roles
+## Roles and permissions
 
-`super_admin` > `admin` > `operator` > `viewer`
+- Access is **permission-based**. The catalogue is `backend/src/config/permissions.js` (source of truth; `docs/rbac/permission-matrix.csv` is generated from it with `node backend/scripts/rbac-matrix.mjs`).
+- A **Role** (org-scoped, `Role` model) is a named set of permission keys. Every org has four built-in roles — `super_admin` (always every permission, locked), `admin`, `manager`, `member` (editable, resettable) — plus any custom roles. `User.roleId` points at the role; `User.role` mirrors the role's **base tier** (`member|manager|admin|super_admin`), which policy ROLE subjects / `approverRoles` still match on.
+- Backend: guard routes with `requirePermission('servers.update')` (`middleware/rbac.js`); inline checks use `can(req, key)`. `req.user.permissions` is loaded from the DB on every request. NEVER gate on role names.
+- Frontend: `useAuth().can('servers.update')` / `can(user, key)` from `lib/permissions.js`; page access is the `ROUTE_ACCESS` table in `lib/commands.js` (router, sidebar, palette, shortcuts all read it).
+- No escalation: you can only create/edit/assign/delete a role — or manage a user holding it — when its permissions are a subset of yours and its base tier isn't above yours (`roleService.canActOnRole`). Nobody edits their own role; the last active super admin can't be demoted or suspended.
+- New permissions: add to the catalogue with a higher `since`; `syncSystemRoles()` grants them to existing roles by base tier on boot.
+- Audit + gaps: `docs/rbac/rbac-audit.md`.
 
 ## Security Rules
 
@@ -131,7 +137,7 @@ shellius/
 - RDP passwords MUST never be exposed to the frontend — injected via Guacamole only
 - check-principals on hosts validates every connection in real-time against the Shellius API
 - Certificates auto-expire. Access requests auto-expire. No permanent access.
-- Production servers require manager approval for every requester below the org's approval-bypass role (default: `admin`); the bypass role is admin-configurable (`GET`/`PUT /api/org/access-settings`, super_admin only) but never lets a policy silently grant unreviewed prod access to a lower role
+- Production servers require approval for every requester whose role lacks `access.prod_bypass` (or when the org switch `prodBypassEnabled` is off); who holds it is edited on Roles, the switch on `GET`/`PUT /api/org/access-settings` (`org.access_settings`). A policy can never silently grant unreviewed prod access
 - All audit log entries are immutable — no UPDATE or DELETE operations
 
 ## Important Warnings
@@ -140,5 +146,6 @@ shellius/
 - NEVER log plaintext secrets, private keys, passwords, or certificate contents
 - NEVER store SSH private keys server-side after returning them to the user (Keystore keys are the documented exception: encrypted, admin-managed, never in list/get responses)
 - NEVER skip org_id scoping on database queries
-- NEVER allow direct production server access without approval flow for a requester below the org's `prodApprovalBypassMinRole` (applies to certificate AND credential servers; Quick Connect refuses hosts matching a saved prod server). Requesters at/above the bypass role still get an audited, notified `APPROVED` request — never a silent, unaudited connection.
+- NEVER allow direct production server access without the approval flow for a requester who can't skip it (`access.prod_bypass` + org switch) — applies to certificate AND credential servers, break-glass, key deployment and direct cert issuance; Quick Connect refuses hosts matching a saved prod server. Requesters who may skip it still get an audited, notified `APPROVED` request — never a silent, unaudited connection.
+- NEVER gate on role names (`role === 'admin'`) — use permissions. NEVER let a role or user edit grant permissions the actor doesn't hold.
 - NEVER hard-delete cloud-terminated servers — mark as terminated to preserve audit trail

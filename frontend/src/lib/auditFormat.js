@@ -64,6 +64,7 @@ const VERBS = {
   attach: 'attached to',
   detach: 'detached from',
   end: 'ended',
+  close: 'closed',
   reconnect: 'reconnected via',
   save: 'saved',
   clear: 'cleared',
@@ -114,9 +115,16 @@ export function describeAuditEvent(item) {
     (meta.host ? `${meta.username ? `${meta.username}@` : ''}${meta.host}` : null) ||
     meta.email ||
     null;
-  // Don't repeat a target that is just the resource type ("credential", "ticket").
+  // Don't repeat a target that is just the resource type ("credential", "ticket"),
+  // or the actor themselves: self-events (sign in, MFA, profile) would read
+  // "Local Admin signed in Local Admin".
+  const actor = item?.actor || {};
+  const norm = (v) => String(v || '').trim().toLowerCase();
+  const isSelf =
+    (item?.resourceId && item.resourceId === (actor.id || item?.actorId) && /user/i.test(item?.resourceType || '')) ||
+    [actor.name, actor.email, item?.actorName, item?.actorEmail].filter(Boolean).map(norm).includes(norm(rawTarget));
   const target =
-    rawTarget && rawTarget.toLowerCase() !== String(item?.resourceType || '').toLowerCase()
+    rawTarget && !isSelf && norm(rawTarget) !== norm(item?.resourceType)
       ? String(rawTarget)
       : null;
 

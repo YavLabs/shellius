@@ -41,6 +41,7 @@ import keystoreRouter from './routes/keystore.js';
 import quickConnectRouter from './routes/quickConnect.js';
 import searchRouter from './routes/search.js';
 import terminalRouter from './routes/terminal.js';
+import rolesRouter from './routes/roles.js';
 import errorHandler from './middleware/errorHandler.js';
 import { startAllJobs } from './jobs/index.js';
 
@@ -84,6 +85,7 @@ app.use('/api/auth/sso', ssoRouter);
 app.use('/api/auth/device', deviceAuthRouter);
 app.use('/api/users', usersRouter);
 app.use('/api/groups', groupsRouter);
+app.use('/api/roles', rolesRouter);
 app.use('/api/customers', customersRouter);
 app.use('/api/servers', serversRouter);
 app.use('/api/certificates', certificatesRouter);

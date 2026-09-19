@@ -4,7 +4,6 @@ import { Server as ServerIcon, PlugZap, Pencil, Trash2, MoreHorizontal, KeyRound
 import Modal from '@/components/shared/Modal';
 import ConfirmDialog from '@/components/shared/ConfirmDialog';
 import EmptyState from '@/components/ui/EmptyState';
-import StatTile from '@/components/shared/StatTile';
 import EnvironmentBadge from '@/components/shared/EnvironmentBadge';
 import UserCell from '@/components/shared/UserCell';
 import { Badge } from '@/components/ui/badge';
@@ -36,9 +35,9 @@ function DetailItem({ label, value, full }) {
 /**
  * IdentityDetailModal — full detail view for a stored Keystore identity
  * (username/password or username/key credential). Mirrors KeyDetailModal's
- * structure: header with icon tile + meta, a primary/secondary action row
- * with an overflow menu for rarer actions, a "Details" grid, a stat row,
- * then a Servers tab.
+ * structure: header with icon tile + meta on the left and the actions
+ * (Test connection, Edit, overflow menu) on the right, a "Details" card
+ * (auth method, full-width linked key, …), then the servers using it.
  *
  * canManage gates edit/delete; everyone can still test the connection and
  * browse servers/linked key.
@@ -130,42 +129,37 @@ function IdentityDetailModal({ open, onClose, credentialId, canManage, onChanged
                   )}
                 </div>
               </div>
-              <div className="flex shrink-0 items-center justify-end gap-1.5">
-                <AuthTypeBadge authType={credential.authType} />
+              <div className="flex w-full flex-wrap items-center gap-2 sm:ml-auto sm:w-auto sm:justify-end">
+                <Button size="sm" onClick={() => setTestOpen(true)}>
+                  <PlugZap className="mr-1.5 h-3.5 w-3.5" /> Test connection
+                </Button>
+                {canManage && (
+                  <>
+                    <Button variant="outline" size="sm" onClick={() => setEditOpen(true)}>
+                      <Pencil className="mr-1.5 h-3.5 w-3.5" /> Edit
+                    </Button>
+                    <DropdownMenu>
+                      <DropdownMenuTrigger asChild>
+                        <Button variant="outline" size="icon" className="h-9 w-9" aria-label="More actions">
+                          <MoreHorizontal className="h-4 w-4" />
+                        </Button>
+                      </DropdownMenuTrigger>
+                      <DropdownMenuContent align="end" className="w-44">
+                        <DropdownMenuItem
+                          className="text-destructive focus:text-destructive"
+                          onClick={() => {
+                            setDeleteError('');
+                            setInUseInfo(null);
+                            setDeleteTarget(true);
+                          }}
+                        >
+                          <Trash2 className="mr-2 h-4 w-4" /> Delete
+                        </DropdownMenuItem>
+                      </DropdownMenuContent>
+                    </DropdownMenu>
+                  </>
+                )}
               </div>
-            </div>
-
-            {/* Actions */}
-            <div className="flex flex-wrap items-center gap-2">
-              <Button size="sm" onClick={() => setTestOpen(true)}>
-                <PlugZap className="mr-1.5 h-3.5 w-3.5" /> Test connection
-              </Button>
-              {canManage && (
-                <>
-                  <Button variant="outline" size="sm" onClick={() => setEditOpen(true)}>
-                    <Pencil className="mr-1.5 h-3.5 w-3.5" /> Edit
-                  </Button>
-                  <DropdownMenu>
-                    <DropdownMenuTrigger asChild>
-                      <Button variant="outline" size="icon" className="h-9 w-9">
-                        <MoreHorizontal className="h-4 w-4" />
-                      </Button>
-                    </DropdownMenuTrigger>
-                    <DropdownMenuContent align="end" className="w-44">
-                      <DropdownMenuItem
-                        className="text-destructive focus:text-destructive"
-                        onClick={() => {
-                          setDeleteError('');
-                          setInUseInfo(null);
-                          setDeleteTarget(true);
-                        }}
-                      >
-                        <Trash2 className="mr-2 h-4 w-4" /> Delete
-                      </DropdownMenuItem>
-                    </DropdownMenuContent>
-                  </DropdownMenu>
-                </>
-              )}
             </div>
 
             {/* Details grid */}
@@ -181,12 +175,12 @@ function IdentityDetailModal({ open, onClose, credentialId, canManage, onChanged
                       <button
                         type="button"
                         onClick={() => setLinkedKeyOpen(true)}
-                        className="inline-flex items-center gap-2 rounded-md border border-border px-2 py-1 text-left hover:bg-accent"
+                        className="flex w-full items-center gap-3 rounded-md border border-border px-3 py-2 text-left hover:bg-accent"
                       >
-                        <KeyRound className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
-                        <span>
-                          <span className="block text-sm text-foreground">{credential.sshKey.name}</span>
-                          <span className="block font-mono text-[11px] text-muted-foreground">
+                        <KeyRound className="h-4 w-4 shrink-0 text-muted-foreground" />
+                        <span className="min-w-0 flex-1">
+                          <span className="block truncate text-sm text-foreground">{credential.sshKey.name}</span>
+                          <span className="block truncate font-mono text-[11px] text-muted-foreground">
                             {credential.sshKey.fingerprint}
                           </span>
                         </span>
@@ -222,14 +216,11 @@ function IdentityDetailModal({ open, onClose, credentialId, canManage, onChanged
               </div>
             </div>
 
-            {/* Stats row */}
-            <div className="flex gap-3">
-              <StatTile label="Servers" value={servers.length} className="w-40" />
-            </div>
-
             {/* Servers */}
             <div>
-              <p className="mb-2 text-xs font-medium text-muted-foreground">Servers using this identity</p>
+              <p className="mb-2 text-xs font-medium text-muted-foreground">
+                Servers using this identity{servers.length > 0 && <span className="text-muted-foreground/70"> ({servers.length})</span>}
+              </p>
               {servers.length === 0 ? (
                 <EmptyState
                   icon={ServerIcon}

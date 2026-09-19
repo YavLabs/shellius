@@ -28,6 +28,9 @@ type TokenResponse struct {
 		Email    string `json:"email"`
 		Name     string `json:"name"`
 		Role     string `json:"role"`
+		// Role display name and permissions (backend custom roles).
+		RoleName    string   `json:"roleName"`
+		Permissions []string `json:"permissions"`
 		// (kept for clarity — already used by SaveTokens)
 		OrgID    string `json:"orgId"`
 		OrgSlug  string `json:"orgSlug"`

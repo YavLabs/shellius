@@ -3,6 +3,7 @@ import ApiError from '../utils/ApiError.js';
 import { encrypt } from '../utils/crypto.js';
 import * as ssoConfigService from './ssoConfigService.js';
 import { envAllowedDomains, callbackUrlFor, safeDefaultRole, ENV_DEFAULTS, decryptProviderSecret } from './ssoConfigService.js';
+import { ssoDefaultRole } from './roleService.js';
 
 // ---------------------------------------------------------------------------
 // Public status — legacy (first provider) + Revision 2 (multi-provider list)
@@ -181,13 +182,14 @@ export async function reconcileSsoUser({ orgId, cfg, subject, email, emailVerifi
     if (requireVerified && !emailVerified) {
       throw ssoError('email_not_verified', 'Your identity provider did not assert a verified email for this account');
     }
-    const defaultRole = safeDefaultRole(cfg.defaultRole);
+    const defaultRole = await ssoDefaultRole(orgId, cfg.defaultRole);
     user = await prisma.user.create({
       data: {
         orgId,
         email,
         name: name || email,
-        role: defaultRole,
+        role: defaultRole.baseRole,
+        roleId: defaultRole.id,
         status: 'active',
         ssoProvider: cfg.provider,
         ssoSub: subject,

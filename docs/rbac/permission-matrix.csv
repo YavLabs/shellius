@@ -1,0 +1,62 @@
+permission,area,label,description,sensitive,before_member,before_manager,before_admin,before_super_admin,default_member,default_manager,default_admin,default_super_admin,changed,endpoints,audit_findings
+customers.view,Customers & servers,View customers,See customers and their server counts.,,Y,Y,Y,Y,Y,Y,Y,Y,,GET /api/customers; GET /api/customers/:id; GET /api/customers/:id/stats,
+customers.create,Customers & servers,Create customers,Add new customers.,,N,Y,Y,Y,N,Y,Y,Y,,POST /api/customers,
+customers.update,Customers & servers,Edit customers,Rename customers and activate / deactivate them.,,N,Y,Y,Y,N,Y,Y,Y,,PUT /api/customers/:id,
+customers.delete,Customers & servers,Delete customers,Permanently delete a customer (its servers must be reassigned or deleted).,yes,N,N,N,Y,N,N,N,Y,,GET /api/customers/:id/delete-impact; DELETE /api/customers/:id,F-13 UI-2.2
+servers.view,Customers & servers,View servers,See the server inventory and fleet health.,,Y,Y,Y,Y,Y,Y,Y,Y,,GET /api/servers; GET /api/servers/:id; GET /api/servers/health/summary,
+servers.create,Customers & servers,Add servers,Add servers to the inventory.,,N,Y,Y,Y,N,Y,Y,Y,,POST /api/servers,
+servers.update,Customers & servers,Edit servers,"Edit server name, address, port, labels, customer, OS and SSH user (single or bulk).",,N,Y,Y,Y,N,Y,Y,Y,,PUT /api/servers/:id; POST /api/servers/bulk,
+servers.change_environment,Customers & servers,Change server environment,Move servers between demo / dev / staging / prod. Moving a server out of prod removes its approval requirement.,yes,N,Y,Y,Y,N,N,Y,Y,changed,POST /api/servers/bulk/environment; PUT /api/servers/:id (environment); POST /api/servers/bulk (environment),F-05
+servers.manage_credentials,Customers & servers,Bind stored identities to servers,"Switch a server to identity auth, pick its Keystore identity, or set its RDP password.",yes,N,Y,Y,Y,N,N,Y,Y,changed,"POST/PUT /api/servers (authMode, credentialId, rdpPassword); POST /api/quick-connect/save (existing identity)",F-05 F-17
+servers.update_connection_ip,Customers & servers,Update dynamic IP,Change the connection IP of a server marked as having a dynamic IP.,,Y,Y,Y,Y,N,Y,Y,Y,changed,PATCH /api/servers/:id/connection-ip,F-06
+servers.onboard,Customers & servers,Onboard servers,"Create install / uninstall links, run remote provisioning and health checks.",,N,Y,Y,Y,N,Y,Y,Y,,POST /api/bootstrap/token; POST /api/bootstrap/uninstall-token; POST /api/servers/:id/provision; POST /api/servers/:id/health-check,
+servers.reset_host_key,Customers & servers,Reset pinned host keys,Clear a server’s pinned SSH host key so the next connection trusts a new one.,yes,N,N,Y,Y,N,N,Y,Y,,POST /api/servers/:id/host-key/reset,
+servers.delete,Customers & servers,Delete servers,Permanently delete servers.,yes,N,N,N,Y,N,N,N,Y,,GET /api/servers/:id/delete-impact; DELETE /api/servers/:id,UI-2.1
+import.run,Customers & servers,Bulk import,"Import customers, servers, users, groups and policies from CSV/JSON. Each row type also needs the matching permission.",,N,N,Y,Y,N,N,Y,Y,,POST /api/import; GET /api/import/:id; PATCH /api/import/:id/decisions; POST /api/import/:id/commit; GET /api/import/templates/:entity,F-01 F-25
+access.request,Server access,Request access,Request access to servers. What is granted still depends on access policies.,,Y,Y,Y,Y,Y,Y,Y,Y,,POST /api/access-requests; GET /api/policies/my-access,
+access.choose_principal,Server access,Choose login user,"Request or connect as any login user the matching policy allows, not just the server default.",,N,N,Y,Y,N,N,Y,Y,,POST /api/access-requests (principal); WS /api/terminal/ssh (principal override),F-18 G14
+access.prod_bypass,Server access,Production without approval,"Get production access without an approver. The request is still created (reason required), audited as access_request.prod_bypass, and approvers are notified.",yes,N,N,Y,Y,N,N,Y,Y,,POST /api/access-requests (prod),F-09 G3 G5
+access.bypass_policies,Server access,Bypass access policies,Non-production access to any server without a matching policy (DENY policies still apply).,yes,N,N,N,Y,N,N,N,Y,,POST /api/access-requests (non-prod),G12
+access.break_glass,Server access,Break-glass access,Self-approve up to 1 hour of emergency access to any server. Always audited as high severity and all admins are notified.,yes,N,N,Y,Y,N,N,Y,Y,,POST /api/access-requests/break-glass,F-09 G5
+access_requests.view_all,Server access,View all access requests,"See every access request in the organization, not just your own and the ones you review.",,N,N,Y,Y,N,N,Y,Y,,GET /api/access-requests?tab=all; GET /api/access-requests/:id,
+access_requests.revoke_any,Server access,Revoke any access,Revoke any approved access request (and its certificate).,,N,N,Y,Y,N,N,Y,Y,,POST /api/access-requests/:id/revoke,F-07 UI-2.10
+quick_connect.use,Quick Connect,Use Quick Connect,Open ad-hoc SSH sessions with one-off credentials to hosts that are not saved production servers.,,N,Y,Y,Y,N,Y,Y,Y,,POST /api/quick-connect/tickets; POST /api/quick-connect/history/:id/reconnect,G6
+quick_connect.use_stored_identity,Quick Connect,Quick Connect with stored identities,Use Keystore identities (stored passwords / keys) in Quick Connect.,yes,N,Y,Y,Y,N,N,Y,Y,changed,POST /api/quick-connect/tickets (auth.type=credential),F-17
+quick_connect.save_server,Quick Connect,Save Quick Connect host as server,Turn a Quick Connect target into a saved server.,,N,Y,Y,Y,N,Y,Y,Y,,POST /api/quick-connect/save,
+quick_connect.settings,Quick Connect,Quick Connect settings,Turn Quick Connect on or off for the organization.,,N,N,Y,Y,N,N,Y,Y,,PUT /api/quick-connect/settings,
+certificates.view_all,Certificates & CA,View all certificates,See every issued certificate. Everyone can always see their own.,,N,N,Y,Y,N,N,Y,Y,,GET /api/certificates; GET /api/certificates/:id,
+certificates.revoke,Certificates & CA,Revoke certificates,Revoke any issued certificate.,,N,N,Y,Y,N,N,Y,Y,,POST /api/certificates/:id/revoke,
+certificates.issue_direct,Certificates & CA,Issue certificates directly,Sign a certificate outside the access-request flow (API only). Every principal is still checked against policy for the target server; production always needs an approved request.,yes,Y,Y,Y,Y,N,N,N,Y,changed,POST /api/certificates/issue,F-03 F-04 G1 G2
+ca.view,Certificates & CA,View CA,See the CA public key and status (needed to trust Shellius certificates on hosts manually).,,N,N,Y,Y,N,N,Y,Y,,GET /api/ca/public-key; GET /api/ca/status,UI-3.4
+ca.rotate,Certificates & CA,Rotate CA,Rotate the organization’s certificate authority key pair.,yes,N,N,N,Y,N,N,N,Y,,POST /api/ca/rotate,
+policies.view,Policies & groups,View policies,See access policies and test them with the policy simulator.,,N,N,Y,Y,N,N,Y,Y,,GET /api/policies; GET /api/policies/:id; POST /api/policies/evaluate,F-22
+policies.manage,Policies & groups,Manage policies,"Create, edit and delete access policies — who can reach which servers, for how long, and who approves.",yes,N,N,Y,Y,N,N,Y,Y,,POST /api/policies; PUT /api/policies/:id; DELETE /api/policies/:id; GET /api/policies/:id/delete-impact,
+groups.view,Policies & groups,View groups,See groups and their members.,,N,Y,Y,Y,N,Y,Y,Y,,GET /api/groups; GET /api/groups/:id,UI-3.3
+groups.manage,Policies & groups,Manage groups,"Create, edit and delete groups and change their members (groups are used by policies and approvals).",,N,N,Y,Y,N,N,Y,Y,,POST /api/groups; PUT /api/groups/:id; DELETE /api/groups/:id; POST /api/groups/:id/members; DELETE /api/groups/:id/members/:userId,
+sessions.view_all,Sessions & audit,View all sessions,"See every user’s SSH / RDP sessions, live and past.",,N,Y,Y,Y,N,Y,Y,Y,,GET /api/sessions; GET /api/sessions/active; GET /api/sessions/:id,UI-2.7
+sessions.view_recordings,Sessions & audit,Watch session recordings,Download and replay any session recording.,yes,N,Y,Y,Y,N,N,Y,Y,changed,GET /api/sessions/:id/recording,F-22
+sessions.terminate,Sessions & audit,Terminate sessions,Force-end another user’s live session.,,N,N,Y,Y,N,N,Y,Y,,POST /api/sessions/:id/terminate,
+audit.view,Sessions & audit,View audit log,Read the organization audit log.,,N,N,Y,Y,N,N,Y,Y,,GET /api/audit,
+audit.export,Sessions & audit,Export audit log,Export the audit log as CSV / JSON.,yes,N,N,N,Y,N,N,N,Y,,GET /api/audit/export,
+keystore.view,Keystore,View Keystore,"See stored identities, keys and deployments (never secrets).",,N,Y,Y,Y,N,Y,Y,Y,,GET /api/keystore/keys; GET /api/keystore/credentials; GET /api/keystore/deployments; POST /api/keystore/keys/inspect,
+keystore.test,Keystore,Test identities,Test a stored identity against a saved server. Testing against an arbitrary host needs Manage Keystore.,,N,Y,Y,Y,N,Y,Y,Y,,POST /api/keystore/credentials/:id/test,F-17
+keystore.manage,Keystore,Manage Keystore,"Create, import, edit and delete stored identities and keys.",yes,N,N,Y,Y,N,N,Y,Y,,POST /api/keystore/keys/generate; POST /api/keystore/keys/import; PATCH/DELETE /api/keystore/keys/:id; POST/PATCH/DELETE /api/keystore/credentials,
+keystore.export_private,Keystore,Export private keys,Download a stored private key in plain text. Always audited.,yes,N,N,Y,Y,N,N,Y,Y,,POST /api/keystore/keys/:id/export,F-09
+keystore.deploy,Keystore,Deploy keys to servers,"Push, rotate and remove stored keys on servers. Production servers also need Production without approval.",yes,N,N,Y,Y,N,N,Y,Y,,POST /api/keystore/deployments; POST /api/keystore/deployments/:id/retry,F-09
+users.view,Users,View users,See the user directory.,,N,N,Y,Y,N,N,Y,Y,,GET /api/users; GET /api/users/:id; GET /api/users/:id/reports,
+users.view_reports,Users,View own direct reports,See the users who report to you (you are their fallback approver).,,N,N,Y,Y,N,Y,Y,Y,changed,GET /api/users/:id/reports (self); GET /api/users/:id (own reports),F-22
+users.invite,Users,Invite users,Create users and send or resend invitations.,,N,N,Y,Y,N,N,Y,Y,,POST /api/users; POST /api/users/:id/resend-invite,F-02
+users.update,Users,Edit users,"Edit other users’ name, email, manager and SSH key. Only for users whose role you could assign.",,N,N,Y,Y,N,N,Y,Y,,PUT /api/users/:id; PUT/DELETE /api/users/:id/ssh-key,F-01
+users.assign_role,Users,Assign roles,Change users’ roles. You can only assign roles whose permissions you hold yourself.,yes,N,N,Y,Y,N,N,Y,Y,,PUT /api/users/:id (roleId); POST /api/users (roleId),F-01
+users.suspend,Users,Suspend users,Suspend or reactivate users (signs them out everywhere).,,N,N,Y,Y,N,N,Y,Y,,PUT /api/users/:id (status),F-01 F-11
+users.reset_credentials,Users,Reset passwords & lockouts,Send password-reset links and clear login lockouts.,yes,N,N,Y,Y,N,N,Y,Y,,POST /api/users/:id/password-reset; POST /api/users/:id/unlock,F-02
+users.revoke_sessions,Users,Sign users out,Sign a user out of every browser and CLI session.,,N,N,Y,Y,N,N,Y,Y,,POST /api/users/:id/revoke-sessions,
+users.delete,Users,Delete users,Permanently delete users.,yes,N,N,N,Y,N,N,N,Y,,GET /api/users/:id/delete-impact; DELETE /api/users/:id,UI-2.3
+roles.view,Roles,View roles,See roles and their permissions.,,-,-,-,-,N,N,Y,Y,new,GET /api/roles; GET /api/roles/:id,
+roles.manage,Roles,Manage roles,"Create, edit and delete custom roles and edit built-in ones. You can only grant permissions you hold.",yes,-,-,-,-,N,N,Y,Y,new,POST /api/roles; PUT /api/roles/:id; DELETE /api/roles/:id; POST /api/roles/:id/reset,
+org.update,Organization & settings,Edit organization profile,"Change the organization name, domain and logo.",,N,N,Y,Y,N,N,Y,Y,,PUT /api/org,F-10 G3
+org.access_settings,Organization & settings,Access settings,Change organization-wide access rules.,yes,N,N,N,Y,N,N,N,Y,,GET/PUT /api/org/access-settings,
+settings.sso,Organization & settings,Single sign-on,"Configure SSO providers, auto-provisioning and their default role.",yes,N,N,N,Y,N,N,N,Y,,/api/auth/sso/config*; /api/auth/sso/providers*,F-25
+settings.mfa,Organization & settings,MFA policy,Enable and enforce multi-factor authentication for the organization.,yes,N,N,N,Y,N,N,N,Y,,GET/PUT /api/settings/mfa,
+settings.smtp,Organization & settings,Email server,"Configure the SMTP server used for invitations, approvals and alerts.",,N,N,N,Y,N,N,N,Y,,GET/PUT/DELETE /api/settings/smtp; POST /api/settings/smtp/test,
+settings.storage,Organization & settings,Recording storage,Configure where session recordings are stored. This setting is shared by every organization on this install.,yes,N,N,N,Y,N,N,N,Y,,GET/PUT/DELETE /api/settings/storage; POST /api/settings/storage/test,F-16

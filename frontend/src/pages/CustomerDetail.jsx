@@ -49,7 +49,7 @@ import { listSessions } from '@/services/sessionService';
 import { relativeTime, formatDateTime } from '@/utils/time';
 import Skeleton from '@/components/ui/Skeleton';
 import { useAuth } from '@/context/AuthContext';
-import { roleAtLeast } from '@/lib/permissions';
+import { can } from '@/lib/permissions';
 import { ENVIRONMENT_LABELS } from '@/lib/labels';
 
 // ---------------------------------------------------------------------------
@@ -150,8 +150,9 @@ function CustomerDetail() {
   const { id } = useParams();
   const navigate = useNavigate();
   const { user } = useAuth();
-  const canManage = roleAtLeast(user, 'manager'); // add/edit servers + customer
-  const canDelete = roleAtLeast(user, 'admin');
+  const canAddServer = can(user, 'servers.create');
+  const canManage = can(user, 'customers.update');
+  const canDelete = can(user, 'customers.delete');
 
   const [customer, setCustomer] = useState(null);
   const [stats, setStats] = useState(null);
@@ -175,7 +176,9 @@ function CustomerDetail() {
         getCustomer(id),
         getCustomerStats(id).catch(() => null),
         listServers({ customerId: id, page: 1, pageSize: 200 }).catch(() => ({ items: [] })),
-        listSessions({ customerId: id, status: 'ACTIVE', page: 1, pageSize: 1 }).catch(() => null),
+        can(user, 'sessions.view_all')
+          ? listSessions({ customerId: id, status: 'ACTIVE', page: 1, pageSize: 1 }).catch(() => null)
+          : null,
       ]);
       setCustomer(c);
       setStats(s);
@@ -450,7 +453,7 @@ function CustomerDetail() {
 
         {/* Action group */}
         <div className="flex shrink-0 items-center gap-2">
-          {canManage && (
+          {canAddServer && (
             <Button size="sm" onClick={() => setAddServerOpen(true)}>
               <Plus className="mr-1.5 h-3.5 w-3.5" />
               Add server
@@ -496,12 +499,14 @@ function CustomerDetail() {
           value={total}
           iconClass="bg-primary/10 text-primary"
         />
-        <StatTile
-          icon={Activity}
-          label="Active sessions"
-          value={activeSessions}
-          iconClass="bg-emerald-500/10 text-emerald-500"
-        />
+        {can(user, 'sessions.view_all') && (
+          <StatTile
+            icon={Activity}
+            label="Active sessions"
+            value={activeSessions}
+            iconClass="bg-emerald-500/10 text-emerald-500"
+          />
+        )}
         <StatTile
           icon={CheckCircle}
           label="Healthy"
@@ -529,7 +534,7 @@ function CustomerDetail() {
                   ({filteredServers.length}{envFilter ? ` of ${servers.length}` : ''})
                 </span>
               </h3>
-              {canManage && (
+              {canAddServer && (
                 <Button size="sm" variant="outline" onClick={() => setAddServerOpen(true)}>
                   <Plus className="mr-1.5 h-3.5 w-3.5" />
                   Add server
@@ -651,7 +656,7 @@ function CustomerDetail() {
           {/* Quick Actions card */}
           <SectionCard title="Quick Actions">
             <div className="flex flex-col gap-2">
-              {canManage && (
+              {canAddServer && (
                 <Button
                   variant="outline"
                   size="sm"

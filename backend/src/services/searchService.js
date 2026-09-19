@@ -1,32 +1,42 @@
 import prisma from '../config/db.js';
 import logger from '../utils/logger.js';
 import { isServerOnboarded } from './accessRequestService.js';
+import { TIERS, defaultPermissionsFor } from '../config/permissions.js';
 
 // ---------------------------------------------------------------------------
 // searchService — global command-palette search across the org.
 // Per docs/keystore-and-quick-connect.md "Global search":
-//   servers/customers  — any member
-//   identities/keys    — manager+
-//   users/policies     — admin+
+//   servers/customers  — servers.view / customers.view
+//   identities/keys    — keystore.view
+//   users/policies     — users.view / policies.view
 // Everything is org-scoped and case-insensitive (contains match). Results are
 // ranked exact-match first, then prefix, then contains, within each type.
 // ---------------------------------------------------------------------------
 
-export const ROLE_RANK = { super_admin: 4, admin: 3, manager: 2, member: 1 };
+// Result type -> permission needed to see it.
+const TYPE_PERMISSION = {
+  servers: 'servers.view',
+  customers: 'customers.view',
+  identities: 'keystore.view',
+  keys: 'keystore.view',
+  users: 'users.view',
+  policies: 'policies.view',
+};
 
 export const SEARCH_TYPES = ['servers', 'customers', 'users', 'identities', 'keys', 'policies'];
 
 /**
- * getAllowedTypes(role) — pure gating function: which result types a role
- * may see. Unknown/missing roles see nothing (fail closed).
+ * getAllowedTypes(permissions) — pure gating function: which result types the
+ * caller may see. Takes the caller's permission Set/array (or, for older
+ * callers, a built-in role key, resolved to that role's defaults). Unknown
+ * callers see nothing (fail closed).
  */
-export function getAllowedTypes(role) {
-  const rank = ROLE_RANK[role] ?? 0;
-  if (rank <= 0) return [];
-  const allowed = ['servers', 'customers'];
-  if (rank >= ROLE_RANK.manager) allowed.push('identities', 'keys');
-  if (rank >= ROLE_RANK.admin) allowed.push('users', 'policies');
-  return allowed;
+export function getAllowedTypes(permissions) {
+  let perms = permissions;
+  if (typeof perms === 'string') perms = TIERS.includes(perms) ? defaultPermissionsFor(perms) : [];
+  if (!perms) return [];
+  const set = perms instanceof Set ? perms : new Set(perms);
+  return SEARCH_TYPES.filter((type) => set.has(TYPE_PERMISSION[type]));
 }
 
 // ---------------------------------------------------------------------------
@@ -343,15 +353,15 @@ const COUNTERS = {
 };
 
 /**
- * search({ orgId, role, q, limit }) — role-gated, org-scoped global search.
- * Types the role isn't allowed to see are omitted entirely (empty array,
+ * search({ orgId, permissions, q, limit }) — permission-gated, org-scoped
+ * global search. Types the caller isn't allowed to see are omitted entirely (empty array,
  * count 0) rather than filtered post-hoc, so nothing gated ever touches the
  * network response. `results[type]` is truncated to `limit`; `counts[type]`
  * is the TOTAL number of matches for that type (so the UI can show "N more…").
  */
-export async function search({ orgId, role, q, limit = 5 }) {
+export async function search({ orgId, permissions, q, limit = 5 }) {
   const query = String(q || '').trim();
-  const allowedTypes = getAllowedTypes(role);
+  const allowedTypes = getAllowedTypes(permissions);
 
   const results = {};
   const counts = {};
@@ -394,5 +404,4 @@ export default {
   rankAndLimit,
   bestScore,
   SEARCH_TYPES,
-  ROLE_RANK,
 };

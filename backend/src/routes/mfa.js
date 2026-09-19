@@ -11,7 +11,7 @@ import asyncHandler from '../utils/asyncHandler.js';
 import ApiError from '../utils/ApiError.js';
 import authenticate from '../middleware/auth.js';
 import tenant from '../middleware/tenant.js';
-import requireRole from '../middleware/rbac.js';
+import { requirePermission } from '../middleware/rbac.js';
 import audit from '../middleware/audit.js';
 import prisma from '../config/db.js';
 import * as mfaService from '../services/mfaService.js';
@@ -208,7 +208,7 @@ const mfaConfigSchema = Joi.object({
 
 configRouter.get(
   '/',
-  requireRole('super_admin'),
+  requirePermission('settings.mfa'),
   asyncHandler(async (req, res) => {
     const config = await mfaConfigService.getEffective(req.orgId);
     res.json({ success: true, data: { config } });
@@ -217,7 +217,7 @@ configRouter.get(
 
 configRouter.put(
   '/',
-  requireRole('super_admin'),
+  requirePermission('settings.mfa'),
   audit('mfa.config.updated', 'MfaConfig'),
   asyncHandler(async (req, res) => {
     const { error, value } = mfaConfigSchema.validate(req.body, { stripUnknown: true });

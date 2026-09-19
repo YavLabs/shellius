@@ -75,12 +75,12 @@ export const HELP_CONTENT = {
   users: {
     title: 'Users',
     summary:
-      "Everyone who can log in to Shellius. Roles control what they can see and do: super_admin > admin > manager > member.",
+      'Everyone who can log in to Shellius. Each user has one role, and the role\'s permissions decide what they can see and do.',
     sections: [
       {
         heading: 'Roles',
         body:
-          'super_admin: full access, including CA rotation and SSO config. admin: org-wide read/write minus CA, production access without approval. manager: production access without approval, can approve others. member: self-serve dev/staging; production requires approval.',
+          'Built-in roles: Super admin (every permission, cannot be edited), Admin, Manager and Member. Admin, Manager and Member can be edited, and you can create custom roles on the Roles page — e.g. an Admin with a few extra settings. You can only assign roles whose permissions you hold yourself. Skipping production approval is the "Production without approval" permission (Admin by default).',
       },
       {
         heading: 'Inviting users',

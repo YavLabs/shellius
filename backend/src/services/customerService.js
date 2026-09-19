@@ -161,8 +161,12 @@ export async function deleteCustomer(orgId, customerId, options = {}) {
     const targetCustomer = await prisma.customer.findFirst({ where: { id: target, orgId } });
     if (!targetCustomer) throw new ApiError(400, 'Target customer not found for policies');
     await prisma.accessPolicy.updateMany({ where: { orgId, customerId }, data: { customerId: target } });
+  } else {
+    // No explicit choice: switch the customer's policies OFF before the FK
+    // nulls their customerId. Left active, a customer-scoped ALLOW policy
+    // would silently start matching every server in the org (docs/rbac F-13).
+    await prisma.accessPolicy.updateMany({ where: { orgId, customerId }, data: { isActive: false } });
   }
-  // else policies SetNull → become org-wide (handled by the FK on delete).
 
   await prisma.customer.delete({ where: { id: customerId } });
   return { success: true };

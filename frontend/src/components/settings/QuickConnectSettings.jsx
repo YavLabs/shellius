@@ -1,19 +1,17 @@
 import { useEffect, useState } from 'react';
 import { SectionCard } from '@/components/settings/shared';
 import { Button } from '@/components/ui/button';
-import SearchableSelect from '@/components/ui/SearchableSelect';
 import { getQuickConnectSettings, updateQuickConnectSettings } from '@/services/quickConnectService';
-import { ROLE_LABELS } from '@/lib/labels';
+import { SwitchField } from '@/components/ui/switch';
+import RolesWithPermission from '@/components/roles/RolesWithPermission';
 
-const ROLES = [
-  { value: 'manager', label: ROLE_LABELS.manager },
-  { value: 'admin', label: ROLE_LABELS.admin },
-  { value: 'super_admin', label: ROLE_LABELS.super_admin },
-];
-
+/**
+ * QuickConnectSettings — the org-wide on/off switch. Who may use it is the
+ * role permission "Use Quick Connect" (and "Quick Connect with stored
+ * identities"), edited on the Roles page.
+ */
 function QuickConnectSettings() {
   const [enabled, setEnabled] = useState(true);
-  const [minRole, setMinRole] = useState('manager');
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
@@ -23,7 +21,6 @@ function QuickConnectSettings() {
     getQuickConnectSettings()
       .then((data) => {
         setEnabled(data?.enabled ?? true);
-        setMinRole(data?.minRole || 'manager');
       })
       .catch((err) => setError(err.response?.data?.error?.message || err.message))
       .finally(() => setLoading(false));
@@ -34,9 +31,8 @@ function QuickConnectSettings() {
     setError('');
     setSaved(false);
     try {
-      const data = await updateQuickConnectSettings({ enabled, minRole });
+      const data = await updateQuickConnectSettings({ enabled });
       setEnabled(data?.enabled ?? enabled);
-      setMinRole(data?.minRole || minRole);
       setSaved(true);
       setTimeout(() => setSaved(false), 3000);
     } catch (err) {
@@ -71,42 +67,20 @@ function QuickConnectSettings() {
           </div>
         )}
 
-        <div className="flex items-center justify-between rounded-lg border border-border p-4">
-          <div>
-            <p className="text-sm font-medium text-foreground">Enable quick connect</p>
-            <p className="text-xs text-muted-foreground">
-              Allow eligible users to open ad-hoc SSH sessions to hosts that aren&apos;t saved as servers.
-            </p>
-          </div>
-          <button
-            onClick={() => setEnabled((v) => !v)}
-            role="switch"
-            aria-checked={enabled}
-            className={[
-              'relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none focus:ring-2 focus:ring-ring',
-              enabled ? 'bg-primary' : 'bg-muted-foreground/30',
-            ].join(' ')}
-          >
-            <span
-              className={[
-                'pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out',
-                enabled ? 'translate-x-5' : 'translate-x-0',
-              ].join(' ')}
-            />
-          </button>
-        </div>
+        <SwitchField
+          bordered
+          label="Enable quick connect"
+          description="Allow eligible users to open ad-hoc SSH sessions to hosts that aren't saved as servers."
+          checked={enabled}
+          onCheckedChange={setEnabled}
+        />
 
-        <div>
-          <label className="mb-1.5 block text-sm font-medium text-foreground">Minimum role</label>
-          <SearchableSelect
-            className="w-64"
-            value={minRole}
-            onChange={setMinRole}
-            options={ROLES}
-            searchable={false}
-            clearable={false}
-            disabled={!enabled}
-          />
+        <div className="rounded-lg border border-border p-4">
+          <p className="mb-2 text-sm font-medium text-foreground">Who can use it</p>
+          <p className="mb-2 text-xs text-muted-foreground">
+            Roles with the “Use Quick Connect” permission. Change it on the Roles page.
+          </p>
+          <RolesWithPermission permission="quick_connect.use" emptyText="No role can use Quick Connect." />
         </div>
 
         <div className="pt-1">

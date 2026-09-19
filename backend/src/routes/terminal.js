@@ -24,6 +24,7 @@ import * as hub from '../services/terminalHub.js';
 import * as quickConnectService from '../services/quickConnectService.js';
 import * as wsTicketService from '../services/wsTicketService.js';
 import * as recoveryService from '../services/terminalRecoveryService.js';
+import * as sessionService from '../services/sessionService.js';
 import { userRateLimiter } from '../middleware/rateLimiter.js';
 
 const router = express.Router();
@@ -88,6 +89,22 @@ router.get(
 );
 
 // ---------------------------------------------------------------------------
+// GET /api/terminal/recent-servers?days=7&limit=8 — servers the caller
+// connected to recently (their own sessions only), for the dashboard's
+// "Recent connections" widget. Quick Connects come from /quick-connect/history.
+// ---------------------------------------------------------------------------
+
+router.get(
+  '/recent-servers',
+  asyncHandler(async (req, res) => {
+    const days = parseInt(req.query.days, 10) || 7;
+    const limit = parseInt(req.query.limit, 10) || 8;
+    const items = await sessionService.listRecentServersForUser(req.orgId, req.user.userId, { days, limit });
+    res.json({ success: true, data: { items } });
+  })
+);
+
+// ---------------------------------------------------------------------------
 // GET /api/terminal/sessions/:id/recovery — a workspace tab lost its live
 // session (backend restart, expiry, admin terminate, detach timeout, remote
 // exit…). Says what happened and the one next step that will work, based on
@@ -118,6 +135,7 @@ router.post(
       userId: req.user.userId,
       orgId: req.orgId,
       role: req.user.role,
+      permissions: req.user.permissions,
     });
     res.status(201).json({ success: true, data });
   })
@@ -161,7 +179,7 @@ router.post(
     if (spec.type === 'quick_connect') {
       const result = await quickConnectService.createTicketFromSpec(
         req.orgId,
-        { id: req.user.userId, role: req.user.role },
+        { id: req.user.userId, role: req.user.role, permissions: req.user.permissions },
         { host: spec.host, port: spec.port, username: spec.username, auth: spec.auth, expectedHostKey: spec.expectedHostKey }
       );
       res.status(201).json({ success: true, data: { connect: { ticket: result.ticket } } });

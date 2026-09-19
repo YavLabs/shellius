@@ -9,6 +9,7 @@ import { listGroups } from '@/services/groupService';
 import PolicyEvaluator from '@/components/policies/PolicyEvaluator';
 import SubjectsPicker from '@/components/policies/SubjectsPicker';
 import SearchableSelect from '@/components/ui/SearchableSelect';
+import { listRoles } from '@/services/roleService';
 
 const ENVIRONMENTS = ['demo', 'dev', 'staging', 'prod'];
 
@@ -468,11 +469,20 @@ function Step3({ form, onChange, errors }) {
 }
 
 // Step 4 ─────────────────────────────────────────────────────────────────────
-const APPROVER_ROLES = ['admin', 'manager'];
 
 function Step4({ form, onChange, errors }) {
   const durationMinutes = Math.round((form.maxSessionDuration || 3600) / 60);
   const [groups, setGroups] = useState([]);
+  // Approver roles: any org role except Super admin (custom ones included).
+  const [approverRoleOptions, setApproverRoleOptions] = useState([
+    { key: 'admin', name: 'Admin' },
+    { key: 'manager', name: 'Manager' },
+  ]);
+  useEffect(() => {
+    listRoles()
+      .then((roles) => setApproverRoleOptions(roles.filter((r) => r.key !== 'super_admin' && r.key !== 'member')))
+      .catch(() => {});
+  }, []);
 
   useEffect(() => {
     let active = true;
@@ -570,15 +580,15 @@ function Step4({ form, onChange, errors }) {
         <div>
           <label className={labelCls}>Approver roles</label>
           <div className="flex flex-wrap gap-3">
-            {APPROVER_ROLES.map((role) => (
-              <label key={role} className="flex items-center gap-2 text-sm capitalize">
+            {approverRoleOptions.map((role) => (
+              <label key={role.key} className="flex items-center gap-2 text-sm">
                 <input
                   type="checkbox"
-                  checked={(form.approverRoles || []).includes(role)}
-                  onChange={() => toggleApproverRole(role)}
+                  checked={(form.approverRoles || []).includes(role.key)}
+                  onChange={() => toggleApproverRole(role.key)}
                   className="accent-primary h-4 w-4"
                 />
-                {role}
+                {role.name}
               </label>
             ))}
           </div>
