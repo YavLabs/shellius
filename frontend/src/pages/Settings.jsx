@@ -42,6 +42,7 @@ import {
 } from '@/services/storageConfigService';
 import { useAuth } from '@/context/AuthContext';
 import { formatDateTime } from '@/utils/time';
+import { Switch } from '@/components/ui/switch';
 
 const ROLE_RANK = { super_admin: 4, admin: 3, manager: 2, member: 1 };
 function isAtLeast(user, role) {
@@ -665,22 +666,10 @@ function NotificationsTab() {
                 session activity.
               </p>
             </div>
-            <button
-              onClick={() => setEmailEnabled((v) => !v)}
-              role="switch"
-              aria-checked={emailEnabled}
-              className={[
-                'relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none focus:ring-2 focus:ring-ring',
-                emailEnabled ? 'bg-primary' : 'bg-muted-foreground/30',
-              ].join(' ')}
-            >
-              <span
-                className={[
-                  'pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out',
-                  emailEnabled ? 'translate-x-5' : 'translate-x-0',
-                ].join(' ')}
-              />
-            </button>
+            <Switch
+              checked={emailEnabled}
+              onCheckedChange={setEmailEnabled}
+            />
           </div>
 
           <div className="flex items-center justify-between rounded-lg border border-border p-4">
@@ -690,22 +679,10 @@ function NotificationsTab() {
                 Get notified when certificates and access requests are approaching expiry.
               </p>
             </div>
-            <button
-              onClick={() => setExpiringSoonAlerts((v) => !v)}
-              role="switch"
-              aria-checked={expiringSoonAlerts}
-              className={[
-                'relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none focus:ring-2 focus:ring-ring',
-                expiringSoonAlerts ? 'bg-primary' : 'bg-muted-foreground/30',
-              ].join(' ')}
-            >
-              <span
-                className={[
-                  'pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out',
-                  expiringSoonAlerts ? 'translate-x-5' : 'translate-x-0',
-                ].join(' ')}
-              />
-            </button>
+            <Switch
+              checked={expiringSoonAlerts}
+              onCheckedChange={setExpiringSoonAlerts}
+            />
           </div>
 
           <div className="pt-1">

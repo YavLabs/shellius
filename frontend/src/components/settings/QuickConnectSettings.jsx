@@ -4,6 +4,7 @@ import { Button } from '@/components/ui/button';
 import SearchableSelect from '@/components/ui/SearchableSelect';
 import { getQuickConnectSettings, updateQuickConnectSettings } from '@/services/quickConnectService';
 import { ROLE_LABELS } from '@/lib/labels';
+import { Switch } from '@/components/ui/switch';
 
 const ROLES = [
   { value: 'manager', label: ROLE_LABELS.manager },
@@ -78,22 +79,10 @@ function QuickConnectSettings() {
               Allow eligible users to open ad-hoc SSH sessions to hosts that aren&apos;t saved as servers.
             </p>
           </div>
-          <button
-            onClick={() => setEnabled((v) => !v)}
-            role="switch"
-            aria-checked={enabled}
-            className={[
-              'relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none focus:ring-2 focus:ring-ring',
-              enabled ? 'bg-primary' : 'bg-muted-foreground/30',
-            ].join(' ')}
-          >
-            <span
-              className={[
-                'pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out',
-                enabled ? 'translate-x-5' : 'translate-x-0',
-              ].join(' ')}
-            />
-          </button>
+          <Switch
+            checked={enabled}
+            onCheckedChange={setEnabled}
+          />
         </div>
 
         <div>

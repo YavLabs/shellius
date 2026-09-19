@@ -17,6 +17,7 @@ import {
   testSavedSsoProvider,
   reorderSsoProviders,
 } from '@/services/ssoConfigService';
+import { Switch } from '@/components/ui/switch';
 
 function allowedSummary(provider) {
   const parts = [];
@@ -160,25 +161,13 @@ function ProviderRow({ provider, index, count, onChanged, onEdit }) {
       </div>
 
       <div className="flex shrink-0 items-center gap-2 self-end sm:self-center">
-        <button
-          role="switch"
-          aria-checked={provider.isActive}
-          type="button"
+        <Switch
+          checked={provider.isActive}
+          onCheckedChange={handleToggleActive}
+          size="sm"
           disabled={busy || provider.source === 'env'}
-          onClick={handleToggleActive}
           title={provider.source === 'env' ? 'Configured via environment variables' : 'Toggle active'}
-          className={[
-            'relative inline-flex h-5 w-9 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none focus:ring-2 focus:ring-ring disabled:cursor-not-allowed disabled:opacity-50',
-            provider.isActive ? 'bg-primary' : 'bg-muted-foreground/30',
-          ].join(' ')}
-        >
-          <span
-            className={[
-              'pointer-events-none inline-block h-4 w-4 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out',
-              provider.isActive ? 'translate-x-4' : 'translate-x-0',
-            ].join(' ')}
-          />
-        </button>
+        />
 
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
