@@ -23,7 +23,7 @@ Tracked here as work lands on `main`; moved into a dated section on release
 - **Web terminal, RDP viewer and command snippets** use the brand terminal colours (Ink background, Sky cursor).
 - Text fields, selects and buttons share one size and corner radius across the app.
 - **Terminal workspace**: tabs are rounded pills with no divider below them. The workspace has padding around it. The sessions panel is a rounded card.
-- Sign-in with a single SSO provider uses the same "or continue with" button as several providers.
+- Sign-in lists SSO providers as full-width "Sign in with …" buttons, one per row, under an "or continue with" divider.
 
 ### Fixed
 
