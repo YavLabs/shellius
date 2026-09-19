@@ -33,7 +33,7 @@ function DeploymentRow({ deployment, canRetry, onRetry }) {
         <button
           type="button"
           onClick={() => hasDetail && setOpen((o) => !o)}
-          className="flex min-w-0 flex-1 items-center gap-2 text-left text-sm"
+          className="flex min-h-10 min-w-0 flex-1 items-center gap-2 text-left text-sm md:min-h-0"
         >
           {hasDetail ? (
             open ? <ChevronDown className="h-3.5 w-3.5 shrink-0 text-muted-foreground" /> : <ChevronRight className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
@@ -47,7 +47,7 @@ function DeploymentRow({ deployment, canRetry, onRetry }) {
           <button
             type="button"
             onClick={() => onRetry(deployment)}
-            className="flex shrink-0 items-center gap-1 text-xs text-primary hover:underline"
+            className="flex min-h-10 shrink-0 items-center gap-1 px-1 text-xs text-primary hover:underline md:min-h-0 md:px-0"
           >
             <RefreshCw className="h-3 w-3" /> Retry
           </button>
@@ -124,7 +124,7 @@ function BatchRow({ batch, canRetry, onChanged, defaultOpen, highlighted, rowRef
       <button
         type="button"
         onClick={() => setOpen((o) => !o)}
-        className="flex w-full items-center gap-4 px-4 py-3 text-left"
+        className="flex w-full items-center gap-3 px-3 py-3 text-left md:gap-4 md:px-4"
       >
         {open ? <ChevronDown className="h-4 w-4 shrink-0 text-muted-foreground" /> : <ChevronRight className="h-4 w-4 shrink-0 text-muted-foreground" />}
         <div className="min-w-0 flex-1">
