@@ -169,13 +169,18 @@ function Notifications() {
             ? `${unreadCount} unread notification${unreadCount === 1 ? '' : 's'}`
             : 'Recent system notifications and alerts.'
         }
-      >
-        {unreadCount > 0 && (
-          <Button variant="outline" size="sm" onClick={handleMarkAll}>
-            <CheckCheck className="mr-2 h-4 w-4" /> Mark all read
-          </Button>
-        )}
-      </PageHeader>
+        actions={[
+          {
+            key: 'mark-all',
+            label: 'Mark all read',
+            icon: CheckCheck,
+            variant: 'outline',
+            size: 'sm',
+            onClick: handleMarkAll,
+            hidden: unreadCount === 0,
+          },
+        ]}
+      />
 
       {error && (
         <div className="rounded-md border border-destructive/50 bg-destructive/10 px-3 py-2 text-sm text-destructive">

@@ -49,6 +49,8 @@ import { listServers, createServer } from '@/services/serverService';
 import { listSessions } from '@/services/sessionService';
 import { relativeTime, formatDateTime } from '@/utils/time';
 import Skeleton from '@/components/ui/Skeleton';
+import MobilePageHeader from '@/components/mobile/MobilePageHeader';
+import useIsMobile from '@/hooks/useIsMobile';
 import { useAuth } from '@/context/AuthContext';
 import { can } from '@/lib/permissions';
 import { ENVIRONMENT_LABELS } from '@/lib/labels';
@@ -154,6 +156,7 @@ function CustomerDetail() {
   const canAddServer = can(user, 'servers.create');
   const canManage = can(user, 'customers.update');
   const canDelete = can(user, 'customers.delete');
+  const isMobile = useIsMobile();
 
   const [customer, setCustomer] = useState(null);
   const [stats, setStats] = useState(null);
@@ -436,6 +439,26 @@ function CustomerDetail() {
 
       {/* ---- ZONE 1: HERO ---- */}
 
+      {isMobile ? (
+        <MobilePageHeader
+          back={{ to: '/customers', label: 'Back to Customers' }}
+          icon={Building2}
+          title={customer.name}
+          subtitle={
+            <>
+              <span className="font-mono">{customer.slug}</span>
+              {envSummary && envSummary !== 'No servers' && <span className="text-muted-foreground/60"> &mdash; {envSummary}</span>}
+              {customer.description && <span className="block">{customer.description}</span>}
+            </>
+          }
+          actions={[
+            { key: 'add-server', label: 'Add server', icon: Plus, onClick: () => setAddServerOpen(true), hidden: !canAddServer },
+            { key: 'edit', label: 'Edit customer', icon: Pencil, variant: 'outline', onClick: () => setEditOpen(true), hidden: !canManage },
+            { key: 'delete', label: 'Delete customer', icon: Trash2, variant: 'destructive', onClick: () => setConfirmDelete(true), hidden: !canDelete },
+          ]}
+        />
+      ) : (
+      <>
       {/* Back link */}
       <Link
         to="/customers"
@@ -510,6 +533,8 @@ function CustomerDetail() {
           )}
         </div>
       </div>
+      </>
+      )}
 
       {/* Stat tiles */}
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">

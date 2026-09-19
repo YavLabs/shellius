@@ -516,23 +516,26 @@ function AuditLog() {
 
   return (
     <div className="space-y-6 p-6">
-      <PageHeader icon={ScrollText} title="Audit Log" subtitle="Immutable record of all system events." helpKey="audit-log">
-        {canExport && (
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <Button variant="outline" disabled={exporting}>
-                <Download className="mr-2 h-4 w-4" />
-                {exporting ? 'Exporting...' : 'Export'}
-                <ChevronDown className="ml-2 h-3.5 w-3.5" />
-              </Button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="end" className="w-40">
-              <DropdownMenuItem onClick={() => handleExport('csv')}>Export as CSV</DropdownMenuItem>
-              <DropdownMenuItem onClick={() => handleExport('json')}>Export as JSON</DropdownMenuItem>
-            </DropdownMenuContent>
-          </DropdownMenu>
-        )}
-      </PageHeader>
+      <PageHeader
+        icon={ScrollText}
+        title="Audit Log"
+        subtitle="Immutable record of all system events."
+        helpKey="audit-log"
+        actions={[
+          {
+            key: 'export',
+            label: exporting ? 'Exporting...' : 'Export',
+            icon: Download,
+            variant: 'outline',
+            disabled: exporting,
+            hidden: !canExport,
+            items: [
+              { key: 'csv', label: 'Export as CSV', icon: Download, onClick: () => handleExport('csv') },
+              { key: 'json', label: 'Export as JSON', icon: Download, onClick: () => handleExport('json') },
+            ],
+          },
+        ]}
+      />
 
       {/* Filter panel (not inside DataTable — rendered as a standalone block) */}
       {!isMobile && filterSlot}

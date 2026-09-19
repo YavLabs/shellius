@@ -90,18 +90,11 @@ function GroupDetail() {
         icon={UsersRound}
         title={group.name}
         subtitle={group.description}
-      >
-        {canManage && (
-          <>
-            <Button variant="outline" onClick={() => setEditOpen(true)}>
-              <Pencil className="mr-2 h-4 w-4" /> Edit
-            </Button>
-            <Button variant="destructive" onClick={() => setConfirmDelete(true)}>
-              <Trash2 className="mr-2 h-4 w-4" /> Delete
-            </Button>
-          </>
-        )}
-      </PageHeader>
+        actions={[
+          { key: 'edit', label: 'Edit', icon: Pencil, variant: 'outline', onClick: () => setEditOpen(true), hidden: !canManage },
+          { key: 'delete', label: 'Delete', icon: Trash2, variant: 'destructive', onClick: () => setConfirmDelete(true), hidden: !canManage },
+        ]}
+      />
 
       <div className="rounded-lg border border-border bg-card">
         <div className="flex items-center justify-between border-b border-border px-5 py-3">

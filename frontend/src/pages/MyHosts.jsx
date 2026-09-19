@@ -361,16 +361,23 @@ function MyHosts() {
 
   return (
     <div className="space-y-6 p-6">
-      <PageHeader icon={Lock} title="My hosts" subtitle="A private list of SSH targets only you can see." helpKey="my-hosts">
-        <Button
-          onClick={() => {
-            setEditing(null);
-            setFormOpen(true);
-          }}
-        >
-          <Plus className="mr-2 h-4 w-4" /> Add host
-        </Button>
-      </PageHeader>
+      <PageHeader
+        icon={Lock}
+        title="My hosts"
+        subtitle="A private list of SSH targets only you can see."
+        helpKey="my-hosts"
+        actions={[
+          {
+            key: 'add',
+            label: 'Add host',
+            icon: Plus,
+            onClick: () => {
+              setEditing(null);
+              setFormOpen(true);
+            },
+          },
+        ]}
+      />
 
       {(error || connectError) && (
         <div className="flex items-start gap-2 rounded-md border border-destructive/50 bg-destructive/10 px-3 py-2 text-sm text-destructive">

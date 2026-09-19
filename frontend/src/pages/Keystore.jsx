@@ -121,26 +121,21 @@ function Keystore() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [searchParams, activeTab, isAdmin, canDeploy]);
 
-  const headerActions = activeTab === 'deployments' ? (
-    canDeploy ? (
-      <Button onClick={() => deploymentsRef.current?.openDeploy?.()}>
-        <Send className="mr-2 h-4 w-4" /> Export to servers
-      </Button>
-    ) : null
-  ) : !isAdmin ? null : activeTab === 'identities' ? (
-    <Button onClick={() => identitiesRef.current?.openNew?.()}>
-      <Plus className="mr-2 h-4 w-4" /> New identity
-    </Button>
-  ) : activeTab === 'keys' ? (
-    <div className="flex items-center gap-2">
-      <Button variant="outline" onClick={() => keysRef.current?.openImport?.()}>
-        <Upload className="mr-2 h-4 w-4" /> Import key
-      </Button>
-      <Button onClick={() => keysRef.current?.openGenerate?.()}>
-        <Plus className="mr-2 h-4 w-4" /> Generate key
-      </Button>
-    </div>
-  ) : null;
+  // Header actions for the active tab (desktop buttons; on phones the
+  // gradient one is the full-width primary, the rest go into "⋯").
+  const headerActions =
+    activeTab === 'deployments'
+      ? [{ key: 'deploy', label: 'Export to servers', icon: Send, onClick: () => deploymentsRef.current?.openDeploy?.(), hidden: !canDeploy }]
+      : !isAdmin
+        ? []
+        : activeTab === 'identities'
+          ? [{ key: 'new', label: 'New identity', icon: Plus, onClick: () => identitiesRef.current?.openNew?.() }]
+          : activeTab === 'keys'
+            ? [
+                { key: 'import', label: 'Import key', icon: Upload, variant: 'outline', onClick: () => keysRef.current?.openImport?.() },
+                { key: 'generate', label: 'Generate key', icon: Plus, onClick: () => keysRef.current?.openGenerate?.() },
+              ]
+            : [];
 
   const subtitle =
     scope === 'personal'
@@ -149,9 +144,13 @@ function Keystore() {
 
   return (
     <div className="space-y-6 p-6">
-      <PageHeader icon={scope === 'personal' ? Lock : KeyRound} title="Keystore" subtitle={subtitle} helpKey="keystore">
-        {headerActions}
-      </PageHeader>
+      <PageHeader
+        icon={scope === 'personal' ? Lock : KeyRound}
+        title="Keystore"
+        subtitle={subtitle}
+        helpKey="keystore"
+        actions={headerActions}
+      />
 
       {canSwitchScope && (
         <div className="inline-flex items-center gap-1 rounded-lg border border-border bg-muted/30 p-1">

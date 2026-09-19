@@ -289,13 +289,21 @@ function Policies() {
       <PageHeader
         icon={Shield}
         title="Policies"
-        subtitle="Access control policies governing who can reach which servers." helpKey="policies">
-        {canAdmin && (
-          <Button onClick={() => { setEditing(null); setFormOpen(true); }}>
-            <Plus className="mr-2 h-4 w-4" /> New Policy
-          </Button>
-        )}
-      </PageHeader>
+        subtitle="Access control policies governing who can reach which servers."
+        helpKey="policies"
+        actions={[
+          {
+            key: 'new',
+            label: 'New Policy',
+            icon: Plus,
+            hidden: !canAdmin,
+            onClick: () => {
+              setEditing(null);
+              setFormOpen(true);
+            },
+          },
+        ]}
+      />
 
       {error && (
         <div className="rounded-md border border-destructive/50 bg-destructive/10 px-3 py-2 text-sm text-destructive">

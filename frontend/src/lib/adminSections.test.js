@@ -82,6 +82,22 @@ describe('resolveAdminRoute', () => {
     expect(resolveAdminRoute({ permissions: ['settings.storage'] })).toEqual({ redirect: '/admin/storage' });
   });
 
+  it('shows the section list for bare /admin on phones (listOnBare)', () => {
+    expect(resolveAdminRoute(usersOnly, undefined, { listOnBare: true })).toEqual({ list: true });
+    // Everything else behaves the same.
+    expect(resolveAdminRoute(member, undefined, { listOnBare: true })).toEqual({ redirect: '/' });
+    expect(resolveAdminRoute(usersOnly, 'email', { listOnBare: true })).toEqual({ redirect: '/admin' });
+    expect(resolveAdminRoute(usersOnly, 'users', { listOnBare: true }).section.key).toBe('users');
+  });
+
+  it('gives every section a one-line description for the phone list', () => {
+    for (const s of ADMIN_SECTIONS) {
+      expect(typeof s.description).toBe('string');
+      expect(s.description.length).toBeGreaterThan(0);
+      expect(s.description.length).toBeLessThanOrEqual(60);
+    }
+  });
+
   it('bounces hidden or unknown sections back to /admin', () => {
     expect(resolveAdminRoute(usersOnly, 'email')).toEqual({ redirect: '/admin' });
     expect(resolveAdminRoute(usersOnly, 'nope')).toEqual({ redirect: '/admin' });

@@ -509,25 +509,25 @@ function Servers() {
       <PageHeader
         icon={ServerIcon}
         title="Servers"
-        subtitle="Manage target servers across customers." helpKey="servers">
-        <div className="flex items-center gap-2">
-          <QuickConnectHeaderButton />
-          <Button variant="outline" onClick={() => fetch()} disabled={loading}>
-            <RefreshCw className={`mr-2 h-4 w-4 ${loading ? 'animate-spin' : ''}`} /> Refresh
-          </Button>
-          {canCreate && (
-            <Button
-              onClick={() => {
-                setEditing(null);
-                setNewServerCustomerId('');
-                setFormOpen(true);
-              }}
-            >
-              <Plus className="mr-2 h-4 w-4" /> Add Server
-            </Button>
-          )}
-        </div>
-      </PageHeader>
+        subtitle="Manage target servers across customers."
+        helpKey="servers"
+        actions={[
+          // Quick connect has its own entry in the mobile bottom-nav sheet.
+          { key: 'quick-connect', label: 'Quick connect', desktop: <QuickConnectHeaderButton />, mobile: false },
+          { key: 'refresh', label: 'Refresh', icon: RefreshCw, variant: 'outline', onClick: () => fetch(), disabled: loading, spin: loading },
+          {
+            key: 'add',
+            label: 'Add Server',
+            icon: Plus,
+            hidden: !canCreate,
+            onClick: () => {
+              setEditing(null);
+              setNewServerCustomerId('');
+              setFormOpen(true);
+            },
+          },
+        ]}
+      />
 
       {error && (
         <div className="rounded-md border border-destructive/50 bg-destructive/10 px-3 py-2 text-sm text-destructive">

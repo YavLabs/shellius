@@ -156,18 +156,16 @@ function Customers() {
 
   return (
     <div className="space-y-6 p-6">
-      <PageHeader icon={Building2} title="Customers" subtitle="Organize servers and access by tenant." helpKey="customers">
-        <div className="flex items-center gap-2">
-          <Button variant="outline" onClick={() => fetch()} disabled={loading}>
-            <RefreshCw className={`mr-2 h-4 w-4 ${loading ? 'animate-spin' : ''}`} /> Refresh
-          </Button>
-          {canCreate && (
-            <Button onClick={() => setCreateOpen(true)}>
-              <Plus className="mr-2 h-4 w-4" /> Add Customer
-            </Button>
-          )}
-        </div>
-      </PageHeader>
+      <PageHeader
+        icon={Building2}
+        title="Customers"
+        subtitle="Organize servers and access by tenant."
+        helpKey="customers"
+        actions={[
+          { key: 'refresh', label: 'Refresh', icon: RefreshCw, variant: 'outline', onClick: () => fetch(), disabled: loading, spin: loading },
+          { key: 'add', label: 'Add Customer', icon: Plus, onClick: () => setCreateOpen(true), hidden: !canCreate },
+        ]}
+      />
 
       {error && (
         <div className="rounded-md border border-destructive/50 bg-destructive/10 px-3 py-2 text-sm text-destructive">

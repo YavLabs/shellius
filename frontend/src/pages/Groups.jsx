@@ -122,13 +122,15 @@ function Groups() {
 
   return (
     <div className="space-y-6">
-      <PageHeader icon={UsersRound} title="Groups" subtitle="Organize users into access groups." helpKey="groups">
-        {canManage && (
-          <Button onClick={() => setCreateOpen(true)}>
-            <Plus className="mr-2 h-4 w-4" /> Create Group
-          </Button>
-        )}
-      </PageHeader>
+      <PageHeader
+        icon={UsersRound}
+        title="Groups"
+        subtitle="Organize users into access groups."
+        helpKey="groups"
+        actions={[
+          { key: 'create', label: 'Create Group', icon: Plus, onClick: () => setCreateOpen(true), hidden: !canManage },
+        ]}
+      />
 
       {error && (
         <div className="rounded-md border border-destructive/50 bg-destructive/10 px-3 py-2 text-sm text-destructive">

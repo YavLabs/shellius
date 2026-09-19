@@ -26,6 +26,8 @@ import ProvisionModal from '@/components/servers/ProvisionModal';
 import UninstallHostModal from '@/components/servers/UninstallHostModal';
 import QuickConnectButton from '@/components/servers/QuickConnectButton';
 import PrivateIPWarning from '@/components/servers/PrivateIPWarning';
+import MobilePageHeader from '@/components/mobile/MobilePageHeader';
+import useIsMobile from '@/hooks/useIsMobile';
 import DeployWizardModal from '@/components/keystore/DeployWizardModal';
 import TestConnectionModal from '@/components/keystore/TestConnectionModal';
 import { Button } from '@/components/ui/button';
@@ -77,6 +79,7 @@ function ServerDetail() {
   const { id } = useParams();
   const navigate = useNavigate();
   const { user: currentUser } = useAuth();
+  const isMobile = useIsMobile();
   const [server, setServer] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -185,6 +188,48 @@ function ServerDetail() {
 
   return (
     <div className="space-y-5 p-6">
+      {isMobile ? (
+        <MobilePageHeader
+          back={{ onClick: () => navigate('/servers'), label: 'Back to servers' }}
+          title={server.displayName || server.hostname}
+          subtitle={
+            <span className="flex flex-wrap items-center gap-x-2 gap-y-1">
+              <HealthStatusDot status={server.healthStatus} showLabel />
+              <EnvironmentBadge environment={server.environment} />
+              {server.displayName && server.displayName !== server.hostname && (
+                <span className="font-mono">{server.hostname}</span>
+              )}
+            </span>
+          }
+          primaryNode={<QuickConnectButton server={server} currentUser={currentUser} />}
+          actions={[
+            { key: 'edit', label: 'Edit', icon: Pencil, variant: 'outline', onClick: () => setEditOpen(true), hidden: !canEdit },
+            {
+              key: 'host',
+              label: 'Host',
+              hidden: !canOnboard,
+              items: [
+                { key: 'health', label: checking ? 'Checking...' : 'Run health check', icon: Activity, onClick: handleHealthCheck, disabled: checking },
+                { key: 'bootstrap', label: 'Bootstrap host', icon: Download, onClick: () => setBootstrapOpen(true), hidden: isCredentialMode },
+                { key: 'provision', label: 'Auto-provision', icon: Terminal, onClick: () => setProvisionOpen(true), hidden: isCredentialMode || !canProvision },
+                { key: 'uninstall', label: 'Uninstall agent', icon: Eraser, onClick: () => setUninstallOpen(true), hidden: isCredentialMode },
+                { key: 'test', label: 'Test identity', icon: PlugZap, onClick: () => setTestIdentityOpen(true), hidden: !isCredentialMode },
+              ],
+            },
+            {
+              key: 'keystore',
+              label: 'Keystore',
+              hidden: !(canDeployKeys || canResetHostKey) || !(server.protocol === 'ssh' || server.protocol === 'both'),
+              items: [
+                { key: 'deploy', label: 'Export key to servers…', icon: Send, onClick: () => setDeployWizardOpen(true), hidden: !canDeployKeys },
+                { key: 'reset-host-key', label: 'Reset host key', icon: RotateCw, onClick: () => setResetHostKeyConfirm(true), hidden: !canResetHostKey },
+              ],
+            },
+            { key: 'delete', label: 'Delete server', icon: Trash2, variant: 'destructive', onClick: () => setConfirmDelete(true), hidden: !canDelete },
+          ]}
+        />
+      ) : (
+      <>
       <button
         onClick={() => navigate('/servers')}
         className="flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground"
@@ -290,6 +335,8 @@ function ServerDetail() {
           )}
         </div>
       </div>
+      </>
+      )}
 
       <PrivateIPWarning ipAddress={server.ipAddress} />
 

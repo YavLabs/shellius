@@ -287,6 +287,13 @@ function RoleDetail({ id, catalog, roles, reloadList }) {
             </p>
           </>
         }
+        actions={[
+          // Phones: every role action goes into the header's "⋯" menu (desktop keeps the buttons below).
+          { key: 'edit', label: 'Edit details', icon: Pencil, variant: 'outline', onClick: () => setEditMeta(true), hidden: !can('roles.manage') || !canEdit, desktop: null },
+          { key: 'duplicate', label: 'Duplicate', icon: Copy, variant: 'outline', onClick: () => setCopyOpen(true), hidden: !can('roles.manage') || !role.assignable, desktop: null },
+          { key: 'reset', label: 'Reset to defaults', icon: RotateCcw, variant: 'outline', onClick: () => setResetOpen(true), hidden: !can('roles.manage') || !canEdit || !role.isSystem, desktop: null },
+          { key: 'delete', label: 'Delete', icon: Trash2, variant: 'destructive', onClick: () => setDeleteOpen(true), hidden: !can('roles.manage') || !canEdit || role.isSystem, desktop: null },
+        ]}
       >
         {can('roles.manage') && (
           <div className="flex flex-wrap items-center gap-2">
@@ -466,7 +473,25 @@ function Roles() {
 
   return (
     <div className="space-y-6">
-      <PageHeader icon={ShieldCheck} title="Roles" subtitle="What each role can do. Every user has one role." helpKey="roles">
+      <PageHeader
+        icon={ShieldCheck}
+        title="Roles"
+        subtitle="What each role can do. Every user has one role."
+        helpKey="roles"
+        actions={[
+          // Phones: the List / Matrix switch goes into the "⋯" menu (desktop keeps the controls below).
+          {
+            key: 'view',
+            label: 'View',
+            desktop: null,
+            items: [
+              { key: 'list', label: 'List', icon: List, checked: view === 'list', onClick: () => setView('list') },
+              { key: 'matrix', label: 'Matrix', icon: LayoutGrid, checked: view === 'matrix', onClick: () => setView('matrix') },
+            ],
+          },
+          { key: 'new', label: 'New role', icon: Plus, onClick: () => setNewOpen(true), hidden: !can('roles.manage'), desktop: null },
+        ]}
+      >
         <div className="flex items-center gap-2">
           <div className="flex rounded-md border border-border p-0.5" role="tablist" aria-label="View">
             {[
