@@ -78,7 +78,7 @@ function AuthShell({ children, align = 'center', className, footer }) {
         )}
       >
         {/* Stacked lockup centred above each page's title (brand: login). */}
-        <BrandLockupStacked className="mb-8" />
+        <BrandLockupStacked className="mb-5" />
         {children}
       </main>
       <AuthFooter className="relative">{footer}</AuthFooter>

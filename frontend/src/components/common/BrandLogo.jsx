@@ -109,7 +109,7 @@ export default function BrandLogo({ size = 'md', className = '', wordmarkClassNa
  */
 export function BrandLockupStacked({ className = '' }) {
   return (
-    <div className={`flex flex-col items-center gap-3 ${className}`}>
+    <div className={`flex flex-col items-center gap-5 ${className}`}>
       <BrandMark size="lg" className="h-14 w-14" />
       <BrandWordmark className="text-[24px]" />
     </div>

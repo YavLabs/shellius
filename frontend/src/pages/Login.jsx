@@ -310,7 +310,6 @@ function Login() {
 
   const locked = !!lockout && retryRemaining > 0;
 
-  const brand = import.meta.env.VITE_BRAND_NAME || 'Shellius';
   // /dummy/login?sso=N previews N providers (0–6); default all six.
   const previewCount = Math.min(6, Math.max(0, Number(searchParams.get('sso') ?? 6) || 0));
   const ssoList = ssoStatus.providers?.length
@@ -361,9 +360,9 @@ function Login() {
 
         <div className="text-center">
           <h1 className="text-3xl font-semibold">
-            {step === 'mfa' ? 'Verify it’s you' : step === 'sent' ? 'Check your inbox' : `Sign in to ${brand}`}
+            {step === 'mfa' ? 'Verify it’s you' : step === 'sent' ? 'Check your inbox' : 'Sign in'}
           </h1>
-          <p className="mx-auto mt-3 max-w-[19rem] text-sm leading-relaxed text-muted-foreground">
+          <p className="mx-auto mt-2 max-w-[19rem] text-sm leading-relaxed text-muted-foreground">
             {step === 'password'
               ? 'Enter your password to continue.'
               : step === 'sso'
