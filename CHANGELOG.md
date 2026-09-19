@@ -11,6 +11,7 @@ Tracked here as work lands on `main`; moved into a dated section on release
 
 ### Fixed
 
+- The cursor bar in the email logo sits on the same baseline as the letters. It was a separate table cell, so it sat lower in some mail clients.
 - Fields that draw their own focus style, such as the command palette search, no longer show an extra accent outline when focused. Buttons and links keep their keyboard focus ring.
 
 ## [1.5.0] - 2026-09-19
