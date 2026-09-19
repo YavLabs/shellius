@@ -191,6 +191,12 @@ function AuthPreview() {
             </a>
           ))}
         </div>
+        <a
+          href="/dummy/app"
+          className="block rounded-full bg-foreground px-4 py-2.5 text-center text-sm font-medium text-background transition-opacity hover:opacity-90"
+        >
+          App layout: current vs new look
+        </a>
         <p className="text-center text-xs text-muted-foreground">
           <Link to="/" className="hover:text-foreground">
             Back to the app

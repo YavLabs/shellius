@@ -42,6 +42,7 @@ import MyHosts from './pages/MyHosts';
 import Roles from './pages/Roles';
 import MfaSetup from './pages/MfaSetup';
 import AuthPreview, { AuthPreviewPage } from './pages/AuthPreview';
+import AppPreview, { AppPreviewFrame } from './pages/AppPreview';
 
 function App() {
   return (
@@ -72,6 +73,10 @@ function App() {
               <Route path="/dummy/sso-callback" element={<AuthPreviewPage pageKey="sso-error" />} />
               <Route path="/dummy/legal/:doc" element={<AuthPreviewPage pageKey="legal" />} />
               <Route path="/dummy/not-found" element={<AuthPreviewPage pageKey="not-found" />} />
+              {/* Whole-app look preview: real layout, sample content, current vs new theme */}
+              <Route path="/dummy/app" element={<AppPreviewFrame />}>
+                <Route index element={<AppPreview />} />
+              </Route>
               <Route element={<ProtectedRoute />}>
                 {/* Forced MFA enrollment — full screen, no app chrome */}
                 <Route path="/mfa-setup" element={<MfaSetup />} />
