@@ -13,6 +13,7 @@ import {
 import { cn } from '@/lib/utils';
 import { overflowEntries, splitActions } from '@/lib/pageHeaderActions';
 import { useRegisterPageActions } from '@/context/PageActionsContext';
+import { mobileSubtitle } from '@/lib/mobileSubtitles';
 
 const ICON_BTN =
   'flex h-11 w-11 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring';
@@ -123,7 +124,7 @@ function MobilePageHeader({
   return (
     <div
       className={cn(
-        'space-y-1',
+        inFrame ? 'space-y-1' : 'space-y-3',
         // Top-level pages: a hairline divider between the header and the content.
         !inFrame && 'border-b border-border pb-4',
         // Inside an Administration card: bleed to the card edges like the desktop header.
@@ -131,35 +132,58 @@ function MobilePageHeader({
       )}
       data-mobile-header=""
     >
-      {/* Title row: the 44px icon buttons overlap it (-my-2) so the row is only
-          as tall as the title and the subtitle sits right under it. */}
-      <div className="flex items-center gap-1 [&>*:not(.min-w-0)]:-my-2">
-        {backButton}
-        <div className="min-w-0 flex-1">
-          <Heading
-            className={cn(
-              'flex min-w-0 items-center gap-2 font-bold tracking-tight',
-              level === 1 ? 'text-xl' : 'text-base font-semibold text-foreground'
+      {inFrame ? (
+        <>
+          {/* Title row: the 44px icon buttons overlap it (-my-2) so the row is only
+              as tall as the title and the subtitle sits right under it. */}
+          <div className="flex items-center gap-1 [&>*:not(.min-w-0)]:-my-2">
+            {backButton}
+            <div className="min-w-0 flex-1">
+              <Heading className="flex min-w-0 items-center gap-2 text-base font-semibold tracking-tight text-foreground">
+                {Icon && <Icon className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden="true" />}
+                <span className="min-w-0 truncate">{title}</span>
+              </Heading>
+            </div>
+            {compactPrimary && primary && !primaryNode && !inPlusSheet && <PrimaryButton action={primary} compact />}
+            {helpKey && (
+              <span className="-mr-1 shrink-0 [&>button]:h-11 [&>button]:w-11">
+                <HelpButton helpKey={helpKey} />
+              </span>
             )}
-          >
-            {Icon && (
-              <Icon
-                className={cn('shrink-0', level === 1 ? 'h-5 w-5 text-primary' : 'h-4 w-4 text-muted-foreground')}
-                aria-hidden="true"
-              />
+            <OverflowMenu entries={entries} />
+          </div>
+          {subtitle && <div className="line-clamp-2 text-sm leading-snug text-muted-foreground">{subtitle}</div>}
+        </>
+      ) : (
+        // Page header: the icon in a brand-tinted box, title and subtitle
+        // stacked beside it, help and "⋯" at the end (the original
+        // Administration header, now on every page).
+        <div className="flex items-center gap-3 [&>.hdr-btn]:-my-2">
+          {backButton && <span className="hdr-btn -mr-2 shrink-0">{backButton}</span>}
+          {Icon && (
+            <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg border border-border bg-[hsl(var(--brand)/0.12)] text-primary">
+              <Icon className="h-5 w-5" aria-hidden="true" />
+            </span>
+          )}
+          <div className="min-w-0 flex-1">
+            <Heading className="truncate text-xl font-bold leading-7 tracking-tight">{title}</Heading>
+            {subtitle && (
+              <div className="truncate text-[13px] leading-snug text-muted-foreground">{mobileSubtitle(title, subtitle)}</div>
             )}
-            <span className="min-w-0 truncate">{title}</span>
-          </Heading>
+          </div>
+          {(compactPrimary && primary && !primaryNode && !inPlusSheet) || helpKey || entries.length > 0 ? (
+            <span className="hdr-btn flex shrink-0 items-center">
+              {compactPrimary && primary && !primaryNode && !inPlusSheet && <PrimaryButton action={primary} compact />}
+              {helpKey && (
+                <span className="[&>button]:h-11 [&>button]:w-11">
+                  <HelpButton helpKey={helpKey} />
+                </span>
+              )}
+              <OverflowMenu entries={entries} />
+            </span>
+          ) : null}
         </div>
-        {compactPrimary && primary && !primaryNode && !inPlusSheet && <PrimaryButton action={primary} compact />}
-        {helpKey && (
-          <span className="-mr-1 shrink-0 [&>button]:h-11 [&>button]:w-11">
-            <HelpButton helpKey={helpKey} />
-          </span>
-        )}
-        <OverflowMenu entries={entries} />
-      </div>
-      {subtitle && <div className="line-clamp-2 text-sm leading-snug text-muted-foreground">{subtitle}</div>}
+      )}
       {primaryNode ? (
         <div className="[&>*]:w-full [&_button]:h-11 [&_button]:w-full">{primaryNode}</div>
       ) : (

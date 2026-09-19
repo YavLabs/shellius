@@ -3,8 +3,11 @@ import { Badge } from '@/components/ui/badge';
 import { isPrivateIP } from '@/utils/network';
 
 /**
- * PrivateIPWarning — surfaces a "VPN may be required" notice when a
- * server's IP address looks private. Renders nothing for public IPs.
+ * PrivateIPWarning — explains what a private address means for reaching the
+ * host: browser terminals connect from the Shellius backend, so the backend
+ * must be able to reach that network; connecting from your own machine (CLI,
+ * a downloaded key) needs your machine on it too. Renders nothing for public
+ * IPs.
  *
  * variants:
  *   "banner" — full-width amber alert (default; for forms / modals / detail headers)
@@ -16,7 +19,7 @@ function PrivateIPWarning({ ipAddress, variant = 'banner' }) {
 
   if (variant === 'pill') {
     return (
-      <Badge tone="warning" icon={Wifi} title="Private network address — VPN may be required">
+      <Badge tone="warning" icon={Wifi} title="Private address: reachable only if the Shellius backend can reach this network">
         Private IP
       </Badge>
     );
@@ -27,9 +30,8 @@ function PrivateIPWarning({ ipAddress, variant = 'banner' }) {
       <p className="mt-1 flex items-start gap-1.5 text-[11px] text-amber-700 dark:text-amber-400">
         <AlertTriangle className="mt-0.5 h-3 w-3 shrink-0" />
         <span>
-          <code className="font-mono">{ipAddress}</code> looks like a private IP. The
-          Shellius backend can only reach this host if it's on the same network.
-          Connect to the appropriate VPN before connecting.
+          <code className="font-mono">{ipAddress}</code> is a private address. It works only if the
+          Shellius backend can reach this network.
         </span>
       </p>
     );
@@ -42,11 +44,10 @@ function PrivateIPWarning({ ipAddress, variant = 'banner' }) {
       <div className="flex-1">
         <p className="font-medium">Private network address</p>
         <p className="mt-0.5 text-xs text-amber-700/90 dark:text-amber-300/90">
-          <code className="font-mono">{ipAddress}</code> looks like a private IP. The
-          Shellius backend can only reach this host if it (or your browser, for
-          direct downloads) is on the same network.{' '}
-          <strong>Make sure you're connected to the appropriate VPN</strong> before
-          connecting.
+          <code className="font-mono">{ipAddress}</code> is a private address.{' '}
+          <strong>Browser terminals connect from the Shellius backend</strong>, so they work only if
+          the backend can reach this network. To connect from your own machine (the CLI or a
+          downloaded key), your machine needs to be on it too, for example over VPN.
         </p>
       </div>
     </div>

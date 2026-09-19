@@ -160,7 +160,7 @@ export function MobileLoadMore({ shown, total, hasMore = shown < total, loading 
 }
 
 /**
- * Bulk-action bar pinned above the mobile bottom navigation (64px + safe
+ * Bulk-action bar pinned above the mobile bottom navigation and its raised "+" (64px + 24px + safe
  * area). Rendered fixed so it doesn't depend on the scroll container; the
  * list adds a spacer so the last card isn't hidden behind it.
  */
@@ -168,7 +168,7 @@ export function MobileBulkBar({ children }) {
   return (
     <>
       <div aria-hidden="true" className="h-40" />
-      <div className="fixed inset-x-0 bottom-[calc(64px+env(safe-area-inset-bottom))] z-30 px-3 pb-2">
+      <div className="fixed inset-x-0 bottom-[calc(88px+env(safe-area-inset-bottom))] z-30 px-3 pb-2">
         <div className="max-h-[45dvh] overflow-y-auto rounded-lg bg-card shadow-lg ring-1 ring-black/5 [&_button]:min-h-10">
           {children}
         </div>

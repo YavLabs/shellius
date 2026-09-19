@@ -153,12 +153,13 @@ function Keystore() {
       />
 
       {canSwitchScope && (
-        <div className="inline-flex items-center gap-1 rounded-lg border border-border bg-muted/30 p-1">
+        // Phones: full width, two equal halves.
+        <div className="inline-flex items-center gap-1 rounded-lg border border-border bg-muted/30 p-1 max-md:flex max-md:w-full">
           <button
             type="button"
             onClick={() => handleScopeChange('org')}
             className={[
-              'flex items-center gap-1.5 rounded-md px-3 py-1.5 text-sm font-medium transition-colors',
+              'flex items-center gap-1.5 rounded-md px-3 py-1.5 text-sm font-medium transition-colors max-md:h-10 max-md:flex-1 max-md:justify-center',
               scope === 'org' ? 'bg-card text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground',
             ].join(' ')}
           >
@@ -168,7 +169,7 @@ function Keystore() {
             type="button"
             onClick={() => handleScopeChange('personal')}
             className={[
-              'flex items-center gap-1.5 rounded-md px-3 py-1.5 text-sm font-medium transition-colors',
+              'flex items-center gap-1.5 rounded-md px-3 py-1.5 text-sm font-medium transition-colors max-md:h-10 max-md:flex-1 max-md:justify-center',
               scope === 'personal' ? 'bg-card text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground',
             ].join(' ')}
           >

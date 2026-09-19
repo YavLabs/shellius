@@ -60,17 +60,25 @@ import { ENVIRONMENT_LABELS } from '@/lib/labels';
 // Sub-components
 // ---------------------------------------------------------------------------
 
-function StatTile({ icon: Icon, label, value, iconClass, loading }) {
+// `shortLabel`: phones, where two tiles share a row and a long label wrapped.
+function StatTile({ icon: Icon, label, shortLabel, value, iconClass, loading }) {
   return (
-    <div className="flex items-center gap-3 rounded-lg border border-border bg-card p-4">
+    <div className="flex items-center gap-3 rounded-lg border border-border bg-card p-4 max-md:p-3">
       <div
         className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-md ${iconClass}`}
       >
         <Icon className="h-4 w-4" />
       </div>
       <div className="min-w-0">
-        <p className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
-          {label}
+        <p className="truncate text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+          {shortLabel ? (
+            <>
+              <span className="md:hidden">{shortLabel}</span>
+              <span className="max-md:hidden">{label}</span>
+            </>
+          ) : (
+            label
+          )}
         </p>
         {loading ? (
           <Skeleton className="mt-1 h-5 w-10" />
@@ -464,13 +472,9 @@ function CustomerDetail() {
           back={{ to: '/customers', label: 'Back to Customers' }}
           icon={Building2}
           title={customer.name}
-          subtitle={
-            <>
-              <span className="font-mono">{customer.slug}</span>
-              {envSummary && envSummary !== 'No servers' && <span className="text-muted-foreground/60"> &mdash; {envSummary}</span>}
-              {customer.description && <span className="block">{customer.description}</span>}
-            </>
-          }
+          // Phones: one line — the description, or the slug without one.
+          // Server counts per environment are in the tiles below.
+          subtitle={customer.description || <span className="font-mono">{customer.slug}</span>}
           actions={[
             { key: 'add-server', label: 'Add server', icon: Plus, onClick: () => setAddServerOpen(true), hidden: !canAddServer },
             { key: 'edit', label: 'Edit customer', icon: Pencil, variant: 'outline', onClick: () => setEditOpen(true), hidden: !canManage },
@@ -561,6 +565,7 @@ function CustomerDetail() {
         <StatTile
           icon={Server}
           label="Total servers"
+          shortLabel="Servers"
           value={total}
           iconClass="bg-primary/10 text-primary"
         />
@@ -568,6 +573,7 @@ function CustomerDetail() {
           <StatTile
             icon={Activity}
             label="Active sessions"
+            shortLabel="Sessions"
             value={activeSessions}
             iconClass="bg-emerald-500/10 text-emerald-500"
           />
@@ -581,6 +587,7 @@ function CustomerDetail() {
         <StatTile
           icon={Clock}
           label="Last health check"
+          shortLabel="Last check"
           value={lastHealthCheck ? relativeTime(new Date(lastHealthCheck)) : 'Never'}
           iconClass="bg-muted-foreground/10 text-muted-foreground"
         />

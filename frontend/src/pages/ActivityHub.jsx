@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Inbox, ClipboardCheck, KeyRound, SquareTerminal, Bell, Terminal, ScrollText, CheckCheck } from 'lucide-react';
+import { Inbox, KeyRound, Bell, Terminal, ScrollText, CheckCheck } from 'lucide-react';
 import PageHeader from '@/components/common/PageHeader';
 import { NavGroup, NavRow } from '@/components/mobile/MobileNavList';
 import { MobileEmptyCard } from '@/components/mobile/MobileCard';
@@ -33,34 +33,30 @@ function useMyPendingCount() {
   return count;
 }
 
-/** One summary tile: big number, label, tap to open the page behind it. */
-function Tile({ icon: Icon, label, value, hint, to, tone = 'neutral' }) {
+/**
+ * One column of the summary strip: number on top, label under it, tap to
+ * open the page behind it. Amber / green when there's something to see.
+ */
+function Stat({ label, value, to, tone = 'neutral' }) {
   const navigate = useNavigate();
+  const lit = value > 0 && tone !== 'neutral';
   return (
     <button
       type="button"
       onClick={() => navigate(to)}
-      className="flex min-w-0 flex-col gap-2 rounded-lg border border-border bg-card p-3.5 text-left transition-colors active:bg-accent"
+      className="flex min-w-0 flex-1 flex-col items-center justify-center gap-1 px-1 py-3.5 text-center transition-colors active:bg-accent"
     >
-      <span className="flex items-center justify-between">
-        <span
-          className={cn(
-            'flex h-8 w-8 items-center justify-center rounded-lg',
-            tone === 'attention' && value > 0
-              ? 'bg-amber-500/15 text-amber-600 dark:text-amber-300'
-              : tone === 'live' && value > 0
-                ? 'bg-emerald-500/15 text-emerald-600 dark:text-emerald-300'
-                : 'bg-[hsl(var(--brand)/0.12)] text-primary'
-          )}
-        >
-          <Icon className="h-4 w-4" aria-hidden="true" />
-        </span>
-        <span className="text-2xl font-semibold tabular-nums text-foreground">{value}</span>
+      <span
+        className={cn(
+          'text-2xl font-semibold leading-none tabular-nums',
+          lit && tone === 'attention' && 'text-amber-600 dark:text-amber-300',
+          lit && tone === 'live' && 'text-emerald-600 dark:text-emerald-300',
+          !lit && 'text-foreground'
+        )}
+      >
+        {value > 99 ? '99+' : value}
       </span>
-      <span className="min-w-0">
-        <span className="block truncate text-sm font-medium text-foreground">{label}</span>
-        <span className="block truncate text-xs text-muted-foreground">{hint}</span>
-      </span>
+      <span className="max-w-full truncate text-[11px] font-medium text-muted-foreground">{label}</span>
     </button>
   );
 }
@@ -100,20 +96,12 @@ function ActivityHub() {
     <div className="space-y-6 p-6">
       <PageHeader icon={Inbox} title="Activity" subtitle="Requests, sessions and notifications in one place." />
 
-      <div className="grid grid-cols-2 gap-2">
-        {showReviews && (
-          <Tile
-            icon={ClipboardCheck}
-            label="To review"
-            hint="Requests waiting on you"
-            value={pendingReviews}
-            tone="attention"
-            to="/access-requests?tab=to-review"
-          />
-        )}
-        <Tile icon={KeyRound} label="My requests" hint="Waiting for approval" value={myPending} to="/access-requests" />
-        <Tile icon={SquareTerminal} label="Live sessions" hint="Open in Terminals" value={liveCount} tone="live" to="/terminals" />
-        <Tile icon={Bell} label="Unread" hint="Notifications" value={unreadCount} tone="attention" to="/notifications" />
+      {/* One summary card, split into equal columns (3 or 4), so nothing sits alone. */}
+      <div className="flex divide-x divide-border overflow-hidden rounded-lg border border-border bg-card">
+        {showReviews && <Stat label="To review" value={pendingReviews} tone="attention" to="/access-requests?tab=to-review" />}
+        <Stat label="My requests" value={myPending} to="/access-requests" />
+        <Stat label="Live" value={liveCount} tone="live" to="/terminals" />
+        <Stat label="Unread" value={unreadCount} tone="attention" to="/notifications" />
       </div>
 
       <section>

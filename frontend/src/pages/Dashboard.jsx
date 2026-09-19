@@ -34,9 +34,6 @@ import { cn } from '@/lib/utils';
 import useIsMobile from '@/hooks/useIsMobile';
 import { SectionTitle, ViewAllLink } from '@/components/mobile/MobileNavList';
 
-// Environment dot colours for the phone servers tile (the Badge tone dots).
-const ENV_DOT = { prod: 'bg-red-500', staging: 'bg-amber-500', dev: 'bg-blue-500', demo: 'bg-muted-foreground/60' };
-const ENV_ORDER = ['prod', 'staging', 'dev', 'demo'];
 
 /**
  * Phone metric tile: icon + number on one row, label under it. Four fit in
@@ -66,23 +63,6 @@ function StatTile({ icon: Icon, label, value, to, loading, tone = 'primary', chi
       <span className="truncate text-xs font-medium text-muted-foreground">{label}</span>
       {children}
     </button>
-  );
-}
-
-/** Servers per environment as coloured dots with counts (same tones as the env badges). */
-function EnvCounts({ byEnv }) {
-  const parts = ENV_ORDER.map((env) => [env, byEnv?.[env] || 0]).filter(([, n]) => n > 0);
-  if (!parts.length) return null;
-  return (
-    <span className="flex min-w-0 flex-wrap items-center gap-x-2.5 gap-y-1 text-[11px] tabular-nums text-muted-foreground">
-      {parts.map(([env, n]) => (
-        <span key={env} className="inline-flex items-center gap-1" title={`${n} ${env}`}>
-          <span className={cn('h-1.5 w-1.5 rounded-full', ENV_DOT[env])} aria-hidden="true" />
-          <span className="sr-only">{env}</span>
-          {n}
-        </span>
-      ))}
-    </span>
   );
 }
 
@@ -218,9 +198,7 @@ function Dashboard() {
       {/* Phones: the four metrics as a compact 2×2 grid. */}
       {isMobile && (
         <div className="grid grid-cols-2 gap-2">
-          <StatTile icon={Server} label="Servers" value={serverStats.total} loading={statsLoading} to="/servers">
-            {!statsLoading && <EnvCounts byEnv={byEnv} />}
-          </StatTile>
+          <StatTile icon={Server} label="Servers" value={serverStats.total} loading={statsLoading} to="/servers" />
           {allSessions ? (
             <StatTile icon={Terminal} label="Active sessions" value={activeSessions} loading={statsLoading} tone="emerald" to="/sessions?tab=active" />
           ) : (

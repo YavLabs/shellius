@@ -2,7 +2,6 @@ import { useCallback, useEffect, useImperativeHandle, useRef, useState, forwardR
 import { ChevronDown, ChevronRight, RefreshCw, History, Send, Trash2 } from 'lucide-react';
 import { CardIcon, CardStatus } from '@/components/mobile/MobileCard';
 import EmptyState from '@/components/ui/EmptyState';
-import Avatar from '@/components/ui/Avatar';
 import { statusTone } from '@/lib/badgeTones';
 import DeployWizardModal from './DeployWizardModal';
 import { listDeploymentBatches, listDeployments, retryDeployment } from '@/services/keystoreService';
@@ -29,7 +28,7 @@ function ResultCounts({ counts }) {
           {counts[k]} {label}
         </span>
       ))}
-      <span className="text-muted-foreground/70">of {counts?.total || 0}</span>
+
     </span>
   );
 }
@@ -140,30 +139,34 @@ function BatchRow({ batch, canRetry, onChanged, defaultOpen, highlighted, rowRef
         highlighted ? 'border-primary ring-2 ring-primary/40' : 'border-border'
       }`}
     >
-      <button
-        type="button"
-        onClick={() => setOpen((o) => !o)}
-        aria-expanded={open}
-        className="flex w-full items-start gap-3 p-3.5 text-left md:px-4"
-      >
+      {/* Same structure as the list cards: what and who on top, the
+          result and the "Servers" toggle in an action row under a divider. */}
+      <div className="flex items-start gap-3 p-3.5 md:px-4">
         <CardIcon icon={ACTION_ICON[batch.action] || Send} />
-        <span className="min-w-0 flex-1">
-          <span className="flex min-w-0 items-center gap-2">
+        <div className="min-w-0 flex-1">
+          <div className="flex min-w-0 items-center gap-2">
             <span className="min-w-0 flex-1 truncate font-semibold leading-5 text-foreground">{batch.sshKey?.name || 'SSH key'}</span>
             <CardStatus {...batchStatus(batch.counts)} />
-            {open ? <ChevronDown className="h-4 w-4 shrink-0 text-muted-foreground" /> : <ChevronRight className="h-4 w-4 shrink-0 text-muted-foreground" />}
-          </span>
-          <span className="mt-0.5 flex min-w-0 items-center gap-1.5 text-xs leading-4 text-muted-foreground">
-            <Avatar name={batch.deployedBy?.name} email={batch.deployedBy?.email} avatarUrl={batch.deployedBy?.avatarUrl} size="xs" />
-            <span className="truncate">
-              {ACTION_LABEL[batch.action] || batch.action} · {batch.deployedBy?.name || 'system'} · {relativeTime(batch.createdAt)}
-            </span>
-          </span>
-          <span className="mt-2 block">
-            <ResultCounts counts={batch.counts} />
-          </span>
-        </span>
-      </button>
+          </div>
+          <p className="mt-0.5 truncate text-xs leading-4 text-muted-foreground">
+            {ACTION_LABEL[batch.action] || batch.action} · {batch.deployedBy?.name || 'system'} · {relativeTime(batch.createdAt)}
+          </p>
+        </div>
+      </div>
+      <div className="flex items-center gap-3 border-t border-border py-1.5 pl-3.5 pr-1.5 md:pl-4">
+        <div className="min-w-0 flex-1">
+          <ResultCounts counts={batch.counts} />
+        </div>
+        <button
+          type="button"
+          onClick={() => setOpen((o) => !o)}
+          aria-expanded={open}
+          className="inline-flex h-9 shrink-0 items-center gap-1 rounded-md px-2.5 text-xs font-medium text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+        >
+          Servers
+          {open ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
+        </button>
+      </div>
       {open && (
         <div className="border-t border-border">
           {loadError ? (

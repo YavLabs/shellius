@@ -19,6 +19,7 @@ import {
 import Modal from '@/components/shared/Modal';
 import ConfirmDialog from '@/components/shared/ConfirmDialog';
 import EnvironmentBadge from '@/components/shared/EnvironmentBadge';
+import { cn } from '@/lib/utils';
 import HealthStatusDot from '@/components/shared/HealthStatusDot';
 import ServerForm from '@/components/servers/ServerForm';
 import BootstrapModal from '@/components/servers/BootstrapModal';
@@ -74,6 +75,13 @@ function Field({ label, value, mono }) {
     </div>
   );
 }
+
+// Environment code colours (the list cards' bottom-left label).
+const ENV_TEXT = {
+  prod: 'text-rose-700 dark:text-rose-300',
+  staging: 'text-amber-700 dark:text-amber-300',
+  dev: 'text-sky-700 dark:text-sky-300',
+};
 
 function ServerDetail() {
   const { id } = useParams();
@@ -192,13 +200,17 @@ function ServerDetail() {
         <MobilePageHeader
           back={{ onClick: () => navigate('/servers'), label: 'Back to servers' }}
           title={server.displayName || server.hostname}
+          // Phones: one line — health dot, the environment code (as on the
+          // cards) and the address.
           subtitle={
-            <span className="flex flex-wrap items-center gap-x-2 gap-y-1">
-              <HealthStatusDot status={server.healthStatus} showLabel />
-              <EnvironmentBadge environment={server.environment} />
-              {server.displayName && server.displayName !== server.hostname && (
-                <span className="font-mono">{server.hostname}</span>
+            <span className="flex min-w-0 items-center gap-1.5">
+              <HealthStatusDot status={server.healthStatus} />
+              {server.environment && (
+                <span className={cn('shrink-0 text-[10px] font-semibold uppercase tracking-[0.14em]', ENV_TEXT[server.environment] || 'text-muted-foreground')}>
+                  {server.environment}
+                </span>
               )}
+              <span className="truncate font-mono">{server.hostname || server.ipAddress}</span>
             </span>
           }
           primaryNode={<QuickConnectButton server={server} currentUser={currentUser} />}
