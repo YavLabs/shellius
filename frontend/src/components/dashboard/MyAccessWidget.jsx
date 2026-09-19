@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Shield, ShieldAlert, Server, ChevronRight } from 'lucide-react';
+import { Shield, ShieldAlert, Server, ChevronRight, MoreHorizontal, KeyRound, Plus } from 'lucide-react';
 import EnvironmentBadge from '@/components/shared/EnvironmentBadge';
 import { Badge } from '@/components/ui/badge';
 import { getMyAccess } from '@/services/policyService';
@@ -8,6 +8,10 @@ import { cn } from '@/lib/utils';
 import useIsMobile from '@/hooks/useIsMobile';
 import { CardIcon, CardStatus, MobileCard } from '@/components/mobile/MobileCard';
 import { envAccent } from '@/lib/mobileCard';
+import { SectionTitle, ViewAllLink } from '@/components/mobile/MobileNavList';
+import { useAuth } from '@/context/AuthContext';
+import { canAccessRoute } from '@/lib/commands';
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
 
 function formatMaxTtl(seconds) {
   if (!seconds || seconds <= 0) return '-';
@@ -131,6 +135,8 @@ function MyAccessWidget({ wide = false }) {
 
   const totalCount = entries.length;
   const isMobile = useIsMobile();
+  const navigate = useNavigate();
+  const { user } = useAuth();
   const limit = isMobile ? 5 : LIMIT;
   const visible = showAll ? entries : entries.slice(0, limit);
   const groups = {};
@@ -142,6 +148,43 @@ function MyAccessWidget({ wide = false }) {
   return (
     // Phones: no frame around the widget — its rows are cards themselves.
     <div className="rounded-lg border border-border bg-card p-5 max-md:rounded-none max-md:border-0 max-md:bg-transparent max-md:p-0">
+      {isMobile ? (
+        <SectionTitle
+          title="My access"
+          count={!loading && totalCount > 0 ? totalCount : undefined}
+          action={
+            <>
+              {totalCount > limit && (
+                <ViewAllLink label={showAll ? 'Show less' : 'View all'} onClick={() => setShowAll((v) => !v)} />
+              )}
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <button
+                    type="button"
+                    aria-label="My access options"
+                    className="inline-flex h-10 w-10 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground"
+                  >
+                    <MoreHorizontal className="h-4 w-4" />
+                  </button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end" className="w-56">
+                  {canAccessRoute(user, '/servers') && (
+                    <DropdownMenuItem className="min-h-11" onSelect={() => navigate('/servers')}>
+                      <Server className="mr-2 h-4 w-4" /> Browse servers
+                    </DropdownMenuItem>
+                  )}
+                  <DropdownMenuItem className="min-h-11" onSelect={() => navigate('/access-requests')}>
+                    <KeyRound className="mr-2 h-4 w-4" /> My access requests
+                  </DropdownMenuItem>
+                  <DropdownMenuItem className="min-h-11" onSelect={() => navigate('/access-requests?new=1')}>
+                    <Plus className="mr-2 h-4 w-4" /> New access request
+                  </DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
+            </>
+          }
+        />
+      ) : (
       <div className="flex items-center justify-between mb-4 max-md:mb-3">
         <div>
           <h2 className="text-sm font-semibold text-foreground">My access</h2>
@@ -153,6 +196,7 @@ function MyAccessWidget({ wide = false }) {
           <span className="text-xs text-muted-foreground">{totalCount} server{totalCount === 1 ? '' : 's'}</span>
         )}
       </div>
+      )}
 
       {loading && (
         <div className="space-y-2">
@@ -195,7 +239,8 @@ function MyAccessWidget({ wide = false }) {
           ))}
           </div>
 
-          {totalCount > limit && (
+          {/* Phones: "View all" is in the section title. */}
+          {totalCount > limit && !isMobile && (
             <button
               type="button"
               onClick={() => setShowAll((s) => !s)}

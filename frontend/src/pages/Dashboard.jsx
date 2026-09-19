@@ -32,9 +32,10 @@ import { useQuickConnect } from '@/context/QuickConnectContext';
 import { QUICK_ACTIONS, isQuickActionVisible } from '@/lib/commands';
 import { cn } from '@/lib/utils';
 import useIsMobile from '@/hooks/useIsMobile';
+import { SectionTitle, ViewAllLink } from '@/components/mobile/MobileNavList';
 
-// Environment colours for the phone servers tile's split bar.
-const ENV_BAR = { prod: 'fill-rose-500', staging: 'fill-amber-500', dev: 'fill-sky-500', demo: 'fill-muted-foreground/50' };
+// Environment dot colours for the phone servers tile (the Badge tone dots).
+const ENV_DOT = { prod: 'bg-red-500', staging: 'bg-amber-500', dev: 'bg-blue-500', demo: 'bg-muted-foreground/60' };
 const ENV_ORDER = ['prod', 'staging', 'dev', 'demo'];
 
 /**
@@ -68,29 +69,22 @@ function StatTile({ icon: Icon, label, value, to, loading, tone = 'primary', chi
   );
 }
 
-/** Proportional environment split (Prod · Staging · Dev · Demo) as one thin bar. */
-function EnvSplit({ byEnv }) {
+/** Servers per environment as coloured dots with counts (same tones as the env badges). */
+function EnvCounts({ byEnv }) {
   const parts = ENV_ORDER.map((env) => [env, byEnv?.[env] || 0]).filter(([, n]) => n > 0);
-  const total = parts.reduce((sum, [, n]) => sum + n, 0);
-  if (!total) return null;
+  if (!parts.length) return null;
   return (
-    // SVG so each segment's width is an attribute (no inline styles).
-    <svg
-      viewBox={`0 0 ${total} 1`}
-      preserveAspectRatio="none"
-      className="h-1.5 w-full overflow-hidden rounded-full"
-      role="img"
-      aria-label={parts.map(([env, n]) => `${n} ${env}`).join(', ')}
-    >
-      <title>{parts.map(([env, n]) => `${env.toUpperCase()} ${n}`).join(' · ')}</title>
-      {parts.map(([env, n], i) => {
-        const x = parts.slice(0, i).reduce((sum, [, m]) => sum + m, 0);
-        return <rect key={env} x={x} y={0} width={n} height={1} className={ENV_BAR[env]} />;
-      })}
-    </svg>
+    <span className="flex min-w-0 flex-wrap items-center gap-x-2.5 gap-y-1 text-[11px] tabular-nums text-muted-foreground">
+      {parts.map(([env, n]) => (
+        <span key={env} className="inline-flex items-center gap-1" title={`${n} ${env}`}>
+          <span className={cn('h-1.5 w-1.5 rounded-full', ENV_DOT[env])} aria-hidden="true" />
+          <span className="sr-only">{env}</span>
+          {n}
+        </span>
+      ))}
+    </span>
   );
 }
-
 
 // Badge for audit action verbs — reuses the shared audit category tone map.
 function AuditRow({ item }) {
@@ -225,7 +219,7 @@ function Dashboard() {
       {isMobile && (
         <div className="grid grid-cols-2 gap-2">
           <StatTile icon={Server} label="Servers" value={serverStats.total} loading={statsLoading} to="/servers">
-            {!statsLoading && <EnvSplit byEnv={byEnv} />}
+            {!statsLoading && <EnvCounts byEnv={byEnv} />}
           </StatTile>
           {allSessions ? (
             <StatTile icon={Terminal} label="Active sessions" value={activeSessions} loading={statsLoading} tone="emerald" to="/sessions?tab=active" />
@@ -356,15 +350,16 @@ function Dashboard() {
         <MyAccessWidget wide={!isAdmin} />
 
         {isAdmin && (
-          <div className="flex flex-col rounded-lg border border-border bg-card p-5 max-md:p-4">
-            <div className="mb-3 flex items-center justify-between">
+          <div className="flex flex-col rounded-lg border border-border bg-card p-5 max-md:rounded-none max-md:border-0 max-md:bg-transparent max-md:p-0">
+            {isMobile && <SectionTitle title="Recent activity" action={<ViewAllLink to="/audit-log" />} />}
+            <div className="mb-3 flex items-center justify-between max-md:hidden">
               <div>
                 <h2 className="text-sm font-semibold text-foreground">Recent activity</h2>
                 <p className="mt-0.5 text-xs text-muted-foreground max-md:hidden">Latest audit events across the organization</p>
               </div>
             </div>
 
-            <div className="-mx-2 flex-1">
+            <div className="-mx-2 flex-1 max-md:mx-0 max-md:rounded-lg max-md:border max-md:border-border max-md:bg-card max-md:px-1 max-md:py-1">
               {auditLoading ? (
                 <div className="space-y-3 px-2">
                   {Array.from({ length: 6 }).map((_, i) => (
@@ -391,7 +386,7 @@ function Dashboard() {
             <button
               type="button"
               onClick={() => navigate('/audit-log')}
-              className="mt-4 flex h-9 w-full items-center justify-center gap-1 rounded-md border border-border text-sm font-medium text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+              className="mt-4 flex h-9 w-full items-center justify-center gap-1 rounded-md border border-border max-md:hidden text-sm font-medium text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
             >
               View all activity
               <ArrowRight className="h-3.5 w-3.5" />

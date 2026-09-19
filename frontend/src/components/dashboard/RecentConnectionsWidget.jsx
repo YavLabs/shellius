@@ -47,6 +47,7 @@ import { cn } from '@/lib/utils';
 import useIsMobile from '@/hooks/useIsMobile';
 import { CardIcon, MobileCard } from '@/components/mobile/MobileCard';
 import { envAccent } from '@/lib/mobileCard';
+import { SectionTitle, ViewAllLink } from '@/components/mobile/MobileNavList';
 
 // Widget (dashboard) shows a few per group and links to the full page.
 const WIDGET_ACTIVE_LIMIT = 3;
@@ -235,6 +236,8 @@ export function RecentConnections({ variant = 'widget', showQuickConnect = true 
   // Phones show fewer rows (the dashboard stacks everything in one column).
   const isMobile = useIsMobile();
   const recentLimit = isMobile ? 3 : WIDGET_RECENT_LIMIT;
+  // The dashboard widget on a phone: section title outside, no inner headings.
+  const compact = isMobile && !isPage;
   const activeLimit = isMobile ? 2 : WIDGET_ACTIVE_LIMIT;
 
   // Page: filter by text and type. Widget: first few of each group.
@@ -350,7 +353,34 @@ export function RecentConnections({ variant = 'widget', showQuickConnect = true 
         !isPage && 'h-full'
       )}
     >
-      <div className="mb-3 flex flex-wrap items-start justify-between gap-2 max-md:mb-1 max-md:items-center">
+      {compact ? (
+        // Phones (dashboard): one section title with "View all" and the menu.
+        <SectionTitle
+          title="Recent connections"
+          action={
+            <>
+              <ViewAllLink to="/connections" />
+                    <RowMenu label="Recent connections options">
+                      <DropdownMenuItem onSelect={() => navigate('/terminals')}>
+                        <SquareTerminal className="mr-2 h-4 w-4" /> Open terminals
+                      </DropdownMenuItem>
+                      <DropdownMenuItem onSelect={() => navigate('/sessions')}>
+                        <History className="mr-2 h-4 w-4" /> Session history
+                      </DropdownMenuItem>
+                      {qcAllowed && history.length > 0 && (
+                        <>
+                          <DropdownMenuSeparator />
+                          <DropdownMenuItem onSelect={() => setConfirmClear(true)} className="text-destructive focus:text-destructive">
+                            <Trash2 className="mr-2 h-4 w-4" /> Clear Quick Connect history
+                          </DropdownMenuItem>
+                        </>
+                      )}
+                    </RowMenu>
+            </>
+          }
+        />
+      ) : (
+      <div className="mb-3 flex flex-wrap items-start justify-between gap-2 ">
         {isPage ? (
           <div className="flex min-w-0 flex-1 basis-full flex-wrap items-center gap-2 md:basis-0">
             <div className="relative w-full md:max-w-xs">
@@ -419,6 +449,7 @@ export function RecentConnections({ variant = 'widget', showQuickConnect = true 
           </RowMenu>
         </div>
       </div>
+      )}
 
       {actionError && (
         <div className="mb-3 flex items-start gap-2 rounded-md border border-destructive/50 bg-destructive/10 px-3 py-2 text-xs text-destructive">
@@ -455,7 +486,7 @@ export function RecentConnections({ variant = 'widget', showQuickConnect = true 
 
       {noMatches && <p className="py-8 text-center text-sm text-muted-foreground">No connections match these filters.</p>}
 
-      <div className={cn('min-h-0 flex-1 space-y-3', !isPage && 'overflow-y-auto')}>
+      <div className={cn('min-h-0 flex-1 space-y-3', !isPage && !compact && 'overflow-y-auto')}>
         {/* ── Active now ─────────────────────────────────────────────── */}
         {active.length > 0 && (
           <section aria-label="Active sessions" id={isPage ? 'active' : undefined}>
@@ -463,7 +494,7 @@ export function RecentConnections({ variant = 'widget', showQuickConnect = true 
               icon={PlugZap}
               title="Active now"
               count={isPage ? active.length : allActive.length}
-              viewAllTo={!isPage && allActive.length > activeLimit ? '/connections#active' : null}
+              viewAllTo={!isPage && !compact && allActive.length > activeLimit ? '/connections#active' : null}
             />
             <ul className="max-md:grid max-md:auto-rows-fr max-md:gap-2">
               {active.map((s) => {
@@ -513,14 +544,17 @@ export function RecentConnections({ variant = 'widget', showQuickConnect = true 
         {/* ── Recent ─────────────────────────────────────────────────── */}
         {recentFiltered.length > 0 && (
           <section aria-label="Recent connections" id={isPage ? 'recent' : undefined}>
+            {/* Phones: only needed to tell it apart from "Active now". */}
+            {(!compact || active.length > 0) && (
             <SectionHeader
               icon={History}
               title="Recent"
               // Widget fetches only a few, so it can't know the true total.
               count={isPage ? recentFiltered.length : undefined}
               hint={isPage ? (days === 30 && qcAllowed ? 'Last 30 days · Quick Connect history is kept 7 days' : `Last ${days} days`) : 'Last 7 days'}
-              viewAllTo={!isPage && recent.length > recentLimit ? '/connections#recent' : null}
+              viewAllTo={!isPage && !compact && recent.length > recentLimit ? '/connections#recent' : null}
             />
+            )}
             <ul className="max-md:grid max-md:auto-rows-fr max-md:gap-2">
               {recentFiltered.map((r) => {
                 if (r.kind === 'server') {

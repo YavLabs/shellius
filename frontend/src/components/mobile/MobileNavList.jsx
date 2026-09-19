@@ -93,3 +93,39 @@ export function SearchLauncher({ onClick, placeholder = 'Search servers, users, 
     </button>
   );
 }
+
+/**
+ * Phone section title (dashboard widgets and similar): a short brand bar,
+ * the title, an optional muted count, and an action (usually "View all")
+ * at the end. Space above it sets the section apart.
+ */
+export function SectionTitle({ title, count, action, className }) {
+  return (
+    <div className={cn('flex min-h-9 items-center gap-2 pb-1.5 pt-3', className)}>
+      <span className="bg-brand-gradient h-4 w-1 shrink-0 rounded-full" aria-hidden="true" />
+      <h2 className="min-w-0 truncate text-[15px] font-semibold tracking-tight text-foreground">{title}</h2>
+      {typeof count === 'number' && <span className="text-xs tabular-nums text-muted-foreground">{count}</span>}
+      {action && <span className="ml-auto flex shrink-0 items-center gap-1">{action}</span>}
+    </div>
+  );
+}
+
+/** "View all ›" for a SectionTitle: a link (`to`) or a button (`onClick`). */
+export function ViewAllLink({ to, onClick, label = 'View all' }) {
+  const cls = 'inline-flex h-9 items-center gap-0.5 rounded-md px-1.5 text-sm font-medium text-[hsl(var(--brand))] active:bg-accent';
+  const body = (
+    <>
+      {label}
+      <ChevronRight className="h-4 w-4" aria-hidden="true" />
+    </>
+  );
+  return to ? (
+    <Link to={to} className={cls}>
+      {body}
+    </Link>
+  ) : (
+    <button type="button" onClick={onClick} className={cls}>
+      {body}
+    </button>
+  );
+}
