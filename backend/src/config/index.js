@@ -8,13 +8,15 @@
  *   TRAEFIK_HOST=shellius.example.com
  *
  * and all the URL-based callers (SSO, device auth, CORS, bootstrap links,
- * email buttons) just work. The old per-purpose vars (CORS_ORIGIN,
- * FRONTEND_URL, PUBLIC_BASE_URL) remain honored as overrides for anyone
- * who already has them set, so this change is backwards compatible.
+ * email buttons) just work. Overrides, in order: APP_URL, PUBLIC_BASE_URL,
+ * FRONTEND_URL (all mean "the public URL of the web app"); CORS_ORIGIN
+ * overrides CORS only.
  */
 
 function computePublicBaseUrl() {
-  // Explicit override wins.
+  // Explicit overrides win. APP_URL is the documented "public URL of the web
+  // app"; PUBLIC_BASE_URL / FRONTEND_URL are older spellings of the same.
+  if (process.env.APP_URL) return stripTrailingSlash(process.env.APP_URL);
   if (process.env.PUBLIC_BASE_URL) return stripTrailingSlash(process.env.PUBLIC_BASE_URL);
   if (process.env.FRONTEND_URL) return stripTrailingSlash(process.env.FRONTEND_URL);
   // Derive from TRAEFIK_HOST (bare hostname — we assume https in prod).

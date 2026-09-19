@@ -9,6 +9,25 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 Tracked here as work lands on `main`; moved into a dated section on release
 (`node scripts/version.mjs bump <major|minor|patch>`).
 
+## [1.2.1] - 2026-09-19
+
+Security fix release. Upgrade recommended. If you don't use `TRAEFIK_HOST`, set `APP_URL` to the
+public URL of the web app.
+
+### Security
+
+- Invite, password-reset, email-verification and approval links were built from the request's
+  `Host` header when `TRAEFIK_HOST` wasn't set. On the public "forgot password" endpoint, a forged
+  `Host` could put the reset token on another domain (reset-link poisoning). Links now always use
+  the configured app URL.
+
+### Fixed
+
+- Links that open app pages now use `APP_URL` (the public URL of the web app, falling back to
+  `PUBLIC_BASE_URL`, `FRONTEND_URL` or `TRAEFIK_HOST`). Previously the "SMTP unavailable" reset
+  dialog, and emails, could show the backend address (for example `http://localhost:3001`).
+  `APP_URL` now also applies everywhere else the app URL is used, not only SSO.
+
 ## [1.2.0] - 2026-09-18
 
 This release adds **custom roles** and fixes the gaps found in a full RBAC audit, including
