@@ -9,10 +9,30 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 Tracked here as work lands on `main`; moved into a dated section on release
 (`node scripts/version.mjs bump <major|minor|patch>`).
 
+### Added
+
+- **Connect sign-in providers from Profile.** Sign-in methods lists every SSO provider the organization uses, with Connect for the ones you haven't linked and Disconnect for the ones you have. Connecting links the provider account to you, never to another account with the same email. An account already linked to another user is refused.
+- **Set a password.** People who sign in only with SSO can add a password from Profile. They confirm it's them with their two-factor code, or with a code emailed to them.
+- **Sign-in methods for administrators.** On Users, "Sign-in methods" shows whether a user has a password and which SSO accounts are linked, and can unlink one. It needs the new "Manage sign-in methods" permission (Admin and Super admin by default) and follows the same rule as editing users: you can't act on someone whose role has more permissions than yours.
+- **Require single sign-on** (Settings → Access). When on, password sign-in, password resets and adding a password are refused, except for roles with the "Single sign-on" permission, so an administrator can still sign in if the identity provider breaks. The sign-in page shows only the SSO buttons.
+- Emails when an SSO account is linked to or unlinked from your account, and when a password is added.
+
 ### Changed
 
 - The sidebar collapses automatically on the Terminals workspace and Administration. You can still expand it there; leaving restores your usual setting.
 - The Shellius logo files (`frontend/public/brand`) have outlined, evenly spaced lettering, so the gap between SHELL, the bar and US is gone and they look the same without the font installed.
+- Signing in with SSO for the first time no longer links the provider to an existing account with the same email straight away:
+  - If the account has a password, you confirm with that password (and your two-factor code, if you use one) before the provider is linked. This applies to every role.
+  - If the account has no password but has administrative permissions, an approval link is emailed to the account.
+  - Other accounts without a password are linked as before.
+- The sign-in page no longer jumps straight to the identity provider for SSO-only accounts. It shows "This account signs in with <Provider>" and a Continue button.
+- The SSO provider form warns when "Require verified email" is turned off.
+- People who have both a password and a linked SSO account can change their password again.
+
+### Security
+
+- An identity provider account with the same email can no longer take over a Shellius account without the account's password, two-factor code or an emailed approval. Wrong passwords on the confirm page count toward the account lockout.
+- Linking and unlinking SSO accounts are recorded in the audit log as their own events (`auth.identity.linked`, `auth.identity.unlinked`), with how it happened.
 
 ## [1.4.1] - 2026-09-19
 

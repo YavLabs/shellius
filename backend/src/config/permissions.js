@@ -627,6 +627,19 @@ export const PERMISSIONS = [
     findings: ['UI-2.3'],
   },
 
+  {
+    key: 'users.manage_identities',
+    group: 'users',
+    label: 'Manage sign-in methods',
+    description:
+      'See whether a user has a password and which SSO accounts are linked to them, and unlink an SSO account. Only for users whose role you could assign; the last way to sign in can never be removed.',
+    sensitive: true,
+    defaults: ADM,
+    current: [],
+    endpoints: ['GET /api/users/:id/identities', 'DELETE /api/users/:id/identities/:identityId'],
+    since: 3,
+  },
+
   // -------------------------------------------------------------------- roles
   {
     key: 'roles.view',
@@ -715,6 +728,19 @@ export const PERMISSIONS = [
 export const CATALOG_VERSION = Math.max(...PERMISSIONS.map((p) => p.since));
 
 export const PERMISSION_KEYS = PERMISSIONS.map((p) => p.key);
+
+/**
+ * "Privileged" permissions — an account holding any of them is an attractive
+ * takeover target, so linking a new SSO identity to it by email alone needs a
+ * stronger proof (docs/auth-hardening.md "Linking SSO accounts"). Derived
+ * from the catalogue, never from role names: every write permission in the
+ * users / roles / settings groups (the view-only keys are excluded) plus
+ * `access.prod_bypass`.
+ */
+export const PRIVILEGED_PERMISSIONS = PERMISSIONS.filter(
+  (p) =>
+    (['users', 'roles', 'settings'].includes(p.group) && !/\.view(_|$)/.test(p.key)) || p.key === 'access.prod_bypass'
+).map((p) => p.key);
 const KEY_SET = new Set(PERMISSION_KEYS);
 
 export function isPermission(key) {

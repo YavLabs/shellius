@@ -18,6 +18,9 @@ const SAMPLES = {
   accessRequestApproved: { recipientName: 'A', serverHostname: 'h', environment: 'prod', expiresAt: '2026-04-07T02:00:00Z', connectUrl: 'https://x.test/c' },
   inviteSso: { recipientName: 'A', orgName: 'Acme', loginUrl: 'https://x.test/login', providerLabel: 'Google' },
   mfaOtp: { recipientName: 'A', code: '123456', minutes: 10 },
+  identityLinked: { recipientName: 'A', providerName: 'Google', identityEmail: 'a@x.test', ipAddress: '1.2.3.4', when: '2026-04-07T01:00:00Z' },
+  identityUnlinked: { recipientName: 'A', providerName: 'GitHub', identityEmail: 'a@x.test', byAdmin: true, when: '2026-04-07T01:00:00Z' },
+  ssoLinkApproval: { recipientName: 'A', providerName: '<b>Okta</b>', identityEmail: 'a@x.test', approveUrl: 'https://x.test/sso/link/approve?token=t', expiresInMinutes: 30, ipAddress: '1.2.3.4' },
   accessRequestDenied: { recipientName: 'A', serverHostname: 'h', deniedReason: 'no' },
   certificateExpiring: { recipientName: 'A', serverHostname: 'h', expiresAt: '2026-04-07T02:00:00Z', renewUrl: 'https://x.test/n' },
   verifyEmail: { recipientName: 'A', verifyUrl: 'https://x.test/v/1', expiresInHours: 24 },
@@ -61,6 +64,26 @@ describe('email templates — XSS escape', () => {
   test('invite template escapes & in orgName', () => {
     const { html } = renderTemplate('invite', SAMPLES.invite);
     expect(html).toContain('Acme &amp; Co');
+  });
+});
+
+describe('email templates — SSO linking', () => {
+  test('ssoLinkApproval escapes the provider name and carries the approve link', () => {
+    const { html, text } = renderTemplate('ssoLinkApproval', SAMPLES.ssoLinkApproval);
+    expect(html).not.toContain('<b>Okta</b>');
+    expect(html).toContain('&lt;b&gt;Okta&lt;/b&gt;');
+    expect(text).toContain('https://x.test/sso/link/approve?token=t');
+  });
+
+  test('identityLinked tells the user to contact an administrator', () => {
+    const { subject, text } = renderTemplate('identityLinked', SAMPLES.identityLinked);
+    expect(subject).toContain('Google account was linked');
+    expect(text).toMatch(/If this wasn't you, contact your administrator/);
+  });
+
+  test('passwordChanged has an "added" variant', () => {
+    const { subject } = renderTemplate('passwordChanged', { ...SAMPLES.passwordChanged, added: true });
+    expect(subject).toBe('[Shellius] A password was added to your account');
   });
 });
 

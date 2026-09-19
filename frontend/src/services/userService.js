@@ -54,3 +54,15 @@ export const exportMyData = () =>
   });
 export const deleteMyAccount = () =>
   api.delete('/users/me').then((r) => r.data?.data ?? r.data);
+
+// Sign-in methods
+/** POST /api/auth/password/set/send-code — email the one-time proof code. */
+export const sendSetPasswordCode = () =>
+  api.post('/auth/password/set/send-code').then((r) => r.data?.data ?? r.data);
+/** POST /api/auth/password/set { newPassword, method, code } — accounts without a password. */
+export const setMyPassword = (body) => api.post('/auth/password/set', body).then((r) => r.data?.data ?? r.data);
+/** GET /api/users/:id/identities → { hasPassword, passwordUsable, identities } (users.manage_identities). */
+export const getUserIdentities = (id) => api.get(`/users/${id}/identities`).then((r) => r.data?.data ?? r.data);
+/** DELETE /api/users/:id/identities/:identityId (users.manage_identities). */
+export const unlinkUserIdentity = (id, identityId) =>
+  api.delete(`/users/${id}/identities/${identityId}`).then((r) => r.data?.data ?? r.data);

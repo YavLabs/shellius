@@ -4,15 +4,17 @@ import bcrypt from 'bcryptjs';
 import asyncHandler from '../utils/asyncHandler.js';
 import ApiError from '../utils/ApiError.js';
 import authenticate from '../middleware/auth.js';
-import { authLimiter, tokenActionLimiter } from '../middleware/rateLimiter.js';
+import { authLimiter, tokenActionLimiter, userRateLimiter } from '../middleware/rateLimiter.js';
 import * as authService from '../services/authService.js';
 import * as inviteService from '../services/inviteService.js';
 import * as userService from '../services/userService.js';
 import * as ssoService from '../services/ssoService.js';
 import * as mfaService from '../services/mfaService.js';
+import * as ssoLinkService from '../services/ssoLinkService.js';
+import { passwordSignInBlocked } from '../services/orgService.js';
 import { sendMail } from '../services/mailer.js';
 import { renderTemplate } from '../email/index.js';
-import { log as auditLog } from '../services/auditService.js';
+import { log as auditLog, ACTIONS } from '../services/auditService.js';
 import prisma from '../config/db.js';
 import config from '../config/index.js';
 
@@ -112,6 +114,26 @@ async function resolvePublicOrg(req) {
   return prisma.organization.findFirst({ orderBy: { createdAt: 'asc' } });
 }
 
+/**
+ * Org requires single sign-on (Organization.settings.access.ssoRequired) and
+ * this user's role doesn't hold settings.sso: passwords can't be set or
+ * reset. Audited, then throws 403 SSO_REQUIRED.
+ */
+async function refuseIfSsoRequired(user, req, context) {
+  if (!(await passwordSignInBlocked(user))) return;
+  await auditLog({
+    orgId: user.orgId,
+    actorId: null,
+    action: ACTIONS.auth.sso_required_blocked,
+    resourceType: 'User',
+    resourceId: user.id,
+    metadata: { context },
+    ipAddress: req.ip,
+    userAgent: req.headers['user-agent'],
+  });
+  throw authService.ssoRequiredError();
+}
+
 // ---------------------------------------------------------------------------
 // Existing routes
 // ---------------------------------------------------------------------------
@@ -141,11 +163,14 @@ router.post(
     const { email } = req.body;
     const org = await resolvePublicOrg(req);
     const sso = org ? await ssoService.getPublicSsoSummary(org.id) : { enabled: false, presetId: null, providers: [] };
-    const state = await authService.getLoginState(email);
+    const state = await authService.getLoginState(email, org?.id || null);
     res.json({
       success: true,
       data: {
         hasPassword: state.hasPassword,
+        // Org requires SSO and this account isn't exempt (settings.sso) — the
+        // login page shows only the SSO buttons.
+        ssoRequired: !!state.ssoRequired,
         ssoEnabled: !!sso.enabled,
         ssoPresetId: sso.presetId || null,
         providers: sso.providers || [],
@@ -240,18 +265,60 @@ router.delete(
   '/identities/:id',
   authenticate,
   asyncHandler(async (req, res) => {
-    await ssoService.deleteUserIdentity(req.user.userId, req.params.id);
-    await auditLog({
+    // Audited (auth.identity.unlinked, method: self) + notification email
+    // inside the service.
+    await ssoLinkService.unlinkOwnIdentity({
       orgId: req.user.orgId,
-      actorId: req.user.userId,
-      action: 'auth.identity.unlinked',
-      resourceType: 'User',
-      resourceId: req.user.userId,
-      metadata: { identityId: req.params.id },
+      userId: req.user.userId,
+      identityId: req.params.id,
       ipAddress: req.ip,
       userAgent: req.headers['user-agent'],
     });
     res.status(204).send();
+  })
+);
+
+// ---------------------------------------------------------------------------
+// Set a password — for accounts that have none (SSO-only). Requires a
+// recent-auth proof: an MFA code when enrolled, otherwise an emailed
+// one-time code from POST /password/set/send-code. Refused when the org
+// requires SSO and the user isn't exempt.
+// ---------------------------------------------------------------------------
+
+const setPasswordLimiter = userRateLimiter({ keyPrefix: 'rl:password-set', windowSeconds: 15 * 60, max: 10 });
+
+router.post(
+  '/password/set/send-code',
+  authenticate,
+  setPasswordLimiter,
+  asyncHandler(async (req, res) => {
+    const result = await ssoLinkService.sendSetPasswordCode({ orgId: req.user.orgId, userId: req.user.userId });
+    res.json({ success: true, data: result });
+  })
+);
+
+const setPasswordSchema = Joi.object({
+  newPassword: strongPasswordSchema,
+  method: Joi.string().valid('totp', 'email', 'backup').required(),
+  code: Joi.string().min(1).max(64).required(),
+});
+
+router.post(
+  '/password/set',
+  authenticate,
+  setPasswordLimiter,
+  validate(setPasswordSchema),
+  asyncHandler(async (req, res) => {
+    const result = await ssoLinkService.setInitialPassword({
+      orgId: req.user.orgId,
+      userId: req.user.userId,
+      newPassword: req.body.newPassword,
+      method: req.body.method,
+      code: req.body.code,
+      ipAddress: req.ip,
+      userAgent: req.headers['user-agent'],
+    });
+    res.json({ success: true, data: result });
   })
 );
 
@@ -355,6 +422,7 @@ router.post(
         code: 'INVITE_NOT_PENDING',
       });
     }
+    await refuseIfSsoRequired(user, req, 'invite_accept');
 
     const passwordHash = await bcrypt.hash(req.body.password, config.bcryptRounds);
 
@@ -435,6 +503,7 @@ router.post(
     if (['suspended', 'deactivated', 'deleted'].includes(user.status)) {
       throw new ApiError(403, 'Account is disabled', { code: 'ACCOUNT_DISABLED' });
     }
+    await refuseIfSsoRequired(user, req, 'password_reset');
 
     const passwordHash = await bcrypt.hash(req.body.password, config.bcryptRounds);
     const updateData = { passwordHash, passwordChangedAt: new Date() };
@@ -496,6 +565,8 @@ router.post(
         });
 
         if (!user || user.status === 'deactivated') return;
+        // SSO-required org: no reset email (the response is 204 either way).
+        if (await passwordSignInBlocked(user)) return;
 
         const { rawToken } = await inviteService.createInvite(
           user.id,

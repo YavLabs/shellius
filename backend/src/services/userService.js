@@ -518,8 +518,11 @@ export async function changePassword(userId, currentPassword, newPassword, ipAdd
   const user = await prisma.user.findUnique({ where: { id: userId } });
   if (!user) throw new ApiError(404, 'User not found');
 
-  if (!user.passwordHash || user.ssoProvider) {
-    throw new ApiError(400, 'Password change is not available for SSO accounts');
+  // Only "no password yet" blocks a change — an account with a linked SSO
+  // identity AND a password may change it (SSO-only accounts use
+  // POST /api/auth/password/set instead).
+  if (!user.passwordHash) {
+    throw new ApiError(400, 'This account has no password yet — set one from your profile instead');
   }
 
   const ok = await bcrypt.compare(currentPassword, user.passwordHash);

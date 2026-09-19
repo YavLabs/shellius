@@ -24,6 +24,9 @@ import * as accountDeleted from './templates/accountDeleted.js';
 import * as verifyEmail from './templates/verifyEmail.js';
 import * as smtpTest from './templates/smtpTest.js';
 import * as mfaOtp from './templates/mfaOtp.js';
+import * as identityLinked from './templates/identityLinked.js';
+import * as identityUnlinked from './templates/identityUnlinked.js';
+import * as ssoLinkApproval from './templates/ssoLinkApproval.js';
 
 const TEMPLATES = {
   invite,
@@ -39,6 +42,9 @@ const TEMPLATES = {
   verifyEmail,
   smtpTest,
   mfaOtp,
+  identityLinked,
+  identityUnlinked,
+  ssoLinkApproval,
 };
 
 export function renderTemplate(name, vars) {

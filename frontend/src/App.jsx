@@ -33,6 +33,8 @@ import Profile from './pages/Profile';
 import Register from './pages/Register';
 import Legal from './pages/Legal';
 import AuthCallback from './pages/AuthCallback';
+import SsoLink from './pages/SsoLink';
+import SsoLinkApprove from './pages/SsoLinkApprove';
 import NotFound from './pages/NotFound';
 import InstallCli from './pages/InstallCli';
 import ApproveRequest from './pages/ApproveRequest';
@@ -58,6 +60,8 @@ function App() {
               <Route path="/register" element={<Register />} />
               <Route path="/legal/:doc" element={<Legal />} />
               <Route path="/auth/callback" element={<AuthCallback />} />
+              <Route path="/sso/link" element={<SsoLink />} />
+              <Route path="/sso/link/approve" element={<SsoLinkApprove />} />
               <Route element={<ProtectedRoute />}>
                 {/* Forced MFA enrollment — full screen, no app chrome */}
                 <Route path="/mfa-setup" element={<MfaSetup />} />

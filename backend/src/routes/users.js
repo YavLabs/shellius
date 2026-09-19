@@ -11,6 +11,9 @@ import { tokenActionLimiter } from '../middleware/rateLimiter.js';
 import * as userService from '../services/userService.js';
 import * as inviteService from '../services/inviteService.js';
 import * as userInviteService from '../services/userInviteService.js';
+import * as ssoLinkService from '../services/ssoLinkService.js';
+import * as authService from '../services/authService.js';
+import { passwordSignInBlocked } from '../services/orgService.js';
 import { sendMail } from '../services/mailer.js';
 import { renderTemplate } from '../email/index.js';
 import { log as auditLog } from '../services/auditService.js';
@@ -523,6 +526,8 @@ router.post(
     if (!user) throw new ApiError(404, 'User not found');
     await userService.assertCanManageUser(req.orgId, actorFromReq(req), user, "reset this user's password");
     if (user.status !== 'active') throw new ApiError(409, 'Only active users can reset their password');
+    // Org requires SSO and this user isn't exempt — a reset link would be useless.
+    if (await passwordSignInBlocked(user)) throw authService.ssoRequiredError();
 
     const { rawToken } = await inviteService.createInvite(user.id, inviteService.TOKEN_TYPES.PASSWORD_RESET, 1);
     const resetUrl = inviteService.buildTokenUrl(inviteService.TOKEN_TYPES.PASSWORD_RESET, rawToken, req);
@@ -557,6 +562,43 @@ router.post(
 
     const data = { success: true };
     if (!mailResult.delivered) data.resetUrl = resetUrl;
+    res.json({ success: true, data });
+  })
+);
+
+// ---------------------------------------------------------------------------
+// Sign-in methods — GET /:id/identities, DELETE /:id/identities/:identityId
+// (users.manage_identities). Same no-escalation rule as managing the user
+// (roleService.canActOnRole), and the last way to sign in can't be removed.
+// Unlinks are audited (auth.identity.unlinked, method: admin) and the user
+// is emailed.
+// ---------------------------------------------------------------------------
+
+router.get(
+  '/:id/identities',
+  requirePermission('users.manage_identities'),
+  asyncHandler(async (req, res) => {
+    const data = await ssoLinkService.listIdentitiesForAdmin({
+      orgId: req.orgId,
+      actor: actorFromReq(req),
+      userId: req.params.id,
+    });
+    res.json({ success: true, data });
+  })
+);
+
+router.delete(
+  '/:id/identities/:identityId',
+  requirePermission('users.manage_identities'),
+  asyncHandler(async (req, res) => {
+    const data = await ssoLinkService.adminUnlinkIdentity({
+      orgId: req.orgId,
+      actor: actorFromReq(req),
+      userId: req.params.id,
+      identityId: req.params.identityId,
+      ipAddress: req.ip,
+      userAgent: req.headers['user-agent'],
+    });
     res.json({ success: true, data });
   })
 );

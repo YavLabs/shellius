@@ -34,6 +34,8 @@ async function performRefresh() {
   return data.accessToken;
 }
 
+const CREDENTIAL_ERROR_CODES = new Set(['INVALID_CREDENTIALS', 'MFA_INVALID', 'MFA_CHALLENGE_EXPIRED']);
+
 api.interceptors.response.use(
   (response) => response,
   async (error) => {
@@ -71,11 +73,17 @@ api.interceptors.response.use(
       return Promise.reject(error);
     }
 
+    // A 401 that is a wrong password / code (e.g. confirming an SSO link,
+    // setting a password) is an answer, not an expired session — don't
+    // refresh-and-retry it (that would replay the attempt, or bounce a
+    // signed-out /sso/link page to /login).
     if (
       status === 401 &&
       !originalRequest._retry &&
+      !CREDENTIAL_ERROR_CODES.has(code) &&
       !url.includes('/auth/login') &&
-      !url.includes('/auth/refresh')
+      !url.includes('/auth/refresh') &&
+      !url.includes('/auth/sso/confirm-link')
     ) {
       originalRequest._retry = true;
       try {
