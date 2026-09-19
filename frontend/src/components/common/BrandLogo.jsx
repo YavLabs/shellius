@@ -102,3 +102,16 @@ export default function BrandLogo({ size = 'md', className = '', wordmarkClassNa
     </div>
   );
 }
+
+/**
+ * BrandLockupStacked — mark above wordmark (brand guideline 01, "Stacked":
+ * splash, login, print covers). Wordmark ≈ 0.44 of the mark height.
+ */
+export function BrandLockupStacked({ className = '' }) {
+  return (
+    <div className={`flex flex-col items-center gap-3 ${className}`}>
+      <BrandMark size="lg" className="h-14 w-14" />
+      <BrandWordmark className="text-[24px]" />
+    </div>
+  );
+}

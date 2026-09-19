@@ -215,6 +215,8 @@
   }
 
   .auth-fey main h1 {
+    font-size: 1.625rem;
+    line-height: 2rem;
     font-family: theme('fontFamily.brand');
     font-weight: 700;
     letter-spacing: -0.02em;

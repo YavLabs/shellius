@@ -2,7 +2,7 @@ import { useMemo } from 'react';
 import { Link } from 'react-router-dom';
 import { APP_VERSION } from '@/version';
 import useOrgName from '@/hooks/useOrgName';
-import BrandLogo from '@/components/common/BrandLogo';
+import { BrandLockupStacked } from '@/components/common/BrandLogo';
 import { cn } from '@/lib/utils';
 import FlowRing from './FlowRing';
 
@@ -70,18 +70,15 @@ function AuthShell({ children, align = 'center', className, footer }) {
         ))}
         <div className="auth-aura" />
       </div>
-      <header className="relative flex items-center px-5 pt-5">
-        <Link to="/" aria-label="Home" className="transition-opacity hover:opacity-90">
-          <BrandLogo size="sm" />
-        </Link>
-      </header>
       <main
         className={cn(
-          'relative flex flex-1 flex-col items-center px-4',
+          'relative flex flex-1 flex-col items-center px-4 pt-10',
           align === 'center' ? 'justify-center py-10' : 'py-8',
           className
         )}
       >
+        {/* Stacked lockup centred above each page's title (brand: login). */}
+        <BrandLockupStacked className="mb-8" />
         {children}
       </main>
       <AuthFooter className="relative">{footer}</AuthFooter>
