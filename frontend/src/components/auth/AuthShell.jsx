@@ -2,7 +2,7 @@ import { useMemo } from 'react';
 import { Link } from 'react-router-dom';
 import { APP_VERSION } from '@/version';
 import useOrgName from '@/hooks/useOrgName';
-import { BrandLockupStacked } from '@/components/common/BrandLogo';
+import BrandLogo, { BrandLockupStacked } from '@/components/common/BrandLogo';
 import { cn } from '@/lib/utils';
 import FlowRing from './FlowRing';
 
@@ -57,12 +57,14 @@ export function AuthFooter({ className, children }) {
  *
  *   align   'center' (forms, default) | 'top' (long documents)
  *   footer  optional line above the legal links (e.g. the sign-up prompt)
+ *   logo    'corner' (horizontal lockup top left, default) | 'stacked'
+ *           (big lockup centred as the heading — sign-in page)
  */
-function AuthShell({ children, align = 'center', className, footer }) {
+function AuthShell({ children, align = 'center', className, footer, logo = 'corner' }) {
   // A different mix of ring sizes on every visit.
   const rings = useMemo(() => RINGS.map((r) => ({ ...r, scale: 0.65 + Math.random() * 0.7 })), []);
   return (
-    <div className="auth-fey relative isolate flex min-h-screen flex-col overflow-hidden">
+    <div className={cn('auth-fey relative isolate flex min-h-screen flex-col overflow-hidden', logo === 'stacked' && 'auth-stacked')}>
       <div aria-hidden="true" className="auth-backdrop -z-10">
         <div className="brand-bloom absolute inset-0" />
         {rings.map((r, i) => (
@@ -70,6 +72,13 @@ function AuthShell({ children, align = 'center', className, footer }) {
         ))}
         <div className="auth-aura" />
       </div>
+      {logo === 'corner' && (
+        <header className="relative flex items-center px-6 pt-6">
+          <Link to="/" aria-label="Home" className="transition-opacity hover:opacity-90">
+            <BrandLogo size="sm" />
+          </Link>
+        </header>
+      )}
       <main
         className={cn(
           'relative flex flex-1 flex-col items-center px-4 pt-10',
@@ -77,8 +86,8 @@ function AuthShell({ children, align = 'center', className, footer }) {
           className
         )}
       >
-        {/* Stacked lockup centred above each page's title (brand: login). */}
-        <BrandLockupStacked className="mb-5" />
+        {/* Sign-in: stacked lockup centred as the heading (brand: login). */}
+        {logo === 'stacked' && <BrandLockupStacked className="mb-5" />}
         {children}
       </main>
       <AuthFooter className="relative">{footer}</AuthFooter>

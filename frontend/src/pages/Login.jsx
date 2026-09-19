@@ -332,6 +332,7 @@ function Login() {
 
   return (
     <AuthShell
+      logo="stacked"
       footer={
         registrationEnabled && (
           <>

@@ -214,16 +214,27 @@
     --auth-canvas: 240 14% 4.1%; /* Ink #09090C */
   }
 
-  /* The stacked lockup is the heading on auth pages; each page's h1 reads
-     as the quiet purpose line under it. Documents (legal, 404) opt out
-     with .auth-heading. */
-  .auth-fey main h1:not(.auth-heading) {
+  /* Sign-in (.auth-stacked): the big lockup is the heading, so the h1
+     reads as the quiet purpose line under it. Other auth pages keep a
+     real brand heading. */
+  .auth-fey.auth-stacked main h1:not(.auth-heading) {
     font-family: theme('fontFamily.ui');
     font-size: 0.9375rem;
     line-height: 1.5rem;
     font-weight: 500;
     letter-spacing: 0;
     color: hsl(var(--muted-foreground));
+  }
+  .auth-fey:not(.auth-stacked) main h1:not(.auth-heading) {
+    font-size: 1.625rem;
+    line-height: 2rem;
+    font-family: theme('fontFamily.brand');
+    font-weight: 700;
+    letter-spacing: -0.02em;
+    background-image: var(--brand-gradient);
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
   }
   .auth-fey main h1.auth-heading {
     font-family: theme('fontFamily.brand');
