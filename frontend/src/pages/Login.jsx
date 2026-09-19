@@ -46,17 +46,6 @@ function ssoLoginLabel(presetId) {
   return names[presetId] || 'SSO';
 }
 
-// Preview (temp/fey-auth-ui): every provider Shellius supports, shown when
-// the org has no SSO configured, to judge the layout. Clicking explains.
-const PREVIEW_PROVIDERS = [
-  { id: 'preview-google', name: 'Google', presetId: 'google' },
-  { id: 'preview-entra', name: 'Microsoft', presetId: 'entra' },
-  { id: 'preview-okta', name: 'Okta', presetId: 'okta' },
-  { id: 'preview-auth0', name: 'Auth0', presetId: 'auth0' },
-  { id: 'preview-github', name: 'GitHub', presetId: 'github' },
-  { id: 'preview-oidc', name: 'SSO', presetId: 'generic' },
-];
-
 /**
  * Fey-style sign-in buttons. One provider: a quiet "Sign in with X" text
  * button. Several: a two-column grid of pill buttons.
@@ -310,8 +299,6 @@ function Login() {
 
   const locked = !!lockout && retryRemaining > 0;
 
-  // /dummy/login?sso=N previews N providers (0–6); default all six.
-  const previewCount = Math.min(6, Math.max(0, Number(searchParams.get('sso') ?? 6) || 0));
   const ssoList = ssoStatus.providers?.length
     ? ssoStatus.providers
     : [{ id: null, name: ssoLoginLabel(ssoStatus.presetId), presetId: ssoStatus.presetId }];
@@ -486,13 +473,6 @@ function Login() {
 
             {step === 'email' && ssoStatus.enabled && (
               <SsoTextButtons providers={ssoList} submitting={ssoSubmitting} onSelect={(id) => handleSsoLogin(id)} />
-            )}
-            {step === 'email' && !ssoStatus.enabled && previewCount > 0 && (
-              <SsoTextButtons
-                providers={PREVIEW_PROVIDERS.slice(0, previewCount)}
-                submitting={false}
-                onSelect={() => setError('Preview only — set up single sign-on in Settings → SSO.')}
-              />
             )}
           </form>
         )}

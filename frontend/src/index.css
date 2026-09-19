@@ -3,52 +3,55 @@
 @tailwind utilities;
 
 @layer base {
+  /* Brand palette (brand/README.txt). Light: cool off-white canvas with
+     the deep Sky→Lavender pair; dark: Ink canvas, Sky accent. */
   :root {
-    --background: 0 0% 100%;
-    --foreground: 240 10% 3.9%;
+    --background: 228 20% 97%;
+    --foreground: 229 33% 7%;
     --card: 0 0% 100%;
-    --card-foreground: 240 10% 3.9%;
+    --card-foreground: 229 33% 7%;
     --popover: 0 0% 100%;
-    --popover-foreground: 240 10% 3.9%;
-    --primary: 240 5.9% 10%;
-    --primary-foreground: 0 0% 98%;
-    --secondary: 240 4.8% 95.9%;
-    --secondary-foreground: 240 5.9% 10%;
-    --muted: 240 4.8% 95.9%;
-    --muted-foreground: 240 3.8% 46.1%;
-    --accent: 240 4.8% 95.9%;
-    --accent-foreground: 240 5.9% 10%;
-    --destructive: 0 84.2% 60.2%;
-    --destructive-foreground: 0 0% 98%;
-    --border: 240 5.9% 90%;
-    --input: 240 5.9% 90%;
-    --ring: 240 5.9% 10%;
+    --popover-foreground: 229 33% 7%;
+    --primary: 221 50% 48%; /* #3D63B8 */
+    --primary-foreground: 0 0% 100%;
+    --secondary: 228 18% 94%;
+    --secondary-foreground: 229 33% 7%;
+    --muted: 228 18% 94%;
+    --muted-foreground: 223 5% 44%;
+    --accent: 228 20% 94%;
+    --accent-foreground: 229 33% 7%;
+    --destructive: 4 72% 52%;
+    --destructive-foreground: 0 0% 100%;
+    --border: 228 16% 90%;
+    --input: 228 14% 87%;
+    --ring: 221 50% 48%;
+    --brand: 221 50% 48%;
     --radius: 0.75rem;
   }
 
   .dark {
-    /* Lifted zinc palette: page ≈ #18181b, cards/popovers one step up, so
-       surfaces separate without the near-black of the shadcn default. */
-    --background: 240 5.9% 10%;
-    --foreground: 0 0% 98%;
-    --card: 240 5.2% 12.5%;
-    --card-foreground: 0 0% 98%;
-    --popover: 240 5.2% 13.5%;
-    --popover-foreground: 0 0% 98%;
-    --primary: 0 0% 98%;
-    --primary-foreground: 240 5.9% 10%;
-    --secondary: 240 4.4% 18.5%;
-    --secondary-foreground: 0 0% 98%;
-    --muted: 240 4.4% 18.5%;
-    --muted-foreground: 240 5% 68%;
-    --accent: 240 4.4% 20%;
-    --accent-foreground: 0 0% 98%;
-    --destructive: 0 62.8% 42%;
-    --destructive-foreground: 0 0% 98%;
-    --border: 240 4.4% 21%;
-    --input: 240 4.4% 23%;
-    --ring: 240 4.9% 83.9%;
-  }}
+    --background: 240 14% 4.1%; /* Ink #09090C */
+    --foreground: 228 14% 94%; /* Light #EDEEF2 */
+    --card: 228 22% 6.5%;
+    --card-foreground: 228 14% 94%;
+    --popover: 228 22% 8%;
+    --popover-foreground: 228 14% 94%;
+    --primary: 217 83% 76%; /* Sky #8FB6F5 */
+    --primary-foreground: 229 33% 7%;
+    --secondary: 228 18% 11%;
+    --secondary-foreground: 228 14% 94%;
+    --muted: 228 18% 10%;
+    --muted-foreground: 223 4% 56%; /* Muted #8A8D94 */
+    --accent: 228 18% 11%;
+    --accent-foreground: 228 14% 94%;
+    --destructive: 4 86% 69%; /* #F4776C */
+    --destructive-foreground: 229 33% 7%;
+    --border: 228 16% 12.5%;
+    --input: 228 16% 15%;
+    --ring: 217 83% 76%;
+    --brand: 217 83% 76%;
+  }
+}
 
 @layer base {
   * {
@@ -56,8 +59,7 @@
   }
   body {
     @apply bg-background text-foreground;
-    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto,
-      'Helvetica Neue', Arial, sans-serif;
+    font-family: theme('fontFamily.ui');
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
   }
@@ -153,12 +155,12 @@
 
 @layer base {
   :root {
-    --field: 240 5% 96.5%;
-    --field-border: 240 6% 90%;
+    --field: 228 22% 97.5%;
+    --field-border: 228 14% 88%;
   }
   .dark {
-    --field: 240 5% 12.5%;
-    --field-border: 240 4% 17%;
+    --field: 228 20% 7.5%;
+    --field-border: 228 16% 13%;
   }
 }
 
@@ -268,7 +270,7 @@
     background-image: var(--brand-gradient);
     color: var(--brand-on-gradient);
   }
-  /* Buttons match the app (/dummy/app): 40px, 10px corners, semibold. */
+  /* Buttons match the app: 40px, 10px corners, semibold. */
   .auth-fey main :is(button, a):is(.rounded, .rounded-sm, .rounded-md, .rounded-lg, .bg-primary, .border-input) {
     border-radius: calc(var(--radius) - 2px);
   }
@@ -303,35 +305,15 @@
   }
 }
 
-/* Auth backdrop — plain CSS (not @layer) so Tailwind never purges the
-   numbered ring classes, which are built from template strings. */
-  /* Backdrop: several soft coloured rings scattered around the edges that
-   morph and drift very slowly (components/auth/FlowRing.jsx), and a quiet
-   grey lift behind the form. Motion stops for prefers-reduced-motion. */
+/* Auth backdrop container (components/auth/AuthShell.jsx). */
 .auth-backdrop {
   position: absolute;
   inset: 0;
   overflow: hidden;
   pointer-events: none;
 }
-.auth-ring {
-  position: absolute;
-  width: var(--size);
-  height: var(--size);
-  filter: blur(var(--blur, 46px));
-  opacity: var(--o, 0.2);
-  animation: auth-drift var(--dur, 60s) ease-in-out var(--delay, 0s) infinite alternate;
-  will-change: transform;
-}
-.dark .auth-ring {
-  opacity: var(--od, 0.17);
-}
-.auth-ring-1 { --size: min(600px, 110vw); top: -26%; left: 14%; --dx: 120px; --dy: 70px; --dur: 30s; }
-.auth-ring-2 { --size: min(380px, 75vw); top: 34%; right: -12%; --dx: -90px; --dy: 110px; --dur: 34s; --delay: -9s; }
-.auth-ring-3 { --size: min(520px, 95vw); top: 40%; left: -14%; --dx: 110px; --dy: -90px; --dur: 32s; --delay: -17s; }
-.auth-ring-4 { --size: min(760px, 125vw); bottom: -40%; left: 46%; --dx: -120px; --dy: -30px; --dur: 38s; --delay: -5s; }
-.auth-ring-5 { --size: min(480px, 90vw); top: -16%; right: -6%; --dx: -100px; --dy: 90px; --dur: 26s; --delay: -12s; }
 
+/* Slow drift for the app's ambient rings (.app-ring). */
 @keyframes auth-drift {
   0% { transform: translate3d(0, 0, 0) rotate(0deg) scale(1); }
   50% { transform: translate3d(var(--dx), var(--dy), 0) rotate(35deg) scale(1.08); }
@@ -351,92 +333,40 @@
   filter: blur(30px);
 }
 
-@media (prefers-reduced-motion: reduce) {
-  .auth-ring {
-    animation: none;
-  }
-}
 
 
 /* ---------------------------------------------------------------------------
-   Proposed app theme ("new look") — previewed at /dummy/app, which adds
-   `theme-fey` to <html> while it's open (portals — modals, menus — pick it
-   up too). Same structure as today; darker canvas, quieter surfaces, an
-   indigo accent for focus/selection, and softer borders.
+   App chrome in the brand look: gradient primary actions, faint ambient
+   bloom behind the content area, gradient page titles, accent focus.
    --------------------------------------------------------------------------- */
-.theme-fey {
-  --background: 228 20% 97%;
-  --foreground: 229 33% 7%;
-  --card: 0 0% 100%;
-  --popover: 0 0% 100%;
-  --muted: 228 18% 94%;
-  --muted-foreground: 223 5% 44%;
-  --secondary: 228 18% 94%;
-  --accent: 228 20% 94%;
-  --border: 228 16% 90%;
-  --input: 228 14% 87%;
-  --primary: 221 50% 48%; /* #3D63B8 */
-  --primary-foreground: 0 0% 100%;
-  --ring: 221 50% 48%;
-  --field: 228 22% 97.5%;
-  --field-border: 228 14% 88%;
-  --brand: 221 50% 48%;
-}
-.dark.theme-fey {
-  --background: 240 14% 4.1%; /* Ink #09090C */
-  --foreground: 228 14% 94%; /* Light #EDEEF2 */
-  --card: 228 22% 6.5%;
-  --popover: 228 22% 8%;
-  --muted: 228 18% 10%;
-  --muted-foreground: 223 4% 56%; /* Muted #8A8D94 */
-  --secondary: 228 18% 11%;
-  --accent: 228 18% 11%;
-  --border: 228 16% 12.5%;
-  --input: 228 16% 15%;
-  --primary: 217 83% 76%; /* Sky #8FB6F5 */
-  --primary-foreground: 229 33% 7%;
-  --ring: 217 83% 76%;
-  --field: 228 20% 7.5%;
-  --field-border: 228 16% 13%;
-  --brand: 217 83% 76%;
-}
-.theme-fey body {
-  font-family: theme('fontFamily.ui');
-}
 /* Brand gradient on primary actions and "on" controls. */
-.theme-fey .bg-primary,
-.theme-fey input[type='checkbox']:checked,
-.theme-fey input[type='checkbox']:indeterminate {
+.bg-primary,
+input[type='checkbox']:checked,
+input[type='checkbox']:indeterminate {
   background-image: var(--brand-gradient);
   border-color: transparent;
 }
-.theme-fey :is(button, a).bg-primary:hover {
+:is(button, a).bg-primary:hover {
   filter: brightness(1.06);
 }
 /* Dark text on the light gradient reads thinner than light-on-dark —
    semibold keeps every button the same visual weight. */
-.theme-fey :is(button, a).bg-primary,
-.theme-fey :is(button, a).inline-flex.whitespace-nowrap.font-medium {
+:is(button, a).bg-primary,
+:is(button, a).inline-flex.whitespace-nowrap.font-medium {
   font-weight: 600;
 }
-.theme-fey :is(button, a).bg-primary:disabled {
+:is(button, a).bg-primary:disabled {
   opacity: 0.55;
   filter: saturate(0.55);
 }
-.theme-fey :is(button, a).border-input:hover {
+:is(button, a).border-input:hover {
   border-color: hsl(var(--brand) / 0.45);
 }
 /* Faint brand ambience in the content area. */
-.app-ambient {
-  display: none;
-}
-.theme-fey .app-ambient {
-  display: block;
-}
-.theme-fey .app-ambient .brand-bloom {
+.app-ambient .brand-bloom {
   opacity: 0.25;
 }
-.dark.theme-fey .app-ambient .brand-bloom {
+.dark .app-ambient .brand-bloom {
   opacity: 0.35;
 }
 .app-ring {
@@ -459,11 +389,11 @@
   }
 }
 /* Surfaces: a faint top highlight instead of a heavier border. */
-.theme-fey .bg-card.border {
+.bg-card.border {
   box-shadow: inset 0 1px 0 hsl(var(--foreground) / 0.04), 0 1px 2px hsl(0 0% 0% / 0.04);
 }
 /* Page titles get the auth pages' calm gradient. */
-.theme-fey main h1 {
+main h1 {
   font-family: theme('fontFamily.brand');
   letter-spacing: -0.02em;
   background-image: var(--brand-gradient);
@@ -471,23 +401,23 @@
   background-clip: text;
   color: transparent;
 }
-.theme-fey main h1 svg {
+main h1 svg {
   color: hsl(var(--brand));
 }
 /* Focus and selection use the accent. */
-.theme-fey :focus-visible {
+:focus-visible {
   outline-color: hsl(var(--ring));
 }
-.theme-fey ::selection {
+::selection {
   background: hsl(var(--brand) / 0.3);
 }
 /* Active sidebar item: accent bar + tint. */
-.theme-fey aside a[aria-current='page'] {
+aside a[aria-current='page'] {
   background: hsl(var(--brand) / 0.12);
   box-shadow: inset 2px 0 0 hsl(var(--brand));
 }
 /* Content-area grid a touch quieter on the darker canvas. */
-.theme-fey .bg-grid {
+.bg-grid {
   opacity: 0.6;
 }
 

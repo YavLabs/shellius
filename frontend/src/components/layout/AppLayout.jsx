@@ -3,7 +3,7 @@ import { Outlet, useLocation } from 'react-router-dom';
 import Sidebar from './Sidebar';
 import Topbar from './Topbar';
 import Footer from './Footer';
-import FlowRing from '@/components/auth/FlowRing';
+import FlowRing from '@/components/common/FlowRing';
 
 // Same rings as the auth pages, far fainter (see .app-ambient in index.css).
 const AMBIENT_RINGS = [
@@ -83,8 +83,7 @@ function AppLayout() {
                 // on <main> itself would fade the page content too.
                 <div className="relative min-h-0 flex-1 bg-muted/30">
                   <div aria-hidden="true" className="bg-grid bg-grid-fade pointer-events-none absolute inset-0" />
-                  {/* Brand ambience (bloom + faint rings) — only shown by the
-                      proposed theme (.theme-fey, previewed at /dummy/app). */}
+                  {/* Faint brand ambience: bloom + slow blurred rings. */}
                   <div aria-hidden="true" className="app-ambient pointer-events-none absolute inset-0 overflow-hidden">
                     <div className="brand-bloom absolute inset-0" />
                     {AMBIENT_RINGS.map((r, i) => (

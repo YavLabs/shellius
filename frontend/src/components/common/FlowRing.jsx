@@ -6,12 +6,12 @@ import { useId, useMemo } from 'react';
  * like it's flowing. Pure SVG: the outline is a smooth closed path through
  * points on r(θ); SMIL <animate> interpolates between keyframe paths (all
  * built from the same number of points, so they morph cleanly). Blur and
- * placement come from CSS (.auth-ring in index.css).
+ * placement come from CSS (.app-ring in index.css; AppLayout's ambience).
  *
  *   colors  three gradient stops
  *   seed    varies the shape and timing per ring
  *   dur     seconds for one full morph cycle
- *   scale   base size multiplier (AuthShell randomises it per visit)
+ *   scale   base size multiplier
  */
 
 const POINTS = 48;

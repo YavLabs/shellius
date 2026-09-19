@@ -1,34 +1,9 @@
-import { useMemo } from 'react';
 import { Link } from 'react-router-dom';
 import { APP_VERSION } from '@/version';
 import useOrgName from '@/hooks/useOrgName';
 import BrandLogo, { BrandLockupStacked } from '@/components/common/BrandLogo';
 import { cn } from '@/lib/utils';
-import FlowRing from './FlowRing';
 import TerminalBackdrop from './TerminalBackdrop';
-import { isPreview } from '@/lib/previewMock';
-
-// Which backdrop the auth pages use: 'rings' (default) or 'terminal'. The
-// /dummy previews let you switch (stored per browser); elsewhere it's rings.
-export const AUTH_BACKDROP_KEY = 'shellius_auth_backdrop';
-function useAuthBackdrop() {
-  if (!isPreview()) return 'rings';
-  try {
-    return localStorage.getItem(AUTH_BACKDROP_KEY) === 'terminal' ? 'terminal' : 'rings';
-  } catch {
-    return 'rings';
-  }
-}
-
-// Brand palette (brand/README.txt): Sky #8FB6F5 → Lavender #B9A6F2, with
-// the deeper light-background pair #3D63B8 → #6B54C4 for contrast.
-const RINGS = [
-  { colors: ['#8FB6F5', '#A7AEF4', '#B9A6F2'], seed: 3, dur: 14 },
-  { colors: ['#3D63B8', '#8FB6F5', '#B9A6F2'], seed: 11, dur: 18 },
-  { colors: ['#B9A6F2', '#8FB6F5', '#6B54C4'], seed: 23, dur: 16 },
-  { colors: ['#6B54C4', '#B9A6F2', '#8FB6F5'], seed: 37, dur: 20 },
-  { colors: ['#8FB6F5', '#6B54C4', '#B9A6F2'], seed: 51, dur: 15 },
-];
 
 const LEGAL_LINKS = [
   { to: '/legal/privacy', label: 'Privacy policy' },
@@ -65,8 +40,8 @@ export function AuthFooter({ className, children }) {
 /**
  * AuthShell — shared frame for every signed-out / full-screen auth page
  * (login, register, invite, password reset, device, approvals, MFA setup,
- * SSO callback, 404, legal). Fey-style: near-black canvas, soft coloured
- * organic rings slowly morphing and drifting around the edges, the form floating without a card (see `.auth-fey`
+ * SSO callback, 404, legal). Fey-style: near-black canvas, faint panes of
+ * terminal output drifting upward (TerminalBackdrop), the form floating without a card (see `.auth-fey`
  * in index.css), and the footer pinned to the bottom.
  *
  *   align   'center' (forms, default) | 'top' (long documents)
@@ -75,20 +50,11 @@ export function AuthFooter({ className, children }) {
  *           (big lockup centred as the heading — sign-in page)
  */
 function AuthShell({ children, align = 'center', className, footer, logo = 'corner' }) {
-  // A different mix of ring sizes on every visit.
-  const backdrop = useAuthBackdrop();
-  const rings = useMemo(() => RINGS.map((r) => ({ ...r, scale: 0.65 + Math.random() * 0.7 })), []);
   return (
     <div className={cn('auth-fey relative isolate flex min-h-screen flex-col overflow-hidden', logo === 'stacked' && 'auth-stacked')}>
       <div aria-hidden="true" className="auth-backdrop -z-10">
         <div className="brand-bloom absolute inset-0" />
-        {backdrop === 'terminal' ? (
-          <TerminalBackdrop />
-        ) : (
-          rings.map((r, i) => (
-            <FlowRing key={i} className={`auth-ring auth-ring-${i + 1}`} colors={r.colors} seed={r.seed} dur={r.dur} scale={r.scale} />
-          ))
-        )}
+        <TerminalBackdrop />
         <div className="auth-aura" />
       </div>
       {logo === 'corner' && (

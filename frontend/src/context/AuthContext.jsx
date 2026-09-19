@@ -1,5 +1,4 @@
 import { createContext, useContext, useState, useEffect, useCallback, useRef } from 'react';
-import { isPreview } from '@/lib/previewMock';
 import api from '@/services/api';
 import { PERMISSIONS_STALE_EVENT } from '@/lib/permissions';
 
@@ -13,8 +12,7 @@ export function AuthProvider({ children }) {
 
   const loadMe = useCallback(async () => {
     const token = localStorage.getItem('accessToken');
-    // /dummy previews: don't touch (or clear) the real session.
-    if (!token || isPreview()) {
+    if (!token) {
       setIsLoading(false);
       return;
     }
@@ -195,7 +193,3 @@ export function useAuth() {
   if (!ctx) throw new Error('useAuth must be used within an AuthProvider');
   return ctx;
 }
-
-// Exported for the /dummy auth-page previews (pages/AuthPreview.jsx), which
-// render real pages against a fake session.
-export { AuthContext };
