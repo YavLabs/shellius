@@ -70,13 +70,18 @@ function AppLayout() {
                   <Outlet />
                 </main>
               ) : (
-                // Faint grid behind page content (cards stay solid on top).
-                <main className="bg-grid flex-1 overflow-y-auto overflow-x-hidden bg-muted/30">
-                  <div className="min-h-[calc(100%-3rem)]">
-                    <Outlet />
-                  </div>
-                  <Footer />
-                </main>
+                // Faint grid with the same centre vignette as the auth pages.
+                // It lives on its own non-scrolling layer behind <main>: a mask
+                // on <main> itself would fade the page content too.
+                <div className="relative min-h-0 flex-1 bg-muted/30">
+                  <div aria-hidden="true" className="bg-grid bg-grid-fade pointer-events-none absolute inset-0" />
+                  <main className="relative h-full overflow-y-auto overflow-x-hidden">
+                    <div className="min-h-[calc(100%-3rem)]">
+                      <Outlet />
+                    </div>
+                    <Footer />
+                  </main>
+                </div>
               )}
             </div>
           </div>
