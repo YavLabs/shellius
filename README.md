@@ -1,13 +1,18 @@
-<h1 align="center">Shellius</h1>
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="frontend/public/brand/png/shellius-lockup-dark-bg-1280x256.png" />
+    <img src="frontend/public/brand/png/shellius-lockup-light-bg-1280x256.png" alt="Shellius" width="320" />
+  </picture>
+</p>
 
 <h3 align="center">Self-hosted, certificate-based SSH and RDP access management for fleets</h3>
 
 <p align="center">
-  <a href="#license"><img src="https://img.shields.io/badge/license-AGPL--3.0-blue.svg" alt="License" /></a>
-  <img src="https://img.shields.io/badge/version-1.4.0-green.svg" alt="Version" />
-  <img src="https://img.shields.io/badge/docker-compose-blue.svg" alt="Docker" />
-  <img src="https://img.shields.io/badge/go-1.22+-00ADD8.svg" alt="Go" />
-  <img src="https://img.shields.io/badge/node-20+-339933.svg" alt="Node" />
+  <a href="#license"><img src="https://img.shields.io/badge/license-AGPL--3.0-8FB6F5.svg?labelColor=141A2E" alt="License" /></a>
+  <img src="https://img.shields.io/badge/version-1.4.0-B9A6F2.svg?labelColor=141A2E" alt="Version" />
+  <img src="https://img.shields.io/badge/docker-compose-8FB6F5.svg?labelColor=141A2E" alt="Docker" />
+  <img src="https://img.shields.io/badge/go-1.22+-8FB6F5.svg?labelColor=141A2E" alt="Go" />
+  <img src="https://img.shields.io/badge/node-20+-8FB6F5.svg?labelColor=141A2E" alt="Node" />
 </p>
 
 ---

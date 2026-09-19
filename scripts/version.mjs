@@ -107,7 +107,7 @@ function syncTuiMakefile(version) {
 function syncReadmeBadge(version) {
   if (!existsSync(README)) return false;
   const raw = readFileSync(README, 'utf8');
-  const re = /(img\.shields\.io\/badge\/version-)[^-]+(-green\.svg)/;
+  const re = /(img\.shields\.io\/badge\/version-)[^-]+(-[0-9A-Za-z]+\.svg)/;
   if (!re.test(raw)) return false;
   const encoded = version.replace(/-/g, '--');
   const next = raw.replace(re, `$1${encoded}$2`);
