@@ -1,3 +1,4 @@
+import { useMemo } from 'react';
 import { Link } from 'react-router-dom';
 import { APP_VERSION } from '@/version';
 import useOrgName from '@/hooks/useOrgName';
@@ -8,11 +9,11 @@ import FlowRing from './FlowRing';
 // Cool, restrained palette (indigo / blue / teal / slate violet) — an
 // org-level access tool, not a consumer app.
 const RINGS = [
-  { colors: ['#6366f1', '#3b82f6', '#22d3ee'], seed: 3, dur: 34 },
-  { colors: ['#0ea5e9', '#6366f1', '#8b5cf6'], seed: 11, dur: 42 },
-  { colors: ['#14b8a6', '#3b82f6', '#6366f1'], seed: 23, dur: 38 },
-  { colors: ['#8b5cf6', '#6366f1', '#0ea5e9'], seed: 37, dur: 46 },
-  { colors: ['#64748b', '#818cf8', '#38bdf8'], seed: 51, dur: 50 },
+  { colors: ['#6366f1', '#3b82f6', '#22d3ee'], seed: 3, dur: 14 },
+  { colors: ['#0ea5e9', '#6366f1', '#8b5cf6'], seed: 11, dur: 18 },
+  { colors: ['#14b8a6', '#3b82f6', '#6366f1'], seed: 23, dur: 16 },
+  { colors: ['#8b5cf6', '#6366f1', '#0ea5e9'], seed: 37, dur: 20 },
+  { colors: ['#64748b', '#818cf8', '#38bdf8'], seed: 51, dur: 15 },
 ];
 
 const LEGAL_LINKS = [
@@ -58,11 +59,13 @@ export function AuthFooter({ className, children }) {
  *   footer  optional line above the legal links (e.g. the sign-up prompt)
  */
 function AuthShell({ children, align = 'center', className, footer }) {
+  // A different mix of ring sizes on every visit.
+  const rings = useMemo(() => RINGS.map((r) => ({ ...r, scale: 0.65 + Math.random() * 0.7 })), []);
   return (
     <div className="auth-fey relative isolate flex min-h-screen flex-col overflow-hidden">
       <div aria-hidden="true" className="auth-backdrop -z-10">
-        {RINGS.map((r, i) => (
-          <FlowRing key={i} className={`auth-ring auth-ring-${i + 1}`} colors={r.colors} seed={r.seed} dur={r.dur} />
+        {rings.map((r, i) => (
+          <FlowRing key={i} className={`auth-ring auth-ring-${i + 1}`} colors={r.colors} seed={r.seed} dur={r.dur} scale={r.scale} />
         ))}
         <div className="auth-aura" />
       </div>

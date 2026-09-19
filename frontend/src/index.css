@@ -301,16 +301,16 @@
 .dark .auth-ring {
   opacity: var(--od, 0.17);
 }
-.auth-ring-1 { --size: min(620px, 110vw); top: -26%; left: 14%; --dx: 60px; --dy: 40px; --dur: 58s; }
-.auth-ring-2 { --size: min(520px, 95vw); top: 24%; right: -16%; --dx: -50px; --dy: 60px; --dur: 66s; --delay: -14s; }
-.auth-ring-3 { --size: min(440px, 85vw); top: 40%; left: -14%; --dx: 50px; --dy: -50px; --dur: 62s; --delay: -26s; }
-.auth-ring-4 { --size: min(680px, 115vw); bottom: -34%; left: 44%; --dx: -60px; --dy: -40px; --dur: 72s; --delay: -8s; }
-.auth-ring-5 { --size: min(280px, 55vw); top: -6%; right: 6%; --dx: -30px; --dy: 40px; --dur: 84s; --delay: -40s; --o: 0.12; --od: 0.1; --blur: 40px; }
+.auth-ring-1 { --size: min(600px, 110vw); top: -26%; left: 14%; --dx: 120px; --dy: 70px; --dur: 30s; }
+.auth-ring-2 { --size: min(380px, 75vw); top: 34%; right: -12%; --dx: -90px; --dy: 110px; --dur: 34s; --delay: -9s; }
+.auth-ring-3 { --size: min(520px, 95vw); top: 40%; left: -14%; --dx: 110px; --dy: -90px; --dur: 32s; --delay: -17s; }
+.auth-ring-4 { --size: min(760px, 125vw); bottom: -40%; left: 46%; --dx: -120px; --dy: -30px; --dur: 38s; --delay: -5s; }
+.auth-ring-5 { --size: min(480px, 90vw); top: -16%; right: -6%; --dx: -100px; --dy: 90px; --dur: 26s; --delay: -12s; }
 
 @keyframes auth-drift {
   0% { transform: translate3d(0, 0, 0) rotate(0deg) scale(1); }
-  50% { transform: translate3d(var(--dx), var(--dy), 0) rotate(18deg) scale(1.05); }
-  100% { transform: translate3d(calc(var(--dx) * -0.5), calc(var(--dy) * 0.7), 0) rotate(-10deg) scale(0.96); }
+  50% { transform: translate3d(var(--dx), var(--dy), 0) rotate(35deg) scale(1.08); }
+  100% { transform: translate3d(calc(var(--dx) * -0.6), calc(var(--dy) * 0.8), 0) rotate(-20deg) scale(0.94); }
 }
 
 /* quiet grey lift behind the form */

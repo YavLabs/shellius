@@ -11,6 +11,7 @@ import { useId, useMemo } from 'react';
  *   colors  three gradient stops
  *   seed    varies the shape and timing per ring
  *   dur     seconds for one full morph cycle
+ *   scale   base size multiplier (AuthShell randomises it per visit)
  */
 
 const POINTS = 48;
@@ -80,15 +81,23 @@ function keyframes(seed) {
   return [...paths, paths[0]]; // loop back to the start
 }
 
-export default function FlowRing({ colors, seed = 1, dur = 40, className }) {
+export default function FlowRing({ colors, seed = 1, dur = 40, scale = 1, className }) {
   const id = useId().replace(/:/g, '');
   const paths = useMemo(() => keyframes(seed), [seed]);
+  // Slow "breathing": each ring grows and shrinks by its own range.
+  const breathe = useMemo(() => {
+    const r = rng(seed + 101);
+    const lo = 0.7 + r() * 0.15;
+    const hi = 1.12 + r() * 0.2;
+    const mid = 0.9 + r() * 0.1;
+    return `1;${hi.toFixed(3)};${mid.toFixed(3)};${lo.toFixed(3)};1`;
+  }, [seed]);
   const splines = paths
     .slice(1)
     .map(() => '0.45 0 0.55 1')
     .join(';');
   return (
-    <svg viewBox="0 0 200 200" className={className} aria-hidden="true" focusable="false">
+    <svg viewBox="0 0 200 200" overflow="visible" className={className} aria-hidden="true" focusable="false">
       <defs>
         <linearGradient id={`g${id}`} x1="0" y1="0" x2="1" y2="1">
           <stop offset="0%" stopColor={colors[0]} />
@@ -103,6 +112,19 @@ export default function FlowRing({ colors, seed = 1, dur = 40, className }) {
           />
         </linearGradient>
       </defs>
+      <g transform={`translate(100 100) scale(${scale.toFixed(3)})`}>
+        <g>
+          <animateTransform
+            attributeName="transform"
+            type="scale"
+            values={breathe}
+            dur={`${Math.round(dur * 1.3)}s`}
+            calcMode="spline"
+            keyTimes="0;0.25;0.5;0.75;1"
+            keySplines="0.45 0 0.55 1;0.45 0 0.55 1;0.45 0 0.55 1;0.45 0 0.55 1"
+            repeatCount="indefinite"
+          />
+          <g transform="translate(-100 -100)">
       <path d={paths[0]} fill="none" stroke={`url(#g${id})`} strokeWidth="34" strokeLinejoin="round">
         <animate
           attributeName="d"
@@ -114,6 +136,9 @@ export default function FlowRing({ colors, seed = 1, dur = 40, className }) {
           repeatCount="indefinite"
         />
       </path>
+          </g>
+        </g>
+      </g>
     </svg>
   );
 }
