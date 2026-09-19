@@ -33,6 +33,9 @@ import { relativeTime, formatDateTime } from '@/utils/time';
 import { extractCommands, formatOffset } from '@/utils/castCommands';
 import { SESSION_STATUS_LABELS } from '@/lib/labels';
 import { can } from '@/lib/permissions';
+import { envAccent } from '@/lib/mobileCard';
+import { statusTone } from '@/lib/badgeTones';
+import { CardStatus } from '@/components/mobile/MobileCard';
 
 // A session row is "connectable" from this page when it's the caller's own
 // still-ACTIVE session — matches the terminal hub's "caller's own sessions
@@ -531,11 +534,8 @@ function Sessions() {
       mobile: {
         slot: 'title',
         render: (r) => (
-          <span className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
-            <span className="min-w-0 break-all">
-              <SessionTarget session={r} />
-            </span>
-            {r.server?.environment && <EnvironmentBadge environment={r.server.environment} />}
+          <span className="min-w-0 break-all">
+            <SessionTarget session={r} />
           </span>
         ),
       },
@@ -611,14 +611,15 @@ function Sessions() {
       label: 'Status',
       sortable: true,
       searchAccessor: (r) => r.status || '',
-      mobile: { slot: 'meta', order: 1 },
+      // Phones: quiet status next to the "⋯" menu (DataTable `mobile.corner`).
+      mobile: 'hidden',
       render: (r) => <SessionStatusBadge status={r.status} />,
     },
     {
       key: 'authMethod',
       label: 'Auth',
       hideBelow: 'md',
-      mobile: { slot: 'meta', order: 2 },
+      mobile: 'hidden',
       render: (r) => <AuthMethodBadge authMethod={r.authMethod} />,
     },
     {
@@ -633,8 +634,6 @@ function Sessions() {
             <span className="inline-flex items-center gap-1">
               <Film className="h-3.5 w-3.5" /> Recorded
             </span>
-          ) : r.clientIp ? (
-            <span className="font-mono">{r.clientIp}</span>
           ) : null,
       },
       render: (r) => (
@@ -715,6 +714,8 @@ function Sessions() {
         filters={filterSlot}
         mobile={{
           onCardClick: (r) => openDetail(r.id),
+          accent: (r) => envAccent(r.server?.environment),
+          corner: (r) => <CardStatus {...statusTone(r.status)} />,
           leading: (r) => <Avatar name={r.user?.name} email={r.user?.email} avatarUrl={r.user?.avatarUrl} size="md" />,
         }}
         serverPagination={{

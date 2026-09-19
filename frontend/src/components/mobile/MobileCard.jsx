@@ -2,6 +2,7 @@ import { MoreHorizontal } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
+import { TONE_DOT } from '@/components/ui/badge';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -24,7 +25,7 @@ export function CardActionMenu({ actions = [], row, label = 'More actions' }) {
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
-        <Button variant="ghost" size="icon" className="-mr-2 -mt-1 h-11 w-11 shrink-0" onClick={stop} aria-label={label}>
+        <Button variant="ghost" size="icon" className="h-11 w-11 shrink-0 text-muted-foreground" onClick={stop} aria-label={label}>
           <MoreHorizontal className="h-5 w-5" />
         </Button>
       </DropdownMenuTrigger>
@@ -52,7 +53,7 @@ export function CardActionMenu({ actions = [], row, label = 'More actions' }) {
   );
 }
 
-/** A compact button for one of the row's primary actions. */
+/** A compact pill button for one of the row's primary actions. */
 export function CardActionButton({ action, row }) {
   const Icon = action.icon;
   const destructive = action.variant === 'destructive';
@@ -60,7 +61,7 @@ export function CardActionButton({ action, row }) {
     <Button
       variant="outline"
       size="sm"
-      className={cn('h-10 gap-1.5 px-3', destructive && 'text-destructive hover:text-destructive')}
+      className={cn('h-9 gap-1.5 px-3', destructive && 'text-destructive hover:text-destructive')}
       onClick={(e) => {
         e.stopPropagation();
         action.onClick(row);
@@ -72,7 +73,7 @@ export function CardActionButton({ action, row }) {
   );
 }
 
-/** Meta chip wrapper: an optional muted label before the value. */
+/** Meta item: an optional muted label before the value. */
 export function CardMeta({ label, children }) {
   if (children === null || children === undefined || children === false || children === '') return null;
   return (
@@ -84,12 +85,51 @@ export function CardMeta({ label, children }) {
 }
 
 /**
+ * Card accents by Badge tone (lib/badgeTones.js): a soft diagonal tint from
+ * the top-left corner, a tinted border and the colour of the bottom-left label.
+ * Class strings are written out in full so Tailwind keeps them.
+ */
+const ACCENTS = {
+  info: {
+    card: 'border-sky-500/25 from-sky-500/[0.13] dark:from-sky-400/[0.12]',
+    tag: 'text-sky-700 dark:text-sky-300',
+  },
+  warning: {
+    card: 'border-amber-500/30 from-amber-500/[0.14] dark:from-amber-400/[0.12]',
+    tag: 'text-amber-700 dark:text-amber-300',
+  },
+  danger: {
+    card: 'border-rose-500/30 from-rose-500/[0.14] dark:from-rose-400/[0.13]',
+    tag: 'text-rose-700 dark:text-rose-300',
+  },
+  success: {
+    card: 'border-emerald-500/25 from-emerald-500/[0.12] dark:from-emerald-400/[0.10]',
+    tag: 'text-emerald-700 dark:text-emerald-300',
+  },
+  accent: {
+    card: 'border-violet-500/25 from-violet-500/[0.13] dark:from-violet-400/[0.12]',
+    tag: 'text-violet-700 dark:text-violet-300',
+  },
+  neutral: {
+    card: 'from-muted-foreground/[0.08]',
+    tag: 'text-muted-foreground',
+  },
+};
+
+/**
  * MobileCard — one row of a mobile list.
  *
- *   [☐] [leading]  title ……………………… [⋯]
- *                  secondary
- *                  meta · meta · meta
- *                  [primary] [primary] [extra]
+ *   [leading]  title ………………… corner [⋯] [☐]
+ *              secondary
+ *              meta · meta · meta
+ *   ───────────────────────────────────────────
+ *   TAG                       [action] [action]
+ *
+ * The corner controls (a small `corner` value such as a count, the "⋯"
+ * menu, the selection checkbox) share the title line without making it
+ * taller, so the lines below stay right under the title. `accent` ({ tone, label }) tints the card and puts the
+ * label small in the bottom-left corner — used for server environments.
+ * The action row sits under a full-width divider, buttons on the right.
  */
 export function MobileCard({
   leading,
@@ -98,6 +138,9 @@ export function MobileCard({
   meta = [],
   actions,
   menu,
+  corner,
+  accent,
+  reserveActions = false,
   onClick,
   selectable = false,
   selected = false,
@@ -110,6 +153,11 @@ export function MobileCard({
     (m) => m !== null && m !== undefined && m !== false
   );
   const clickable = typeof onClick === 'function';
+  const tone = accent ? ACCENTS[accent.tone] || ACCENTS.neutral : null;
+  const tag = accent?.label;
+  // Lists where any row has actions keep the action row on every card (empty
+  // when this row has none) so all cards line up at the same height.
+  const hasActionRow = !!actions || reserveActions;
   return (
     <div
       // No role="button": the card holds its own buttons (menu, actions), and
@@ -127,51 +175,94 @@ export function MobileCard({
           : undefined
       }
       className={cn(
-        'relative flex min-w-0 gap-3 rounded-lg border border-border bg-card px-3 py-3 text-sm transition-colors',
+        'relative flex h-full min-w-0 flex-col rounded-lg border border-border bg-card p-3.5 text-sm transition-colors',
+        tone && 'bg-gradient-to-br to-transparent to-60%',
+        tone?.card,
         clickable &&
           'cursor-pointer active:bg-accent/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
-        selected && 'border-primary/40 bg-primary/5',
+        selected && 'border-primary/50 ring-1 ring-primary/30',
         className
       )}
     >
-      {selectable && (
-        // 44px hit area around the 16px checkbox.
-        <label
-          className="-my-3 -ml-3 -mr-2 flex w-11 shrink-0 cursor-pointer items-start justify-center pt-[1.1rem]"
-          onClick={stop}
-        >
-          <Checkbox checked={!!selected} onChange={() => onSelectChange?.(!selected)} aria-label={selectLabel} />
-        </label>
-      )}
-      {leading && <div className="flex shrink-0 items-start pt-0.5">{leading}</div>}
-      <div className="min-w-0 flex-1">
-        <div className="flex min-w-0 items-start gap-2">
-          <div className="min-w-0 flex-1 break-words font-medium leading-snug text-foreground">{title}</div>
-          {menu && <div onClick={stop}>{menu}</div>}
-        </div>
-        {secondary && <div className="mt-0.5 min-w-0 break-words text-xs text-muted-foreground">{secondary}</div>}
-        {metaItems.length > 0 && (
-          <div className="mt-2 flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1.5">{metaItems}</div>
-        )}
-        {children}
-        {actions && (
-          <div className="mt-3 flex flex-wrap items-center gap-2" onClick={stop}>
-            {actions}
+      <div className="flex min-w-0 flex-1 items-start gap-3">
+        {leading && <div className="flex shrink-0">{leading}</div>}
+        <div className="min-w-0 flex-1">
+          <div className="flex min-w-0 items-center gap-2">
+            <div className="min-w-0 flex-1 truncate font-semibold leading-5 text-foreground">{title}</div>
+            {(corner || menu || selectable) && (
+              // Negative margins: the 44px controls sit on the title line without
+              // making it taller, so the next line stays right under the title.
+              <div className="-my-3 -mr-2 flex shrink-0 items-center" onClick={stop}>
+                {corner && <span className="mr-0.5 flex items-center text-xs text-muted-foreground">{corner}</span>}
+                {menu}
+                {selectable && (
+                  // 44px hit area around the 16px checkbox.
+                  <label className="-ml-1 flex h-11 w-10 shrink-0 cursor-pointer items-center justify-center">
+                    <Checkbox checked={!!selected} onChange={() => onSelectChange?.(!selected)} aria-label={selectLabel} />
+                  </label>
+                )}
+              </div>
+            )}
           </div>
-        )}
+          {secondary && <div className="mt-0.5 min-w-0 truncate text-xs leading-4 text-muted-foreground">{secondary}</div>}
+          {metaItems.length > 0 && (
+            <div className="mt-2 flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1.5">{metaItems}</div>
+          )}
+          {children}
+        </div>
       </div>
+      {(hasActionRow || tag) && (
+        <div
+          className={cn(
+            'flex min-w-0 items-center gap-2',
+            // A full-width divider separates the content from the action row.
+            hasActionRow ? '-mx-3.5 mt-3.5 min-h-[49px] border-t border-border px-3.5 pt-3' : 'mt-3'
+          )}
+        >
+          {tag && (
+            <span className={cn('shrink-0 text-[10px] font-semibold uppercase leading-none tracking-[0.14em]', tone?.tag)}>
+              {tag}
+            </span>
+          )}
+          {actions && (
+            // Row controls (e.g. Connect) get the same height as the action buttons.
+            <div className="ml-auto flex min-w-0 flex-wrap items-center justify-end gap-2 [&_button]:h-9" onClick={stop}>
+              {actions}
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 }
 
-/** Leading icon tile (for rows without an avatar). */
-export function CardIcon({ icon: Icon, className, title }) {
+/** Quiet status for a card's corner: a tone dot and the label (no chip). */
+export function CardStatus({ tone = 'neutral', label }) {
+  if (!label) return null;
+  return (
+    <span className="inline-flex items-center gap-1.5 whitespace-nowrap text-xs text-muted-foreground">
+      <span className={cn('h-1.5 w-1.5 shrink-0 rounded-full', TONE_DOT[tone] || TONE_DOT.neutral)} aria-hidden="true" />
+      {label}
+    </span>
+  );
+}
+
+/** Leading icon tile (for rows without an avatar); `status` adds a health dot. */
+export function CardIcon({ icon: Icon, className, title, status, statusLabel }) {
   return (
     <span
-      className={cn('flex h-9 w-9 shrink-0 items-center justify-center rounded-md border border-border bg-muted/50 text-muted-foreground', className)}
+      className={cn('relative flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-border bg-background/60 text-muted-foreground', className)}
       title={title}
     >
       {Icon && <Icon className="h-4 w-4" />}
+      {status && (
+        <span
+          className={cn('absolute -bottom-0.5 -right-0.5 h-2.5 w-2.5 rounded-full ring-2 ring-card', status)}
+          role="img"
+          aria-label={statusLabel}
+          title={statusLabel}
+        />
+      )}
     </span>
   );
 }
@@ -181,7 +272,7 @@ export function MobileCardSkeleton({ count = 5, withLeading = false }) {
   return (
     <div className="space-y-2" aria-busy="true" aria-label="Loading">
       {Array.from({ length: count }).map((_, i) => (
-        <div key={i} className="flex gap-3 rounded-lg border border-border bg-card px-3 py-3">
+        <div key={i} className="flex gap-3 rounded-lg border border-border bg-card p-3.5">
           {withLeading && <div className="h-8 w-8 shrink-0 animate-pulse rounded-full bg-muted" />}
           <div className="min-w-0 flex-1 space-y-2">
             <div className={cn('h-4 animate-pulse rounded bg-muted', i % 2 ? 'w-2/3' : 'w-1/2')} />
@@ -206,9 +297,13 @@ export function MobileEmptyCard({ children }) {
   );
 }
 
-/** Vertical stack of cards. */
-export function MobileCardList({ children, className }) {
-  return <div className={cn('space-y-2', className)}>{children}</div>;
+/**
+ * Vertical stack of cards. `uniform` makes every card as tall as the tallest
+ * one (grid rows of equal height) — for data lists; leave it off where a card
+ * can expand in place (Audit log details).
+ */
+export function MobileCardList({ children, className, uniform = false }) {
+  return <div className={cn(uniform ? 'grid auto-rows-fr gap-2' : 'space-y-2', className)}>{children}</div>;
 }
 
 export default MobileCard;

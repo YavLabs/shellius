@@ -13,22 +13,34 @@ Tracked here as work lands on `main`; moved into a dated section on release
 
 ### Changed
 
-- **Lists on phones are cards instead of tables.** Below 768px wide, every list (Servers, Customers, a customer's servers, Access requests, Policies, Certificates, Sessions, Notifications, My hosts, Keystore identities and keys, Users, Groups, Audit log, Bulk import) shows one card per row: an icon or avatar, the name, a line of detail and up to three badges. Tapping a card does what clicking the row does. The row's main action (Connect, Quick Connect, Request access) is a button on the card and the rest are in the "⋯" menu, with the same permissions as before.
-- On phones, search is full width, filters open in a sheet from a "Filters" button that shows how many are set, and sorting is a "Sort" menu. Long lists end with "Load more" or previous/next page buttons. Selecting servers shows the bulk actions in a bar at the bottom of the screen.
+- **Lists on phones are cards instead of tables.** Below 768px wide, every list (Servers, Customers, a customer's servers, Access requests, Policies, Certificates, Sessions, Notifications, My hosts, Keystore identities and keys, Users, Groups, Audit log, Bulk import) shows one card per row. Tapping a card does what clicking the row does. Cards stay short:
+  - A one-line name and a one-line detail (for a server: hostname and IP), with at most two quiet details under them. No badges.
+  - Status sits next to the "⋯" menu as a coloured dot and a word (Approved, Expired, Active, Locked, Allow / Deny). Counts go there too (a customer's servers, a group's members, an identity's servers). The selection checkbox is in the top-right corner.
+  - A server's health is a dot on its icon, spelled out only when the server is unhealthy or in maintenance. Its environment tints the card (Dev blue, Staging amber, Prod red, Demo grey) and is written small in the bottom-left corner. Access requests, sessions and certificates for a server are tinted the same way.
+  - The main action (Connect, Request access, Quick Connect) is a button in the bottom-right, under a divider. The rest are in the "⋯" menu, with the same permissions as before.
+  - Every card in a list is the same height.
+  - Customers are grouped under Active and Inactive headings.
+- On phones, search is full width, filters open in a sheet from a "Filters" button that shows how many are set, and sorting is a "Sort" menu. There are no page numbers: the next page loads as you scroll, with a "Load more" button as a fallback, in every list including the Audit log. Selecting servers shows the bulk actions in a bar at the bottom of the screen.
 - The role matrix on phones lists each permission by area with the roles that hold it. Recent connections, the Roles list and key exports have larger touch targets and no longer squeeze names on narrow screens.
 - **Dialogs open as bottom sheets on phones.** Below 768px wide, every dialog (forms, confirmations, Quick Connect, the command palette, keyboard shortcuts) slides up from the bottom with rounded corners and a drag handle. Swipe it down, tap outside it or press Escape to close it, the same as closing the dialog on a computer. The body scrolls while the title and the action buttons stay in place. The buttons fill the width and stack when they don't fit. Fields are 44px tall with 16px text, so iPhones don't zoom in when you tap one. When the on-screen keyboard opens, the sheet moves up so the buttons stay visible. Side-by-side fields that got too narrow on a phone now stack (for example OS type and version on Add server). Desktop and tablet dialogs are unchanged.
 - **Help opens from the bottom on phones.** The page help panel opens as a bottom sheet instead of sliding in from the right.
 - **Phone layout for the app shell** (below 768px wide; tablets and desktop are unchanged):
-  - The top bar is one row: menu button, page title, search, notifications and your avatar. The menu button now sits inside the bar instead of floating over it. Quick actions, Quick connect and the theme menu moved out of the bar.
-  - A bottom navigation bar shows Home, Terminals, Servers and Access requests, or, when you can't open one of them, My hosts, Keystore, Sessions or Notifications instead. The "+" button in the middle opens a sheet with Quick connect first, then the same quick actions as the desktop menu, with the same permissions. The bar is hidden on the full-screen terminal and while the keyboard is open in the Terminals workspace.
-  - The footer is hidden. Its Privacy, Terms and EULA links and the version are at the bottom of the menu drawer, next to a Light / Dark / System switch. The account menu has the same switch.
-  - The notifications panel fits the screen width.
-- **Page headers on phones.** The title stays on one line with the help button at the end, the description goes under it, the main action (for example "Add server") is a full-width button, and the other actions (Refresh, Export, Edit, Delete, …) are in a "⋯" menu. Server and customer pages have a back button before the title and their details (hostname, environment, slug, server counts) under it.
+  - There is no top bar. Each page starts with its own title, with the notch and status bar left clear.
+  - The bottom navigation bar has five slots: **Home**, **Connect**, the raised **+**, **Activity** and **More** (your avatar). A tab stays highlighted on the pages it leads to. The bar is hidden on the full-screen terminal and while the keyboard is open in the Terminals workspace.
+  - **Connect** (`/connect`) gathers everything about getting onto a machine: search, Quick connect, the Terminals workspace (with open and live counts), Servers, My hosts and your recent connections. Its badge counts live terminals.
+  - **Activity** (`/activity`) gathers what needs your attention: requests waiting for your review, your pending requests, live sessions and unread notifications, the latest notifications, and links to Access requests, Notifications, Sessions and the Audit log. Its badge replaces the bell.
+  - **More** opens a sheet with your account (to Profile), search, every other page grouped as in the sidebar, Administration, Bulk import, Install CLI, the theme switch, Sign out, and the Privacy, Terms and EULA links with the version.
+  - **+** lists the current page's create action first ("On this page", for example Add server on Servers), then Quick connect and the same quick actions as the desktop menu, without repeating the page's action. The pages themselves no longer show a full-width create button.
+  - The pages Connect and Activity open on desktop too.
+  - The footer is hidden.
+  - The theme switch is three icons with a "Theme" label, in the More sheet and the account menu.
+- **Page headers on phones.** The title stays on one line with the help button at the end and the description right under it. The main create action moves to the "+" button, and the other actions (Refresh, Export, Edit, Delete, …) are in a "⋯" menu. The header, toolbar and list are spaced evenly. Server and customer pages have a back button before the title and their details (hostname, environment, slug, server counts) under it.
 - **Administration on phones.** `/admin` shows the list of sections, grouped like a phone's Settings app, with a one-line description each and the search box on top. A section opens full width with "‹ Administration" to go back, instead of the dropdown. Going back still asks before discarding unsaved changes.
 - Desktop and tablet layouts are unchanged.
 
 ### Fixed
 
+- The Administration page title looks the same as every other page's, on desktop and on phones.
 - The cursor bar in the email logo sits on the same baseline as the letters. It was a separate table cell, so it sat lower in some mail clients.
 - Fields that draw their own focus style, such as the command palette search, no longer show an extra accent outline when focused. Buttons and links keep their keyboard focus ring.
 

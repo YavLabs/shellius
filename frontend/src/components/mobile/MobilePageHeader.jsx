@@ -12,6 +12,7 @@ import {
 } from '@/components/ui/dropdown-menu';
 import { cn } from '@/lib/utils';
 import { overflowEntries, splitActions } from '@/lib/pageHeaderActions';
+import { useRegisterPageActions } from '@/context/PageActionsContext';
 
 const ICON_BTN =
   'flex h-11 w-11 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring';
@@ -77,7 +78,8 @@ function PrimaryButton({ action: a, compact }) {
  * Phone layout of a page header (docs/plans/1.5.1-mobile.md §2):
  *   row 1  [‹ back] icon + title (one line, truncates) … [compact primary] [?] [⋯]
  *   row 2  subtitle / meta line (up to two lines, muted)
- *   row 3  primary action, full width
+ *   row 3  primary action, full width — or, inside the app layout, in the
+ *          bottom navigation's "+" sheet (context/PageActionsContext.jsx)
  * Used by PageHeader on phones and directly by detail pages whose desktop
  * header is bespoke. `primaryNode` replaces the primary action button with a
  * custom control (e.g. the server Connect / Request access button).
@@ -95,6 +97,11 @@ function MobilePageHeader({
   children,
 }) {
   const { primary, secondary } = splitActions(actions);
+  // The primary (create) action goes to the bottom navigation's "+" sheet
+  // instead of a full-width button here — unless the page shows a bespoke
+  // control (primaryNode, e.g. Connect) or there's no navigation to take it.
+  const movable = primary && !primaryNode && typeof primary.onClick === 'function' ? [primary] : [];
+  const inPlusSheet = useRegisterPageActions(movable, movable.length > 0);
   const entries = overflowEntries(secondary);
   const Heading = level === 1 ? 'h1' : 'h2';
   const backLabel = back?.label || 'Back';
@@ -116,13 +123,15 @@ function MobilePageHeader({
   return (
     <div
       className={cn(
-        'space-y-2',
+        'space-y-1.5',
         // Inside an Administration card: bleed to the card edges like the desktop header.
         inFrame && '-mx-4 -mt-4 border-b border-border px-4 pb-4 pt-2'
       )}
       data-mobile-header=""
     >
-      <div className="flex min-h-11 items-center gap-1">
+      {/* Title row: the 44px icon buttons overlap the row's padding (-my-1) so
+          they don't push the subtitle away from the title. */}
+      <div className="flex min-h-9 items-center gap-1 [&>*:not(.min-w-0)]:-my-1">
         {backButton}
         <div className="min-w-0 flex-1">
           <Heading
@@ -140,7 +149,7 @@ function MobilePageHeader({
             <span className="min-w-0 truncate">{title}</span>
           </Heading>
         </div>
-        {compactPrimary && primary && !primaryNode && <PrimaryButton action={primary} compact />}
+        {compactPrimary && primary && !primaryNode && !inPlusSheet && <PrimaryButton action={primary} compact />}
         {helpKey && (
           <span className="-mr-1 shrink-0 [&>button]:h-11 [&>button]:w-11">
             <HelpButton helpKey={helpKey} />
@@ -148,11 +157,11 @@ function MobilePageHeader({
         )}
         <OverflowMenu entries={entries} />
       </div>
-      {subtitle && <div className="line-clamp-2 text-sm text-muted-foreground">{subtitle}</div>}
+      {subtitle && <div className="line-clamp-2 text-sm leading-snug text-muted-foreground">{subtitle}</div>}
       {primaryNode ? (
         <div className="[&>*]:w-full [&_button]:h-11 [&_button]:w-full">{primaryNode}</div>
       ) : (
-        primary && !compactPrimary && <PrimaryButton action={primary} />
+        primary && !compactPrimary && !inPlusSheet && <PrimaryButton action={primary} />
       )}
       {/* Pages not yet describing their buttons as `actions` keep them, wrapped. */}
       {children && !actions && <div className="flex flex-wrap items-center gap-2">{children}</div>}

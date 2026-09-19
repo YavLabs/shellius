@@ -1,4 +1,4 @@
-import { LayoutDashboard, SquareTerminal, Server, KeyRound, Lock, KeySquare, Terminal, Bell } from 'lucide-react';
+import { LayoutDashboard, Cable, Inbox } from 'lucide-react';
 import { canAccessRoute, QUICK_ACTIONS, isQuickActionVisible } from '@/lib/commands';
 
 /**
@@ -6,46 +6,69 @@ import { canAccessRoute, QUICK_ACTIONS, isQuickActionVisible } from '@/lib/comma
  * they can be unit tested without rendering the layout.
  */
 
-/** Preferred bottom-nav items, in order. */
-export const BOTTOM_NAV_PREFERRED = [
-  { id: 'dashboard', label: 'Home', icon: LayoutDashboard, to: '/' },
-  { id: 'terminals', label: 'Terminals', icon: SquareTerminal, to: '/terminals' },
-  { id: 'servers', label: 'Servers', icon: Server, to: '/servers' },
-  { id: 'access-requests', label: 'Requests', icon: KeyRound, to: '/access-requests' },
-];
-
-/** Used, in order, when one of the preferred items isn't allowed. */
-export const BOTTOM_NAV_FALLBACKS = [
-  { id: 'my-hosts', label: 'My hosts', icon: Lock, to: '/my-hosts' },
-  { id: 'keystore', label: 'Keystore', icon: KeySquare, to: '/keystore' },
-  { id: 'sessions', label: 'Sessions', icon: Terminal, to: '/sessions' },
-  { id: 'notifications', label: 'Alerts', icon: Bell, to: '/notifications' },
-];
-
-export const BOTTOM_NAV_SLOTS = 4;
-
 /**
- * The four items shown in the bottom navigation for `user`: the first four
- * pages they can open, preferred items first (in their order), then the
- * fallbacks. Visibility is always canAccessRoute (ROUTE_ACCESS).
+ * The phone bottom navigation: Home, Connect, [+], Activity, More.
+ *
+ *   Home      the dashboard
+ *   Connect   hub for getting onto a machine — Quick connect, open terminals,
+ *             servers, My hosts, recent connections (pages/ConnectHub.jsx)
+ *   Activity  hub for what needs attention — reviews, your requests, live
+ *             sessions, notifications (pages/ActivityHub.jsx)
+ *   More      a sheet with search, the account, every other page and the
+ *             theme (components/mobile/MoreSheet.jsx)
+ *
+ * A tab stays highlighted on the pages it leads to (`sections`), so the bar
+ * always says where you are. Both hubs show only what the viewer may open.
  */
-export function bottomNavItems(user) {
-  return [...BOTTOM_NAV_PREFERRED, ...BOTTOM_NAV_FALLBACKS]
-    .filter((item) => canAccessRoute(user, item.to))
-    .slice(0, BOTTOM_NAV_SLOTS);
+export const BOTTOM_NAV_ITEMS = [
+  { id: 'dashboard', label: 'Home', icon: LayoutDashboard, to: '/', sections: ['/dashboard'] },
+  {
+    id: 'connect',
+    label: 'Connect',
+    icon: Cable,
+    to: '/connect',
+    sections: ['/terminals', '/servers', '/my-hosts', '/connections'],
+  },
+  {
+    id: 'activity',
+    label: 'Activity',
+    icon: Inbox,
+    to: '/activity',
+    sections: ['/access-requests', '/notifications', '/sessions'],
+  },
+];
+
+/** Every page in the bottom-nav tabs' `sections` (the More tab covers the rest). */
+const TAB_PATHS = BOTTOM_NAV_ITEMS.flatMap((i) => [i.to, ...i.sections]);
+
+const underPath = (path, base) => (base === '/' ? path === '/' : path === base || path.startsWith(`${base}/`));
+
+/** Is `item` the current tab? */
+export function isBottomNavItemActive(item, pathname) {
+  const path = String(pathname || '/').split(/[?#]/)[0];
+  return [item.to, ...(item.sections || [])].some((base) => underPath(path, base));
 }
 
-/** Split the items around the centre button: [left, right]. */
+/** Is the current page one the More sheet leads to (profile, admin, keystore, …)? */
+export function isMoreActive(pathname) {
+  const path = String(pathname || '/').split(/[?#]/)[0];
+  return !TAB_PATHS.some((base) => underPath(path, base));
+}
+
+/** Split the tabs around the centre button: [Home, Connect] | [Activity] (+ More). */
 export function splitAroundCentre(items) {
   const half = Math.ceil(items.length / 2);
   return [items.slice(0, half), items.slice(half)];
 }
 
-/** Is `item` the current page? "/" is also active on "/dashboard". */
-export function isBottomNavItemActive(item, pathname) {
-  const path = String(pathname || '/');
-  if (item.to === '/') return path === '/' || path === '/dashboard';
-  return path === item.to || path.startsWith(`${item.to}/`);
+/**
+ * The More sheet's page groups: NAV_SECTIONS filtered by canAccessRoute,
+ * empty groups dropped.
+ */
+export function moreSheetSections(user, sections) {
+  return sections
+    .map((s) => ({ ...s, items: s.items.filter((i) => canAccessRoute(user, i.to)) }))
+    .filter((s) => s.items.length > 0);
 }
 
 /** Heights (CSS px) the on-screen keyboard takes before we call it "open". */

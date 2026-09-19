@@ -8,6 +8,8 @@ import UserMenu from '@/components/layout/UserMenu';
 import QuickConnectButton from '@/components/quickConnect/QuickConnectButton';
 import QuickActionsMenu from '@/components/command/QuickActionsMenu';
 import Avatar from '@/components/ui/Avatar';
+import useIsMobile from '@/hooks/useIsMobile';
+import { cn } from '@/lib/utils';
 import { Tooltip, TooltipContent, TooltipTrigger, TooltipProvider } from '@/components/ui/tooltip';
 
 const isMac =
@@ -29,6 +31,8 @@ const routeNames = {
   '/keystore': 'Keystore',
   '/terminals': 'Terminals',
   '/connections': 'Recent connections',
+  '/connect': 'Connect',
+  '/activity': 'Activity',
   '/dashboard': 'Dashboard',
   '/profile': 'Profile',
   '/notifications': 'Notifications',
@@ -42,18 +46,51 @@ function pageNameFor(pathname) {
   return routeNames[section] || 'Shellius';
 }
 
+function AccountButton({ user, className }) {
+  return (
+    <TooltipProvider delayDuration={300}>
+      <UserMenu
+        align="right"
+        verticalAlign="below"
+        trigger={({ open, onClick }) => (
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <button
+                type="button"
+                onClick={onClick}
+                aria-haspopup="menu"
+                aria-expanded={open}
+                aria-label={`Account menu (${user?.name || 'User'})`}
+                className={cn(
+                  'flex shrink-0 items-center justify-center rounded-full focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background',
+                  className
+                )}
+              >
+                <Avatar name={user?.name} email={user?.email} avatarUrl={user?.avatarUrl} size="md" />
+              </button>
+            </TooltipTrigger>
+            <TooltipContent side="bottom">Account menu ({user?.name || 'User'})</TooltipContent>
+          </Tooltip>
+        )}
+      />
+    </TooltipProvider>
+  );
+}
+
 /**
- * Top bar. Phones (below md) get a single 56px row: menu button (opens the
- * navigation drawer), page title, search, notifications, avatar — Quick
- * actions, Quick connect and the theme menu move to the bottom navigation's
- * centre button, the drawer and the account menu (docs/plans/1.5.1-mobile.md).
+ * Top bar (desktop and tablet). Phones have no top bar: navigation, search,
+ * notifications and the account live in the bottom navigation (Connect,
+ * Activity, More) and the "+" sheet (docs/plans/1.5.1-mobile.md).
  */
 function Topbar({ onOpenNav }) {
   const location = useLocation();
   const { user } = useAuth();
   const { openPalette } = useCommandPalette();
+  const isMobile = useIsMobile();
 
   const pageName = pageNameFor(location.pathname);
+
+  if (isMobile) return null;
 
   return (
     <header className="flex h-14 shrink-0 items-center justify-between gap-1 border-b border-border bg-card pl-1 pr-1 md:gap-3 md:pl-6 md:pr-4">
@@ -122,29 +159,7 @@ function Topbar({ onOpenNav }) {
 
         {/* User dropdown — avatar only trigger. Profile / Administration / Bulk
             import / Install CLI / Keyboard shortcuts / Sign out live inside. */}
-        <TooltipProvider delayDuration={300}>
-          <UserMenu
-            align="right"
-            verticalAlign="below"
-            trigger={({ open, onClick }) => (
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <button
-                    type="button"
-                    onClick={onClick}
-                    aria-haspopup="menu"
-                    aria-expanded={open}
-                    aria-label={`Account menu (${user?.name || 'User'})`}
-                    className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full focus-visible:outline-none md:h-9 md:w-9 focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
-                  >
-                    <Avatar name={user?.name} email={user?.email} avatarUrl={user?.avatarUrl} size="md" />
-                  </button>
-                </TooltipTrigger>
-                <TooltipContent side="bottom">Account menu ({user?.name || 'User'})</TooltipContent>
-              </Tooltip>
-            )}
-          />
-        </TooltipProvider>
+        <AccountButton user={user} className="h-9 w-9" />
       </div>
     </header>
   );

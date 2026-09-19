@@ -5,7 +5,7 @@ import BottomSheet from './BottomSheet';
  * ActionSheet — a list of actions in a bottom sheet (the bottom
  * navigation's centre button), on the shared BottomSheet chrome.
  *
- * groups: [{ key, label (optional heading), items: [{ key, label, icon, onSelect, emphasis }] }]
+ * groups: [{ key, label (optional heading), items: [{ key, label, icon, onSelect, emphasis, disabled }] }]
  */
 function ActionSheet({ open, onClose, title, groups = [] }) {
   return (
@@ -26,8 +26,9 @@ function ActionSheet({ open, onClose, title, groups = [] }) {
                       <button
                         type="button"
                         onClick={item.onSelect}
+                        disabled={item.disabled}
                         className={cn(
-                          'flex min-h-12 w-full items-center gap-3 rounded-lg px-3 text-left text-sm transition-colors active:bg-accent hover:bg-accent/60',
+                          'flex min-h-12 w-full items-center gap-3 rounded-lg px-3 text-left text-sm transition-colors active:bg-accent hover:bg-accent/60 disabled:pointer-events-none disabled:opacity-50',
                           item.emphasis ? 'font-semibold text-foreground' : 'text-foreground'
                         )}
                       >

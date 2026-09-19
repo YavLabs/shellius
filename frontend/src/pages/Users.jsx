@@ -20,6 +20,7 @@ import {
 import DataTable from '@/components/shared/DataTable';
 import { Badge } from '@/components/ui/badge';
 import { roleTone, statusTone } from '@/lib/badgeTones';
+import { CardStatus } from '@/components/mobile/MobileCard';
 import UserCell from '@/components/shared/UserCell';
 import Avatar from '@/components/ui/Avatar';
 import Modal from '@/components/shared/Modal';
@@ -318,10 +319,7 @@ function Users() {
       mobile: {
         slot: 'title',
         render: (r) => (
-          <span className="block min-w-0">
-            <span className="block truncate">{r.name || r.email}</span>
-            {r.name && <span className="block truncate text-xs font-normal text-muted-foreground">{r.email}</span>}
-          </span>
+          r.name || r.email
         ),
       },
       render: (r) => <UserCell user={r} />,
@@ -331,7 +329,8 @@ function Users() {
       label: 'Role',
       sortable: true,
       searchAccessor: (r) => r.roleInfo?.name || r.role || '',
-      mobile: { slot: 'meta', order: 1 },
+      // Phones: plain text, no chip.
+      mobile: { slot: 'meta', order: 1, render: (r) => r.roleInfo?.name || roleTone(r.role).label },
       render: (r) => (
         <Badge tone={roleTone(r.role).tone}>{r.roleInfo?.name || roleTone(r.role).label}</Badge>
       ),
@@ -341,7 +340,8 @@ function Users() {
       label: 'Status',
       sortable: true,
       searchAccessor: (r) => r.status || '',
-      mobile: { slot: 'meta', order: 2 },
+      // Phones: quiet status next to the "⋯" menu (DataTable `mobile.corner`).
+      mobile: 'hidden',
       render: (r) => (
         <div className="flex flex-wrap items-center gap-1.5">
           <Badge tone={statusTone(r.status).tone}>{statusTone(r.status).label}</Badge>
@@ -388,7 +388,7 @@ function Users() {
       hideBelow: 'lg',
       mobile: {
         slot: 'secondary',
-        render: (r) => (r.lastLoginAt || r.lastLogin ? `Last login ${formatDate(r.lastLoginAt || r.lastLogin)}` : 'Never signed in'),
+        render: (r) => (r.name ? r.email : null),
       },
       render: (r) => <span className="text-muted-foreground">{formatDate(r.lastLoginAt || r.lastLogin)}</span>,
     },
@@ -486,6 +486,8 @@ function Users() {
         onResetFilters={() => { setRole(''); setStatus(''); setPage(1); }}
         mobile={{
           leading: (r) => <Avatar name={r.name} email={r.email} avatarUrl={r.avatarUrl} size="md" />,
+          corner: (r) =>
+            isLocked(r) ? <CardStatus tone="danger" label="Locked" /> : <CardStatus {...statusTone(r.status)} />,
           onCardClick:
             can('users.update') || can('users.assign_role') || can('users.suspend')
               ? (r) => manageable(r) && openEdit(r)

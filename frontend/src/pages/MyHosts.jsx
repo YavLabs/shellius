@@ -244,14 +244,7 @@ function MyHosts() {
         slot: 'meta',
         order: 1,
         render: (r) =>
-          r.credential ? (
-            <span className="flex min-w-0 items-center gap-1.5">
-              <span className="truncate">{r.credential.name}</span>
-              <ScopeBadge scope={r.credential.scope} />
-            </span>
-          ) : (
-            'Ask each time'
-          ),
+          r.credential ? <span className="truncate">{r.credential.name}</span> : 'Ask each time',
       },
       render: (r) =>
         r.credential ? (
@@ -268,7 +261,7 @@ function MyHosts() {
       label: 'Last connected',
       sortable: true,
       hideBelow: 'lg',
-      mobile: { slot: 'meta', order: 2 },
+      mobile: 'hidden',
       render: (r) => (
         <span className="flex items-center gap-1.5 text-xs text-muted-foreground" title={formatDateTime(r.lastConnectedAt)}>
           {r.lastConnectedAt ? relativeTime(r.lastConnectedAt) : 'Never'}
@@ -280,7 +273,7 @@ function MyHosts() {
       key: 'hostKey',
       label: 'Host key',
       hideBelow: 'lg',
-      mobile: { slot: 'meta', order: 3, render: (r) => (r.hostKeyFingerprint ? 'Key pinned' : null) },
+      mobile: 'hidden',
       render: (r) =>
         r.hostKeyFingerprint ? (
           <span

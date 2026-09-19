@@ -18,6 +18,7 @@ import useKeyboardOpen from '@/hooks/useKeyboardOpen';
 import { isBottomNavHidden } from '@/lib/mobileNav';
 import ShortcutsDialog from '@/components/command/ShortcutsDialog';
 import { CommandPaletteProvider } from '@/context/CommandPaletteContext';
+import { PageActionsProvider } from '@/context/PageActionsContext';
 import { QuickConnectProvider } from '@/context/QuickConnectContext';
 import { TerminalWorkspaceProvider } from '@/context/TerminalWorkspaceContext';
 import useKeyboardShortcuts from '@/hooks/useKeyboardShortcuts';
@@ -72,11 +73,13 @@ function AppLayout() {
     <TerminalWorkspaceProvider key={user?.id || 'anon'}>
       <QuickConnectProvider>
         <CommandPaletteProvider>
+        <PageActionsProvider>
           <GlobalShortcuts />
           {/* h-dvh on phones: 100vh there includes the area behind the browser bars. */}
           <div className="flex h-screen overflow-hidden bg-background text-foreground max-md:h-dvh">
             <Sidebar mobileOpen={navOpen} onMobileOpenChange={setNavOpen} />
-            <div className="flex flex-1 flex-col overflow-hidden min-w-0">
+            <div className="relative flex min-w-0 flex-1 flex-col overflow-hidden">
+              {/* Phones: no top bar (see BottomNav). */}
               <Topbar onOpenNav={() => setNavOpen(true)} />
               {/* /terminals owns the full available height (no page scroll,
                   no footer) so the tab bar + panes fill the viewport. */}
@@ -86,7 +89,7 @@ function AppLayout() {
                 // xterm pane, sized by FitAddon) push it taller than the
                 // viewport, clipping the last line/cursor with no way to
                 // scroll to it. See docs/terminal-workspace.md.
-                <main className="min-h-0 flex-1 overflow-hidden bg-muted/30">
+                <main className="min-h-0 flex-1 overflow-hidden bg-muted/30 max-md:pt-[env(safe-area-inset-top)]">
                   <Outlet />
                 </main>
               ) : (
@@ -102,7 +105,8 @@ function AppLayout() {
                       <FlowRing key={i} className={`app-ring app-ring-${i + 1}`} colors={r.colors} seed={r.seed} dur={r.dur} />
                     ))}
                   </div>
-                  <main className="app-main relative h-full overflow-y-auto overflow-x-hidden">
+                  {/* Phones: no top bar, so keep clear of the notch / status bar. */}
+                  <main className="app-main relative h-full overflow-y-auto overflow-x-hidden max-md:pt-[env(safe-area-inset-top)]">
                     <div className="min-h-[calc(100%-3rem)]">
                       <Outlet />
                     </div>
@@ -118,6 +122,7 @@ function AppLayout() {
           {/* Mounted once so ⌘K / Ctrl+K / "/" work from any authenticated page */}
           <CommandPalette />
           <ShortcutsDialog open={shortcutsOpen} onClose={() => setShortcutsOpen(false)} />
+        </PageActionsProvider>
         </CommandPaletteProvider>
       </QuickConnectProvider>
     </TerminalWorkspaceProvider>

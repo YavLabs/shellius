@@ -1,7 +1,9 @@
 import { useMemo } from 'react';
+import useMobilePages from '@/hooks/useMobilePages';
 import { cn } from '@/lib/utils';
 import {
   countActiveFilters,
+  groupRows,
   mobileWindow,
   resolveCardLayout,
   sortOptions,
@@ -22,15 +24,18 @@ import {
   MobileBulkBar,
   MobileFiltersButton,
   MobileLoadMore,
-  MobilePager,
   MobileSearch,
   MobileSelectAll,
   MobileSortMenu,
 } from '@/components/mobile/MobileListControls';
 
 /**
- * DataTable's mobile body: toolbar + card list + paging + bulk bar. All state
- * (search, sort, page, selection) stays in DataTable; this only renders it.
+ * DataTable's mobile body: toolbar + card list + bulk bar. All state (search,
+ * sort, page, selection) stays in DataTable; this only renders it.
+ *
+ * No page numbers on phones: the list grows as you scroll (with a "Load more"
+ * button as the fallback). Client lists show pages 1..page; server lists keep
+ * the pages fetched so far and ask for the next one.
  */
 export default function MobileDataList({
   className,
@@ -53,8 +58,6 @@ export default function MobileDataList({
   pageSize,
   total,
   totalPages,
-  startRow,
-  endRow,
   onPage,
   onLoadMore,
   selectable,
@@ -70,7 +73,19 @@ export default function MobileDataList({
   const sorts = useMemo(() => sortOptions(columns), [columns]);
   const filterCount = activeFilterCount ?? countActiveFilters(filters);
 
-  const shown = mobileWindow({ rows, page, pageSize, server });
+  const serverRows = useMobilePages({
+    rows,
+    page,
+    loading,
+    enabled: server,
+    // Page 1 already starts over (search / filters); a server sort may not.
+    resetKey: `${sortKey || ''}:${sortDir || ''}`,
+  });
+  const shown = server ? serverRows : mobileWindow({ rows, page, pageSize, server });
+  const hasMore = server ? page < totalPages : shown.length < total;
+  const loadMore = () => (server ? onPage(page + 1) : onLoadMore());
+  // A first load (or a new search) shows skeletons; a next page keeps the list.
+  const initialLoading = loading && (!server || page <= 1 || shown.length === 0);
   const shownIds = shown.map((r) => r.id).filter(Boolean);
   const allSelected = shownIds.length > 0 && shownIds.every((id) => selectedIds.includes(id));
   const someSelected = shownIds.some((id) => selectedIds.includes(id));
@@ -88,7 +103,15 @@ export default function MobileDataList({
   // Tables without a row click on desktop may still give the card a tap target.
   const cardClick = options?.onCardClick || onRowClick;
 
+  // Optional headed sections (e.g. Active / Inactive customers).
+  const groups = options?.group ? groupRows(shown, options.group, options.groupOrder) : null;
+
   const hasControls = filters || sorts.length > 0 || selectable;
+  // Any card on screen with buttons → every card keeps the action row.
+  const reserveActions =
+    layout.extras.length > 0 ||
+    (!!layout.actionsColumn &&
+      shown.some((row) => splitRowActions(layout.actionsColumn.actions, row, { maxPrimary }).primary.length > 0));
 
   const renderCard = (row, idx) => {
     const { primary, menu } = layout.actionsColumn
@@ -101,6 +124,7 @@ export default function MobileDataList({
     ];
     const secondary = layout.secondary.map((f) => f.render(row)).filter((v) => v !== null && v !== undefined && v !== '');
     const leading = options?.leading ? options.leading(row) : layout.leading?.render(row);
+    const accent = options?.accent ? options.accent(row) : null;
     const isSelected = !!(selectable && row.id && selectedIds.includes(row.id));
     return (
       <MobileCard
@@ -131,6 +155,9 @@ export default function MobileDataList({
         })}
         actions={actionNodes.length > 0 ? actionNodes : null}
         menu={menu.length > 0 ? <CardActionMenu actions={menu} row={row} /> : null}
+        accent={accent}
+        corner={options?.corner ? options.corner(row) : null}
+        reserveActions={reserveActions}
         onClick={cardClick ? () => cardClick(row) : undefined}
         selectable={selectable}
         selected={isSelected}
@@ -168,28 +195,31 @@ export default function MobileDataList({
         )}
       </div>
 
-      {loading ? (
+      {initialLoading ? (
         <MobileCardSkeleton count={Math.min(pageSize, 6)} withLeading={!!(options?.leading || layout.leading)} />
       ) : shown.length === 0 ? (
         <MobileEmptyCard>{emptyContent}</MobileEmptyCard>
       ) : (
-        <MobileCardList>{shown.map(renderCard)}</MobileCardList>
+        groups ? (
+          <div className="space-y-4">
+            {groups.map((g) => (
+              <section key={g.key} aria-label={g.label} className="space-y-2">
+                <h3 className="flex items-center gap-2 px-1 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                  {g.label}
+                  <span className="rounded-full bg-muted px-1.5 py-px text-[11px] font-medium tabular-nums">{g.rows.length}</span>
+                </h3>
+                <MobileCardList uniform>{g.rows.map(renderCard)}</MobileCardList>
+              </section>
+            ))}
+          </div>
+        ) : (
+          <MobileCardList uniform>{shown.map(renderCard)}</MobileCardList>
+        )
       )}
 
-      {!loading &&
-        total > 0 &&
-        (server ? (
-          <MobilePager
-            page={page}
-            totalPages={totalPages}
-            startRow={startRow}
-            endRow={endRow}
-            total={total}
-            onPage={onPage}
-          />
-        ) : (
-          <MobileLoadMore shown={shown.length} total={total} onMore={onLoadMore} />
-        ))}
+      {!initialLoading && total > 0 && (
+        <MobileLoadMore shown={shown.length} total={total} hasMore={hasMore} loading={loading} onMore={loadMore} />
+      )}
 
       {selectable && selectedIds.length > 0 && bulkActions && <MobileBulkBar>{bulkActions}</MobileBulkBar>}
     </div>

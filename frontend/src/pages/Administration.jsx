@@ -17,6 +17,7 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import MobilePageHeader from '@/components/mobile/MobilePageHeader';
+import PageHeader from '@/components/common/PageHeader';
 import useIsMobile from '@/hooks/useIsMobile';
 import { cn } from '@/lib/utils';
 import {
@@ -285,7 +286,7 @@ function Administration() {
   // full-width with "‹ Administration" to go back — no dropdown picker.
   if (isMobile) {
     return (
-      <div className="space-y-4 p-4">
+      <div className="space-y-6 p-6">
         {resolved.list ? (
           <>
             <MobilePageHeader
@@ -333,20 +334,14 @@ function Administration() {
   }
 
   return (
-    <div className="space-y-6 p-4 sm:p-6">
-      {/* Page header */}
-      <div className="flex items-start justify-between gap-4">
-        <div className="flex min-w-0 items-center gap-3">
-          <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg border border-border bg-[hsl(var(--brand)/0.12)] text-primary">
-            <ShieldCheck className="h-5 w-5" aria-hidden="true" />
-          </span>
-          <div className="min-w-0">
-            <h1 className="text-2xl font-bold tracking-tight">Administration</h1>
-            <p className="text-sm text-muted-foreground">Configure people, security and integrations for this organization.</p>
-          </div>
-        </div>
-        <HelpButton helpKey="admin" />
-      </div>
+    <div className="space-y-6 p-6">
+      {/* Same header as every other page. */}
+      <PageHeader
+        icon={ShieldCheck}
+        title="Administration"
+        subtitle="Configure people, security and integrations for this organization."
+        helpKey="admin"
+      />
 
       <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:gap-6">
         {/* Narrow screens: a picker above the content */}

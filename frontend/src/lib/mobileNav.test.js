@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import {
-  BOTTOM_NAV_SLOTS,
-  bottomNavItems,
+  BOTTOM_NAV_ITEMS,
+  isMoreActive,
+  moreSheetSections,
   centreSheetGroups,
   isBottomNavHidden,
   isBottomNavItemActive,
@@ -20,27 +21,39 @@ const admin = {
 const noServers = { role: 'member', permissions: ['vault.hosts', 'keystore.view'] };
 const bare = { role: 'super_admin', permissions: [] };
 
-describe('bottomNavItems', () => {
-  it('shows the four preferred items when all are allowed', () => {
-    expect(ids(bottomNavItems(admin))).toEqual(['dashboard', 'terminals', 'servers', 'access-requests']);
+describe('BOTTOM_NAV_ITEMS', () => {
+  it('is Home, Connect, Activity (More and "+" are drawn by BottomNav)', () => {
+    expect(ids(BOTTOM_NAV_ITEMS)).toEqual(['dashboard', 'connect', 'activity']);
   });
 
-  it('fills a missing slot with the first allowed fallback, in order', () => {
-    // No servers.view → Servers is replaced by My hosts (first fallback).
-    expect(ids(bottomNavItems(noServers))).toEqual(['dashboard', 'terminals', 'access-requests', 'my-hosts']);
-    const noServersNoHosts = { permissions: ['keystore.view', 'sessions.view_all'] };
-    expect(ids(bottomNavItems(noServersNoHosts))).toEqual(['dashboard', 'terminals', 'access-requests', 'keystore']);
+  it('keeps a tab lit on the pages it leads to', () => {
+    const [home, connect, activity] = BOTTOM_NAV_ITEMS;
+    expect(isBottomNavItemActive(home, '/dashboard')).toBe(true);
+    expect(isBottomNavItemActive(connect, '/servers/abc')).toBe(true);
+    expect(isBottomNavItemActive(connect, '/terminals')).toBe(true);
+    expect(isBottomNavItemActive(activity, '/access-requests?tab=to-review')).toBe(true);
+    expect(isBottomNavItemActive(activity, '/servers')).toBe(false);
+    expect(isBottomNavItemActive(home, '/servers')).toBe(false);
   });
 
-  it('never trusts role names and always returns at most four items', () => {
-    // Dashboard, Terminals, Access requests and Notifications are open to everyone.
-    expect(ids(bottomNavItems(bare))).toEqual(['dashboard', 'terminals', 'access-requests', 'notifications']);
-    expect(bottomNavItems(admin)).toHaveLength(BOTTOM_NAV_SLOTS);
-    expect(ids(bottomNavItems(null))).toEqual(['dashboard', 'terminals', 'access-requests', 'notifications']);
+  it('lights More everywhere else', () => {
+    expect(isMoreActive('/keystore')).toBe(true);
+    expect(isMoreActive('/admin/users')).toBe(true);
+    expect(isMoreActive('/servers')).toBe(false);
+    expect(isMoreActive('/')).toBe(false);
   });
+});
 
-  it('uses short labels', () => {
-    expect(bottomNavItems(admin).map((i) => i.label)).toEqual(['Home', 'Terminals', 'Servers', 'Requests']);
+describe('moreSheetSections', () => {
+  const sections = [
+    { label: 'A', items: [{ id: 'servers', to: '/servers' }, { id: 'terminals', to: '/terminals' }] },
+    { label: 'B', items: [{ id: 'audit', to: '/audit-log' }] },
+  ];
+  it('keeps only pages the viewer may open and drops empty groups', () => {
+    const out = moreSheetSections(bare, sections);
+    expect(out.map((s) => s.label)).toEqual(['A']);
+    expect(ids(out[0].items)).toEqual(['terminals']);
+    expect(moreSheetSections(admin, sections)[0].items).toHaveLength(2);
   });
 });
 
@@ -54,7 +67,7 @@ describe('splitAroundCentre', () => {
 });
 
 describe('isBottomNavItemActive', () => {
-  const home = { to: '/' };
+  const home = { to: '/', sections: ['/dashboard'] };
   const servers = { to: '/servers' };
   it('matches the page and its sub-pages', () => {
     expect(isBottomNavItemActive(home, '/')).toBe(true);

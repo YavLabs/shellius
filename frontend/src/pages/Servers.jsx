@@ -22,7 +22,8 @@ import Modal from '@/components/shared/Modal';
 import ConfirmDialog from '@/components/shared/ConfirmDialog';
 import DeleteServerDialog from '@/components/servers/DeleteServerDialog';
 import EnvironmentBadge from '@/components/shared/EnvironmentBadge';
-import HealthStatusDot from '@/components/shared/HealthStatusDot';
+import HealthStatusDot, { HEALTH_COLORS, HEALTH_LABELS } from '@/components/shared/HealthStatusDot';
+import { envAccent } from '@/lib/mobileCard';
 import ServerForm from '@/components/servers/ServerForm';
 import BootstrapModal from '@/components/servers/BootstrapModal';
 import UninstallHostModal from '@/components/servers/UninstallHostModal';
@@ -382,7 +383,7 @@ function Servers() {
       label: 'Customer',
       sortable: true,
       searchAccessor: (r) => r.customer?.name || '',
-      mobile: { slot: 'meta', order: 3, render: (r) => r.customer?.name || null },
+      mobile: { slot: 'meta', order: 1, render: (r) => r.customer?.name || null },
       render: (r) =>
         r.customer ? (
           <button
@@ -400,7 +401,8 @@ function Servers() {
       label: 'Env',
       sortable: true,
       searchAccessor: (r) => r.environment || '',
-      mobile: { slot: 'meta', order: 1 },
+      // Phones: the card tint + bottom-left label (DataTable `mobile.accent`).
+      mobile: 'hidden',
       render: (r) => <EnvironmentBadge environment={r.environment} />,
     },
     {
@@ -411,7 +413,15 @@ function Servers() {
         slot: 'leading',
         render: (r) => {
           const ProtoIcon = (r.protocol || r.type) === 'RDP' || r.protocol === 'rdp' ? Monitor : TerminalIcon;
-          return <CardIcon icon={ProtoIcon} title={r.protocol} />;
+          const health = r.healthStatus || 'unknown';
+          return (
+            <CardIcon
+              icon={ProtoIcon}
+              title={r.protocol}
+              status={HEALTH_COLORS[health] || HEALTH_COLORS.unknown}
+              statusLabel={HEALTH_LABELS[health] || 'Unknown'}
+            />
+          );
         },
       },
       render: (r) => (
@@ -422,7 +432,15 @@ function Servers() {
       key: 'health',
       label: 'Health',
       searchAccessor: (r) => r.healthStatus || '',
-      mobile: { slot: 'meta', order: 2 },
+      // Phones: a dot on the card icon; spelled out only when something's wrong.
+      mobile: {
+        slot: 'meta',
+        order: 2,
+        render: (r) =>
+          r.healthStatus === 'unhealthy' || r.healthStatus === 'maintenance' ? (
+            <HealthStatusDot status={r.healthStatus} showLabel />
+          ) : null,
+      },
       render: (r) => <HealthStatusDot status={r.healthStatus} showLabel />,
     },
     {
@@ -549,6 +567,7 @@ function Servers() {
         onSelectionChange={setSelected}
         bulkActions={bulkActionsSlot}
         onRowClick={(r) => navigate(`/servers/${r.id}`)}
+        mobile={{ accent: (r) => envAccent(r.environment) }}
         serverPagination={{
           page,
           total,

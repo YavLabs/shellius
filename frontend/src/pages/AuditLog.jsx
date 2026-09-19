@@ -28,8 +28,9 @@ import { relativeTime, formatDateTime } from '@/utils/time';
 import { formatLabel } from '@/utils/format';
 import { can } from '@/lib/permissions';
 import useIsMobile from '@/hooks/useIsMobile';
+import useMobilePages from '@/hooks/useMobilePages';
 import { MobileCard, MobileCardList, MobileCardSkeleton, MobileEmptyCard } from '@/components/mobile/MobileCard';
-import { MobileFiltersButton, MobilePager, MobileSearch } from '@/components/mobile/MobileListControls';
+import { MobileFiltersButton, MobileLoadMore, MobileSearch } from '@/components/mobile/MobileListControls';
 import Avatar from '@/components/ui/Avatar';
 
 // ---------------------------------------------------------------------------
@@ -322,6 +323,9 @@ function AuditLog() {
     </>
   );
 
+  // Phones scroll: every page loaded so far, next one on scroll.
+  const mobileItems = useMobilePages({ rows: items, page, loading, enabled: isMobile });
+
   const mobileList = (
     <div className="space-y-3">
       <MobileSearch
@@ -337,13 +341,13 @@ function AuditLog() {
           </Button>
         )}
       </div>
-      {loading ? (
+      {loading && (page <= 1 || mobileItems.length === 0) ? (
         <MobileCardSkeleton count={6} withLeading />
-      ) : items.length === 0 ? (
+      ) : mobileItems.length === 0 ? (
         <MobileEmptyCard>No audit log entries found.</MobileEmptyCard>
       ) : (
         <MobileCardList>
-          {items.map((item) => {
+          {mobileItems.map((item) => {
             const isExpanded = expandedRow === item.id;
             const actor = item.actorId ? item.actorName || item.actorEmail || item.actorId : 'System';
             return (
@@ -399,14 +403,13 @@ function AuditLog() {
           })}
         </MobileCardList>
       )}
-      {!loading && (
-        <MobilePager
-          page={page}
-          totalPages={totalPages}
-          startRow={total === 0 ? 0 : (page - 1) * pageSize + 1}
-          endRow={Math.min(page * pageSize, total)}
+      {mobileItems.length > 0 && (
+        <MobileLoadMore
+          shown={mobileItems.length}
           total={total}
-          onPage={(p) => { setPage(Math.max(1, Math.min(totalPages, p))); setExpandedRow(null); }}
+          hasMore={page < totalPages}
+          loading={loading}
+          onMore={() => setPage(page + 1)}
         />
       )}
     </div>

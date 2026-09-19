@@ -13,6 +13,7 @@ import DeletePolicyDialog from '@/components/policies/DeletePolicyDialog';
 import EnvironmentBadge from '@/components/shared/EnvironmentBadge';
 import { Badge } from '@/components/ui/badge';
 import { policyEffectTone } from '@/lib/badgeTones';
+import { CardStatus } from '@/components/mobile/MobileCard';
 import PolicyForm from '@/components/policies/PolicyForm';
 import PolicyEvaluator from '@/components/policies/PolicyEvaluator';
 import PageHeader from '@/components/common/PageHeader';
@@ -176,12 +177,7 @@ function Policies() {
       mobile: {
         slot: 'title',
         render: (r) => (
-          <span>
-            {r.name}
-            {r.description && (
-              <span className="mt-0.5 block text-xs font-normal text-muted-foreground line-clamp-2">{r.description}</span>
-            )}
-          </span>
+          r.name
         ),
       },
       render: (r) => (
@@ -198,7 +194,8 @@ function Policies() {
       label: 'Effect',
       sortable: true,
       searchAccessor: (r) => r.effect || '',
-      mobile: { slot: 'meta', order: 1 },
+      // Phones: quiet effect next to the "⋯" menu (DataTable `mobile.corner`).
+      mobile: 'hidden',
       render: (r) => <EffectBadge effect={r.effect} />,
     },
     {
@@ -215,7 +212,7 @@ function Policies() {
       key: 'environments',
       label: 'Environments',
       hideBelow: 'md',
-      mobile: { slot: 'meta', order: 3 },
+      mobile: 'hidden',
       render: (r) => {
         const envs = r.targetEnvironments || [];
         if (envs.length === 0) return <span className="text-xs text-muted-foreground">All</span>;
@@ -246,7 +243,7 @@ function Policies() {
       mobile: {
         slot: 'secondary',
         order: 2,
-        render: (r) => <span className="font-mono">Priority {r.priority ?? 0}</span>,
+        render: (r) => `Priority ${r.priority ?? 0}${r.isActive ? '' : ' · Inactive'}`,
       },
       render: (r) => (
         <span className="font-mono text-xs text-muted-foreground">{r.priority ?? 0}</span>
@@ -256,7 +253,7 @@ function Policies() {
       key: 'isActive',
       label: 'Status',
       searchAccessor: (r) => (r.isActive ? 'active' : 'inactive'),
-      mobile: { slot: 'meta', order: 2 },
+      mobile: 'hidden',
       render: (r) =>
         r.isActive ? <Badge tone="success">Active</Badge> : <Badge tone="neutral">Inactive</Badge>,
     },
@@ -319,6 +316,7 @@ function Policies() {
         searchPlaceholder="Search by policy name..."
         filters={filterSlot}
         onResetFilters={() => { setEffectFilter(''); setCustomerFilter(''); setActiveFilter(''); setPage(1); }}
+        mobile={{ corner: (r) => <CardStatus {...policyEffectTone(r.effect)} /> }}
         serverPagination={{
           page,
           total,

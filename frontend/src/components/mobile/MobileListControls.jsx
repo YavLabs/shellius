@@ -1,5 +1,5 @@
-import { useState } from 'react';
-import { ArrowDown, ArrowUp, ArrowUpDown, Check, ChevronLeft, ChevronRight, Search, SlidersHorizontal } from 'lucide-react';
+import { useEffect, useRef, useState } from 'react';
+import { ArrowDown, ArrowUp, ArrowUpDown, Check, Loader2, Search, SlidersHorizontal } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -110,9 +110,36 @@ export function MobileSelectAll({ checked, indeterminate, onChange, disabled }) 
   );
 }
 
-/** "Load more" for client lists. */
-export function MobileLoadMore({ shown, total, onMore }) {
-  if (shown >= total) {
+/**
+ * End of a mobile list: loads the next page on its own when it scrolls into
+ * view (400px early), with a "Load more" button as the fallback, and a count
+ * once everything is shown. Works for client lists (show more rows) and
+ * server lists (fetch the next page) alike — the caller decides via `onMore`.
+ */
+export function MobileLoadMore({ shown, total, hasMore = shown < total, loading = false, onMore }) {
+  const sentinel = useRef(null);
+  const onMoreRef = useRef(onMore);
+  onMoreRef.current = onMore;
+
+  useEffect(() => {
+    const el = sentinel.current;
+    if (!el || !hasMore || loading || typeof IntersectionObserver === 'undefined') return undefined;
+    // Re-created whenever the list grows, so a short page that leaves the
+    // sentinel on screen triggers the next load straight away.
+    const io = new IntersectionObserver(
+      (entries) => {
+        if (entries.some((e) => e.isIntersecting)) {
+          io.disconnect();
+          onMoreRef.current?.();
+        }
+      },
+      { rootMargin: '400px 0px' }
+    );
+    io.observe(el);
+    return () => io.disconnect();
+  }, [hasMore, loading, shown]);
+
+  if (!hasMore) {
     return total > 0 ? (
       <p className="py-2 text-center text-xs text-muted-foreground tabular-nums">
         {total} {total === 1 ? 'item' : 'items'}
@@ -120,50 +147,14 @@ export function MobileLoadMore({ shown, total, onMore }) {
     ) : null;
   }
   return (
-    <div className="space-y-1.5 pt-1">
-      <Button variant="outline" className="h-11 w-full" onClick={onMore}>
-        Load more
+    <div ref={sentinel} className="space-y-1.5 pt-1">
+      <Button variant="outline" className="h-11 w-full gap-2" onClick={onMore} disabled={loading}>
+        {loading && <Loader2 className="h-4 w-4 animate-spin" />}
+        {loading ? 'Loading…' : 'Load more'}
       </Button>
       <p className="text-center text-xs text-muted-foreground tabular-nums">
         Showing {shown} of {total}
       </p>
-    </div>
-  );
-}
-
-/** Compact prev / "page X of Y" / next for server-paginated lists. */
-export function MobilePager({ page, totalPages, startRow, endRow, total, onPage }) {
-  if (total === 0) return null;
-  return (
-    <div className="flex items-center justify-between gap-2 pt-1 text-sm text-muted-foreground">
-      <Button
-        variant="outline"
-        size="icon"
-        className="h-11 w-11"
-        onClick={() => onPage(page - 1)}
-        disabled={page <= 1}
-        aria-label="Previous page"
-      >
-        <ChevronLeft className="h-5 w-5" />
-      </Button>
-      <div className="min-w-0 text-center leading-tight tabular-nums">
-        <div className="text-foreground">
-          Page {page} of {totalPages}
-        </div>
-        <div className="text-xs">
-          {startRow}–{endRow} of {total}
-        </div>
-      </div>
-      <Button
-        variant="outline"
-        size="icon"
-        className="h-11 w-11"
-        onClick={() => onPage(page + 1)}
-        disabled={page >= totalPages}
-        aria-label="Next page"
-      >
-        <ChevronRight className="h-5 w-5" />
-      </Button>
     </div>
   );
 }

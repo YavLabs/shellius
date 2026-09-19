@@ -37,6 +37,7 @@ import {
   TooltipTrigger,
 } from '@/components/ui/tooltip';
 import usePendingReviewCount from '@/hooks/usePendingReviewCount';
+import { NAV_SECTIONS } from '@/lib/navSections';
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -51,50 +52,7 @@ const COLLAPSED_WIDTH = 'w-14';
 // Grouped navigation config
 // ---------------------------------------------------------------------------
 
-const NAV_SECTIONS = [
-  {
-    label: 'Overview',
-    items: [
-      { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard, to: '/' },
-      { id: 'terminals', label: 'Terminals', icon: SquareTerminal, to: '/terminals' },
-    ],
-  },
-  {
-    label: 'Inventory',
-    items: [
-      { id: 'customers', label: 'Customers', icon: Building2, to: '/customers' },
-      { id: 'servers', label: 'Servers', icon: Server, to: '/servers' },
-      { id: 'my-hosts', label: 'My hosts', icon: Lock, to: '/my-hosts' },
-    ],
-  },
-  {
-    label: 'Access',
-    items: [
-      { id: 'access-requests', label: 'Access requests', icon: KeyRound, to: '/access-requests' },
-      { id: 'policies', label: 'Policies', icon: Shield, to: '/policies' },
-      {
-        id: 'certificates',
-        label: 'Certificates',
-        icon: FileKey,
-        to: '/certificates',
-      },
-      {
-        id: 'keystore',
-        label: 'Keystore',
-        icon: KeySquare,
-        to: '/keystore',
-      },
-    ],
-  },
-  {
-    label: 'Audit',
-    items: [
-      { id: 'sessions', label: 'Sessions', icon: Terminal, to: '/sessions' },
-      { id: 'audit-log', label: 'Audit log', icon: ScrollText, to: '/audit-log' },
-      { id: 'notifications', label: 'Notifications', icon: Bell, to: '/notifications' },
-    ],
-  },
-];
+// NAV_SECTIONS lives in lib/navSections.js (the phone "More" sheet uses it too).
 
 // Profile and Administration (users, roles, groups and org settings) live in
 // the shared UserMenu dropdown that opens from both the topbar avatar AND the

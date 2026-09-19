@@ -92,7 +92,7 @@ function Customers() {
       key: 'slug',
       label: 'Slug',
       sortable: true,
-      mobile: { slot: 'meta', order: 1 },
+      mobile: 'hidden',
       render: (c) => <code className="text-xs text-muted-foreground">{c.slug}</code>,
     },
     {
@@ -112,7 +112,8 @@ function Customers() {
       label: 'Servers',
       sortable: true,
       searchAccessor: (c) => String(c._count?.servers ?? 0),
-      mobile: { slot: 'meta', order: 2 },
+      // Phones: next to the "⋯" menu (DataTable `mobile.corner`).
+      mobile: 'hidden',
       render: (c) => (
         <span className="flex items-center gap-1.5 text-sm text-muted-foreground">
           <Server className="h-3.5 w-3.5" />
@@ -124,7 +125,8 @@ function Customers() {
       key: 'status',
       label: 'Status',
       searchAccessor: (c) => (c.isActive ? 'active' : 'inactive'),
-      mobile: { slot: 'meta', order: 3 },
+      // Phones: Active / Inactive sections instead of a chip on each card.
+      mobile: 'hidden',
       render: (c) => (
         <Badge variant={c.isActive ? 'success' : 'default'}>
           {c.isActive ? 'Active' : 'Inactive'}
@@ -180,7 +182,17 @@ function Customers() {
         emptyMessage="No customers yet. Create your first customer to get started."
         searchPlaceholder="Search customers..."
         onRowClick={(c) => navigate(`/customers/${c.id}`)}
-        mobile={{ leading: () => <CardIcon icon={Building2} /> }}
+        mobile={{
+          leading: () => <CardIcon icon={Building2} />,
+          corner: (c) => (
+            <span className="flex items-center gap-1 tabular-nums" title="Servers" aria-label={`${c._count?.servers ?? 0} servers`}>
+              <Server className="h-3.5 w-3.5" />
+              {c._count?.servers ?? 0}
+            </span>
+          ),
+          group: (c) => (c.isActive ? { key: 'active', label: 'Active' } : { key: 'inactive', label: 'Inactive' }),
+          groupOrder: ['active', 'inactive'],
+        }}
       />
 
       <Modal open={createOpen} onClose={() => setCreateOpen(false)} title="Add customer">

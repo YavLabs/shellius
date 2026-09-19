@@ -22,6 +22,9 @@ import { useAuth } from '@/context/AuthContext';
 import { formatDateTime } from '@/utils/time';
 import { CERT_STATUS_LABELS } from '@/lib/labels';
 import { can } from '@/lib/permissions';
+import { envAccent } from '@/lib/mobileCard';
+import { certificateStatusTone } from '@/lib/badgeTones';
+import { CardStatus } from '@/components/mobile/MobileCard';
 
 
 function downloadBlob(filename, content) {
@@ -225,11 +228,7 @@ function Certificates() {
       key: 'serial',
       label: 'Serial',
       sortable: true,
-      mobile: {
-        slot: 'secondary',
-        order: 2,
-        render: (r) => (r.serial ? <span className="font-mono">#{r.serial.slice(0, 12)}{r.serial.length > 12 ? '…' : ''}</span> : null),
-      },
+      mobile: 'hidden',
       render: (r) => (
         <span className="font-mono text-xs text-muted-foreground">
           {r.serial ? r.serial.slice(0, 16) + (r.serial.length > 16 ? '…' : '') : '-'}
@@ -252,10 +251,7 @@ function Certificates() {
       mobile: {
         slot: 'title',
         render: (r) => (
-          <span className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
-            <span className="min-w-0 break-all">{r.issuedFor?.hostname || 'Any server'}</span>
-            {r.issuedFor?.environment && <EnvironmentBadge environment={r.issuedFor.environment} />}
-          </span>
+          <span className="min-w-0 break-all">{r.issuedFor?.hostname || 'Any server'}</span>
         ),
       },
       render: (r) =>
@@ -272,7 +268,7 @@ function Certificates() {
       key: 'principals',
       label: 'Principals',
       hideBelow: 'md',
-      mobile: { slot: 'meta', order: 3 },
+      mobile: 'hidden',
       render: (r) => {
         const list = Array.isArray(r.principals) ? r.principals : [];
         const display = list.slice(0, 3).join(', ');
@@ -297,7 +293,8 @@ function Certificates() {
       label: 'Status',
       sortable: true,
       searchAccessor: (r) => r.status || '',
-      mobile: { slot: 'meta', order: 1 },
+      // Phones: quiet status next to the "⋯" menu (DataTable `mobile.corner`).
+      mobile: 'hidden',
       render: (r) => <CertStatusBadge status={r.status} />,
     },
     {
@@ -354,6 +351,8 @@ function Certificates() {
         filters={filterSlot}
         mobile={{
           onCardClick: (r) => setDetailCert(r),
+          accent: (r) => envAccent(r.issuedFor?.environment),
+          corner: (r) => <CardStatus {...certificateStatusTone(r.status)} />,
           leading: (r) => <Avatar name={r.issuedTo?.name} email={r.issuedTo?.email} avatarUrl={r.issuedTo?.avatarUrl} size="md" />,
         }}
         serverPagination={{

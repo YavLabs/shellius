@@ -36,6 +36,9 @@ import { relativeTime, formatDateTime } from '@/utils/time';
 import { ACCESS_REQUEST_STATUS_LABELS } from '@/lib/labels';
 import { PENDING_REVIEWS_EVENT } from '@/hooks/usePendingReviewCount';
 import { can } from '@/lib/permissions';
+import { envAccent } from '@/lib/mobileCard';
+import { CardStatus } from '@/components/mobile/MobileCard';
+import { statusTone } from '@/lib/badgeTones';
 
 
 
@@ -233,7 +236,11 @@ function AccessRequests() {
   const isAdmin = can(user, 'access_requests.view_all');
   const tabs = isAdmin ? [...TABS, { key: 'all', label: 'All' }] : TABS;
 
-  const [activeTab, setActiveTab] = useState('mine');
+  // ?tab=to-review (Activity's "To review" tile) opens that tab.
+  const [activeTab, setActiveTab] = useState(() => {
+    const t = new URLSearchParams(window.location.search).get('tab');
+    return t === 'to-review' || (t === 'all' && isAdmin) ? t : 'mine';
+  });
   const [requests, setRequests] = useState([]);
   const [total, setTotal] = useState(0);
   const [pendingReviewCount, setPendingReviewCount] = useState(0);
@@ -361,12 +368,7 @@ function AccessRequests() {
       searchAccessor: (r) => serverSearchString(r.server),
       mobile: {
         slot: 'title',
-        render: (r) => (
-          <span className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
-            <ServerName server={r.server} fallback={r.serverId} className="min-w-0" />
-            {r.server?.environment && <EnvironmentBadge environment={r.server.environment} />}
-          </span>
-        ),
+        render: (r) => r.server?.displayName || r.server?.hostname || r.serverId,
       },
       render: (r) => (
         <div className="flex items-center gap-2">
@@ -393,11 +395,7 @@ function AccessRequests() {
       ? [{
           key: 'reviewer',
           label: 'Reviewer',
-          mobile: {
-            slot: 'secondary',
-            order: 1,
-            render: (r) => (r.reviewer ? `Reviewer: ${r.reviewer.name || r.reviewer.email}` : null),
-          },
+          mobile: 'hidden',
           render: (r) => (
             <span className="text-sm text-muted-foreground">
               {r.reviewer?.name || r.reviewer?.email || '-'}
@@ -409,11 +407,8 @@ function AccessRequests() {
       key: 'reason',
       label: 'Reason',
       hideBelow: 'md',
-      mobile: {
-        slot: 'secondary',
-        order: 3,
-        render: (r) => (r.reason ? <span className="line-clamp-1 italic">“{r.reason}”</span> : null),
-      },
+      // Phones: in the request details (tap the card).
+      mobile: 'hidden',
       render: (r) => (
         <span className="block max-w-xs truncate text-sm text-muted-foreground" title={r.reason}>
           {r.reason}
@@ -423,7 +418,7 @@ function AccessRequests() {
     {
       key: 'duration',
       label: 'Duration',
-      mobile: { slot: 'meta', order: 3, showLabel: true },
+      mobile: 'hidden',
       render: (r) => (
         <span className="text-sm text-muted-foreground">{formatDuration(r.requestedDuration)}</span>
       ),
@@ -433,7 +428,8 @@ function AccessRequests() {
       label: 'Status',
       sortable: true,
       searchAccessor: (r) => r.status || '',
-      mobile: { slot: 'meta', order: 1 },
+      // Phones: quiet status next to the "⋯" menu (DataTable `mobile.corner`).
+      mobile: 'hidden',
       render: (r) => <StatusBadge status={r.status} />,
     },
     {
@@ -444,7 +440,7 @@ function AccessRequests() {
       mobile: {
         slot: 'secondary',
         order: 2,
-        render: (r) => relativeTime(r.createdAt),
+        render: (r) => `${relativeTime(r.createdAt)} · ${formatDuration(r.requestedDuration)}`,
       },
       render: (r) => (
         <span className="text-xs text-muted-foreground">{relativeTime(r.createdAt)}</span>
@@ -536,6 +532,8 @@ function AccessRequests() {
         filters={filterSlot}
         mobile={{
           onCardClick: (r) => openDetail(r.id),
+          accent: (r) => envAccent(r.server?.environment),
+          corner: (r) => <CardStatus {...statusTone(r.status)} />,
           leading: (r) =>
             activeTab !== 'mine' ? (
               <Avatar name={r.requester?.name} email={r.requester?.email} avatarUrl={r.requester?.avatarUrl} size="md" />

@@ -27,7 +27,8 @@ import Modal from '@/components/shared/Modal';
 import ConfirmDialog from '@/components/shared/ConfirmDialog';
 import DeleteCustomerDialog from '@/components/customers/DeleteCustomerDialog';
 import EnvironmentBadge from '@/components/shared/EnvironmentBadge';
-import HealthStatusDot from '@/components/shared/HealthStatusDot';
+import HealthStatusDot, { HEALTH_COLORS, HEALTH_LABELS } from '@/components/shared/HealthStatusDot';
+import { envAccent } from '@/lib/mobileCard';
 import CustomerForm from '@/components/customers/CustomerForm';
 import ServerForm from '@/components/servers/ServerForm';
 import { Button } from '@/components/ui/button';
@@ -305,7 +306,17 @@ function CustomerDetail() {
       label: 'Proto',
       mobile: {
         slot: 'leading',
-        render: (r) => <CardIcon icon={r.protocol === 'rdp' ? Monitor : TerminalIcon} title={r.protocol} />,
+        render: (r) => {
+          const health = r.healthStatus || 'unknown';
+          return (
+            <CardIcon
+              icon={r.protocol === 'rdp' ? Monitor : TerminalIcon}
+              title={r.protocol}
+              status={HEALTH_COLORS[health] || HEALTH_COLORS.unknown}
+              statusLabel={HEALTH_LABELS[health] || 'Unknown'}
+            />
+          );
+        },
       },
       render: (r) => (
         <span className="text-xs uppercase tracking-wide text-muted-foreground">
@@ -318,14 +329,23 @@ function CustomerDetail() {
       label: 'Env',
       sortable: true,
       searchAccessor: (r) => r.environment || '',
-      mobile: { slot: 'meta', order: 1 },
+      // Phones: the card tint + bottom-left label (DataTable `mobile.accent`).
+      mobile: 'hidden',
       render: (r) => <EnvironmentBadge environment={r.environment} />,
     },
     {
       key: 'health',
       label: 'Health',
       searchAccessor: (r) => r.healthStatus || '',
-      mobile: { slot: 'meta', order: 2 },
+      // Phones: a dot on the card icon; spelled out only when something's wrong.
+      mobile: {
+        slot: 'meta',
+        order: 2,
+        render: (r) =>
+          r.healthStatus === 'unhealthy' || r.healthStatus === 'maintenance' ? (
+            <HealthStatusDot status={r.healthStatus} showLabel />
+          ) : null,
+      },
       render: (r) => <HealthStatusDot status={r.healthStatus} showLabel />,
     },
     {
@@ -602,6 +622,7 @@ function CustomerDetail() {
                 searchPlaceholder="Search hostname or IP..."
                 filters={filterSlot}
                 onRowClick={(r) => navigate(`/servers/${r.id}`)}
+                mobile={{ accent: (r) => envAccent(r.environment) }}
               />
             </div>
           </div>

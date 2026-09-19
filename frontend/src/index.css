@@ -587,3 +587,19 @@ aside a[aria-current='page'] {
     animation: none;
   }
 }
+
+/* Phones have no top bar: the page header is the first thing on screen,
+   with the same 1rem rhythm as the rest of the page (p-6 on most pages). */
+@media (max-width: 767px) {
+  .app-main > div > :first-child {
+    padding-top: 1rem;
+  }
+}
+
+/* Phones: one rhythm between the page header, the list toolbar and the
+   list (pages stack them with space-y-6 on desktop). */
+@media (max-width: 767px) {
+  .app-main > div > :first-child.space-y-6 > :not([hidden]) ~ :not([hidden]) {
+    margin-top: 1rem;
+  }
+}

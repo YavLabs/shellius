@@ -13,15 +13,8 @@ import {
   markNotificationRead,
 } from '@/services/notificationService';
 import { relativeTime } from '@/utils/time';
+import { RELATED_ROUTE } from '@/lib/notificationRoutes';
 
-const RELATED_ROUTE = {
-  AccessRequest: () => `/access-requests`,
-  Certificate: () => `/certificates`,
-  Session: () => `/sessions`,
-  Server: (id) => `/servers/${id}`,
-  Customer: (id) => `/customers/${id}`,
-  User: () => `/admin/users`,
-};
 
 function Notifications() {
   const navigate = useNavigate();
@@ -111,7 +104,7 @@ function Notifications() {
       label: 'Type',
       sortable: true,
       searchAccessor: (n) => n.type || '',
-      mobile: { slot: 'meta', order: 1 },
+      mobile: 'hidden',
       render: (n) => (
         <Badge tone="info" variant="outline">
           {formatLabel(n.type || 'info')}
@@ -140,7 +133,7 @@ function Notifications() {
       key: 'related',
       label: 'Related',
       hideBelow: 'md',
-      mobile: { slot: 'meta', order: 2, render: (n) => n.relatedType || null },
+      mobile: 'hidden',
       render: (n) => (
         <span className="text-xs text-muted-foreground">
           {n.relatedType ? `${n.relatedType}` : '—'}

@@ -145,7 +145,8 @@ function Row({ icon: Icon, iconTone = 'text-muted-foreground', dot, title, badge
  *
  * Everything is your own data only (both APIs are user-scoped).
  */
-export function RecentConnections({ variant = 'widget' }) {
+// `showQuickConnect={false}`: the host page already offers Quick connect (Connect hub).
+export function RecentConnections({ variant = 'widget', showQuickConnect = true }) {
   const isPage = variant === 'page';
   const navigate = useNavigate();
   const { allowed: qcAllowed, openQuickConnect } = useQuickConnect();
@@ -355,7 +356,7 @@ export function RecentConnections({ variant = 'widget' }) {
           </div>
         )}
         <div className="flex shrink-0 items-center gap-1.5">
-          {qcAllowed && (
+          {qcAllowed && showQuickConnect && (
             <button
               type="button"
               onClick={() => openQuickConnect()}

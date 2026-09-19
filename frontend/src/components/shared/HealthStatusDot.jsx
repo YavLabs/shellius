@@ -1,13 +1,13 @@
 import { cn } from '@/lib/utils';
 
-const colors = {
+export const HEALTH_COLORS = {
   healthy: 'bg-emerald-500',
   unhealthy: 'bg-red-500',
   unknown: 'bg-muted-foreground/60',
   maintenance: 'bg-yellow-500',
 };
 
-const labels = {
+export const HEALTH_LABELS = {
   healthy: 'Healthy',
   unhealthy: 'Unhealthy',
   unknown: 'Unknown',
@@ -15,13 +15,13 @@ const labels = {
 };
 
 function HealthStatusDot({ status, showLabel = false, className }) {
-  const color = colors[status] || colors.unknown;
+  const color = HEALTH_COLORS[status] || HEALTH_COLORS.unknown;
   return (
     <span className={cn('inline-flex items-center gap-1.5', className)}>
       <span className={cn('inline-block h-2 w-2 rounded-full', color)} />
       {showLabel && (
         <span className="text-xs text-muted-foreground">
-          {labels[status] || 'Unknown'}
+          {HEALTH_LABELS[status] || 'Unknown'}
         </span>
       )}
     </span>

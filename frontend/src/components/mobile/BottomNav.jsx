@@ -7,8 +7,11 @@ import { useCommandPalette } from '@/context/CommandPaletteContext';
 import { useTerminalWorkspace } from '@/context/TerminalWorkspaceContext';
 import usePendingReviewCount from '@/hooks/usePendingReviewCount';
 import { useNotifications } from '@/context/NotificationContext';
+import { usePageActions } from '@/context/PageActionsContext';
 import ActionSheet from '@/components/mobile/ActionSheet';
-import { bottomNavItems, centreSheetGroups, isBottomNavItemActive, splitAroundCentre } from '@/lib/mobileNav';
+import { BOTTOM_NAV_ITEMS, centreSheetGroups, isBottomNavItemActive, isMoreActive, splitAroundCentre } from '@/lib/mobileNav';
+import MoreSheet from '@/components/mobile/MoreSheet';
+import Avatar from '@/components/ui/Avatar';
 import { runQuickAction } from '@/lib/runQuickAction';
 import { cn } from '@/lib/utils';
 
@@ -26,6 +29,9 @@ function CountBadge({ count, tone }) {
   );
 }
 
+const TAB_CLS =
+  'flex min-w-0 flex-1 flex-col items-center justify-center gap-1 rounded-lg text-[11px] font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring';
+
 function NavTab({ item, active, badge }) {
   const Icon = item.icon;
   return (
@@ -33,10 +39,7 @@ function NavTab({ item, active, badge }) {
       to={item.to}
       end={item.to === '/'}
       aria-current={active ? 'page' : undefined}
-      className={cn(
-        'flex min-w-0 flex-1 flex-col items-center justify-center gap-1 rounded-lg text-[11px] font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
-        active ? 'text-[hsl(var(--brand))]' : 'text-muted-foreground active:text-foreground'
-      )}
+      className={cn(TAB_CLS, active ? 'text-[hsl(var(--brand))]' : 'text-muted-foreground active:text-foreground')}
     >
       <span className="relative">
         <Icon className="h-5 w-5" strokeWidth={active ? 2.25 : 1.75} aria-hidden="true" />
@@ -47,12 +50,36 @@ function NavTab({ item, active, badge }) {
   );
 }
 
+/** "More" tab: your avatar (the old top-bar avatar and menu button in one). */
+function MoreTab({ user, active, open, onClick }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      aria-label="More"
+      aria-haspopup="dialog"
+      aria-expanded={open}
+      className={cn(TAB_CLS, active || open ? 'text-[hsl(var(--brand))]' : 'text-muted-foreground active:text-foreground')}
+    >
+      <span
+        className={cn(
+          'flex h-6 w-6 items-center justify-center overflow-hidden rounded-full ring-2 [&>*]:h-6 [&>*]:w-6 [&>*]:text-[10px]',
+          active || open ? 'ring-[hsl(var(--brand))]' : 'ring-transparent'
+        )}
+      >
+        <Avatar name={user?.name} email={user?.email} avatarUrl={user?.avatarUrl} size="sm" />
+      </span>
+      <span className="max-w-full truncate leading-none">More</span>
+    </button>
+  );
+}
+
 /**
- * BottomNav — phone-only navigation bar (docs/plans/1.5.1-mobile.md §1):
- * two nav items, a raised centre "+" button that opens the actions sheet
- * (Quick connect, then the Quick actions list), two nav items. Rendered in
- * the layout's flex column (not over the content) so pages and the
- * terminal keep their full usable height above it.
+ * BottomNav — the phone navigation bar (docs/plans/1.5.1-mobile.md §1), the
+ * only app chrome on phones (no top bar): Home, Connect, the raised "+"
+ * (this page's create actions, then Quick connect and the quick actions),
+ * Activity, and More (your avatar: search, account, every other page,
+ * theme). Rendered in the layout's column, not over the content.
  */
 function BottomNav() {
   const { user } = useAuth();
@@ -64,13 +91,24 @@ function BottomNav() {
   const { unreadCount } = useNotifications();
   const pendingReviews = usePendingReviewCount(unreadCount);
   const [sheetOpen, setSheetOpen] = useState(false);
+  const [moreOpen, setMoreOpen] = useState(false);
+  const closeMore = useCallback(() => setMoreOpen(false), []);
 
-  const items = useMemo(() => bottomNavItems(user), [user]);
-  const [left, right] = splitAroundCentre(items);
+  const [left, right] = splitAroundCentre(BOTTOM_NAV_ITEMS);
   const groups = useMemo(() => centreSheetGroups(user, quickConnectAllowed), [user, quickConnectAllowed]);
   const closeSheet = useCallback(() => setSheetOpen(false), []);
 
-  const sheetGroups = groups.map((g) => ({
+  const pageActions = usePageActions();
+  // "Add Server" on the page and "New server" in Create are the same thing.
+  const noun = (label) => label.trim().toLowerCase().replace(/^(add|new|create|invite)\s+(an?\s+)?/, '');
+  const pageLabels = new Set(pageActions.map((a) => noun(a.label)));
+
+  // "On this page" (the page's create actions) first, then Quick connect and
+  // the global quick actions — without repeating what the page already offers.
+  const globalGroups = groups
+    .map((g) => ({ ...g, items: g.items.filter((a) => !pageLabels.has(noun(a.label))) }))
+    .filter((g) => g.items.length > 0)
+    .map((g) => ({
     key: g.key,
     label: g.label,
     items: g.items.map((a) => ({
@@ -81,10 +119,36 @@ function BottomNav() {
       onSelect: () => runQuickAction(a, { navigate, openQuickConnect, openPalette, onBeforeRun: closeSheet }),
     })),
   }));
+  const sheetGroups = [
+    ...(pageActions.length > 0
+      ? [
+          {
+            key: 'page',
+            label: 'On this page',
+            items: pageActions.map((a) => ({
+              key: a.key,
+              label: a.label,
+              icon: a.icon,
+              emphasis: true,
+              disabled: a.disabled,
+              onSelect: () => {
+                closeSheet();
+                a.run();
+              },
+            })),
+          },
+        ]
+      : []),
+    ...globalGroups.map((g, i) =>
+      // Only one emphasised block: page actions win over Quick connect.
+      pageActions.length > 0 && i === 0 ? { ...g, items: g.items.map((it) => ({ ...it, emphasis: false })) } : g
+    ),
+  ];
 
   const badgeFor = (item) => {
-    if (item.id === 'access-requests') return <CountBadge count={pendingReviews} />;
-    if (item.id === 'terminals') return <CountBadge count={liveCount} tone="live" />;
+    // The old bell's unread count now sits on Activity; live terminals on Connect.
+    if (item.id === 'activity') return <CountBadge count={Math.max(unreadCount, pendingReviews)} />;
+    if (item.id === 'connect') return <CountBadge count={liveCount} tone="live" />;
     return null;
   };
   const renderTab = (item) => (
@@ -113,9 +177,13 @@ function BottomNav() {
               </button>
             )}
           </div>
-          <div className="flex flex-1 items-stretch">{right.map(renderTab)}</div>
+          <div className="flex flex-1 items-stretch">
+            {right.map(renderTab)}
+            <MoreTab user={user} active={isMoreActive(location.pathname)} open={moreOpen} onClick={() => setMoreOpen(true)} />
+          </div>
         </div>
       </nav>
+      <MoreSheet open={moreOpen} onClose={closeMore} pathname={location.pathname} pendingReviews={pendingReviews} />
       <ActionSheet open={sheetOpen} onClose={closeSheet} title="Quick actions" groups={sheetGroups} />
     </>
   );

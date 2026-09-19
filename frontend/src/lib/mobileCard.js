@@ -1,4 +1,5 @@
 import { Children, isValidElement } from 'react';
+import { environmentTone } from '@/lib/badgeTones';
 
 /**
  * Pure helpers behind DataTable's mobile card list (docs/plans/1.5.1-mobile.md §5).
@@ -216,4 +217,64 @@ export function countActiveFilters(node) {
 export function mobileWindow({ rows = [], page = 1, pageSize = 20, server = false }) {
   if (server) return rows;
   return rows.slice(0, Math.max(1, page) * pageSize);
+}
+
+/**
+ * Server-paginated lists on phones scroll instead of paging: the pages seen
+ * so far are kept (page → rows) and shown as one list. Page 1 starts over
+ * (new search, filter or sort); pages after the current one are dropped.
+ * Returns the next page map; never mutates the one passed in.
+ */
+export function storePage(pages, page, rows) {
+  const next = new Map(page <= 1 ? [] : [...pages].filter(([p]) => p < page));
+  next.set(Math.max(1, page), rows || []);
+  return next;
+}
+
+/** The stored pages in order as one list, without repeats (rows can shift between pages). */
+export function pagedRows(pages) {
+  const seen = new Set();
+  const out = [];
+  [...pages.keys()]
+    .sort((a, b) => a - b)
+    .forEach((p) => {
+      for (const row of pages.get(p) || []) {
+        const id = row?.id;
+        if (id != null) {
+          if (seen.has(id)) continue;
+          seen.add(id);
+        }
+        out.push(row);
+      }
+    });
+  return out;
+}
+
+/**
+ * A card's accent for a server environment: the card is tinted with the
+ * environment's tone and its code sits small in the bottom-left corner,
+ * instead of a DEV / PROD chip in the meta row.
+ */
+export function envAccent(environment) {
+  if (!environment) return null;
+  return environmentTone(environment);
+}
+
+/**
+ * Splits rows into headed sections: `group(row)` returns `{ key, label }`.
+ * Sections follow `order` (a list of keys) and then first appearance; rows
+ * keep their order inside a section. Empty sections are left out.
+ */
+export function groupRows(rows = [], group, order = []) {
+  const byKey = new Map();
+  for (const row of rows) {
+    const g = group(row) || { key: 'other', label: 'Other' };
+    if (!byKey.has(g.key)) byKey.set(g.key, { key: g.key, label: g.label, rows: [] });
+    byKey.get(g.key).rows.push(row);
+  }
+  const rank = (k) => {
+    const i = order.indexOf(k);
+    return i === -1 ? order.length : i;
+  };
+  return [...byKey.values()].sort((a, b) => rank(a.key) - rank(b.key));
 }

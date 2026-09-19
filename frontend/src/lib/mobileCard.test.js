@@ -2,6 +2,10 @@ import { describe, expect, it, vi } from 'vitest';
 import { createElement, Fragment } from 'react';
 import {
   countActiveFilters,
+  envAccent,
+  groupRows,
+  pagedRows,
+  storePage,
   mobileSpec,
   mobileWindow,
   resolveCardLayout,
@@ -211,5 +215,57 @@ describe('mobileWindow', () => {
   });
   it('shows server pages as-is', () => {
     expect(mobileWindow({ rows: rows.slice(0, 20), page: 3, pageSize: 20, server: true })).toHaveLength(20);
+  });
+});
+
+describe('storePage / pagedRows (phone lists scroll instead of paging)', () => {
+  const p1 = [{ id: 1 }, { id: 2 }];
+  const p2 = [{ id: 3 }, { id: 4 }];
+
+  it('keeps earlier pages and appends the next one in order', () => {
+    let pages = storePage(new Map(), 1, p1);
+    pages = storePage(pages, 2, p2);
+    expect(pagedRows(pages).map((r) => r.id)).toEqual([1, 2, 3, 4]);
+  });
+
+  it('starts over on page 1 (new search or filter)', () => {
+    let pages = storePage(storePage(new Map(), 1, p1), 2, p2);
+    pages = storePage(pages, 1, [{ id: 9 }]);
+    expect(pagedRows(pages).map((r) => r.id)).toEqual([9]);
+  });
+
+  it('refreshes a page in place and drops pages after it', () => {
+    let pages = storePage(storePage(new Map(), 1, p1), 2, p2);
+    pages = storePage(pages, 1, p1);
+    pages = storePage(storePage(pages, 2, p2), 3, [{ id: 5 }]);
+    pages = storePage(pages, 2, [{ id: 3 }]);
+    expect(pagedRows(pages).map((r) => r.id)).toEqual([1, 2, 3]);
+  });
+
+  it('skips rows that shifted onto the next page', () => {
+    const pages = storePage(storePage(new Map(), 1, p1), 2, [{ id: 2 }, { id: 3 }]);
+    expect(pagedRows(pages).map((r) => r.id)).toEqual([1, 2, 3]);
+  });
+
+  it('does not mutate the map it was given', () => {
+    const first = storePage(new Map(), 1, p1);
+    storePage(first, 2, p2);
+    expect([...first.keys()]).toEqual([1]);
+  });
+});
+
+describe('envAccent', () => {
+  it('maps environments to a tone and short code', () => {
+    expect(envAccent('prod')).toEqual({ tone: 'danger', label: 'PROD' });
+    expect(envAccent('dev')).toEqual({ tone: 'info', label: 'DEV' });
+    expect(envAccent(null)).toBeNull();
+  });
+});
+
+describe('groupRows', () => {
+  it('groups in the given order and keeps row order inside a group', () => {
+    const rows = [{ id: 1, a: false }, { id: 2, a: true }, { id: 3, a: true }];
+    const g = groupRows(rows, (r) => (r.a ? { key: 'active', label: 'Active' } : { key: 'inactive', label: 'Inactive' }), ['active', 'inactive']);
+    expect(g.map((x) => [x.key, x.rows.map((r) => r.id)])).toEqual([['active', [2, 3]], ['inactive', [1]]]);
   });
 });

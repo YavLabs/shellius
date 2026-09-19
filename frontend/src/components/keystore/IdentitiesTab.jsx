@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useImperativeHandle, useState, forwardRef } from 'react';
-import { Pencil, Trash2, PlugZap, Eye, KeyRound, Lock } from 'lucide-react';
+import { Pencil, Trash2, PlugZap, Eye, KeyRound, Lock, Server } from 'lucide-react';
+import { authTypeTone } from '@/lib/badgeTones';
 import DataTable from '@/components/shared/DataTable';
 import { CardIcon } from '@/components/mobile/MobileCard';
 import ConfirmDialog from '@/components/shared/ConfirmDialog';
@@ -106,13 +107,14 @@ const IdentitiesTab = forwardRef(function IdentitiesTab({ canManage, scope = 'or
     {
       key: 'authType',
       label: 'Auth',
-      mobile: { slot: 'meta', order: 1 },
+      // Phones: plain text under the username, no chip.
+      mobile: { slot: 'meta', order: 1, render: (r) => authTypeTone(r.authType).label },
       render: (r) => <AuthTypeBadge authType={r.authType} />,
     },
     {
       key: 'sshKey',
       label: 'Linked key',
-      mobile: { slot: 'meta', order: 2, showLabel: true, render: (r) => r.sshKey?.name || null },
+      mobile: 'hidden',
       render: (r) =>
         r.sshKey ? (
           <span>
@@ -130,7 +132,8 @@ const IdentitiesTab = forwardRef(function IdentitiesTab({ canManage, scope = 'or
             key: 'serverCount',
             label: 'Servers',
             sortable: true,
-            mobile: { slot: 'meta', order: 3, showLabel: true },
+            // Phones: next to the "⋯" menu (DataTable `mobile.corner`).
+            mobile: 'hidden',
             render: (r) => <span className="tabular-nums">{r.serverCount ?? 0}</span>,
           },
         ]),
@@ -213,7 +216,18 @@ const IdentitiesTab = forwardRef(function IdentitiesTab({ canManage, scope = 'or
           onRowClick={(r) => setDetailId(r.id)}
           searchPlaceholder="Search identities..."
           emptyMessage="No identities match your search"
-          mobile={{ leading: () => <CardIcon icon={scope === 'personal' ? Lock : KeyRound} /> }}
+          mobile={{
+            leading: () => <CardIcon icon={scope === 'personal' ? Lock : KeyRound} />,
+            corner:
+              scope === 'personal'
+                ? undefined
+                : (r) => (
+                    <span className="flex items-center gap-1 tabular-nums" title="Servers" aria-label={`${r.serverCount ?? 0} servers`}>
+                      <Server className="h-3.5 w-3.5" />
+                      {r.serverCount ?? 0}
+                    </span>
+                  ),
+          }}
         />
       )}
 

@@ -78,7 +78,8 @@ function Groups() {
       label: 'Members',
       sortable: true,
       searchAccessor: (g) => String(g._count?.memberships ?? g.memberCount ?? 0),
-      mobile: { slot: 'meta', showLabel: true },
+      // Phones: next to the "⋯" menu (DataTable `mobile.corner`).
+      mobile: 'hidden',
       render: (g) => (
         <span className="text-sm text-foreground">
           {g._count?.memberships ?? g.memberCount ?? 0}
@@ -90,7 +91,7 @@ function Groups() {
       label: 'Created',
       sortable: true,
       hideBelow: 'lg',
-      mobile: { slot: 'meta', showLabel: true },
+      mobile: 'hidden',
       render: (g) => (
         <span className="text-xs text-muted-foreground">{relativeTime(g.createdAt)}</span>
       ),
@@ -145,7 +146,18 @@ function Groups() {
         emptyMessage="No groups yet. Create your first one to get started."
         searchPlaceholder="Search groups..."
         onRowClick={(g) => navigate(`/admin/groups/${g.id}`)}
-        mobile={{ leading: () => <CardIcon icon={UsersRound} /> }}
+        mobile={{
+          leading: () => <CardIcon icon={UsersRound} />,
+          corner: (g) => {
+            const n = g._count?.memberships ?? g.memberCount ?? 0;
+            return (
+              <span className="flex items-center gap-1 tabular-nums" title="Members" aria-label={`${n} members`}>
+                <UsersRound className="h-3.5 w-3.5" />
+                {n}
+              </span>
+            );
+          },
+        }}
       />
 
       <CreateGroupModal
