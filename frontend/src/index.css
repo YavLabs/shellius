@@ -524,3 +524,58 @@
     radial-gradient(ellipse 55% 45% at 22% 28%, var(--brand-bloom-a), transparent 70%),
     radial-gradient(ellipse 50% 45% at 78% 72%, var(--brand-bloom-b), transparent 70%);
 }
+
+/* ---------------------------------------------------------------------------
+   Terminal backdrop (auth pages, alternative to the rings) —
+   components/auth/TerminalBackdrop.jsx. Faint panes of terminal output in
+   the brand palette drifting upward; the centre is masked clear so the form
+   stays clean.
+   --------------------------------------------------------------------------- */
+.term-backdrop {
+  font-family: theme('fontFamily.mono');
+  font-size: 12px;
+  line-height: 3.2; /* airy — lines shouldn't read as a dense wall */
+  filter: blur(1.4px);
+  -webkit-mask-image: radial-gradient(ellipse 34% 50% at 50% 47%, transparent 55%, #000 100%);
+  mask-image: radial-gradient(ellipse 34% 50% at 50% 47%, transparent 55%, #000 100%);
+}
+.term-pane {
+  position: absolute;
+  top: 0;
+  height: 100%;
+  width: 23vw;
+  overflow: hidden;
+  opacity: var(--o, 0.08);
+  -webkit-mask-image: linear-gradient(to bottom, transparent, #000 20%, #000 80%, transparent);
+  mask-image: linear-gradient(to bottom, transparent, #000 20%, #000 80%, transparent);
+}
+.dark .term-pane {
+  opacity: var(--od, 0.07);
+}
+/* Four columns, no overlap; the middle two are fainter (behind the form). */
+.term-pane-1 { left: 1%; --dur: 110s; }
+.term-pane-2 { left: 26%; --dur: 140s; --o: 0.045; --od: 0.04; }
+.term-pane-3 { left: 51%; --dur: 125s; --o: 0.045; --od: 0.04; }
+.term-pane-4 { left: 76%; --dur: 100s; }
+.term-scroll {
+  animation: term-up var(--dur, 120s) linear infinite;
+  white-space: nowrap;
+}
+@keyframes term-up {
+  from { transform: translate3d(0, 0, 0); }
+  to { transform: translate3d(0, -50%, 0); }
+}
+.term-line { overflow: hidden; text-overflow: ellipsis; }
+.term-prompt { color: #6b54c4; }
+.term-info { color: #3d63b8; }
+.term-ok { color: #059669; }
+.term-dim { color: #64748b; }
+.dark .term-prompt { color: #b9a6f2; } /* Lavender */
+.dark .term-info { color: #8fb6f5; } /* Sky */
+.dark .term-ok { color: #6ee7a8; } /* connected */
+.dark .term-dim { color: #8a8d94; } /* Muted */
+@media (prefers-reduced-motion: reduce) {
+  .term-scroll {
+    animation: none;
+  }
+}

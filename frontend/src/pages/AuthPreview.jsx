@@ -4,7 +4,7 @@ import { Check, ChevronDown, ChevronLeft, ChevronRight, Eye, LayoutGrid, Moon, S
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
 import { AuthContext } from '@/context/AuthContext';
 import { useTheme } from '@/context/ThemeContext';
-import AuthShell from '@/components/auth/AuthShell';
+import AuthShell, { AUTH_BACKDROP_KEY } from '@/components/auth/AuthShell';
 import Login from './Login';
 import Register from './Register';
 import ForgotPassword from './ForgotPassword';
@@ -80,6 +80,21 @@ function PreviewBar({ index }) {
   const { theme, toggleTheme } = useTheme();
   const [params] = useSearchParams();
   const ssoCount = Math.min(6, Math.max(0, Number(params.get('sso') ?? 6) || 0));
+  const backdrop = (() => {
+    try {
+      return localStorage.getItem(AUTH_BACKDROP_KEY) === 'terminal' ? 'terminal' : 'rings';
+    } catch {
+      return 'rings';
+    }
+  })();
+  const setBackdrop = (value) => {
+    try {
+      localStorage.setItem(AUTH_BACKDROP_KEY, value);
+    } catch {
+      /* ignore */
+    }
+    window.location.reload();
+  };
   const prev = PREVIEW_PAGES[(index - 1 + PREVIEW_PAGES.length) % PREVIEW_PAGES.length];
   const next = PREVIEW_PAGES[(index + 1) % PREVIEW_PAGES.length];
   const btn =
@@ -136,6 +151,28 @@ function PreviewBar({ index }) {
           </DropdownMenuContent>
         </DropdownMenu>
       )}
+      <DropdownMenu>
+        <DropdownMenuTrigger asChild>
+          <button
+            type="button"
+            className="flex h-7 items-center gap-1.5 rounded-full bg-foreground/[0.06] px-3 text-xs text-foreground transition-colors hover:bg-foreground/10 focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          >
+            BG: {backdrop === 'terminal' ? 'Terminal' : 'Rings'}
+            <ChevronDown className="h-3.5 w-3.5 text-muted-foreground" />
+          </button>
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="end" className="w-44">
+          {[
+            ['rings', 'Rings'],
+            ['terminal', 'Terminal'],
+          ].map(([value, label]) => (
+            <DropdownMenuItem key={value} onSelect={() => setBackdrop(value)} className="flex items-center justify-between text-sm">
+              {label}
+              {backdrop === value && <Check className="h-3.5 w-3.5 text-primary" />}
+            </DropdownMenuItem>
+          ))}
+        </DropdownMenuContent>
+      </DropdownMenu>
       <button type="button" className={btn} title={`Previous: ${prev.label}`} onClick={() => window.location.assign(prev.path)}>
         <ChevronLeft className="h-4 w-4" />
       </button>

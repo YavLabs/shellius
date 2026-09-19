@@ -5,6 +5,20 @@ import useOrgName from '@/hooks/useOrgName';
 import BrandLogo, { BrandLockupStacked } from '@/components/common/BrandLogo';
 import { cn } from '@/lib/utils';
 import FlowRing from './FlowRing';
+import TerminalBackdrop from './TerminalBackdrop';
+import { isPreview } from '@/lib/previewMock';
+
+// Which backdrop the auth pages use: 'rings' (default) or 'terminal'. The
+// /dummy previews let you switch (stored per browser); elsewhere it's rings.
+export const AUTH_BACKDROP_KEY = 'shellius_auth_backdrop';
+function useAuthBackdrop() {
+  if (!isPreview()) return 'rings';
+  try {
+    return localStorage.getItem(AUTH_BACKDROP_KEY) === 'terminal' ? 'terminal' : 'rings';
+  } catch {
+    return 'rings';
+  }
+}
 
 // Brand palette (brand/README.txt): Sky #8FB6F5 → Lavender #B9A6F2, with
 // the deeper light-background pair #3D63B8 → #6B54C4 for contrast.
@@ -62,14 +76,19 @@ export function AuthFooter({ className, children }) {
  */
 function AuthShell({ children, align = 'center', className, footer, logo = 'corner' }) {
   // A different mix of ring sizes on every visit.
+  const backdrop = useAuthBackdrop();
   const rings = useMemo(() => RINGS.map((r) => ({ ...r, scale: 0.65 + Math.random() * 0.7 })), []);
   return (
     <div className={cn('auth-fey relative isolate flex min-h-screen flex-col overflow-hidden', logo === 'stacked' && 'auth-stacked')}>
       <div aria-hidden="true" className="auth-backdrop -z-10">
         <div className="brand-bloom absolute inset-0" />
-        {rings.map((r, i) => (
-          <FlowRing key={i} className={`auth-ring auth-ring-${i + 1}`} colors={r.colors} seed={r.seed} dur={r.dur} scale={r.scale} />
-        ))}
+        {backdrop === 'terminal' ? (
+          <TerminalBackdrop />
+        ) : (
+          rings.map((r, i) => (
+            <FlowRing key={i} className={`auth-ring auth-ring-${i + 1}`} colors={r.colors} seed={r.seed} dur={r.dur} scale={r.scale} />
+          ))
+        )}
         <div className="auth-aura" />
       </div>
       {logo === 'corner' && (
