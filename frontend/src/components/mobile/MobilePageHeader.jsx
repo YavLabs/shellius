@@ -123,15 +123,17 @@ function MobilePageHeader({
   return (
     <div
       className={cn(
-        'space-y-1.5',
+        'space-y-1',
+        // Top-level pages: a hairline divider between the header and the content.
+        !inFrame && 'border-b border-border pb-4',
         // Inside an Administration card: bleed to the card edges like the desktop header.
         inFrame && '-mx-4 -mt-4 border-b border-border px-4 pb-4 pt-2'
       )}
       data-mobile-header=""
     >
-      {/* Title row: the 44px icon buttons overlap the row's padding (-my-1) so
-          they don't push the subtitle away from the title. */}
-      <div className="flex min-h-9 items-center gap-1 [&>*:not(.min-w-0)]:-my-1">
+      {/* Title row: the 44px icon buttons overlap it (-my-2) so the row is only
+          as tall as the title and the subtitle sits right under it. */}
+      <div className="flex items-center gap-1 [&>*:not(.min-w-0)]:-my-2">
         {backButton}
         <div className="min-w-0 flex-1">
           <Heading
