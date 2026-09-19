@@ -5,7 +5,7 @@ import Modal from '@/components/shared/Modal';
 import { Button } from '@/components/ui/button';
 import PasswordInput from '@/components/ui/PasswordInput';
 import SearchableSelect from '@/components/ui/SearchableSelect';
-import { Checkbox } from '@/components/ui/checkbox';
+import { SwitchField } from '@/components/ui/switch';
 import PrivateKeyInput from '@/components/keystore/PrivateKeyInput';
 import SaveServerFields from './SaveServerFields';
 import { createQuickConnectTicket, saveQuickConnectServer, getHistory } from '@/services/quickConnectService';
@@ -503,16 +503,15 @@ function QuickConnectModal({ open, onClose, prefill }) {
         </div>
 
         {canSaveServer && (
-          <label className="flex items-center gap-2 text-sm text-foreground">
-            <Checkbox
-              checked={saveOn}
-              onChange={(e) => {
-                setSaveOn(e.target.checked);
-                if (e.target.checked) setSaveHostOn(false);
-              }}
-            />
-            Save as server
-          </label>
+          <SwitchField
+            label="Save as server"
+            description="Add it to the shared server inventory."
+            checked={saveOn}
+            onCheckedChange={(v) => {
+              setSaveOn(v);
+              if (v) setSaveHostOn(false);
+            }}
+          />
         )}
 
         {saveOn && canSaveServer && (
@@ -526,11 +525,12 @@ function QuickConnectModal({ open, onClose, prefill }) {
         )}
 
         {canSaveHost && !saveOn && (
-          <label className="flex items-center gap-2 text-sm text-foreground">
-            <Checkbox checked={saveHostOn} onChange={(e) => setSaveHostOn(e.target.checked)} />
-            Save to My hosts
-            <span className="text-xs text-muted-foreground">(private — only you)</span>
-          </label>
+          <SwitchField
+            label="Save to My hosts"
+            description="Private — only you can see it."
+            checked={saveHostOn}
+            onCheckedChange={setSaveHostOn}
+          />
         )}
 
         {saveHostOn && canSaveHost && (
@@ -548,10 +548,12 @@ function QuickConnectModal({ open, onClose, prefill }) {
             </div>
             {authTab !== 'credential' && (
               <div>
-                <label className="flex cursor-pointer items-center gap-2 text-sm text-foreground">
-                  <Checkbox checked={hostAlsoSaveIdentity} onChange={(e) => setHostAlsoSaveIdentity(e.target.checked)} />
-                  Also save this {authTab === 'password' ? 'password' : keyAlsoPassword ? 'key and password' : 'key'} as a private identity
-                </label>
+                <SwitchField
+                  label="Also save as a private identity"
+                  description={`Keeps this ${authTab === 'password' ? 'password' : keyAlsoPassword ? 'key and password' : 'key'} for next time.`}
+                  checked={hostAlsoSaveIdentity}
+                  onCheckedChange={setHostAlsoSaveIdentity}
+                />
                 {hostAlsoSaveIdentity && (
                   <input
                     className={`${inputCls} mt-2`}

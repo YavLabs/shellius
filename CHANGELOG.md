@@ -9,6 +9,27 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 Tracked here as work lands on `main`; moved into a dated section on release
 (`node scripts/version.mjs bump <major|minor|patch>`).
 
+## [1.5.3] - 2026-09-19
+
+### Added
+
+- **`scripts/update-shellius.sh`** — one-command upgrade for a `docker-compose.deploy.yml` host: builds the new release in a staging folder, keeps the current images as `:rollback-<version>`, backs up the database (`.sql.gz`) and the current folder (`-code.zip`) to `~/shellius-previous/<name>/`, migrates over the direct database address, switches and waits for `/api/health` to report the new version. `--rollback` restores code and images, `--list` shows backups.
+
+### Changed
+
+- **Toggles instead of checkboxes in forms.** Every on/off option in a form is now a switch with its label (and a short description where useful) on the left and the switch on the right, lined up the same way as the Administration settings. This covers:
+  - policies (active, approval, auto-approve, approver roles, just-in-time user options, key download, break-glass)
+  - Quick Connect save options
+  - server "IP may change", customer "Active", provisioning sudo
+  - Keystore export options, "Clear stored password" / "Clear certificate"
+  - the role matrix filter, "use for all outgoing email"
+  - the terms agreement when registering or accepting an invite (its Terms and Privacy links now open the real pages).
+  Selecting rows in lists (tables, cards, the server picker when exporting a key) still uses checkboxes.
+
+### Fixed
+
+- The Profile page no longer runs off the side of a phone screen. A long unbreakable value, such as an IPv6 address in the Sessions list, used to widen every card; the column now keeps to the screen width and the address wraps.
+
 ## [1.5.2] - 2026-09-19
 
 ### Added

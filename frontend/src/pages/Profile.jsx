@@ -243,7 +243,9 @@ function Profile() {
     <div className="space-y-6 p-6">
       <PageHeader icon={User} title="Profile" subtitle="Manage your account and personal data" />
 
-      <div className="grid gap-5 md:grid-cols-2">
+      {/* grid-cols-1 = minmax(0, 1fr): one long unbreakable value (an IPv6
+          address in Sessions) can't widen every card past a phone screen. */}
+      <div className="grid grid-cols-1 gap-5 md:grid-cols-2">
         {/* Profile section */}
         <SectionCard title="Profile" description="Your personal information and account details.">
           <div className="mb-6 flex items-center gap-4">

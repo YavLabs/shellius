@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import Modal from '@/components/shared/Modal';
 import { Button } from '@/components/ui/button';
-import { Checkbox } from '@/components/ui/checkbox';
+import { SwitchField } from '@/components/ui/switch';
 import { updateKey, getKey } from '@/services/keystoreService';
 
 const inputCls =
@@ -108,16 +108,15 @@ function EditKeyModal({ open, onClose, sshKey, onSaved }) {
               Certificate <span className="font-normal text-muted-foreground">(optional)</span>
             </label>
             {(originalCertText || certificate) && (
-              <label className="flex cursor-pointer items-center gap-1.5 text-xs text-muted-foreground">
-                <Checkbox
-                  checked={clearCertificate}
-                  onChange={(e) => {
-                    setClearCertificate(e.target.checked);
-                    if (e.target.checked) setCertificate('');
-                  }}
-                />
-                Clear certificate
-              </label>
+              <SwitchField
+                size="sm"
+                label="Clear certificate"
+                checked={clearCertificate}
+                onCheckedChange={(v) => {
+                  setClearCertificate(v);
+                  if (v) setCertificate('');
+                }}
+              />
             )}
           </div>
           <textarea

@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { Lock, KeyRound } from 'lucide-react';
 import Modal from '@/components/shared/Modal';
 import { Button } from '@/components/ui/button';
-import { Checkbox } from '@/components/ui/checkbox';
+import { SwitchField } from '@/components/ui/switch';
 import PasswordInput from '@/components/ui/PasswordInput';
 import SearchableSelect from '@/components/ui/SearchableSelect';
 import PrivateKeyInput from './PrivateKeyInput';
@@ -252,10 +252,13 @@ function IdentityFormModal({ open, onClose, identity, onSaved, scope = 'org' }) 
               autoComplete="new-password"
             />
             {isEdit && identity?.hasPassword && !password && (
-              <label className="mt-1.5 flex items-center gap-2 text-xs text-muted-foreground">
-                <Checkbox checked={clearPassword} onChange={(e) => setClearPassword(e.target.checked)} />
-                Clear stored password
-              </label>
+              <SwitchField
+                className="mt-2"
+                size="sm"
+                label="Clear stored password"
+                checked={clearPassword}
+                onCheckedChange={setClearPassword}
+              />
             )}
           </div>
         )}

@@ -115,15 +115,15 @@ export default function SessionsCard() {
             const desc = describeSession(s);
             return (
               <div key={s.id} className="flex items-center justify-between gap-4 py-3">
-                <div className="flex min-w-0 items-start gap-3">
+                <div className="flex min-w-0 flex-1 items-start gap-3">
                   <DeviceIcon isCli={desc.isCli} isMobile={desc.isMobile} />
                   <div className="min-w-0">
                     <p className="flex items-center gap-2 text-sm font-medium text-foreground">
                       <span className="truncate">{desc.label}</span>
                       {s.current && <Badge tone="success">This device</Badge>}
                     </p>
-                    <p className="text-xs text-muted-foreground">
-                      {s.ipAddress || 'Unknown IP'} &middot; Started {formatDateTime(s.createdAt)} &middot; Last
+                    <p className="break-words text-xs text-muted-foreground">
+                      <span className="break-all">{s.ipAddress || 'Unknown IP'}</span> &middot; Started {formatDateTime(s.createdAt)} &middot; Last
                       active {relativeTime(s.lastUsedAt)}
                     </p>
                   </div>

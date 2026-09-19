@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { ChevronLeft, Info } from 'lucide-react';
 import Modal from '@/components/shared/Modal';
 import { Button } from '@/components/ui/button';
-import { Checkbox } from '@/components/ui/checkbox';
+import { SwitchField } from '@/components/ui/switch';
 import { Badge } from '@/components/ui/badge';
 import PasswordInput from '@/components/ui/PasswordInput';
 import SearchableSelect from '@/components/ui/SearchableSelect';
@@ -290,15 +290,12 @@ export default function EmailProviderFormModal({ open, onClose, provider, meta, 
           </div>
 
           {!isEdit && canActivateNow && (
-            <label className="flex items-start gap-2 text-sm text-foreground">
-              <Checkbox checked={makeActive} onChange={(e) => setMakeActive(e.target.checked)} className="mt-0.5" />
-              <span>
-                Use this provider for all outgoing email
-                {meta?.activeProviderId && (
-                  <span className="block text-xs text-muted-foreground">Replaces the currently active provider.</span>
-                )}
-              </span>
-            </label>
+            <SwitchField
+              label="Use for all outgoing email"
+              description={meta?.activeProviderId ? 'Replaces the currently active provider.' : undefined}
+              checked={makeActive}
+              onCheckedChange={setMakeActive}
+            />
           )}
           {!isEdit && !canActivateNow && (
             <p className="text-xs text-muted-foreground">

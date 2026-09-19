@@ -5,7 +5,7 @@ import MfaChallenge from '@/components/auth/MfaChallenge';
 import { useAuth } from '@/context/AuthContext';
 import { getInvite, acceptInvite } from '@/services/userTokenService';
 import AuthShell from '@/components/auth/AuthShell';
-import { Checkbox } from '@/components/ui/checkbox';
+import { SwitchField } from '@/components/ui/switch';
 
 function validatePassword(password) {
   if (password.length < 12) return 'Password must be at least 12 characters.';
@@ -235,24 +235,23 @@ function AcceptInvite() {
                 </div>
               </div>
 
-              <div className="flex items-start gap-2 pt-1">
-                <Checkbox
-                  id="invite-terms"
-                  checked={termsAccepted}
-                  onChange={(e) => setTermsAccepted(e.target.checked)}
-                  className="mt-0.5 shrink-0"
-                />
-                <label htmlFor="invite-terms" className="text-sm text-muted-foreground leading-snug">
-                  I agree to the{' '}
-                  <a href="#" className="text-primary underline-offset-4 hover:underline">
-                    Terms of service
-                  </a>{' '}
-                  and{' '}
-                  <a href="#" className="text-primary underline-offset-4 hover:underline">
-                    Privacy policy
-                  </a>
-                </label>
-              </div>
+              <SwitchField
+                className="pt-1"
+                label={
+                  <span className="font-normal leading-snug text-muted-foreground">
+                    I agree to the{' '}
+                    <a href="/legal/terms" target="_blank" rel="noreferrer" className="text-primary underline-offset-4 hover:underline">
+                      Terms of service
+                    </a>{' '}
+                    and{' '}
+                    <a href="/legal/privacy" target="_blank" rel="noreferrer" className="text-primary underline-offset-4 hover:underline">
+                      Privacy policy
+                    </a>
+                  </span>
+                }
+                checked={termsAccepted}
+                onCheckedChange={setTermsAccepted}
+              />
 
               <button
                 type="submit"

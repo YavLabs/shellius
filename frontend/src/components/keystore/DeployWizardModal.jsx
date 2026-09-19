@@ -6,6 +6,7 @@ import { Input } from '@/components/ui/input';
 import SearchableSelect from '@/components/ui/SearchableSelect';
 import EnvironmentBadge from '@/components/shared/EnvironmentBadge';
 import { Badge } from '@/components/ui/badge';
+import { SwitchField } from '@/components/ui/switch';
 import { Checkbox } from '@/components/ui/checkbox';
 import { statusTone } from '@/lib/badgeTones';
 import { ENVIRONMENT_LABELS } from '@/lib/labels';
@@ -249,10 +250,12 @@ function DeployWizardModal({
                     clearable={false}
                   />
                 </div>
-                <label className="flex items-center gap-2 text-sm text-foreground">
-                  <Checkbox checked={updateCredentials} onChange={(e) => setUpdateCredentials(e.target.checked)} />
-                  Update identities that use the old key to point at the new key
-                </label>
+                <SwitchField
+                  label="Update identities to the new key"
+                  description="Identities that use the old key will point at the new one."
+                  checked={updateCredentials}
+                  onCheckedChange={setUpdateCredentials}
+                />
               </>
             )}
           </div>
@@ -345,10 +348,12 @@ function DeployWizardModal({
               </label>
               <Input value={targetUser} onChange={(e) => setTargetUser(e.target.value)} placeholder="e.g. deploy" />
             </div>
-            <label className="flex items-center gap-2 text-sm text-foreground">
-              <Checkbox checked={useSudo} onChange={(e) => setUseSudo(e.target.checked)} />
-              Use sudo to write another user&apos;s authorized_keys
-            </label>
+            <SwitchField
+              label="Use sudo"
+              description="Needed to write another user's authorized_keys."
+              checked={useSudo}
+              onCheckedChange={setUseSudo}
+            />
 
             <div className="rounded-md border border-border bg-muted/30 px-3 py-2 text-xs text-muted-foreground">
               {action === 'deploy' && `Export the key to ${selectedServerIds.length} server(s).`}

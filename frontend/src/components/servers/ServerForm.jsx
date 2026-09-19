@@ -6,7 +6,7 @@ import { listCredentials } from '@/services/keystoreService';
 import PrivateIPWarning from './PrivateIPWarning';
 import SearchableSelect from '@/components/ui/SearchableSelect';
 import PasswordInput from '@/components/ui/PasswordInput';
-import { Checkbox } from '@/components/ui/checkbox';
+import { SwitchField } from '@/components/ui/switch';
 import IdentityFormModal from '@/components/keystore/IdentityFormModal';
 import { useAuth } from '@/context/AuthContext';
 import { ENVIRONMENT_LABELS } from '@/lib/labels';
@@ -329,13 +329,13 @@ function ServerForm({ server, customerId: initialCustomerId, onSubmit, onCancel 
           />
           {ipError && <p className="mt-1 text-xs text-destructive">{ipError}</p>}
           <PrivateIPWarning ipAddress={ipAddress} variant="note" />
-          <label className="mt-2 flex items-center gap-2 text-sm text-foreground">
-            <Checkbox checked={dynamicIp} onChange={(e) => setDynamicIp(e.target.checked)} />
-            IP may change (not static)
-            <span className="text-xs text-muted-foreground">
-              — users can update it at connect time
-            </span>
-          </label>
+          <SwitchField
+            className="mt-3"
+            label="IP may change (not static)"
+            description="Users can update it when they connect."
+            checked={dynamicIp}
+            onCheckedChange={setDynamicIp}
+          />
         </div>
 
         {/* Protocol — filtered by OS type */}
