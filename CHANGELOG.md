@@ -9,6 +9,19 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 Tracked here as work lands on `main`; moved into a dated section on release
 (`node scripts/version.mjs bump <major|minor|patch>`).
 
+### Changed
+
+- Dashboard: **Recent connections** replaces "Recent quick connects" and is shown to everyone.
+  - **Active now:** your live sessions. "Go to terminal" if the session is open in a tab or
+    Workspace; "Connect now" if it's running in the background. End from the row menu.
+  - **Recent (last 7 days):** servers you connected to and your Quick Connects in one list. Server
+    rows show what your access allows now: Connect, Pending, or Request access.
+  - New `GET /api/terminal/recent-servers` (your own sessions only).
+- Dashboard: redesigned **Quick actions**. Quick connect and New access request are prominent
+  tiles; other actions are compact grouped rows with shortcuts on hover; the command palette and
+  shortcut list are in the footer.
+- Dashboard: environment counts in the Total servers card use the same colour as their labels.
+
 ### Fixed
 
 - The seed strips one pair of matching outer quotes from `SEED_*` values. `docker run --env-file`

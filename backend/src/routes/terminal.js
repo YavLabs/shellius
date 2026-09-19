@@ -24,6 +24,7 @@ import * as hub from '../services/terminalHub.js';
 import * as quickConnectService from '../services/quickConnectService.js';
 import * as wsTicketService from '../services/wsTicketService.js';
 import * as recoveryService from '../services/terminalRecoveryService.js';
+import * as sessionService from '../services/sessionService.js';
 import { userRateLimiter } from '../middleware/rateLimiter.js';
 
 const router = express.Router();
@@ -84,6 +85,22 @@ router.get(
   asyncHandler(async (req, res) => {
     const sessions = hub.list(req.user.userId, req.orgId);
     res.json({ success: true, data: { sessions } });
+  })
+);
+
+// ---------------------------------------------------------------------------
+// GET /api/terminal/recent-servers?days=7&limit=8 — servers the caller
+// connected to recently (their own sessions only), for the dashboard's
+// "Recent connections" widget. Quick Connects come from /quick-connect/history.
+// ---------------------------------------------------------------------------
+
+router.get(
+  '/recent-servers',
+  asyncHandler(async (req, res) => {
+    const days = parseInt(req.query.days, 10) || 7;
+    const limit = parseInt(req.query.limit, 10) || 8;
+    const items = await sessionService.listRecentServersForUser(req.orgId, req.user.userId, { days, limit });
+    res.json({ success: true, data: { items } });
   })
 );
 

@@ -12,10 +12,9 @@ import {
 import PageHeader from '@/components/common/PageHeader';
 import MyAccessWidget from '@/components/dashboard/MyAccessWidget';
 import MetricCard from '@/components/dashboard/MetricCard';
-import RecentQuickConnectsWidget from '@/components/dashboard/RecentQuickConnectsWidget';
+import RecentConnectionsWidget from '@/components/dashboard/RecentConnectionsWidget';
 import QuickActionsWidget from '@/components/dashboard/QuickActionsWidget';
 import { useAuth } from '@/context/AuthContext';
-import { useQuickConnect } from '@/context/QuickConnectContext';
 import { getServerStats } from '@/services/serverService';
 import { listSessions } from '@/services/sessionService';
 import { listAccessRequests } from '@/services/accessRequestService';
@@ -70,7 +69,6 @@ function Dashboard() {
   const navigate = useNavigate();
   const { user } = useAuth();
   const isAdmin = isAtLeast(user, 'admin');
-  const { allowed: quickConnectAllowed } = useQuickConnect();
 
   const [statsLoading, setStatsLoading] = useState(true);
   const [serverStats, setServerStats] = useState({ total: 0, byEnv: {} });
@@ -160,7 +158,7 @@ function Dashboard() {
                 .map(([env, count]) => (
                   <Badge key={env} tone={environmentTone(env).tone} uppercase>
                     {env}
-                    <span className="normal-case tracking-normal text-foreground tabular-nums">{count}</span>
+                    <span className="font-semibold normal-case tracking-normal tabular-nums">{count}</span>
                   </Badge>
                 ))
             ) : null
@@ -217,13 +215,11 @@ function Dashboard() {
         />
       </div>
 
-      {/* Recent Quick Connects (wide) + Quick actions (narrow) */}
-      <div className={`grid grid-cols-1 gap-4 ${quickConnectAllowed ? 'lg:grid-cols-3' : ''}`}>
-        {quickConnectAllowed && (
-          <div className="lg:col-span-2">
-            <RecentQuickConnectsWidget />
-          </div>
-        )}
+      {/* Recent connections (wide: active sessions + last 7 days) + Quick actions (narrow) */}
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
+        <div className="lg:col-span-2">
+          <RecentConnectionsWidget />
+        </div>
         <div>
           <QuickActionsWidget />
         </div>
