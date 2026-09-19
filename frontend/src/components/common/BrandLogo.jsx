@@ -73,18 +73,20 @@ export function BrandMark({ size = 'md', className = '' }) {
  * mixed-case "Shellius" for product chrome under 24px tall. A custom
  * VITE_BRAND_NAME renders as plain text.
  */
-export function BrandWordmark({ compact = false, className = '' }) {
+export function BrandWordmark({ compact = false, className = '', nudge = false }) {
+  // `nudge`: 1.5px optical drop for the sidebar lockup.
+  const n = nudge ? 'mt-[1.5px]' : '';
   if (BRAND_NAME !== 'Shellius' || compact) {
     return <span className={`font-brand font-bold leading-none tracking-[-0.02em] text-foreground ${className}`}>{BRAND_NAME}</span>;
   }
   return (
     <span className={`inline-flex items-center font-brand font-bold uppercase leading-none tracking-[-0.02em] text-foreground ${className}`} aria-label={BRAND_NAME}>
-      <span aria-hidden="true">SHELL</span>
+      <span aria-hidden="true" className={n}>SHELL</span>
       <span
         aria-hidden="true"
-        className="bg-brand-gradient mx-[0.07em] inline-block h-[0.72em] w-[0.34em] rounded-[0.05em]"
+        className={`bg-brand-gradient mx-[0.07em] inline-block h-[0.72em] w-[0.34em] rounded-[0.05em] ${n}`}
       />
-      <span aria-hidden="true">US</span>
+      <span aria-hidden="true" className={n}>US</span>
     </span>
   );
 }
@@ -93,12 +95,12 @@ export function BrandWordmark({ compact = false, className = '' }) {
  * BrandLogo — horizontal lockup: mark + wordmark (brand guideline 01,
  * "Primary — horizontal"). `compact` uses the mixed-case wordmark.
  */
-export default function BrandLogo({ size = 'md', className = '', wordmarkClassName = '', showWordmark = true, compact = false }) {
+export default function BrandLogo({ size = 'md', className = '', wordmarkClassName = '', showWordmark = true, compact = false, nudge = false }) {
   const s = pickSize(size);
   return (
     <div className={`flex items-center ${s.gap} ${className}`}>
       <BrandMark size={size} />
-      {showWordmark && <BrandWordmark compact={compact} className={`${s.text} ${wordmarkClassName}`} />}
+      {showWordmark && <BrandWordmark compact={compact} nudge={nudge} className={`${s.text} ${wordmarkClassName}`} />}
     </div>
   );
 }

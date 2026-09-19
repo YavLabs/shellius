@@ -269,7 +269,7 @@ function SidebarBody({ collapsed, onToggle, onNavigate }) {
         ) : (
           <>
             <Link to="/">
-              <BrandLogo size="sm" />
+              <BrandLogo size="sm" nudge />
             </Link>
             <Tooltip>
               <TooltipTrigger asChild>
