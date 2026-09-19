@@ -537,7 +537,7 @@ function Users() {
               <span className="flex-1 break-all font-mono text-xs text-foreground">{urlModal.url}</span>
               <CopyUrlButton url={urlModal.url} />
             </div>
-            <div className="flex justify-end">
+            <div data-sheet-footer className="flex justify-end">
               <Button variant="outline" size="sm" onClick={() => setUrlModal(null)}>Close</Button>
             </div>
           </div>

@@ -287,7 +287,7 @@ function ServerForm({ server, customerId: initialCustomerId, onSubmit, onCancel 
       {/* ── 2. OS Type — comes first so protocol options are driven by it ── */}
       <div className="space-y-3">
         <h4 className={sectionCls}>Operating system</h4>
-        <div className="grid grid-cols-2 gap-3">
+        <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
           <div>
             <label className={labelCls}>OS Type</label>
             <SearchableSelect
@@ -521,7 +521,7 @@ function ServerForm({ server, customerId: initialCustomerId, onSubmit, onCancel 
       {/* ── 5. Classification ─────────────────────────────────────────── */}
       <div className="space-y-3">
         <h4 className={sectionCls}>Classification</h4>
-        <div className="grid grid-cols-2 gap-3">
+        <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
           <div>
             <label className={labelCls}>Customer <span className="text-destructive">*</span></label>
             <SearchableSelect
@@ -582,7 +582,7 @@ function ServerForm({ server, customerId: initialCustomerId, onSubmit, onCancel 
           Cloud Info (Optional)
         </button>
         {cloudOpen && (
-          <div className="grid grid-cols-2 gap-3">
+          <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
             <div>
               <label className={labelCls}>Provider</label>
               <SearchableSelect
@@ -616,7 +616,7 @@ function ServerForm({ server, customerId: initialCustomerId, onSubmit, onCancel 
       </div>
 
       {/* ── Actions ──────────────────────────────────────────────────── */}
-      <div className="flex justify-end gap-2 pt-2">
+      <div data-sheet-footer className="flex justify-end gap-2 pt-2">
         <button
           type="button"
           onClick={onCancel}

@@ -98,7 +98,7 @@ function ExportKeyModal({ open, onClose, sshKey }) {
           </>
         )}
 
-        <div className="flex justify-end pt-1">
+        <div data-sheet-footer className="flex justify-end pt-1">
           <Button variant="outline" onClick={handleClose}>
             Close
           </Button>

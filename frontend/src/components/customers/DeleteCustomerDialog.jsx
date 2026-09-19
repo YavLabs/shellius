@@ -151,7 +151,7 @@ export default function DeleteCustomerDialog({ customer, open, onClose, onDelete
             </div>
           )}
 
-          <div className="flex justify-end gap-2 pt-2">
+          <div data-sheet-footer className="flex justify-end gap-2 pt-2">
             <Button variant="outline" onClick={onClose} disabled={busy}>
               Cancel
             </Button>

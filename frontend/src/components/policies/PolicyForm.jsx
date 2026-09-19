@@ -938,7 +938,7 @@ function PolicyForm({ open, onClose, onSubmit, policy, onEvaluate }) {
           </div>
         )}
 
-        <div className="flex items-center justify-between border-t border-border pt-4">
+        <div data-sheet-footer className="flex items-center justify-between border-t border-border pt-4">
           <button
             type="button"
             onClick={onClose}

@@ -9,6 +9,11 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 Tracked here as work lands on `main`; moved into a dated section on release
 (`node scripts/version.mjs bump <major|minor|patch>`).
 
+### Changed
+
+- **Dialogs open as bottom sheets on phones.** Below 768px wide, every dialog (forms, confirmations, Quick Connect, the command palette, keyboard shortcuts) slides up from the bottom with rounded corners and a drag handle. Swipe it down, tap outside it or press Escape to close it, the same as closing the dialog on a computer. The body scrolls while the title and the action buttons stay in place. The buttons fill the width and stack when they don't fit. Fields are 44px tall with 16px text, so iPhones don't zoom in when you tap one. When the on-screen keyboard opens, the sheet moves up so the buttons stay visible. Side-by-side fields that got too narrow on a phone now stack (for example OS type and version on Add server). Desktop and tablet dialogs are unchanged.
+- **Help opens from the bottom on phones.** The page help panel opens as a bottom sheet instead of sliding in from the right.
+
 ## [1.5.0] - 2026-09-19
 
 ### Added

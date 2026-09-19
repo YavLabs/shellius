@@ -68,7 +68,7 @@ function BootstrapModal({ open, server, onClose }) {
 
   return (
     <Modal open={open} onClose={onClose} title="Bootstrap target host" size="lg">
-      <div className="space-y-4 p-5">
+      <div className="space-y-4 p-5 max-md:p-0">
         <div className="rounded-md border border-amber-500/30 bg-amber-500/10 p-3 text-xs text-amber-700 dark:text-amber-300">
           <div className="flex items-start gap-2">
             <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
@@ -166,7 +166,7 @@ function BootstrapModal({ open, server, onClose }) {
           </ul>
         </div>
 
-        <div className="flex items-center justify-between border-t border-border pt-3">
+        <div data-sheet-footer className="flex items-center justify-between border-t border-border pt-3">
           <a
             href="#"
             onClick={(e) => {
