@@ -3,6 +3,17 @@ import { APP_VERSION } from '@/version';
 import useOrgName from '@/hooks/useOrgName';
 import { BrandMark } from '@/components/common/BrandLogo';
 import { cn } from '@/lib/utils';
+import FlowRing from './FlowRing';
+
+// Cool, restrained palette (indigo / blue / teal / slate violet) — an
+// org-level access tool, not a consumer app.
+const RINGS = [
+  { colors: ['#6366f1', '#3b82f6', '#22d3ee'], seed: 3, dur: 34 },
+  { colors: ['#0ea5e9', '#6366f1', '#8b5cf6'], seed: 11, dur: 42 },
+  { colors: ['#14b8a6', '#3b82f6', '#6366f1'], seed: 23, dur: 38 },
+  { colors: ['#8b5cf6', '#6366f1', '#0ea5e9'], seed: 37, dur: 46 },
+  { colors: ['#64748b', '#818cf8', '#38bdf8'], seed: 51, dur: 50 },
+];
 
 const LEGAL_LINKS = [
   { to: '/legal/privacy', label: 'Privacy policy' },
@@ -40,7 +51,7 @@ export function AuthFooter({ className, children }) {
  * AuthShell — shared frame for every signed-out / full-screen auth page
  * (login, register, invite, password reset, device, approvals, MFA setup,
  * SSO callback, 404, legal). Fey-style: near-black canvas, soft coloured
- * rings drifting slowly around the edges with a few rising bubbles, the form floating without a card (see `.auth-fey`
+ * organic rings slowly morphing and drifting around the edges, the form floating without a card (see `.auth-fey`
  * in index.css), and the footer pinned to the bottom.
  *
  *   align   'center' (forms, default) | 'top' (long documents)
@@ -50,11 +61,8 @@ function AuthShell({ children, align = 'center', className, footer }) {
   return (
     <div className="auth-fey relative isolate flex min-h-screen flex-col overflow-hidden">
       <div aria-hidden="true" className="auth-backdrop -z-10">
-        {[1, 2, 3, 4, 5].map((n) => (
-          <span key={`r${n}`} className={`auth-ring auth-ring-${n}`} />
-        ))}
-        {[1, 2, 3, 4, 5, 6].map((n) => (
-          <span key={`b${n}`} className={`auth-bubble auth-bubble-${n}`} />
+        {RINGS.map((r, i) => (
+          <FlowRing key={i} className={`auth-ring auth-ring-${i + 1}`} colors={r.colors} seed={r.seed} dur={r.dur} />
         ))}
         <div className="auth-aura" />
       </div>
