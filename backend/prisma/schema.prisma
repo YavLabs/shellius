@@ -109,6 +109,10 @@ model User {
   mfaEmailEnabled  Boolean   @default(false) @map("mfa_email_enabled")
   mfaBackupCodes   String[]  @default([]) @map("mfa_backup_codes") // sha256 hashes
   mfaEnrolledAt    DateTime? @map("mfa_enrolled_at")
+  // Which factor sign-in asks for first when several are enrolled
+  // ('totp' | 'email'); null = authenticator first. Ignored when that
+  // factor isn't enabled.
+  mfaPreferredMethod String? @map("mfa_preferred_method")
   // Unconfirmed TOTP secret during (re-)enrollment. Promoted to
   // mfaTotpSecretEnc only after the user proves possession, so starting a
   // re-enroll never invalidates a working authenticator.

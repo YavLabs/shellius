@@ -1,7 +1,9 @@
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { Loader2 } from 'lucide-react';
 import api from '@/services/api';
 import { sendMfaOtp } from '@/services/mfaService';
+import { EmailCodeResend, EmailCodeSend, EmailCodeSentNotice, useEmailCode } from '@/components/mfa/EmailCode';
+import MoreWays, { methodLabel } from '@/components/mfa/MoreWays';
 
 /**
  * MfaChallenge — the second-factor step of the login-shaped flow.
@@ -27,19 +29,14 @@ function MfaChallenge({ mfaToken, methods = [], emailHint, onSuccess, onStartOve
   const [error, setError] = useState('');
   const [attemptsRemaining, setAttemptsRemaining] = useState(null);
   const [fatalMessage, setFatalMessage] = useState('');
-  const [otpSent, setOtpSent] = useState(false);
-  const [resendCooldown, setResendCooldown] = useState(0);
   const inputRef = useRef(null);
+  // Email codes: send first, then the code field; resend with a cooldown.
+  const email = useEmailCode(useCallback(() => sendMfaOtp(mfaToken), [mfaToken]));
+  const awaitingEmail = method === 'email' && !email.sent;
 
   useEffect(() => {
     inputRef.current?.focus();
-  }, [method]);
-
-  useEffect(() => {
-    if (resendCooldown <= 0) return undefined;
-    const t = setInterval(() => setResendCooldown((s) => Math.max(0, s - 1)), 1000);
-    return () => clearInterval(t);
-  }, [resendCooldown]);
+  }, [method, email.sent]);
 
   const maxLen = method === 'backup' ? 12 : 6;
 
@@ -49,17 +46,6 @@ function MfaChallenge({ mfaToken, methods = [], emailHint, onSuccess, onStartOve
     if (cleaned) {
       e.preventDefault();
       setCode(cleaned.slice(0, maxLen));
-    }
-  };
-
-  const handleSendOtp = async () => {
-    setError('');
-    try {
-      await sendMfaOtp(mfaToken);
-      setOtpSent(true);
-      setResendCooldown(30);
-    } catch (err) {
-      setError(err?.response?.data?.error?.message || err.message || 'Could not send code');
     }
   };
 
@@ -129,98 +115,53 @@ function MfaChallenge({ mfaToken, methods = [], emailHint, onSuccess, onStartOve
         </div>
       )}
       <p className="text-sm text-muted-foreground">
-        Two-factor authentication is required. Enter a verification code to continue.
+        {awaitingEmail
+          ? 'Two-factor authentication is required. Get a code by email to continue.'
+          : 'Two-factor authentication is required. Enter a verification code to continue.'}
       </p>
 
-      {primaryMethods.length > 1 && (
-        <div className="flex gap-1 rounded-md border border-border p-1" role="tablist" aria-label="Verification method">
-          {primaryMethods.includes('totp') && (
-            <button
-              type="button"
-              role="tab"
-              aria-selected={method === 'totp'}
-              onClick={() => { setMethod('totp'); setCode(''); setError(''); }}
-              className={`flex-1 rounded px-2 py-1 text-xs font-medium ${method === 'totp' ? 'bg-primary text-primary-foreground' : 'text-muted-foreground'}`}
-            >
-              Authenticator
-            </button>
-          )}
-          {primaryMethods.includes('email') && (
-            <button
-              type="button"
-              role="tab"
-              aria-selected={method === 'email'}
-              onClick={() => { setMethod('email'); setCode(''); setError(''); }}
-              className={`flex-1 rounded px-2 py-1 text-xs font-medium ${method === 'email' ? 'bg-primary text-primary-foreground' : 'text-muted-foreground'}`}
-            >
-              Email code
-            </button>
-          )}
-        </div>
+      {/* Opens on the user's default factor (first in `methods`); others via "More ways to verify". */}
+      <p className="text-sm font-medium text-foreground">{methodLabel(method)}</p>
+
+      {awaitingEmail ? (
+        <EmailCodeSend state={email} emailHint={emailHint} />
+      ) : (
+        <>
+          {method === 'email' && <EmailCodeSentNotice state={email} emailHint={emailHint} />}
+          <div>
+            <label htmlFor="mfa-code" className="mb-1.5 block text-sm font-medium text-foreground">
+              {method === 'backup' ? 'Backup code' : 'Verification code'} <span className="text-destructive">*</span>
+            </label>
+            <input
+              id="mfa-code"
+              ref={inputRef}
+              value={code}
+              onChange={(e) => setCode(e.target.value)}
+              onPaste={handlePaste}
+              placeholder={method === 'backup' ? 'xxxx-xxxx' : '6-digit code'}
+              autoFocus
+              autoComplete="one-time-code"
+              inputMode={method === 'backup' ? 'text' : 'numeric'}
+              maxLength={maxLen}
+              className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm tracking-widest text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring"
+            />
+          </div>
+
+          <button
+            type="submit"
+            disabled={submitting || !code.trim()}
+            className="flex h-9 w-full items-center justify-center rounded-md bg-primary text-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            {submitting ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
+            Verify
+          </button>
+          {method === 'email' && <EmailCodeResend state={email} />}
+        </>
       )}
 
-      {method === 'email' && (
-        <button
-          type="button"
-          onClick={handleSendOtp}
-          disabled={resendCooldown > 0}
-          className="text-xs text-primary underline-offset-4 hover:underline disabled:cursor-not-allowed disabled:text-muted-foreground disabled:no-underline"
-        >
-          {otpSent
-            ? resendCooldown > 0
-              ? `Code sent to ${emailHint || 'your email'} — resend in ${resendCooldown}s`
-              : `Code sent to ${emailHint || 'your email'} — resend`
-            : `Send a code to ${emailHint || 'your email'}`}
-        </button>
-      )}
-
-      <div>
-        <label htmlFor="mfa-code" className="mb-1.5 block text-sm font-medium text-foreground">
-          {method === 'backup' ? 'Backup code' : 'Verification code'} <span className="text-destructive">*</span>
-        </label>
-        <input
-          id="mfa-code"
-          ref={inputRef}
-          value={code}
-          onChange={(e) => setCode(e.target.value)}
-          onPaste={handlePaste}
-          placeholder={method === 'totp' ? '6-digit code' : method === 'backup' ? 'xxxx-xxxx' : 'Enter code'}
-          autoFocus
-          autoComplete="one-time-code"
-          inputMode={method === 'backup' ? 'text' : 'numeric'}
-          maxLength={maxLen}
-          className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm tracking-widest text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring"
-        />
-      </div>
-
-      <button
-        type="submit"
-        disabled={submitting || !code.trim()}
-        className="flex h-9 w-full items-center justify-center rounded-md bg-primary text-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-50"
-      >
-        {submitting ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
-        Verify
-      </button>
-
-      <div className="flex items-center justify-between text-xs">
-        {method !== 'backup' ? (
-          <button
-            type="button"
-            onClick={() => { setMethod('backup'); setCode(''); setError(''); }}
-            className="text-muted-foreground hover:text-foreground"
-          >
-            Use a backup code
-          </button>
-        ) : (
-          <button
-            type="button"
-            onClick={() => { setMethod(primaryMethods[0] || 'totp'); setCode(''); setError(''); }}
-            className="text-muted-foreground hover:text-foreground"
-          >
-            Back to verification methods
-          </button>
-        )}
-        <button type="button" onClick={onStartOver} className="text-muted-foreground hover:text-foreground">
+      <div className="flex flex-wrap items-center justify-between gap-3 text-xs">
+        <MoreWays methods={methods} method={method} onChange={(m) => { setMethod(m); setCode(''); setError(''); }} />
+        <button type="button" onClick={onStartOver} className="ml-auto shrink-0 text-muted-foreground hover:text-foreground">
           Start over
         </button>
       </div>

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { Loader2, Lock, Mail, MailWarning, XCircle } from 'lucide-react';
 import AuthShell from '@/components/auth/AuthShell';
@@ -6,6 +6,8 @@ import ProviderGlyph from '@/components/auth/ProviderGlyph';
 import PasswordInput from '@/components/ui/PasswordInput';
 import { Button } from '@/components/ui/button';
 import { useAuth } from '@/context/AuthContext';
+import { EmailCodeResend, EmailCodeSend, EmailCodeSentNotice, useEmailCode } from '@/components/mfa/EmailCode';
+import MoreWays, { methodLabel } from '@/components/mfa/MoreWays';
 import {
   getPendingLink,
   confirmPendingLink,
@@ -16,7 +18,6 @@ import {
 const INPUT =
   'h-9 w-full rounded-md border border-input bg-background px-3 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring';
 
-const METHOD_LABELS = { totp: 'Authenticator', email: 'Email code', backup: 'Backup code' };
 
 function readParams() {
   const hash = window.location.hash.startsWith('#') ? window.location.hash.slice(1) : window.location.hash;
@@ -74,7 +75,6 @@ export default function SsoLink() {
   const [emailHint, setEmailHint] = useState('');
   const [method, setMethod] = useState('totp');
   const [code, setCode] = useState('');
-  const [codeSent, setCodeSent] = useState(false);
 
   useEffect(() => {
     if (ran.current) return;
@@ -169,15 +169,21 @@ export default function SsoLink() {
     }
   };
 
-  const sendCode = async () => {
-    setError('');
-    try {
-      await sendPendingLinkCode(params.token);
-      setCodeSent(true);
-    } catch (err) {
-      handleError(err, 'Could not send the code.');
-    }
-  };
+  // Email codes: send first, then the code field; resend with a cooldown.
+  // Expired / locked link errors still end the flow (handleError).
+  const email = useEmailCode(
+    useCallback(async () => {
+      try {
+        await sendPendingLinkCode(params.token);
+      } catch (err) {
+        const c = err?.response?.data?.error?.code;
+        if (c === 'LINK_EXPIRED' || c === 'LINK_TOO_MANY_ATTEMPTS' || c === 'ACCOUNT_DISABLED') handleError(err);
+        throw err;
+      }
+      // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [params.token])
+  );
+  const awaitingEmail = method === 'email' && !email.sent;
 
   const cancel = async () => {
     if (params.token) await cancelPendingLink(params.token).catch(() => {});
@@ -275,6 +281,17 @@ export default function SsoLink() {
                     {busy ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Lock className="mr-2 h-4 w-4" />}
                     Link and sign in
                   </Button>
+                  <div className="text-center">
+                    <MoreWays
+                      methods={methods}
+                      method={method}
+                      onChange={(m) => {
+                        setMethod(m);
+                        setCode('');
+                        setError('');
+                      }}
+                    />
+                  </div>
                   <Button type="button" variant="ghost" className="w-full" onClick={cancel} disabled={busy}>
                     Cancel
                   </Button>
@@ -282,51 +299,35 @@ export default function SsoLink() {
               ) : (
                 <form onSubmit={submitCode} className="space-y-4">
                   <p className="text-sm text-muted-foreground">Enter a verification code to finish.</p>
-                  {methods.length > 1 && (
-                    <div className="flex gap-1 rounded-md border border-border p-1" role="tablist" aria-label="Verification method">
-                      {methods.map((m) => (
-                        <button
-                          key={m}
-                          type="button"
-                          role="tab"
-                          aria-selected={method === m}
-                          onClick={() => {
-                            setMethod(m);
-                            setCode('');
-                            setError('');
-                          }}
-                          className={`flex-1 rounded px-2 py-1 text-xs font-medium ${method === m ? 'bg-primary text-primary-foreground' : 'text-muted-foreground'}`}
-                        >
-                          {METHOD_LABELS[m] || m}
-                        </button>
-                      ))}
-                    </div>
+                  <p className="text-sm font-medium text-foreground">{methodLabel(method)}</p>
+                  {awaitingEmail ? (
+                    <EmailCodeSend state={email} emailHint={emailHint} />
+                  ) : (
+                    <>
+                      {method === 'email' && <EmailCodeSentNotice state={email} emailHint={emailHint} />}
+                      <div>
+                        <label htmlFor="link-code" className="mb-1.5 block text-sm font-medium text-foreground">
+                          {method === 'backup' ? 'Backup code' : 'Verification code'}
+                        </label>
+                        <input
+                          id="link-code"
+                          value={code}
+                          onChange={(e) => setCode(e.target.value)}
+                          autoFocus
+                          autoComplete="one-time-code"
+                          inputMode={method === 'backup' ? 'text' : 'numeric'}
+                          maxLength={method === 'backup' ? 14 : 6}
+                          placeholder={method === 'backup' ? 'xxxx-xxxx-xxxx' : '6-digit code'}
+                          className={`${INPUT} tracking-widest`}
+                        />
+                      </div>
+                      <Button type="submit" className="w-full" disabled={busy || !code.trim()}>
+                        {busy ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
+                        Verify and sign in
+                      </Button>
+                      {method === 'email' && <EmailCodeResend state={email} />}
+                    </>
                   )}
-                  {method === 'email' && (
-                    <button type="button" onClick={sendCode} className="text-xs text-primary underline-offset-4 hover:underline">
-                      {codeSent ? `Code sent to ${emailHint || 'your email'} — resend` : `Send a code to ${emailHint || 'your email'}`}
-                    </button>
-                  )}
-                  <div>
-                    <label htmlFor="link-code" className="mb-1.5 block text-sm font-medium text-foreground">
-                      {method === 'backup' ? 'Backup code' : 'Verification code'}
-                    </label>
-                    <input
-                      id="link-code"
-                      value={code}
-                      onChange={(e) => setCode(e.target.value)}
-                      autoFocus
-                      autoComplete="one-time-code"
-                      inputMode={method === 'backup' ? 'text' : 'numeric'}
-                      maxLength={method === 'backup' ? 14 : 6}
-                      placeholder={method === 'backup' ? 'xxxx-xxxx-xxxx' : '6-digit code'}
-                      className={`${INPUT} tracking-widest`}
-                    />
-                  </div>
-                  <Button type="submit" className="w-full" disabled={busy || !code.trim()}>
-                    {busy ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
-                    Verify and sign in
-                  </Button>
                   <Button type="button" variant="ghost" className="w-full" onClick={cancel} disabled={busy}>
                     Cancel
                   </Button>

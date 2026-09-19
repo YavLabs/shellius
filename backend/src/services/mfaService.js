@@ -46,15 +46,40 @@ export function userMfaStatus(user) {
     totpPending: !!user.mfaTotpPendingEnc,
     backupCodesRemaining: (user.mfaBackupCodes || []).length,
     enrolledAt: user.mfaEnrolledAt || null,
+    preferredMethod: preferredMethod(user),
   };
 }
 
+export const PREFERABLE_METHODS = ['totp', 'email'];
+
+/** The factor sign-in asks for first: the user's choice when it's enabled, else the first enabled one. */
+export function preferredMethod(user) {
+  const enabled = PREFERABLE_METHODS.filter((m) => (m === 'totp' ? user.mfaTotpEnabled : user.mfaEmailEnabled));
+  if (enabled.includes(user.mfaPreferredMethod)) return user.mfaPreferredMethod;
+  return enabled[0] || null;
+}
+
+/**
+ * Enrolled factors in the order a challenge offers them: the preferred one
+ * first, then the other, backup codes last.
+ */
 export function availableMethods(user) {
   const m = [];
   if (user.mfaTotpEnabled) m.push('totp');
   if (user.mfaEmailEnabled) m.push('email');
+  const first = preferredMethod(user);
+  if (first && m[0] !== first) m.sort((a, b) => (a === first ? -1 : b === first ? 1 : 0));
   if ((user.mfaBackupCodes || []).length > 0) m.push('backup');
   return m;
+}
+
+/** Set which enrolled factor sign-in asks for first. */
+export async function setPreferredMethod(user, method) {
+  if (!PREFERABLE_METHODS.includes(method)) throw new ApiError(400, 'Choose authenticator or email');
+  const enabled = method === 'totp' ? user.mfaTotpEnabled : user.mfaEmailEnabled;
+  if (!enabled) throw new ApiError(400, 'That method is not set up on your account');
+  await prisma.user.update({ where: { id: user.id }, data: { mfaPreferredMethod: method } });
+  return { preferredMethod: method };
 }
 
 /** True when the user has ANY second factor enrolled (used to gate MFA

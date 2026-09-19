@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { EmailCodeResend, EmailCodeSend, EmailCodeSentNotice, useEmailCode } from '@/components/mfa/EmailCode';
 import { Loader2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { sendMfaEmailCode } from '@/services/mfaService';
@@ -25,18 +26,9 @@ export default function VerifyAction({ enrolledMethods = [], hasPassword, onVeri
   const [method, setMethod] = useState(codeMethods[0] || 'totp');
   const [code, setCode] = useState('');
   const [password, setPassword] = useState('');
-  const [otpSent, setOtpSent] = useState(false);
-  const [sendError, setSendError] = useState('');
-
-  const handleSendCode = async () => {
-    setSendError('');
-    try {
-      await sendMfaEmailCode();
-      setOtpSent(true);
-    } catch (e) {
-      setSendError(e?.response?.data?.error?.message || e.message || 'Could not send code');
-    }
-  };
+  // Email codes: send first, then the code field; resend with a cooldown.
+  const email = useEmailCode(sendMfaEmailCode);
+  const awaitingEmail = mode === 'code' && method === 'email' && !email.sent;
 
   const handleSubmit = (e) => {
     e.preventDefault();
@@ -77,7 +69,7 @@ export default function VerifyAction({ enrolledMethods = [], hasPassword, onVeri
           {codeMethods.length > 1 && (
             <select
               value={method}
-              onChange={(e) => { setMethod(e.target.value); setOtpSent(false); }}
+              onChange={(e) => { setMethod(e.target.value); setCode(''); }}
               className="h-9 w-full rounded-md border border-input bg-background px-2 text-sm"
             >
               {codeMethods.map((m) => (
@@ -85,25 +77,23 @@ export default function VerifyAction({ enrolledMethods = [], hasPassword, onVeri
               ))}
             </select>
           )}
-          {method === 'email' && (
-            <button
-              type="button"
-              onClick={handleSendCode}
-              className="text-xs text-primary underline-offset-4 hover:underline"
-            >
-              {otpSent ? 'Code sent — resend' : 'Send a code to my email'}
-            </button>
+          {awaitingEmail ? (
+            <EmailCodeSend state={email} emailHint="your email address" />
+          ) : (
+            <>
+              {method === 'email' && <EmailCodeSentNotice state={email} />}
+              <input
+                value={code}
+                onChange={(e) => setCode(e.target.value)}
+                placeholder={method === 'backup' ? 'Backup code' : '6-digit code'}
+                inputMode={method === 'backup' ? 'text' : 'numeric'}
+                autoComplete="one-time-code"
+                autoFocus
+                className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm"
+              />
+              {method === 'email' && <EmailCodeResend state={email} />}
+            </>
           )}
-          {sendError && <p className="text-xs text-destructive">{sendError}</p>}
-          <input
-            value={code}
-            onChange={(e) => setCode(e.target.value)}
-            placeholder={method === 'backup' ? 'Backup code' : '6-digit code'}
-            inputMode={method === 'backup' ? 'text' : 'numeric'}
-            autoComplete="one-time-code"
-            autoFocus
-            className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm"
-          />
         </div>
       ) : (
         <input
