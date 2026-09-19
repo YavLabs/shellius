@@ -9,7 +9,7 @@ export function render({ recipientName, ipAddress, userAgent, when }) {
   const safeWhen = esc(when || new Date().toISOString());
 
   const bodyHtml = `
-    <h1 style="margin:0 0 16px;font:600 22px/1.3 -apple-system,sans-serif;color:#0a0a0a">
+    <h1 style="margin:0 0 16px;font:600 22px/1.3 -apple-system,sans-serif;color:#09090C">
       Your password was changed
     </h1>
     <p style="margin:0 0 16px;font:400 15px/1.5 -apple-system,sans-serif;color:#3f3f46">

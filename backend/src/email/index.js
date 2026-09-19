@@ -23,6 +23,7 @@ import * as certificateExpiring from './templates/certificateExpiring.js';
 import * as accountDeleted from './templates/accountDeleted.js';
 import * as verifyEmail from './templates/verifyEmail.js';
 import * as smtpTest from './templates/smtpTest.js';
+import * as emailTest from './templates/emailTest.js';
 import * as mfaOtp from './templates/mfaOtp.js';
 
 const TEMPLATES = {
@@ -38,6 +39,7 @@ const TEMPLATES = {
   accountDeleted,
   verifyEmail,
   smtpTest,
+  emailTest,
   mfaOtp,
 };
 

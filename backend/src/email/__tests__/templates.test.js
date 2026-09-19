@@ -23,6 +23,7 @@ const SAMPLES = {
   verifyEmail: { recipientName: 'A', verifyUrl: 'https://x.test/v/1', expiresInHours: 24 },
   accountDeleted: { recipientName: 'A', when: '2026-04-07T01:00:00Z', gracePeriodDays: 30 },
   smtpTest: { recipientName: 'A', orgName: 'Acme', host: 'smtp.gmail.com', port: 587, useTls: true, when: '2026-04-07T01:00:00Z' },
+  emailTest: { recipientName: 'A', orgName: 'Acme', providerName: 'Company <Gmail>', providerLabel: 'Google (Gmail API)', fromAddress: 'ops@acme.test', when: '2026-04-07T01:00:00Z' },
 };
 
 describe('email templates — registry', () => {
@@ -61,6 +62,39 @@ describe('email templates — XSS escape', () => {
   test('invite template escapes & in orgName', () => {
     const { html } = renderTemplate('invite', SAMPLES.invite);
     expect(html).toContain('Acme &amp; Co');
+  });
+});
+
+describe('email templates — new branded layout', () => {
+  const saved = process.env.APP_URL;
+  beforeAll(() => {
+    process.env.APP_URL = 'https://shellius.example.com';
+  });
+  afterAll(() => {
+    if (saved === undefined) delete process.env.APP_URL;
+    else process.env.APP_URL = saved;
+  });
+
+  for (const name of Object.keys(SAMPLES)) {
+    test(`${name} renders the hosted lockup, no data: URIs, and a plain-text part`, () => {
+      const { html, text } = renderTemplate(name, SAMPLES[name]);
+      expect(html).toContain('https://shellius.example.com/brand/png/shellius-lockup-dark-bg-640x128.png');
+      expect(html).not.toContain('data:image');
+      expect(text).not.toMatch(/<(table|td|p|div|a|br|img)\b/i);
+    });
+  }
+});
+
+describe('emailTest template', () => {
+  test('names the provider, type, sender and timestamp (escaped in HTML)', () => {
+    const { subject, html, text } = renderTemplate('emailTest', SAMPLES.emailTest);
+    expect(subject).toBe('[Shellius] Test email');
+    expect(html).toContain('Company &lt;Gmail&gt;');
+    expect(html).toContain('Google (Gmail API)');
+    expect(html).toContain('ops@acme.test');
+    expect(html).toContain('2026-04-07T01:00:00Z');
+    expect(text).toContain('Provider: Company <Gmail>');
+    expect(text).toContain('Sent at:  2026-04-07T01:00:00Z');
   });
 });
 
