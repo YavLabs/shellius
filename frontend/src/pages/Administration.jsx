@@ -1,6 +1,6 @@
 import { useCallback, useMemo, useRef, useState } from 'react';
 import { Link, Navigate, useLocation, useNavigate, useParams } from 'react-router-dom';
-import { Search, ShieldCheck, X, SearchX } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Search, ShieldCheck, X, SearchX } from 'lucide-react';
 import { useAuth } from '@/context/AuthContext';
 import { AdminFrameContext } from '@/components/admin/AdminFrameContext';
 import HelpButton from '@/components/common/HelpButton';
@@ -16,8 +16,11 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
+import MobilePageHeader from '@/components/mobile/MobilePageHeader';
+import useIsMobile from '@/hooks/useIsMobile';
 import { cn } from '@/lib/utils';
 import {
+  ADMIN_BASE,
   filterSections,
   groupSections,
   resolveAdminRoute,
@@ -106,11 +109,101 @@ function SectionNav({ groups, activeKey, onPick }) {
   );
 }
 
+/**
+ * Phones: the section list is its own screen (like a phone's Settings app)
+ * — search on top, then each group as a card of rows (icon, label, one-line
+ * description, chevron).
+ */
+function MobileSectionList({ groups, query, setQuery, onPick, firstMatch }) {
+  return (
+    <div className="space-y-5">
+      <div className="relative">
+        <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+        <input
+          type="search"
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === 'Escape') setQuery('');
+            if (e.key === 'Enter' && firstMatch) onPick(firstMatch.key);
+          }}
+          placeholder="Search settings"
+          aria-label="Search settings"
+          className="h-11 w-full rounded-lg border border-input bg-background pl-9 pr-10 text-base text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring [&::-webkit-search-cancel-button]:hidden"
+        />
+        {query && (
+          <button
+            type="button"
+            onClick={() => setQuery('')}
+            className="absolute right-0.5 top-1/2 flex h-10 w-10 -translate-y-1/2 items-center justify-center rounded-md text-muted-foreground hover:text-foreground"
+            aria-label="Clear search"
+          >
+            <X className="h-4 w-4" />
+          </button>
+        )}
+      </div>
+
+      {groups.length > 0 ? (
+        <nav aria-label="Administration sections" className="space-y-5">
+          {groups.map((group) => (
+            <section key={group.key} aria-labelledby={`admin-group-${group.key}`}>
+              <h2
+                id={`admin-group-${group.key}`}
+                className="mb-1.5 px-1 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground"
+              >
+                {group.label}
+              </h2>
+              <ul className="divide-y divide-border overflow-hidden rounded-lg border border-border bg-card">
+                {group.sections.map((s) => {
+                  const Icon = s.icon;
+                  return (
+                    <li key={s.key}>
+                      <Link
+                        to={sectionPath(s.key)}
+                        onClick={(e) => {
+                          if (e.metaKey || e.ctrlKey || e.shiftKey || e.button !== 0) return;
+                          e.preventDefault();
+                          onPick(s.key);
+                        }}
+                        className="flex min-h-[3.75rem] items-center gap-3 px-3 py-2.5 transition-colors active:bg-accent hover:bg-accent/50"
+                      >
+                        <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-[hsl(var(--brand)/0.12)] text-primary">
+                          <Icon className="h-[18px] w-[18px]" aria-hidden="true" />
+                        </span>
+                        <span className="min-w-0 flex-1">
+                          <span className="block truncate text-sm font-medium text-foreground">{s.label}</span>
+                          {s.description && (
+                            <span className="block truncate text-xs text-muted-foreground">{s.description}</span>
+                          )}
+                        </span>
+                        <ChevronRight className="h-4 w-4 shrink-0 text-muted-foreground/60" aria-hidden="true" />
+                      </Link>
+                    </li>
+                  );
+                })}
+              </ul>
+            </section>
+          ))}
+        </nav>
+      ) : (
+        <div className="rounded-lg border border-dashed border-border px-4 py-8 text-center">
+          <SearchX className="mx-auto h-5 w-5 text-muted-foreground/60" aria-hidden="true" />
+          <p className="mt-2 break-words text-sm text-muted-foreground">No settings match “{query.trim()}”</p>
+          <Button variant="outline" className="mt-3 h-11" onClick={() => setQuery('')}>
+            Clear
+          </Button>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function Administration() {
   const { user } = useAuth();
   const { section: key, id } = useParams();
   const { search } = useLocation();
   const navigate = useNavigate();
+  const isMobile = useIsMobile();
   const [query, setQuery] = useState('');
 
   // Forms inside a section report unsaved edits here (useUnsavedChanges);
@@ -120,13 +213,15 @@ function Administration() {
     if (dirty) dirtyRef.current.add(formId);
     else dirtyRef.current.delete(formId);
   }, []);
-  const [pendingKey, setPendingKey] = useState(null);
+  // Where to go once the user agrees to discard unsaved edits.
+  const [pendingPath, setPendingPath] = useState(null);
 
   // Recomputed whenever `user` changes, so a permission change (AuthContext
   // re-reads permissions on focus) shows or hides sections without a reload;
   // if the open section disappears, resolveAdminRoute sends us to /admin.
   const sections = useMemo(() => visibleSections(user), [user]);
-  const resolved = resolveAdminRoute(user, key);
+  // Phones: bare /admin is the section list instead of the first section.
+  const resolved = resolveAdminRoute(user, key, { listOnBare: isMobile });
   const activeKey = resolved.section?.key;
 
   const filtered = useMemo(() => filterSections(sections, query), [sections, query]);
@@ -135,13 +230,16 @@ function Administration() {
 
   const frame = useMemo(() => ({ section: activeKey, markDirty }), [activeKey, markDirty]);
 
-  const pick = (next) => {
-    if (next === activeKey && !id) return;
+  const go = (path) => {
     if (dirtyRef.current.size > 0) {
-      setPendingKey(next);
+      setPendingPath(path);
       return;
     }
-    navigate(sectionPath(next));
+    navigate(path);
+  };
+  const pick = (next) => {
+    if (next === activeKey && !id) return;
+    go(sectionPath(next));
   };
 
   if (resolved.redirect) return <Navigate to={resolved.redirect} replace />;
@@ -155,6 +253,84 @@ function Administration() {
   }
 
   const view = SECTION_VIEWS[activeKey];
+
+  const discardDialog = (
+    <ConfirmDialog
+      open={!!pendingPath}
+      title="Discard unsaved changes?"
+      message="You have changes in this section that haven't been saved. Leave without saving?"
+      confirmLabel="Discard changes"
+      variant="destructive"
+      onConfirm={() => {
+        const next = pendingPath;
+        setPendingPath(null);
+        dirtyRef.current.clear();
+        navigate(next);
+      }}
+      onCancel={() => setPendingPath(null)}
+    />
+  );
+
+  const sectionContent = (
+    <AdminFrameContext.Provider value={frame}>
+      {view?.card ? (
+        <div className="rounded-lg border border-border bg-card p-4 sm:p-5">{view.render(id)}</div>
+      ) : (
+        view?.render(id)
+      )}
+    </AdminFrameContext.Provider>
+  );
+
+  // Phones (docs/plans/1.5.1-mobile.md §6): the section list, or one section
+  // full-width with "‹ Administration" to go back — no dropdown picker.
+  if (isMobile) {
+    return (
+      <div className="space-y-4 p-4">
+        {resolved.list ? (
+          <>
+            <MobilePageHeader
+              icon={ShieldCheck}
+              title="Administration"
+              subtitle="Configure people, security and integrations for this organization."
+              helpKey="admin"
+            />
+            <MobileSectionList
+              groups={navGroups}
+              query={query}
+              setQuery={setQuery}
+              onPick={pick}
+              firstMatch={filtered[0]}
+            />
+          </>
+        ) : (
+          <>
+            <div className="flex min-h-11 items-center justify-between">
+              <Link
+                to={ADMIN_BASE}
+                onClick={(e) => {
+                  if (e.metaKey || e.ctrlKey || e.shiftKey || e.button !== 0) return;
+                  e.preventDefault();
+                  go(ADMIN_BASE);
+                }}
+                className="-ml-2 flex h-11 items-center gap-0.5 rounded-md pl-1 pr-3 text-sm font-medium text-[hsl(var(--brand))] hover:bg-accent/50"
+              >
+                <ChevronLeft className="h-5 w-5" aria-hidden="true" />
+                Administration
+              </Link>
+              {/* Users / Roles / Groups have their own help in the card header. */}
+              {!view?.card && (
+                <span className="-mr-1 [&>button]:h-11 [&>button]:w-11">
+                  <HelpButton helpKey="admin" />
+                </span>
+              )}
+            </div>
+            {sectionContent}
+          </>
+        )}
+        {discardDialog}
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-6 p-4 sm:p-6">
@@ -237,31 +413,10 @@ function Administration() {
         </div>
 
         {/* Selected section */}
-        <div className="min-w-0 flex-1">
-          <AdminFrameContext.Provider value={frame}>
-            {view?.card ? (
-              <div className="rounded-lg border border-border bg-card p-4 sm:p-5">{view.render(id)}</div>
-            ) : (
-              view?.render(id)
-            )}
-          </AdminFrameContext.Provider>
-        </div>
+        <div className="min-w-0 flex-1">{sectionContent}</div>
       </div>
 
-      <ConfirmDialog
-        open={!!pendingKey}
-        title="Discard unsaved changes?"
-        message="You have changes in this section that haven't been saved. Leave without saving?"
-        confirmLabel="Discard changes"
-        variant="destructive"
-        onConfirm={() => {
-          const next = pendingKey;
-          setPendingKey(null);
-          dirtyRef.current.clear();
-          navigate(sectionPath(next));
-        }}
-        onCancel={() => setPendingKey(null)}
-      />
+      {discardDialog}
     </div>
   );
 }
