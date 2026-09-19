@@ -90,6 +90,15 @@ function Notifications() {
       key: 'status',
       label: '',
       className: 'w-8',
+      mobile: {
+        slot: 'leading',
+        render: (n) => (
+          <span
+            className={`mt-1.5 inline-block h-2.5 w-2.5 rounded-full ${n.isRead ? 'bg-muted-foreground/20' : 'bg-primary'}`}
+            title={n.isRead ? 'Read' : 'Unread'}
+          />
+        ),
+      },
       render: (n) =>
         n.isRead ? (
           <span className="h-2 w-2 rounded-full bg-transparent" />
@@ -102,6 +111,7 @@ function Notifications() {
       label: 'Type',
       sortable: true,
       searchAccessor: (n) => n.type || '',
+      mobile: { slot: 'meta', order: 1 },
       render: (n) => (
         <Badge tone="info" variant="outline">
           {formatLabel(n.type || 'info')}
@@ -111,6 +121,12 @@ function Notifications() {
     {
       key: 'body',
       label: 'Message',
+      mobile: {
+        slot: 'title',
+        render: (n) => (
+          <span className={n.isRead ? 'font-normal text-muted-foreground' : undefined}>{n.body || n.title || '—'}</span>
+        ),
+      },
       render: (n) => (
         <button
           onClick={() => openNotification(n)}
@@ -124,6 +140,7 @@ function Notifications() {
       key: 'related',
       label: 'Related',
       hideBelow: 'md',
+      mobile: { slot: 'meta', order: 2, render: (n) => n.relatedType || null },
       render: (n) => (
         <span className="text-xs text-muted-foreground">
           {n.relatedType ? `${n.relatedType}` : '—'}
@@ -134,6 +151,7 @@ function Notifications() {
       key: 'created',
       label: 'When',
       sortable: true,
+      mobile: { slot: 'secondary', render: (n) => relativeTime(n.createdAt) },
       render: (n) => (
         <span className="text-xs text-muted-foreground">{relativeTime(n.createdAt)}</span>
       ),
@@ -172,6 +190,7 @@ function Notifications() {
         emptyMessage={filter === 'unread' ? 'No unread notifications.' : 'No notifications yet.'}
         searchPlaceholder="Search notifications..."
         filters={filterSlot}
+        mobile={{ onCardClick: (n) => openNotification(n) }}
       />
     </div>
   );

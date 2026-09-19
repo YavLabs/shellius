@@ -18,6 +18,7 @@ import ServerName, { serverSearchString } from '@/components/shared/ServerName';
 import Badge from '@/components/shared/Badge';
 import EnvironmentBadge from '@/components/shared/EnvironmentBadge';
 import UserCell from '@/components/shared/UserCell';
+import Avatar from '@/components/ui/Avatar';
 import Modal from '@/components/shared/Modal';
 import RequestForm from '@/components/access-requests/RequestForm';
 import ApprovalCard from '@/components/access-requests/ApprovalCard';
@@ -358,6 +359,15 @@ function AccessRequests() {
       label: 'Server',
       sortable: true,
       searchAccessor: (r) => serverSearchString(r.server),
+      mobile: {
+        slot: 'title',
+        render: (r) => (
+          <span className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
+            <ServerName server={r.server} fallback={r.serverId} className="min-w-0" />
+            {r.server?.environment && <EnvironmentBadge environment={r.server.environment} />}
+          </span>
+        ),
+      },
       render: (r) => (
         <div className="flex items-center gap-2">
           <ServerName server={r.server} fallback={r.serverId} />
@@ -371,6 +381,11 @@ function AccessRequests() {
           label: 'Requester',
           sortable: true,
           searchAccessor: (r) => r.requester?.name || r.requester?.email || '',
+          mobile: {
+            slot: 'secondary',
+            order: 1,
+            render: (r) => r.requester?.name || r.requester?.email || r.requesterId || 'Unknown user',
+          },
           render: (r) => <UserCell user={r.requester} fallback={r.requesterId || 'Unknown user'} />,
         }]
       : []),
@@ -378,6 +393,11 @@ function AccessRequests() {
       ? [{
           key: 'reviewer',
           label: 'Reviewer',
+          mobile: {
+            slot: 'secondary',
+            order: 1,
+            render: (r) => (r.reviewer ? `Reviewer: ${r.reviewer.name || r.reviewer.email}` : null),
+          },
           render: (r) => (
             <span className="text-sm text-muted-foreground">
               {r.reviewer?.name || r.reviewer?.email || '-'}
@@ -389,6 +409,11 @@ function AccessRequests() {
       key: 'reason',
       label: 'Reason',
       hideBelow: 'md',
+      mobile: {
+        slot: 'secondary',
+        order: 3,
+        render: (r) => (r.reason ? <span className="line-clamp-1 italic">“{r.reason}”</span> : null),
+      },
       render: (r) => (
         <span className="block max-w-xs truncate text-sm text-muted-foreground" title={r.reason}>
           {r.reason}
@@ -398,6 +423,7 @@ function AccessRequests() {
     {
       key: 'duration',
       label: 'Duration',
+      mobile: { slot: 'meta', order: 3, showLabel: true },
       render: (r) => (
         <span className="text-sm text-muted-foreground">{formatDuration(r.requestedDuration)}</span>
       ),
@@ -407,6 +433,7 @@ function AccessRequests() {
       label: 'Status',
       sortable: true,
       searchAccessor: (r) => r.status || '',
+      mobile: { slot: 'meta', order: 1 },
       render: (r) => <StatusBadge status={r.status} />,
     },
     {
@@ -414,6 +441,11 @@ function AccessRequests() {
       label: 'Created',
       sortable: true,
       hideBelow: 'lg',
+      mobile: {
+        slot: 'secondary',
+        order: 2,
+        render: (r) => relativeTime(r.createdAt),
+      },
       render: (r) => (
         <span className="text-xs text-muted-foreground">{relativeTime(r.createdAt)}</span>
       ),
@@ -426,6 +458,7 @@ function AccessRequests() {
         {
           label: 'Quick Connect',
           icon: Zap,
+          primary: true,
           hidden: (r) => !isConnectable(r),
           onClick: (r) => quickConnect(r),
         },
@@ -505,6 +538,13 @@ function AccessRequests() {
         }
         searchPlaceholder="Search servers or requesters..."
         filters={filterSlot}
+        mobile={{
+          onCardClick: (r) => openDetail(r.id),
+          leading: (r) =>
+            activeTab !== 'mine' ? (
+              <Avatar name={r.requester?.name} email={r.requester?.email} avatarUrl={r.requester?.avatarUrl} size="md" />
+            ) : undefined,
+        }}
         serverPagination={{
           page,
           total,

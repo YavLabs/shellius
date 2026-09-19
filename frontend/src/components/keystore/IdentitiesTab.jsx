@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useImperativeHandle, useState, forwardRef } from 'react';
 import { Pencil, Trash2, PlugZap, Eye, KeyRound, Lock } from 'lucide-react';
 import DataTable from '@/components/shared/DataTable';
+import { CardIcon } from '@/components/mobile/MobileCard';
 import ConfirmDialog from '@/components/shared/ConfirmDialog';
 import EmptyState from '@/components/ui/EmptyState';
 import AuthTypeBadge from './AuthTypeBadge';
@@ -83,6 +84,15 @@ const IdentitiesTab = forwardRef(function IdentitiesTab({ canManage, scope = 'or
       label: 'Name',
       sortable: true,
       searchAccessor: (r) => `${r.name} ${r.username}`,
+      mobile: {
+        slot: 'title',
+        render: (r) => (
+          <span className="flex min-w-0 items-center gap-1.5">
+            <span className="min-w-0 break-words">{r.name}</span>
+            {scope === 'personal' && <Lock className="h-3 w-3 shrink-0 text-muted-foreground" aria-label="Private" />}
+          </span>
+        ),
+      },
       render: (r) => (
         <div>
           <span className="flex items-center gap-1.5 font-medium text-foreground">
@@ -96,11 +106,13 @@ const IdentitiesTab = forwardRef(function IdentitiesTab({ canManage, scope = 'or
     {
       key: 'authType',
       label: 'Auth',
+      mobile: { slot: 'meta', order: 1 },
       render: (r) => <AuthTypeBadge authType={r.authType} />,
     },
     {
       key: 'sshKey',
       label: 'Linked key',
+      mobile: { slot: 'meta', order: 2, showLabel: true, render: (r) => r.sshKey?.name || null },
       render: (r) =>
         r.sshKey ? (
           <span>
@@ -118,6 +130,7 @@ const IdentitiesTab = forwardRef(function IdentitiesTab({ canManage, scope = 'or
             key: 'serverCount',
             label: 'Servers',
             sortable: true,
+            mobile: { slot: 'meta', order: 3, showLabel: true },
             render: (r) => <span className="tabular-nums">{r.serverCount ?? 0}</span>,
           },
         ]),
@@ -125,6 +138,14 @@ const IdentitiesTab = forwardRef(function IdentitiesTab({ canManage, scope = 'or
       key: 'lastUsedAt',
       label: 'Last used',
       sortable: true,
+      mobile: {
+        slot: 'secondary',
+        render: (r) => (
+          <span>
+            <span className="font-mono">{r.username}</span> · {r.lastUsedAt ? `used ${relativeTime(r.lastUsedAt)}` : 'never used'}
+          </span>
+        ),
+      },
       render: (r) => (
         <span className="text-xs text-muted-foreground" title={formatDateTime(r.lastUsedAt)}>
           {r.lastUsedAt ? relativeTime(r.lastUsedAt) : 'Never'}
@@ -192,6 +213,7 @@ const IdentitiesTab = forwardRef(function IdentitiesTab({ canManage, scope = 'or
           onRowClick={(r) => setDetailId(r.id)}
           searchPlaceholder="Search identities..."
           emptyMessage="No identities match your search"
+          mobile={{ leading: () => <CardIcon icon={scope === 'personal' ? Lock : KeyRound} /> }}
         />
       )}
 

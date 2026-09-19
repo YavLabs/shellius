@@ -17,6 +17,7 @@ import {
   Send,
 } from 'lucide-react';
 import DataTable from '@/components/shared/DataTable';
+import { CardIcon } from '@/components/mobile/MobileCard';
 import Modal from '@/components/shared/Modal';
 import ConfirmDialog from '@/components/shared/ConfirmDialog';
 import DeleteServerDialog from '@/components/servers/DeleteServerDialog';
@@ -324,6 +325,17 @@ function Servers() {
       label: 'Name',
       sortable: true,
       searchAccessor: (r) => `${r.displayName || ''} ${r.hostname} ${r.ipAddress || ''}`,
+      mobile: {
+        slot: 'title',
+        render: (r) => (
+          <span className="break-words">
+            {r.displayName || r.hostname}
+            {r.authMode === 'credential' && (
+              <KeyRound className="ml-1.5 inline h-3.5 w-3.5 align-[-2px] text-amber-600 dark:text-amber-400" aria-label="Stored identity" />
+            )}
+          </span>
+        ),
+      },
       render: (r) => {
         const proto = r.protocol || r.type || 'SSH';
         const ProtoIcon = proto === 'RDP' ? Monitor : TerminalIcon;
@@ -355,6 +367,14 @@ function Servers() {
       key: 'ipAddress',
       label: 'IP',
       sortable: true,
+      mobile: {
+        slot: 'secondary',
+        render: (r) => (
+          <span className="break-all font-mono text-[11px]">
+            {[r.displayName ? r.hostname : null, r.ipAddress].filter(Boolean).join(' · ') || '-'}
+          </span>
+        ),
+      },
       render: (r) => <span className="font-mono text-xs text-muted-foreground">{r.ipAddress}</span>,
     },
     {
@@ -362,6 +382,7 @@ function Servers() {
       label: 'Customer',
       sortable: true,
       searchAccessor: (r) => r.customer?.name || '',
+      mobile: { slot: 'meta', order: 3, render: (r) => r.customer?.name || null },
       render: (r) =>
         r.customer ? (
           <button
@@ -379,12 +400,20 @@ function Servers() {
       label: 'Env',
       sortable: true,
       searchAccessor: (r) => r.environment || '',
+      mobile: { slot: 'meta', order: 1 },
       render: (r) => <EnvironmentBadge environment={r.environment} />,
     },
     {
       key: 'protocol',
       label: 'Protocol',
       sortable: true,
+      mobile: {
+        slot: 'leading',
+        render: (r) => {
+          const ProtoIcon = (r.protocol || r.type) === 'RDP' || r.protocol === 'rdp' ? Monitor : TerminalIcon;
+          return <CardIcon icon={ProtoIcon} title={r.protocol} />;
+        },
+      },
       render: (r) => (
         <span className="text-xs uppercase text-muted-foreground">{r.protocol}</span>
       ),
@@ -393,6 +422,7 @@ function Servers() {
       key: 'health',
       label: 'Health',
       searchAccessor: (r) => r.healthStatus || '',
+      mobile: { slot: 'meta', order: 2 },
       render: (r) => <HealthStatusDot status={r.healthStatus} showLabel />,
     },
     {
@@ -415,6 +445,7 @@ function Servers() {
       key: 'quickConnect',
       label: '',
       className: 'w-36',
+      mobile: 'action',
       render: (r) => <QuickConnectButton server={r} currentUser={user} />,
     },
     {
@@ -512,6 +543,7 @@ function Servers() {
         searchPlaceholder="Search name, hostname or IP..."
         onSearchChange={handleSearchChange}
         filters={filterSlot}
+        onResetFilters={() => { setEnvironment(''); setHealthStatus(''); setCustomerFilter(''); setPage(1); }}
         selectable={canBulk}
         selectedIds={selected}
         onSelectionChange={setSelected}

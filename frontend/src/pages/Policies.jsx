@@ -173,6 +173,17 @@ function Policies() {
       key: 'name',
       label: 'Name',
       sortable: true,
+      mobile: {
+        slot: 'title',
+        render: (r) => (
+          <span>
+            {r.name}
+            {r.description && (
+              <span className="mt-0.5 block text-xs font-normal text-muted-foreground line-clamp-2">{r.description}</span>
+            )}
+          </span>
+        ),
+      },
       render: (r) => (
         <div>
           <p className="text-sm font-medium text-foreground">{r.name}</p>
@@ -187,11 +198,13 @@ function Policies() {
       label: 'Effect',
       sortable: true,
       searchAccessor: (r) => r.effect || '',
+      mobile: { slot: 'meta', order: 1 },
       render: (r) => <EffectBadge effect={r.effect} />,
     },
     {
       key: 'scope',
       label: 'Scope',
+      mobile: { slot: 'secondary', order: 1 },
       render: (r) => (
         <span className="text-sm text-muted-foreground">
           {r.customerId ? customerMap[r.customerId] || r.customerId : 'Org-wide'}
@@ -202,6 +215,7 @@ function Policies() {
       key: 'environments',
       label: 'Environments',
       hideBelow: 'md',
+      mobile: { slot: 'meta', order: 3 },
       render: (r) => {
         const envs = r.targetEnvironments || [];
         if (envs.length === 0) return <span className="text-xs text-muted-foreground">All</span>;
@@ -229,6 +243,11 @@ function Policies() {
       key: 'priority',
       label: 'Priority',
       sortable: true,
+      mobile: {
+        slot: 'secondary',
+        order: 2,
+        render: (r) => <span className="font-mono">Priority {r.priority ?? 0}</span>,
+      },
       render: (r) => (
         <span className="font-mono text-xs text-muted-foreground">{r.priority ?? 0}</span>
       ),
@@ -237,6 +256,7 @@ function Policies() {
       key: 'isActive',
       label: 'Status',
       searchAccessor: (r) => (r.isActive ? 'active' : 'inactive'),
+      mobile: { slot: 'meta', order: 2 },
       render: (r) =>
         r.isActive ? <Badge tone="success">Active</Badge> : <Badge tone="neutral">Inactive</Badge>,
     },
@@ -290,6 +310,7 @@ function Policies() {
         emptyMessage="No policies found. Create one to control server access."
         searchPlaceholder="Search by policy name..."
         filters={filterSlot}
+        onResetFilters={() => { setEffectFilter(''); setCustomerFilter(''); setActiveFilter(''); setPage(1); }}
         serverPagination={{
           page,
           total,

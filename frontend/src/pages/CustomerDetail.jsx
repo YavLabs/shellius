@@ -22,6 +22,7 @@ import {
   Shield,
 } from 'lucide-react';
 import DataTable from '@/components/shared/DataTable';
+import { CardIcon, MobileCardSkeleton } from '@/components/mobile/MobileCard';
 import Modal from '@/components/shared/Modal';
 import ConfirmDialog from '@/components/shared/ConfirmDialog';
 import DeleteCustomerDialog from '@/components/customers/DeleteCustomerDialog';
@@ -261,6 +262,7 @@ function CustomerDetail() {
       label: 'Server',
       sortable: true,
       searchAccessor: (r) => `${r.displayName || ''} ${r.hostname} ${r.ipAddress || ''}`,
+      mobile: { slot: 'title', render: (r) => r.displayName || r.hostname },
       render: (r) => {
         const proto = r.protocol || r.type || 'SSH';
         const ProtoIcon = proto === 'RDP' ? Monitor : TerminalIcon;
@@ -283,6 +285,14 @@ function CustomerDetail() {
     {
       key: 'ipAddress',
       label: 'IP',
+      mobile: {
+        slot: 'secondary',
+        render: (r) => (
+          <span className="break-all font-mono text-[11px]">
+            {[r.displayName && r.displayName !== r.hostname ? r.hostname : null, r.ipAddress].filter(Boolean).join(' · ') || '-'}
+          </span>
+        ),
+      },
       render: (r) => (
         <span className="font-mono text-xs text-muted-foreground">{r.ipAddress || '-'}</span>
       ),
@@ -290,6 +300,10 @@ function CustomerDetail() {
     {
       key: 'protocol',
       label: 'Proto',
+      mobile: {
+        slot: 'leading',
+        render: (r) => <CardIcon icon={r.protocol === 'rdp' ? Monitor : TerminalIcon} title={r.protocol} />,
+      },
       render: (r) => (
         <span className="text-xs uppercase tracking-wide text-muted-foreground">
           {r.protocol || 'SSH'}
@@ -301,18 +315,21 @@ function CustomerDetail() {
       label: 'Env',
       sortable: true,
       searchAccessor: (r) => r.environment || '',
+      mobile: { slot: 'meta', order: 1 },
       render: (r) => <EnvironmentBadge environment={r.environment} />,
     },
     {
       key: 'health',
       label: 'Health',
       searchAccessor: (r) => r.healthStatus || '',
+      mobile: { slot: 'meta', order: 2 },
       render: (r) => <HealthStatusDot status={r.healthStatus} showLabel />,
     },
     {
       key: 'lastCheck',
       label: 'Last check',
       hideBelow: 'md',
+      mobile: { slot: 'meta', order: 3, render: (r) => (r.lastHealthCheck ? `Checked ${relativeTime(r.lastHealthCheck)}` : null) },
       render: (r) => (
         <span className="text-xs text-muted-foreground">
           {relativeTime(r.lastHealthCheck)}
@@ -361,7 +378,10 @@ function CustomerDetail() {
           <div className="border-b border-border px-5 py-3">
             <Skeleton className="h-4 w-24" />
           </div>
-          <div className="p-4">
+          <div className="p-3 md:hidden">
+            <MobileCardSkeleton count={4} withLeading />
+          </div>
+          <div className="hidden p-4 md:block">
             <table className="w-full">
               <tbody>
                 {[...Array(5)].map((_, i) => (
@@ -526,8 +546,9 @@ function CustomerDetail() {
 
         {/* LEFT: servers table (2/3) */}
         <div className="lg:col-span-2">
-          <div className="rounded-lg border border-border bg-card overflow-hidden">
-            <div className="flex items-center justify-between border-b border-border px-5 py-3">
+          {/* Mobile: the cards sit directly on the page (no card-in-card). */}
+          <div className="md:overflow-hidden md:rounded-lg md:border md:border-border md:bg-card">
+            <div className="flex items-center justify-between pb-3 md:border-b md:border-border md:px-5 md:py-3">
               <h3 className="text-sm font-semibold text-foreground">
                 Servers
                 <span className="ml-2 text-muted-foreground font-normal">
@@ -544,7 +565,7 @@ function CustomerDetail() {
             {/* Padding around the DataTable so the inner content (search,
                 filters, rows, pagination) never butts up against the card
                 borders. */}
-            <div className="p-4">
+            <div className="md:p-4">
               <DataTable
                 columns={serverColumns}
                 data={filteredServers}

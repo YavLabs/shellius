@@ -5,6 +5,7 @@ import Badge from '@/components/shared/Badge';
 import Modal from '@/components/shared/Modal';
 import ConfirmDialog from '@/components/shared/ConfirmDialog';
 import DataTable from '@/components/shared/DataTable';
+import { CardIcon } from '@/components/mobile/MobileCard';
 import CustomerForm from '@/components/customers/CustomerForm';
 import PageHeader from '@/components/common/PageHeader';
 import { Button } from '@/components/ui/button';
@@ -75,6 +76,7 @@ function Customers() {
       key: 'name',
       label: 'Name',
       sortable: true,
+      mobile: { slot: 'title', render: (c) => c.name },
       render: (c) => (
         <button
           onClick={() => navigate(`/customers/${c.id}`)}
@@ -90,12 +92,17 @@ function Customers() {
       key: 'slug',
       label: 'Slug',
       sortable: true,
+      mobile: { slot: 'meta', order: 1 },
       render: (c) => <code className="text-xs text-muted-foreground">{c.slug}</code>,
     },
     {
       key: 'description',
       label: 'Description',
       hideBelow: 'md',
+      mobile: {
+        slot: 'secondary',
+        render: (c) => (c.description ? <span className="line-clamp-2">{c.description}</span> : null),
+      },
       render: (c) => (
         <span className="text-sm text-muted-foreground line-clamp-1">{c.description || '—'}</span>
       ),
@@ -105,6 +112,7 @@ function Customers() {
       label: 'Servers',
       sortable: true,
       searchAccessor: (c) => String(c._count?.servers ?? 0),
+      mobile: { slot: 'meta', order: 2 },
       render: (c) => (
         <span className="flex items-center gap-1.5 text-sm text-muted-foreground">
           <Server className="h-3.5 w-3.5" />
@@ -116,6 +124,7 @@ function Customers() {
       key: 'status',
       label: 'Status',
       searchAccessor: (c) => (c.isActive ? 'active' : 'inactive'),
+      mobile: { slot: 'meta', order: 3 },
       render: (c) => (
         <Badge variant={c.isActive ? 'success' : 'default'}>
           {c.isActive ? 'Active' : 'Inactive'}
@@ -173,6 +182,7 @@ function Customers() {
         emptyMessage="No customers yet. Create your first customer to get started."
         searchPlaceholder="Search customers..."
         onRowClick={(c) => navigate(`/customers/${c.id}`)}
+        mobile={{ leading: () => <CardIcon icon={Building2} /> }}
       />
 
       <Modal open={createOpen} onClose={() => setCreateOpen(false)} title="Add customer">

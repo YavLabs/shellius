@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useImperativeHandle, useState, forwardRef } from 'react';
 import { Pencil, Trash2, Copy, Download, Send, RefreshCw, Key, FileKey, Lock } from 'lucide-react';
 import DataTable from '@/components/shared/DataTable';
+import { CardIcon } from '@/components/mobile/MobileCard';
 import ConfirmDialog from '@/components/shared/ConfirmDialog';
 import EmptyState from '@/components/ui/EmptyState';
 import { Badge } from '@/components/ui/badge';
@@ -119,6 +120,16 @@ const SshKeysTab = forwardRef(function SshKeysTab({ canManage, scope = 'org', ca
       label: 'Name',
       sortable: true,
       searchAccessor: (r) => `${r.name} ${r.fingerprint}`,
+      mobile: {
+        slot: 'title',
+        render: (r) => (
+          <span className="flex min-w-0 flex-wrap items-center gap-1.5">
+            <span className="min-w-0 break-words">{r.name}</span>
+            <KeyCertBadge certificate={r.certificate} />
+            {scope === 'personal' && <Lock className="h-3 w-3 shrink-0 text-muted-foreground" aria-label="Private" />}
+          </span>
+        ),
+      },
       render: (r) => (
         <div>
           <span className="flex items-center gap-1.5 font-medium text-foreground">
@@ -135,6 +146,7 @@ const SshKeysTab = forwardRef(function SshKeysTab({ canManage, scope = 'org', ca
     {
       key: 'keyType',
       label: 'Type',
+      mobile: { slot: 'meta', order: 1 },
       render: (r) => (
         <span className="text-xs text-muted-foreground">
           {labelize(KEY_TYPE_LABELS, r.keyType)}
@@ -145,12 +157,14 @@ const SshKeysTab = forwardRef(function SshKeysTab({ canManage, scope = 'org', ca
     {
       key: 'fingerprint',
       label: 'Fingerprint',
+      mobile: { slot: 'secondary', render: (r) => <span className="break-all font-mono text-[11px]">{r.fingerprint}</span> },
       render: (r) => <span className="font-mono text-xs text-muted-foreground">{r.fingerprint}</span>,
     },
     {
       key: 'source',
       label: 'Source',
       hideBelow: 'md',
+      mobile: { slot: 'meta', order: 2, render: (r) => <Badge tone={keySourceTone(r.source).tone}>{keySourceTone(r.source).label}</Badge> },
       render: (r) => (
         <div className="flex flex-col gap-1">
           <Badge tone={keySourceTone(r.source).tone}>{keySourceTone(r.source).label}</Badge>
@@ -166,6 +180,7 @@ const SshKeysTab = forwardRef(function SshKeysTab({ canManage, scope = 'org', ca
       key: 'credentialCount',
       label: 'Used by',
       sortable: true,
+      mobile: { slot: 'meta', order: 3 },
       render: (r) => <span className="tabular-nums">{r.credentialCount ?? 0} identities</span>,
     },
     {
@@ -240,6 +255,7 @@ const SshKeysTab = forwardRef(function SshKeysTab({ canManage, scope = 'org', ca
           onRowClick={(r) => setDetailId(r.id)}
           searchPlaceholder="Search keys..."
           emptyMessage="No keys match your search"
+          mobile={{ leading: () => <CardIcon icon={scope === 'personal' ? Lock : Key} /> }}
         />
       )}
 
