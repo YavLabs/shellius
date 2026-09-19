@@ -1,7 +1,7 @@
 <p align="center">
   <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="frontend/public/brand/png/shellius-lockup-dark-bg-1280x256.png" />
-    <img src="frontend/public/brand/png/shellius-lockup-light-bg-1280x256.png" alt="Shellius" width="320" />
+    <source media="(prefers-color-scheme: dark)" srcset="docs/assets/shellius-lockup-dark.png" />
+    <img src="docs/assets/shellius-lockup-light.png" alt="Shellius" width="300" />
   </picture>
 </p>
 
