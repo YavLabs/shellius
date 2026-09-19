@@ -34,9 +34,18 @@ import * as caService from '../src/services/caService.js';
 
 const prisma = new PrismaClient();
 
+// Env value, trimmed, without one pair of matching outer quotes. dotenv and
+// docker compose strip them, but `docker run --env-file` passes them through
+// literally, which stored names like `"Local Admin"` (quotes included).
+function envValue(name) {
+  const raw = (process.env[name] || '').trim();
+  const m = raw.match(/^(["'])([\s\S]*)\1$/);
+  return (m ? m[2] : raw).trim();
+}
+
 function requireEnv(name) {
-  const v = process.env[name];
-  if (!v || !v.trim()) {
+  const v = envValue(name);
+  if (!v) {
     console.error(
       `\n[seed] ERROR: ${name} is not set.\n` +
       `[seed] The seed requires SEED_ORG_NAME, SEED_ORG_SLUG,\n` +
@@ -45,21 +54,21 @@ function requireEnv(name) {
     );
     process.exit(1);
   }
-  return v.trim();
+  return v;
 }
 
 async function main() {
   const ORG_NAME = requireEnv('SEED_ORG_NAME');
   const ORG_SLUG = requireEnv('SEED_ORG_SLUG');
-  const ORG_DOMAIN = (process.env.SEED_ORG_DOMAIN || '').trim() || null;
+  const ORG_DOMAIN = envValue('SEED_ORG_DOMAIN') || null;
 
   const ADMIN_EMAIL = requireEnv('SEED_ADMIN_EMAIL');
-  const ADMIN_NAME = (process.env.SEED_ADMIN_NAME || 'Super Admin').trim();
+  const ADMIN_NAME = envValue('SEED_ADMIN_NAME') || 'Super Admin';
   const ADMIN_PASSWORD = requireEnv('SEED_ADMIN_PASSWORD');
 
   const FORCE_PASSWORD =
     process.argv.includes('--force-password') ||
-    String(process.env.SEED_FORCE_ADMIN_PASSWORD || '').toLowerCase() === 'true';
+    envValue('SEED_FORCE_ADMIN_PASSWORD').toLowerCase() === 'true';
 
   // ---------------------------------------------------------------------
   // Organization
