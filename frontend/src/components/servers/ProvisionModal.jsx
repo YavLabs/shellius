@@ -2,7 +2,7 @@ import { useState, useRef } from 'react';
 import { X, Terminal, Upload, Key, Lock, CheckCircle2, AlertCircle, Loader2 } from 'lucide-react';
 import { provisionServer } from '@/services/serverService';
 import PasswordInput from '@/components/ui/PasswordInput';
-import { Checkbox } from '@/components/ui/checkbox';
+import { SwitchField } from '@/components/ui/switch';
 import useIsMobile from '@/hooks/useIsMobile';
 import BottomSheet from '@/components/mobile/BottomSheet';
 
@@ -131,11 +131,15 @@ function ProvisionModal({ server, onClose }) {
           </div>
 
           <div className="space-y-3">
-            <label className="flex cursor-pointer items-center gap-2 text-sm font-medium text-foreground">
-              <Checkbox checked={needsSudo} onChange={(e) => setNeedsSudo(e.target.checked)} />
-              <Lock className="h-3.5 w-3.5" />
-              Sudo requires a password
-            </label>
+            <SwitchField
+              label={
+                <span className="inline-flex items-center gap-1.5">
+                  <Lock className="h-3.5 w-3.5" /> Sudo requires a password
+                </span>
+              }
+              checked={needsSudo}
+              onCheckedChange={setNeedsSudo}
+            />
             {needsSudo && (
               <PasswordInput
                 className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring"

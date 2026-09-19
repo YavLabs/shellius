@@ -9,7 +9,7 @@ import { listGroups } from '@/services/groupService';
 import PolicyEvaluator from '@/components/policies/PolicyEvaluator';
 import SubjectsPicker from '@/components/policies/SubjectsPicker';
 import SearchableSelect from '@/components/ui/SearchableSelect';
-import { Checkbox } from '@/components/ui/checkbox';
+import { SwitchField } from '@/components/ui/switch';
 import { listRoles } from '@/services/roleService';
 
 const ENVIRONMENTS = ['demo', 'dev', 'staging', 'prod'];
@@ -208,14 +208,12 @@ function Step1({ form, onChange, errors }) {
           <p className="text-xs text-muted-foreground mt-1">Higher priority evaluates first (1–1000).</p>
         </div>
         <div className="flex flex-col justify-end pb-1">
-          <label className="flex items-center gap-2 cursor-pointer">
-            <Checkbox
-              checked={form.isActive}
-              onChange={(e) => onChange('isActive', e.target.checked)}
-            />
-            <span className="text-sm font-medium text-foreground">Active</span>
-          </label>
-          <p className="text-xs text-muted-foreground mt-1">Inactive policies are not evaluated.</p>
+          <SwitchField
+            label="Active"
+            description="Inactive policies are not evaluated."
+            checked={!!form.isActive}
+            onCheckedChange={(v) => onChange('isActive', v)}
+          />
         </div>
       </div>
     </div>
@@ -523,33 +521,19 @@ function Step4({ form, onChange, errors }) {
       </div>
 
       <div className="rounded-md border border-border p-4 space-y-4">
-        <label className="flex items-start gap-3 cursor-pointer">
-          <Checkbox
-            checked={form.requireApproval}
-            onChange={(e) => onChange('requireApproval', e.target.checked)}
-            className="mt-0.5 shrink-0"
-          />
-          <div>
-            <span className="text-sm font-medium text-foreground">Require approval</span>
-            <p className="text-xs text-muted-foreground mt-0.5">
-              Access requests matching this policy will need manager approval before a certificate is issued.
-            </p>
-          </div>
-        </label>
+        <SwitchField
+          label="Require approval"
+          description="Access requests matching this policy will need manager approval before a certificate is issued."
+          checked={form.requireApproval}
+          onCheckedChange={(v) => onChange('requireApproval', v)}
+        />
 
-        <label className="flex items-start gap-3 cursor-pointer">
-          <Checkbox
-            checked={form.autoApprove}
-            onChange={(e) => onChange('autoApprove', e.target.checked)}
-            className="mt-0.5 shrink-0"
-          />
-          <div>
-            <span className="text-sm font-medium text-foreground">Auto-approve</span>
-            <p className="text-xs text-muted-foreground mt-0.5">
-              Requests are approved automatically without manual review.
-            </p>
-          </div>
-        </label>
+        <SwitchField
+          label="Auto-approve"
+          description="Requests are approved automatically without manual review."
+          checked={form.autoApprove}
+          onCheckedChange={(v) => onChange('autoApprove', v)}
+        />
       </div>
 
       {/* Approver routing — who can approve when this policy needs approval */}
@@ -576,15 +560,16 @@ function Step4({ form, onChange, errors }) {
 
         <div>
           <label className={labelCls}>Approver roles</label>
-          <div className="flex flex-wrap gap-3">
+          <div className="divide-y divide-border rounded-md border border-border">
             {approverRoleOptions.map((role) => (
-              <label key={role.key} className="flex items-center gap-2 text-sm">
-                <Checkbox
-                  checked={(form.approverRoles || []).includes(role.key)}
-                  onChange={() => toggleApproverRole(role.key)}
-                />
-                {role.name}
-              </label>
+              <SwitchField
+                key={role.key}
+                className="px-3 py-2.5"
+                size="sm"
+                label={role.name}
+                checked={(form.approverRoles || []).includes(role.key)}
+                onCheckedChange={() => toggleApproverRole(role.key)}
+              />
             ))}
           </div>
         </div>
@@ -642,84 +627,43 @@ function Step4({ form, onChange, errors }) {
           </p>
         </div>
 
-        <label className="flex items-start gap-3 cursor-pointer">
-          <Checkbox
-            checked={!!form.osProvisioning?.aclRecursive}
-            onChange={(e) =>
-              onChange('osProvisioning', { ...(form.osProvisioning || {}), aclRecursive: e.target.checked })
-            }
-            className="mt-0.5 shrink-0"
-          />
-          <div>
-            <span className="text-sm font-medium text-foreground">ACL recursive</span>
-            <p className="text-xs text-muted-foreground mt-0.5">
-              Apply ACL read access recursively to the paths above (can be slow on large trees).
-            </p>
-          </div>
-        </label>
+        <SwitchField
+          label="ACL recursive"
+          description="Apply ACL read access recursively to the paths above (can be slow on large trees)."
+          checked={!!form.osProvisioning?.aclRecursive}
+          onCheckedChange={(v) => onChange('osProvisioning', { ...(form.osProvisioning || {}), aclRecursive: v })}
+        />
 
-        <label className="flex items-start gap-3 cursor-pointer">
-          <Checkbox
-            checked={!!form.osProvisioning?.sudo}
-            onChange={(e) =>
-              onChange('osProvisioning', { ...(form.osProvisioning || {}), sudo: e.target.checked })
-            }
-            className="mt-0.5 shrink-0"
-          />
-          <div>
-            <span className="text-sm font-medium text-foreground">Grant sudo (NOPASSWD)</span>
-            <p className="text-xs text-muted-foreground mt-0.5">
-              Writes a sudoers drop-in for the JIT user. Use sparingly.
-            </p>
-          </div>
-        </label>
+        <SwitchField
+          label="Grant sudo (NOPASSWD)"
+          description="Writes a sudoers drop-in for the JIT user. Use sparingly."
+          checked={!!form.osProvisioning?.sudo}
+          onCheckedChange={(v) => onChange('osProvisioning', { ...(form.osProvisioning || {}), sudo: v })}
+        />
 
-        <label className="flex items-start gap-3 cursor-pointer">
-          <Checkbox
-            checked={!!form.osProvisioning?.hardCutoff}
-            onChange={(e) =>
-              onChange('osProvisioning', { ...(form.osProvisioning || {}), hardCutoff: e.target.checked })
-            }
-            className="mt-0.5 shrink-0"
-          />
-          <div>
-            <span className="text-sm font-medium text-foreground">Hard cutoff on lease expiry</span>
-            <p className="text-xs text-muted-foreground mt-0.5">
-              Kill active sessions when the lease expires. Default is graceful — active commands finish.
-            </p>
-          </div>
-        </label>
+        <SwitchField
+          label="Hard cutoff on lease expiry"
+          description="Kill active sessions when the lease expires. Default is graceful — active commands finish."
+          checked={!!form.osProvisioning?.hardCutoff}
+          onCheckedChange={(v) => onChange('osProvisioning', { ...(form.osProvisioning || {}), hardCutoff: v })}
+        />
       </div>
 
       {/* Phase 21A — key download + break-glass flags */}
       <div className="rounded-md border border-border p-4 space-y-4">
-        <label className="flex items-start gap-3 cursor-pointer">
-          <Checkbox
-            checked={!!form.allowKeyDownload}
-            onChange={(e) => onChange('allowKeyDownload', e.target.checked)}
-            className="mt-0.5 shrink-0"
-          />
-          <div>
-            <span className="text-sm font-medium text-foreground">Allow SSH key download</span>
-            <p className="text-xs text-muted-foreground mt-0.5">
-              Risky. Users can download a short-lived key pair and connect from outside the web terminal. Logged as a distinct audit event.
-            </p>
-          </div>
-        </label>
+        <SwitchField
+          label="Allow SSH key download"
+          description="Risky. Users can download a short-lived key pair and connect from outside the web terminal. Logged as a distinct audit event."
+          checked={!!form.allowKeyDownload}
+          onCheckedChange={(v) => onChange('allowKeyDownload', v)}
+        />
 
-        <label className="flex items-start gap-3 cursor-pointer">
-          <Checkbox
-            checked={!!form.isBreakGlass}
-            onChange={(e) => onChange('isBreakGlass', e.target.checked)}
-            className="mt-0.5 shrink-0"
-          />
-          <div>
-            <span className="text-sm font-medium text-foreground">Break-glass policy</span>
-            <p className="text-xs text-muted-foreground mt-0.5">
-              Marks this as an emergency-access policy. Invoking it notifies all org admins.
-            </p>
-          </div>
-        </label>
+        <SwitchField
+          label="Break-glass policy"
+          description="Marks this as an emergency-access policy. Invoking it notifies all org admins."
+          checked={!!form.isBreakGlass}
+          onCheckedChange={(v) => onChange('isBreakGlass', v)}
+        />
       </div>
     </div>
   );

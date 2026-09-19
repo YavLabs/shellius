@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Checkbox } from '@/components/ui/checkbox';
+import { SwitchField } from '@/components/ui/switch';
 
 function slugify(value) {
   return value
@@ -106,10 +106,12 @@ function CustomerForm({ customer, onSubmit, onCancel }) {
       </div>
 
       {isEdit && (
-        <label className="flex items-center gap-2 text-sm text-foreground">
-          <Checkbox checked={isActive} onChange={(e) => setIsActive(e.target.checked)} />
-          Active
-        </label>
+        <SwitchField
+          label="Active"
+          description="Inactive customers stay in the list but are marked inactive."
+          checked={isActive}
+          onCheckedChange={setIsActive}
+        />
       )}
 
       <div data-sheet-footer className="flex justify-end gap-2 pt-2">
