@@ -343,6 +343,7 @@ async function enrichAuditItems(items, orgId) {
           select: {
             id: true,
             requestedPrincipal: true,
+            requesterId: true,
             requester: { select: { name: true, email: true } },
             server: { select: { hostname: true, environment: true } },
           },
@@ -371,6 +372,9 @@ async function enrichAuditItems(items, orgId) {
           where: { id: { in: [...byType.get('Session')] }, orgId },
           select: {
             id: true,
+            userId: true,
+            targetHost: true,
+            targetUser: true,
             user: { select: { name: true, email: true } },
             server: { select: { hostname: true } },
           },
@@ -456,9 +460,13 @@ async function enrichAuditItems(items, orgId) {
         case 'AccessRequest': {
           const ar = lookups.AccessRequest?.get(rid);
           if (ar) {
-            const who = ar.requester?.name || ar.requester?.email || 'someone';
             const where = ar.server?.hostname || 'server';
-            label = `${who} → ${where}`;
+            // Own request: just the server ("Jane requested access sshtest"),
+            // someone else's: "Jane → sshtest" (e.g. an approver acting on it).
+            label =
+              ar.requesterId && ar.requesterId === it.actorId
+                ? where
+                : `${ar.requester?.name || ar.requester?.email || 'someone'} → ${where}`;
           }
           // No detail route — go to the list.
           link = '/access-requests';
@@ -473,8 +481,15 @@ async function enrichAuditItems(items, orgId) {
         case 'Session': {
           const s = lookups.Session?.get(rid);
           if (s) {
-            const who = s.user?.name || s.user?.email || 'user';
-            label = `${who} on ${s.server?.hostname || 'host'}`;
+            // Saved server, else the Quick Connect target (user@host).
+            const where =
+              s.server?.hostname ||
+              (s.targetHost ? `${s.targetUser ? `${s.targetUser}@` : ''}${s.targetHost}` : 'host');
+            // Own session: just where; someone else's (admin terminate): "Jane on where".
+            label =
+              s.userId && s.userId === it.actorId
+                ? where
+                : `${s.user?.name || s.user?.email || 'user'} on ${where}`;
           }
           link = '/sessions'; // list only
           break;

@@ -24,6 +24,14 @@ Tracked here as work lands on `main`; moved into a dated section on release
 
 ### Fixed
 
+- Recent activity / Audit log: events on your own account, session or request no longer repeat
+  your name. "Local Admin signed in Local Admin" is now "Local Admin signed in", and "Local Admin
+  ended session Local Admin on host" is now "Local Admin ended session sshtest.local". Quick
+  Connect sessions show `user@host` instead of the placeholder "host". Someone else's session or
+  request is still named ("Jane Doe on sshtest.local").
+
+### Fixed
+
 - The seed strips one pair of matching outer quotes from `SEED_*` values. `docker run --env-file`
   passes quotes through literally, which stored names like `"Local Admin"` (quotes included) for
   the super admin and organization.
