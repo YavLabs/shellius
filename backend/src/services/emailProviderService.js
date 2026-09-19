@@ -510,7 +510,7 @@ export async function startGoogleConnect(orgId, id, ctx = {}) {
  * code and stores the refresh token encrypted.
  *
  * Returns { ok: true } or { ok: false, error: <short code> } — the route
- * turns that into a redirect to /settings?tab=email.
+ * turns that into a redirect to /admin/email.
  */
 export async function completeGoogleConnect({ state, code, error, ip, userAgent } = {}) {
   if (!state || typeof state !== 'string' || !/^[a-f0-9]{64}$/.test(state)) {

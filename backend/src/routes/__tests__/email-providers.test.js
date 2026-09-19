@@ -157,6 +157,6 @@ describe('/api/settings/email (live DB)', () => {
   test('Google callback with a bad state redirects back with an error', async () => {
     if (!reachable) return;
     const res = await request(app).get('/api/settings/email/google/callback?state=bogus&code=x').expect(302);
-    expect(res.headers.location).toMatch(/\/settings\?tab=email&error=invalid_state$/);
+    expect(res.headers.location).toMatch(/\/admin\/email\?error=invalid_state$/);
   });
 });

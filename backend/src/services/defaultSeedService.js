@@ -16,7 +16,7 @@
 
 // Groups seeded for every org. Groups grant no permissions by themselves —
 // they are policy subjects and approver pools. What someone may DO comes from
-// their role (Settings → Roles); who skips prod approval is the role
+// their role (Administration → Roles); who skips prod approval is the role
 // permission "Production without approval" (access.prod_bypass).
 export const BASELINE_GROUPS = [
   { name: 'Admin', description: 'Administrators — matched by the admin production policies. Skipping prod approval comes from the role permission, not this group.' },
@@ -61,7 +61,7 @@ export const BASELINE_POLICIES = [
     name: 'Production Access — Admins & Managers',
     description:
       'Admins access production without approval (their role has "Production without approval"). Managers are covered by this policy for ' +
-      'principals/routing but still require approval unless their role is given that permission in Settings → Roles. 2 hour cert ' +
+      'principals/routing but still require approval unless their role is given that permission in Administration → Roles. 2 hour cert ' +
       'lifetime. Higher precedence than the standard prod policy.',
     effect: 'ALLOW',
     targetEnvironments: ['prod'],

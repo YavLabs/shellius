@@ -3,7 +3,7 @@ import { renderLayout } from '../layout.js';
 import { FONT_STACK } from '../brand.js';
 
 /**
- * emailTest template — sent by Settings → Email → "Send test email" to
+ * emailTest template — sent by Administration → Email → "Send test email" to
  * confirm an email provider delivers end to end and that the branded layout
  * renders in the recipient's client.
  *
