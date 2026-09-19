@@ -706,11 +706,19 @@ export const PERMISSIONS = [
   {
     key: 'settings.smtp',
     group: 'settings',
-    label: 'Email server',
-    description: 'Configure the SMTP server used for invitations, approvals and alerts.',
+    label: 'Email delivery',
+    description:
+      'Configure how Shellius sends email (SMTP, Google, Microsoft 365, SendGrid, Mailgun, Postmark, Resend) for invitations, approvals, sign-in codes and alerts, and send test emails.',
+    sensitive: true,
     defaults: SA,
     current: SA,
-    endpoints: ['GET/PUT/DELETE /api/settings/smtp', 'POST /api/settings/smtp/test'],
+    endpoints: [
+      'GET/POST /api/settings/email/providers',
+      'GET/PUT/DELETE /api/settings/email/providers/:id',
+      'POST /api/settings/email/providers/:id/{activate,deactivate,test,google/connect}',
+      'GET/PUT/DELETE /api/settings/smtp (deprecated)',
+      'POST /api/settings/smtp/test (deprecated)',
+    ],
   },
   {
     key: 'settings.storage',

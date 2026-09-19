@@ -33,6 +33,7 @@ const RESOURCES = [
   ['ca', 'certificate authority'],
   ['session', 'session'],
   ['org', 'organization settings'],
+  ['email_provider', 'email provider'],
   ['smtp', 'email settings'],
   ['storage', 'storage settings'],
   ['import', 'bulk import'],
@@ -85,6 +86,9 @@ const VERBS = {
   link_failed: 'failed to link',
   connect_started: 'started connecting',
   sso_required_blocked: 'was refused password sign-in (SSO required)',
+  activate: 'activated',
+  deactivate: 'deactivated',
+  google_connect: 'connected a Google account to',
 };
 
 // Actions whose sentence reads better without the resource noun.
@@ -161,6 +165,7 @@ export function auditCategoryLabel(category) {
     certificate: 'Certificate',
     org: 'Organization',
     smtp: 'Email',
+    email_provider: 'Email',
   };
   if (map[category]) return map[category];
   const s = humanise(category);

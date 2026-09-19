@@ -15,7 +15,7 @@ export function render({ recipientName, orgName, loginUrl, providerLabel }) {
   const safeProvider = esc(providerLabel || 'single sign-on');
 
   const bodyHtml = `
-    <h1 style="margin:0 0 16px;font:600 22px/1.3 -apple-system,sans-serif;color:#0a0a0a">
+    <h1 style="margin:0 0 16px;font:600 22px/1.3 -apple-system,sans-serif;color:#09090C">
       You've been invited to ${safeOrg}
     </h1>
     <p style="margin:0 0 16px;font:400 15px/1.5 -apple-system,sans-serif;color:#3f3f46">
@@ -28,7 +28,7 @@ export function render({ recipientName, orgName, loginUrl, providerLabel }) {
     </div>
     <p style="margin:0;font:400 12px/1.5 -apple-system,sans-serif;color:#a1a1aa">
       If the button doesn't work, copy and paste this link into your browser:<br>
-      <a href="${safeUrl}" style="color:#18181b;word-break:break-all">${safeUrl}</a>
+      <a href="${safeUrl}" style="color:#141A2E;word-break:break-all">${safeUrl}</a>
     </p>
   `;
 
