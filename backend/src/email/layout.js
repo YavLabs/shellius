@@ -31,7 +31,10 @@ export function renderLogo() {
   // sitting on the baseline at cap height (0.7em), like the app's wordmark,
   // so it lines up with the letters in every client's font. Outlook's Word
   // renderer ignores inline-block sizes, so it gets a Sky block glyph instead.
-  const bar = `<!--[if mso]><span style="color:${BRAND.sky};">&#9646;</span><![endif]--><!--[if !mso]><!--><span style="display:inline-block;width:0.34em;height:0.7em;margin:0 0.07em;vertical-align:baseline;background:${BRAND.sky};background-image:linear-gradient(135deg,${BRAND.sky} 0%,${BRAND.lavender} 100%);border-radius:1px;"></span><!--<![endif]-->`;
+  // The margins are uneven on purpose: in the system fonts mail clients use,
+  // a bold L has almost no right side-bearing while U has a wide left one,
+  // so equal margins leave a visibly bigger gap before U.
+  const bar = `<!--[if mso]><span style="color:${BRAND.sky};">&#9646;</span><![endif]--><!--[if !mso]><!--><span style="display:inline-block;width:0.34em;height:0.7em;margin:0 0.01em 0 0.14em;vertical-align:baseline;background:${BRAND.sky};background-image:linear-gradient(135deg,${BRAND.sky} 0%,${BRAND.lavender} 100%);border-radius:1px;"></span><!--<![endif]-->`;
   return `<table role="presentation" cellpadding="0" cellspacing="0" border="0" aria-label="Shellius">
                         <tr>
                           <td style="padding:0 10px 0 0;vertical-align:middle;">
