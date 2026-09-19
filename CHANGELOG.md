@@ -38,7 +38,7 @@ Tracked here as work lands on `main`; moved into a dated section on release
 - The sign-in page no longer jumps straight to the identity provider for SSO-only accounts. It shows "This account signs in with <Provider>" and a Continue button.
 - The SSO provider form warns when "Require verified email" is turned off.
 - People who have both a password and a linked SSO account can change their password again.
-- **Emails use the new Shellius brand.** The header shows the Shellius logo, loaded from the app's public URL (`APP_URL` or `TRAEFIK_HOST`). Without a public URL it shows a text logo instead of a broken image. The old header icon was blocked by Gmail and Outlook. Buttons use the brand gradient.
+- **Emails use the new Shellius brand.** The header shows the full Shellius logo (icon and wordmark) built in HTML, so it appears even when a mail client blocks images and no public app URL is set. The old header icon was blocked by Gmail and Outlook. Buttons use the brand gradient.
 - SMTP has an explicit Security setting: STARTTLS, TLS, or None. Before, the TLS switch only applied on port 465.
 - The "Email server" permission is now called "Email delivery" (same key, `settings.smtp`), and is marked as sensitive.
 - `/api/settings/smtp` is deprecated. It still works, and now reads and writes the org's active SMTP provider.

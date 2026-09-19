@@ -1,12 +1,10 @@
 /**
  * Shellius email brand tokens + logo resolution.
  *
- * The header logo is the hosted PNG lockup served by the web app
- * (frontend/public/brand/png/…). Email clients block data: URIs and SVG, so a
- * hosted PNG is the only reliable image. When the app has no public URL
- * configured (or it points at localhost, which a recipient's mail client
- * can't reach) the header falls back to an HTML-only wordmark, so it never
- * shows a broken image.
+ * The header logo is drawn in HTML (layout.js renderLogo) rather than as an
+ * image: mail clients block data: URIs and SVG, and often block remote
+ * images until the reader allows them. configuredAppUrl() is still used for
+ * absolute links.
  */
 
 export const BRAND = {
@@ -19,10 +17,6 @@ export const BRAND = {
 };
 
 export const FONT_STACK = "-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif";
-
-export const LOGO_PATH = '/brand/png/shellius-lockup-dark-bg-640x128.png';
-export const LOGO_WIDTH = 200;
-export const LOGO_HEIGHT = 40;
 
 /**
  * The web app's public URL when one is explicitly configured, else null.
@@ -49,10 +43,4 @@ export function configuredAppUrl() {
     return null;
   }
   return url.replace(/\/+$/, '');
-}
-
-/** Absolute URL of the hosted header logo, or null → use the wordmark. */
-export function logoUrl() {
-  const base = configuredAppUrl();
-  return base ? `${base}${LOGO_PATH}` : null;
 }

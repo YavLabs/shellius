@@ -14,32 +14,38 @@
  */
 
 import { escapeHtml as esc } from './escape.js';
-import { BRAND, FONT_STACK, LOGO_WIDTH, LOGO_HEIGHT, logoUrl } from './brand.js';
+import { BRAND, FONT_STACK } from './brand.js';
 
-/** HTML-only wordmark: "SHELL" + a brand-gradient block + "US". */
-export function renderWordmark() {
-  const letters = `font:800 20px/1 ${FONT_STACK};color:${BRAND.light};letter-spacing:0.22em;`;
+/**
+ * Header logo: the full Shellius lockup (icon chip + wordmark) built from
+ * HTML tables — no image, so it shows even where remote images are blocked
+ * (Outlook, Gmail for new senders) and when the app has no public URL.
+ * Mirrors the app's BrandLogo: a rounded Sky→Lavender chip with ">_", then
+ * SHELL, a cap-height gradient bar and US with tight tracking. Clients
+ * without CSS gradients get the solid bgcolor (Sky).
+ */
+export function renderLogo() {
+  const chip = `<td width="32" height="32" align="center" valign="middle" bgcolor="${BRAND.sky}"
+                            style="width:32px;height:32px;background:${BRAND.sky};background-image:linear-gradient(135deg,${BRAND.sky} 0%,${BRAND.lavender} 100%);border-radius:9px;font:800 17px/32px Menlo,Consolas,'Courier New',monospace;color:${BRAND.ink};letter-spacing:-0.08em;text-align:center;">&gt;_</td>`;
+  const letters = `font:800 21px/1 ${FONT_STACK};color:${BRAND.light};letter-spacing:-0.02em;vertical-align:middle;`;
+  const bar = `<td width="7" height="15" bgcolor="${BRAND.sky}"
+                                  style="width:7px;height:15px;background:${BRAND.sky};background-image:linear-gradient(135deg,${BRAND.sky} 0%,${BRAND.lavender} 100%);border-radius:1px;font-size:0;line-height:0;">&nbsp;</td>`;
   return `<table role="presentation" cellpadding="0" cellspacing="0" border="0" aria-label="Shellius">
                         <tr>
-                          <td style="${letters}vertical-align:middle;">SHELL</td>
-                          <td style="vertical-align:middle;padding:0 6px 0 1px;">
-                            <table role="presentation" cellpadding="0" cellspacing="0" border="0">
-                              <tr>
-                                <td width="10" height="18" bgcolor="${BRAND.sky}" style="width:10px;height:18px;background:${BRAND.sky};background-image:linear-gradient(180deg,${BRAND.sky} 0%,${BRAND.lavender} 100%);border-radius:2px;font-size:0;line-height:0;">&nbsp;</td>
-                              </tr>
-                            </table>
+                          <td style="padding:0 10px 0 0;vertical-align:middle;">
+                            <table role="presentation" cellpadding="0" cellspacing="0" border="0"><tr>
+                              ${chip}
+                            </tr></table>
                           </td>
-                          <td style="${letters}vertical-align:middle;">US</td>
+                          <td style="${letters}">SHELL</td>
+                          <td style="vertical-align:middle;padding:1px 2px 0 2px;">
+                            <table role="presentation" cellpadding="0" cellspacing="0" border="0"><tr>
+                              ${bar}
+                            </tr></table>
+                          </td>
+                          <td style="${letters}">US</td>
                         </tr>
                       </table>`;
-}
-
-/** Header logo: hosted PNG lockup when the app URL is known, else the wordmark. */
-export function renderLogo() {
-  const src = logoUrl();
-  if (!src) return renderWordmark();
-  return `<img src="${esc(src)}" width="${LOGO_WIDTH}" height="${LOGO_HEIGHT}" alt="Shellius"
-                        style="display:block;width:${LOGO_WIDTH}px;height:${LOGO_HEIGHT}px;max-width:${LOGO_WIDTH}px;border:0;outline:none;text-decoration:none;font:700 20px/40px ${FONT_STACK};color:${BRAND.light};letter-spacing:0.1em;" />`;
 }
 
 /**

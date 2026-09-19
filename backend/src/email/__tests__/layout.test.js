@@ -1,12 +1,12 @@
 /**
- * Email layout / branding: hosted PNG lockup when the app URL is known, an
- * HTML-only wordmark otherwise (never a broken image, never a data: URI),
+ * Email layout / branding: the full lockup (icon chip + wordmark) drawn in
+ * HTML — never an image, so it shows even when remote images are blocked,
  * brand colours, and the gradient button with its solid fallback.
  */
 
 import { renderLayout, renderLogo } from '../layout.js';
 import { button } from '../button.js';
-import { configuredAppUrl, logoUrl, BRAND } from '../brand.js';
+import { configuredAppUrl, BRAND } from '../brand.js';
 
 const URL_VARS = ['APP_URL', 'PUBLIC_BASE_URL', 'FRONTEND_URL', 'TRAEFIK_HOST'];
 const saved = {};
@@ -28,14 +28,12 @@ afterEach(() => {
 describe('brand.configuredAppUrl', () => {
   test('null when nothing is configured', () => {
     expect(configuredAppUrl()).toBeNull();
-    expect(logoUrl()).toBeNull();
   });
 
   test('APP_URL wins and trailing slashes are dropped', () => {
     process.env.APP_URL = 'https://shellius.example.com/';
     process.env.TRAEFIK_HOST = 'other.example.com';
     expect(configuredAppUrl()).toBe('https://shellius.example.com');
-    expect(logoUrl()).toBe('https://shellius.example.com/brand/png/shellius-lockup-dark-bg-640x128.png');
   });
 
   test('TRAEFIK_HOST derives https', () => {
@@ -52,20 +50,18 @@ describe('brand.configuredAppUrl', () => {
 });
 
 describe('layout header', () => {
-  test('hosted PNG lockup at 200x40 with alt text when APP_URL is set', () => {
-    process.env.APP_URL = 'https://shellius.example.com';
-    const html = renderLayout({ title: 't', bodyHtml: '<p>b</p>' });
-    expect(html).toContain('src="https://shellius.example.com/brand/png/shellius-lockup-dark-bg-640x128.png"');
-    expect(html).toMatch(/width="200" height="40" alt="Shellius"/);
-  });
-
-  test('HTML wordmark (no <img>) when no app URL is configured', () => {
-    const logo = renderLogo();
-    expect(logo).not.toContain('<img');
-    expect(logo).toContain('SHELL');
-    expect(logo).toContain('>US<');
-    expect(logo).toContain(BRAND.sky);
-    expect(renderLayout({ title: 't', bodyHtml: '' })).not.toContain('<img');
+  test('full lockup — icon chip, SHELL, gradient bar, US — with no image, with or without an app URL', () => {
+    for (const appUrl of [undefined, 'https://shellius.example.com']) {
+      if (appUrl) process.env.APP_URL = appUrl;
+      const logo = renderLogo();
+      expect(logo).not.toContain('<img');
+      expect(logo).toContain('&gt;_'); // the icon chip
+      expect(logo).toContain('SHELL');
+      expect(logo).toContain('>US<');
+      expect(logo).toContain(`bgcolor="${BRAND.sky}"`); // solid fallback where gradients aren't supported
+      expect(logo).toContain(`linear-gradient(135deg,${BRAND.sky} 0%,${BRAND.lavender} 100%)`);
+      expect(renderLayout({ title: 't', bodyHtml: '' })).not.toContain('<img');
+    }
   });
 
   test('never embeds data: URIs (blocked by Gmail/Outlook)', () => {

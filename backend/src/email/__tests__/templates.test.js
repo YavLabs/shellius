@@ -99,9 +99,10 @@ describe('email templates — new branded layout', () => {
   });
 
   for (const name of Object.keys(SAMPLES)) {
-    test(`${name} renders the hosted lockup, no data: URIs, and a plain-text part`, () => {
+    test(`${name} renders the HTML lockup, no data: URIs, and a plain-text part`, () => {
       const { html, text } = renderTemplate(name, SAMPLES[name]);
-      expect(html).toContain('https://shellius.example.com/brand/png/shellius-lockup-dark-bg-640x128.png');
+      expect(html).toContain('&gt;_'); // full HTML lockup (icon chip + wordmark)
+      expect(html).toContain('>US<');
       expect(html).not.toContain('data:image');
       expect(text).not.toMatch(/<(table|td|p|div|a|br|img)\b/i);
     });
