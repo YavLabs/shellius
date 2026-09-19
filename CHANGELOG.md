@@ -25,6 +25,10 @@ Tracked here as work lands on `main`; moved into a dated section on release
 - **Terminal workspace**: tabs are rounded pills with no divider below them. The workspace has padding around it. The sessions panel is a rounded card.
 - Sign-in with a single SSO provider uses the same "or continue with" button as several providers.
 
+### Fixed
+
+- Adding an SSO provider other than GitHub failed with `"allowedOrgs" is required`. The GitHub organization list is now optional, and other providers don't send it.
+
 ## [1.3.0] - 2026-09-19
 
 ### Added
