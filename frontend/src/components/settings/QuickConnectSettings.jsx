@@ -4,7 +4,7 @@ import { Button } from '@/components/ui/button';
 import SearchableSelect from '@/components/ui/SearchableSelect';
 import { getQuickConnectSettings, updateQuickConnectSettings } from '@/services/quickConnectService';
 import { ROLE_LABELS } from '@/lib/labels';
-import { Switch } from '@/components/ui/switch';
+import { SwitchField } from '@/components/ui/switch';
 
 const ROLES = [
   { value: 'manager', label: ROLE_LABELS.manager },
@@ -72,18 +72,13 @@ function QuickConnectSettings() {
           </div>
         )}
 
-        <div className="flex items-center justify-between rounded-lg border border-border p-4">
-          <div>
-            <p className="text-sm font-medium text-foreground">Enable quick connect</p>
-            <p className="text-xs text-muted-foreground">
-              Allow eligible users to open ad-hoc SSH sessions to hosts that aren&apos;t saved as servers.
-            </p>
-          </div>
-          <Switch
-            checked={enabled}
-            onCheckedChange={setEnabled}
-          />
-        </div>
+        <SwitchField
+          bordered
+          label="Enable quick connect"
+          description="Allow eligible users to open ad-hoc SSH sessions to hosts that aren't saved as servers."
+          checked={enabled}
+          onCheckedChange={setEnabled}
+        />
 
         <div>
           <label className="mb-1.5 block text-sm font-medium text-foreground">Minimum role</label>

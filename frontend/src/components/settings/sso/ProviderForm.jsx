@@ -12,7 +12,7 @@ import {
   testDraftSsoProvider,
   testSavedSsoProvider,
 } from '@/services/ssoConfigService';
-import { Switch } from '@/components/ui/switch';
+import { SwitchField } from '@/components/ui/switch';
 
 // Mirrors the shadcn <Input> default styling so PasswordInput (raw input) matches.
 const SHADCN_INPUT_CLS =
@@ -243,13 +243,13 @@ export default function ProviderForm({ preset, existingProvider, orgGroups, onSa
       )}
 
       {/* Active toggle */}
-      <div className="flex items-center gap-2 pt-1">
-        <Switch
-          checked={isActive}
-          onCheckedChange={setIsActive}
-        />
-        <span className="text-sm text-foreground">Active — shown as a sign-in button</span>
-      </div>
+      <SwitchField
+        bordered
+        label="Active"
+        description="Shown as a sign-in button on the login page."
+        checked={isActive}
+        onCheckedChange={setIsActive}
+      />
 
       {/* Security gating */}
       <div className="rounded-md border border-border p-4 space-y-4">
@@ -265,24 +265,12 @@ export default function ProviderForm({ preset, existingProvider, orgGroups, onSa
           <DomainChipsInput domains={allowedDomains} onChange={setAllowedDomains} />
         </div>
 
-        <label className="flex items-start gap-3 cursor-pointer">
-          <input
-            type="checkbox"
-            checked={requireVerifiedEmail}
-            onChange={(e) => setRequireVerifiedEmail(e.target.checked)}
-            className="mt-0.5 h-4 w-4 accent-primary"
-          />
-          <span>
-            <span className="text-sm font-medium text-foreground">
-              Require verified email for account linking
-            </span>
-            <span className="block text-xs text-muted-foreground">
-              On (recommended): a sign-in only links to an existing password account when the
-              identity provider confirms the email address is verified. Off: link on email match
-              alone.
-            </span>
-          </span>
-        </label>
+        <SwitchField
+          label="Require verified email for account linking"
+          description="On (recommended): a sign-in only links to an existing password account when the identity provider confirms the email address is verified. Off: link on email match alone."
+          checked={requireVerifiedEmail}
+          onCheckedChange={setRequireVerifiedEmail}
+        />
       </div>
 
       {/* Provisioning */}
@@ -294,21 +282,12 @@ export default function ProviderForm({ preset, existingProvider, orgGroups, onSa
           </p>
         </div>
 
-        <label className="flex items-start gap-3 cursor-pointer">
-          <input
-            type="checkbox"
-            checked={autoProvision}
-            onChange={(e) => setAutoProvision(e.target.checked)}
-            className="mt-0.5 h-4 w-4 accent-primary"
-          />
-          <span>
-            <span className="text-sm font-medium text-foreground">Auto-provision new users</span>
-            <span className="block text-xs text-muted-foreground">
-              On: any verified sign-in gets an account. Off: only invited / existing users can sign
-              in — others are told to contact an admin.
-            </span>
-          </span>
-        </label>
+        <SwitchField
+          label="Auto-provision new users"
+          description="On: any verified sign-in gets an account. Off: only invited / existing users can sign in — others are told to contact an admin."
+          checked={autoProvision}
+          onCheckedChange={setAutoProvision}
+        />
 
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
           <div>

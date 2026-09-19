@@ -42,7 +42,7 @@ import {
 } from '@/services/storageConfigService';
 import { useAuth } from '@/context/AuthContext';
 import { formatDateTime } from '@/utils/time';
-import { Switch } from '@/components/ui/switch';
+import { SwitchField } from '@/components/ui/switch';
 
 const ROLE_RANK = { super_admin: 4, admin: 3, manager: 2, member: 1 };
 function isAtLeast(user, role) {
@@ -550,15 +550,13 @@ function SmtpCard() {
             </div>
           </div>
 
-          <label className="flex items-center gap-2 text-sm">
-            <input
-              type="checkbox"
-              checked={useTls}
-              onChange={(e) => setUseTls(e.target.checked)}
-              className="h-4 w-4 accent-primary"
-            />
-            <span className="text-foreground">Use TLS</span>
-          </label>
+          <SwitchField
+            bordered
+            label="Use TLS"
+            description="Connect over TLS (implicit TLS on 465, STARTTLS otherwise)."
+            checked={useTls}
+            onCheckedChange={setUseTls}
+          />
 
           {testResult && (
             <div
@@ -658,32 +656,21 @@ function NotificationsTab() {
             </div>
           )}
 
-          <div className="flex items-center justify-between rounded-lg border border-border p-4">
-            <div>
-              <p className="text-sm font-medium text-foreground">Email notifications</p>
-              <p className="text-xs text-muted-foreground">
-                Receive email alerts for access request approvals, certificate expiry, and
-                session activity.
-              </p>
-            </div>
-            <Switch
-              checked={emailEnabled}
-              onCheckedChange={setEmailEnabled}
-            />
-          </div>
+          <SwitchField
+            bordered
+            label="Email notifications"
+            description="Receive email alerts for access request approvals, certificate expiry, and session activity."
+            checked={emailEnabled}
+            onCheckedChange={setEmailEnabled}
+          />
 
-          <div className="flex items-center justify-between rounded-lg border border-border p-4">
-            <div>
-              <p className="text-sm font-medium text-foreground">Expiring soon alerts</p>
-              <p className="text-xs text-muted-foreground">
-                Get notified when certificates and access requests are approaching expiry.
-              </p>
-            </div>
-            <Switch
-              checked={expiringSoonAlerts}
-              onCheckedChange={setExpiringSoonAlerts}
-            />
-          </div>
+          <SwitchField
+            bordered
+            label="Expiring soon alerts"
+            description="Get notified when certificates and access requests are approaching expiry."
+            checked={expiringSoonAlerts}
+            onCheckedChange={setExpiringSoonAlerts}
+          />
 
           <div className="pt-1">
             <Button onClick={handleSave} disabled={saving}>
@@ -909,25 +896,21 @@ function StorageTab() {
           </div>
 
           {!isAzure && (
-            <div className="flex flex-wrap gap-5">
-              <label className="flex items-center gap-2 text-sm">
-                <input
-                  type="checkbox"
-                  checked={useSsl}
-                  onChange={(e) => setUseSsl(e.target.checked)}
-                  className="h-4 w-4 accent-primary"
-                />
-                <span className="text-foreground">Use SSL/TLS</span>
-              </label>
-              <label className="flex items-center gap-2 text-sm">
-                <input
-                  type="checkbox"
-                  checked={forcePathStyle}
-                  onChange={(e) => setForcePathStyle(e.target.checked)}
-                  className="h-4 w-4 accent-primary"
-                />
-                <span className="text-foreground">Force path-style addressing (MinIO)</span>
-              </label>
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+              <SwitchField
+                bordered
+                label="Use SSL/TLS"
+                description="Connect to the endpoint over HTTPS."
+                checked={useSsl}
+                onCheckedChange={setUseSsl}
+              />
+              <SwitchField
+                bordered
+                label="Force path-style addressing"
+                description="Needed for MinIO and most self-hosted S3."
+                checked={forcePathStyle}
+                onCheckedChange={setForcePathStyle}
+              />
             </div>
           )}
 

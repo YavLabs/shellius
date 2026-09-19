@@ -1,3 +1,4 @@
+import { useId } from 'react';
 import { cn } from '@/lib/utils';
 
 const SIZES = {
@@ -42,5 +43,49 @@ function Switch({ checked, onCheckedChange, size = 'md', disabled = false, class
   );
 }
 
-export { Switch };
+/**
+ * SwitchField — a settings row: label (+ optional description) on the left,
+ * Switch on the right, vertically centred. The whole label is clickable and
+ * wired to the switch via aria-labelledby / aria-describedby.
+ *
+ * `bordered` renders the row as its own card (rounded border + padding),
+ * matching the standalone setting rows used across Settings.
+ */
+function SwitchField({ label, description, checked, onCheckedChange, disabled = false, bordered = false, size, className, children }) {
+  const id = useId();
+  return (
+    <div
+      className={cn(
+        'flex items-center justify-between gap-4',
+        bordered && 'rounded-lg border border-border p-4',
+        disabled && 'opacity-60',
+        className
+      )}
+    >
+      <label htmlFor={id} className={cn('min-w-0 flex-1', disabled ? 'cursor-not-allowed' : 'cursor-pointer')}>
+        <span id={`${id}-label`} className="block text-sm font-medium text-foreground">
+          {label}
+        </span>
+        {description && (
+          <span id={`${id}-desc`} className="mt-0.5 block text-xs text-muted-foreground">
+            {description}
+          </span>
+        )}
+        {children}
+      </label>
+      <Switch
+        id={id}
+        size={size}
+        checked={checked}
+        onCheckedChange={onCheckedChange}
+        disabled={disabled}
+        aria-labelledby={`${id}-label`}
+        aria-describedby={description ? `${id}-desc` : undefined}
+        className="disabled:opacity-100"
+      />
+    </div>
+  );
+}
+
+export { Switch, SwitchField };
 export default Switch;
