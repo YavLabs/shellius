@@ -66,9 +66,9 @@ function DisconnectedBanner({ workspace }) {
   return (
     <div
       role="status"
-      className="flex shrink-0 flex-wrap items-center gap-x-3 gap-y-1 border-b border-amber-500/30 bg-amber-500/10 px-3 py-1.5 text-xs"
+      className="flex shrink-0 flex-wrap items-center gap-x-3 gap-y-1 rounded-lg border border-amber-500/25 bg-amber-500/[0.08] py-1 pl-3 pr-1 text-[13px]"
     >
-      <AlertTriangle className="h-3.5 w-3.5 shrink-0 text-amber-500" aria-hidden="true" />
+      <AlertTriangle className="h-4 w-4 shrink-0 text-amber-500" aria-hidden="true" />
       <span className="text-foreground">
         {affected.length === 1
           ? '1 terminal lost its session.'
@@ -86,7 +86,7 @@ function DisconnectedBanner({ workspace }) {
           <button
             type="button"
             onClick={() => selectTab(attentionTabs[0])}
-            className="rounded px-2 py-0.5 font-medium text-foreground hover:bg-amber-500/20"
+            className="inline-flex h-7 items-center rounded-md px-2.5 font-medium text-foreground transition-colors hover:bg-foreground/[0.07]"
           >
             Show
           </button>
@@ -95,7 +95,7 @@ function DisconnectedBanner({ workspace }) {
             <button
               type="button"
               onClick={() => selectTab(offscreen[0].id)}
-              className="rounded px-2 py-0.5 font-medium text-foreground hover:bg-amber-500/20"
+              className="inline-flex h-7 items-center rounded-md px-2.5 font-medium text-foreground transition-colors hover:bg-foreground/[0.07]"
             >
               Show
             </button>
@@ -105,16 +105,16 @@ function DisconnectedBanner({ workspace }) {
           type="button"
           onClick={reconnectAll}
           disabled={busy}
-          className="inline-flex items-center gap-1 rounded px-2 py-0.5 font-medium text-foreground hover:bg-amber-500/20 disabled:opacity-60"
+          className="inline-flex h-7 items-center gap-1.5 rounded-md px-2.5 font-medium text-foreground transition-colors hover:bg-foreground/[0.07] disabled:opacity-60"
         >
-          {busy ? <Loader2 className="h-3 w-3 animate-spin" /> : <RefreshCw className="h-3 w-3" />} Reconnect all
+          {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5" />} Reconnect all
         </button>
         <button
           type="button"
           onClick={closeAll}
-          className="inline-flex items-center gap-1 rounded px-2 py-0.5 font-medium text-muted-foreground hover:bg-amber-500/20 hover:text-foreground"
+          className="inline-flex h-7 items-center gap-1.5 rounded-md px-2.5 font-medium text-muted-foreground transition-colors hover:bg-foreground/[0.07] hover:text-foreground"
         >
-          <X className="h-3 w-3" /> Close all
+          <X className="h-3.5 w-3.5" /> Close all
         </button>
       </div>
     </div>

@@ -10,7 +10,7 @@ export const listVaultHosts = () =>
 
 // { name, host, port?, username?, credentialId?, description?, tags?, newIdentity? }
 export const createVaultHost = (data) =>
-  api.post('/vault/hosts', data).then((r) => r.data.data?.host);
+  api.post('/vault/hosts', data, { timeout: 45000 }).then((r) => r.data.data?.host);
 
 export const updateVaultHost = (id, data) =>
   api.patch(`/vault/hosts/${id}`, data).then((r) => r.data.data?.host);

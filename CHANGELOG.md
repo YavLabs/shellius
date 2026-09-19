@@ -12,6 +12,10 @@ Tracked here as work lands on `main`; moved into a dated section on release
 ### Fixed
 
 - Just-in-time Linux accounts (a policy's OS provisioning: groups, sudo, ACLs) were never provisioned. Building the provisioning manifest failed on every certificate check, and allocating the account's Linux UID failed on a Postgres type mismatch. Both are fixed, and access without OS provisioning is unaffected.
+- Quick Connect and "Save to My hosts" could hang with no error. The check that stops Quick Connect reaching a production server looked up each production server's hostname one at a time, with no time limit, so a slow DNS server stalled the request. The lookups now run in parallel, with a 2-second limit and a short cache. Looking up the target host itself has a time limit too, and the dialog shows an error if the server doesn't respond.
+- Saving a key with a password to My hosts said it saved only the key. It saved both; the label now says "key and password".
+- Long group and customer names wrap left-aligned in their tables instead of centred.
+- The terminal workspace's "lost its session" banner matches the workspace style: a rounded card with the same buttons as the tab bar.
 
 ## [1.4.0] - 2026-09-19
 
