@@ -516,7 +516,7 @@ function CommandPalette() {
             </div>
           </Command>
 
-          <div className="flex items-center justify-between border-t border-border px-3 py-2 text-[11px] text-muted-foreground">
+          <div className="hidden items-center justify-between border-t border-border px-3 py-2 text-[11px] text-muted-foreground md:flex">
             <span className="flex items-center gap-3">
               <span className="flex items-center gap-1">
                 <Kbd>↑</Kbd>

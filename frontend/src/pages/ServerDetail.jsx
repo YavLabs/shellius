@@ -369,8 +369,8 @@ function ServerDetail() {
                 label="Host key"
                 value={
                   server.hostKeyFingerprint ? (
-                    <span className="flex flex-col items-end gap-0.5">
-                      <span className="font-mono text-xs">{server.hostKeyFingerprint}</span>
+                    <span className="flex min-w-0 flex-col items-end gap-0.5">
+                      <span className="break-all text-right font-mono text-xs">{server.hostKeyFingerprint}</span>
                       {server.hostKeyPinnedAt && (
                         <span className="text-[11px] text-muted-foreground">
                           pinned {formatDateTime(server.hostKeyPinnedAt)}

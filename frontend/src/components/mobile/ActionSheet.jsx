@@ -1,90 +1,16 @@
-import { useEffect, useRef } from 'react';
-import { createPortal } from 'react-dom';
-import { X } from 'lucide-react';
 import { cn } from '@/lib/utils';
-
-const SWIPE_CLOSE_PX = 80;
+import BottomSheet from './BottomSheet';
 
 /**
- * ActionSheet — a small self-contained bottom sheet listing actions (the
- * bottom navigation's centre button). Rounded top, drag handle, title row
- * with a close button, scrollable body. Closes on backdrop tap, Escape, or
- * a swipe down on the handle / title row.
+ * ActionSheet — a list of actions in a bottom sheet (the bottom
+ * navigation's centre button), on the shared BottomSheet chrome.
  *
  * groups: [{ key, label (optional heading), items: [{ key, label, icon, onSelect, emphasis }] }]
  */
 function ActionSheet({ open, onClose, title, groups = [] }) {
-  const panelRef = useRef(null);
-  const startY = useRef(null);
-  const dragY = useRef(0);
-
-  useEffect(() => {
-    if (!open) return undefined;
-    const onKey = (e) => {
-      if (e.key === 'Escape') onClose();
-    };
-    document.addEventListener('keydown', onKey);
-    const prev = document.activeElement;
-    panelRef.current?.focus();
-    return () => {
-      document.removeEventListener('keydown', onKey);
-      if (prev && typeof prev.focus === 'function') prev.focus();
-    };
-  }, [open, onClose]);
-
-  if (!open || typeof document === 'undefined') return null;
-
-  // The panel follows the finger via a CSS variable (translate-y below).
-  const setDrag = (px) => {
-    dragY.current = px;
-    panelRef.current?.style.setProperty('--sheet-drag', `${px}px`);
-    panelRef.current?.classList.toggle('transition-transform', px === 0);
-  };
-  const onTouchStart = (e) => {
-    startY.current = e.touches[0].clientY;
-  };
-  const onTouchMove = (e) => {
-    if (startY.current == null) return;
-    setDrag(Math.max(0, e.touches[0].clientY - startY.current));
-  };
-  const onTouchEnd = () => {
-    const closing = dragY.current > SWIPE_CLOSE_PX;
-    startY.current = null;
-    setDrag(0);
-    if (closing) onClose();
-  };
-
-  return createPortal(
-    <div className="fixed inset-0 z-50 md:hidden">
-      <div className="absolute inset-0 animate-in fade-in-0 bg-black/50" onClick={onClose} aria-hidden="true" />
-      <div
-        ref={panelRef}
-        role="dialog"
-        aria-modal="true"
-        aria-label={title}
-        tabIndex={-1}
-        className={cn(
-          'absolute inset-x-0 bottom-0 flex max-h-[90dvh] translate-y-[var(--sheet-drag,0px)] flex-col rounded-t-2xl border-t border-border bg-card pb-[env(safe-area-inset-bottom)] shadow-2xl outline-none',
-          'transition-transform animate-in slide-in-from-bottom duration-200'
-        )}
-      >
-        <div className="shrink-0 touch-none" onTouchStart={onTouchStart} onTouchMove={onTouchMove} onTouchEnd={onTouchEnd}>
-          <div className="flex justify-center pb-1 pt-2.5" aria-hidden="true">
-            <span className="h-1 w-10 rounded-full bg-muted-foreground/30" />
-          </div>
-          <div className="flex items-center justify-between px-4 pb-2">
-            <h2 className="text-base font-semibold text-foreground">{title}</h2>
-            <button
-              type="button"
-              onClick={onClose}
-              className="-mr-2 flex h-11 w-11 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground"
-              aria-label="Close"
-            >
-              <X className="h-5 w-5" />
-            </button>
-          </div>
-        </div>
-        <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-2 pb-3">
+  return (
+    <BottomSheet open={open} onClose={onClose} title={title} bodyClassName="px-2 pt-2 pb-3">
+        <div>
           {groups.map((group, idx) => (
             <div key={group.key} className={cn(idx > 0 && 'mt-2 border-t border-border pt-2')}>
               {group.label && (
@@ -126,9 +52,7 @@ function ActionSheet({ open, onClose, title, groups = [] }) {
             </div>
           ))}
         </div>
-      </div>
-    </div>,
-    document.body
+    </BottomSheet>
   );
 }
 

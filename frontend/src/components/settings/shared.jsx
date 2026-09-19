@@ -17,7 +17,7 @@ export function SectionCard({ title, description, actions, children }) {
             <p className="mt-0.5 text-sm text-muted-foreground">{description}</p>
           )}
         </div>
-        {actions && <div className="flex shrink-0 flex-wrap items-center gap-2">{actions}</div>}
+        {actions && <div className="flex shrink-0 flex-wrap items-center gap-2 max-sm:[&>*]:flex-1">{actions}</div>}
       </div>
       <div className="px-4 py-4 sm:px-5">{children}</div>
     </div>
