@@ -47,30 +47,16 @@ function ssoLoginLabel(presetId) {
 }
 
 /**
- * Fey-style sign-in buttons. One provider: a quiet "Sign in with X" text
- * button. Several: a two-column grid of pill buttons.
+ * Fey-style sign-in buttons under an "or continue with" divider. One
+ * provider: a full-width "Sign in with X" button; several: a grid of the
+ * same buttons.
  */
 function SsoTextButtons({ providers, submitting, onSelect }) {
-  if (providers.length === 1) {
-    const provider = providers[0];
-    return (
-      <div className="flex justify-center">
-        <button
-          type="button"
-          onClick={() => onSelect(provider.id)}
-          disabled={submitting}
-          className="inline-flex h-10 items-center gap-2.5 rounded-md px-4 text-sm font-semibold text-foreground/90 transition-colors hover:bg-foreground/[0.05] hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50"
-        >
-          {submitting ? <Loader2 className="h-4 w-4 animate-spin" /> : <ProviderGlyph presetId={provider.presetId} />}
-          {submitting ? 'Opening sign-in…' : `Sign in with ${provider.name || ssoLoginLabel(provider.presetId)}`}
-        </button>
-      </div>
-    );
-  }
-  // 2–3 in one row; 4 as 2×2; 5–6 in rows of three with the last row
-  // centred — so no provider is ever left stranded on its own.
+  // One full-width; 2–3 in one row; 4 as 2×2; 5–6 in rows of three with
+  // the last row centred — so no provider is ever left stranded on its own.
+  const single = providers.length === 1;
   const cols = providers.length <= 3 ? providers.length : providers.length === 4 ? 2 : 3;
-  const basis = cols === 2 ? 'basis-[calc(50%-0.25rem)]' : 'basis-[calc(33.333%-0.34rem)]';
+  const basis = single ? 'basis-full' : cols === 2 ? 'basis-[calc(50%-0.25rem)]' : 'basis-[calc(33.333%-0.34rem)]';
   return (
     <div className="space-y-3">
       <div className="flex items-center gap-3 text-[11px] uppercase tracking-[0.14em] text-muted-foreground/70">
@@ -88,8 +74,10 @@ function SsoTextButtons({ providers, submitting, onSelect }) {
             title={`Sign in with ${provider.name || ssoLoginLabel(provider.presetId)}`}
             className={`${basis} inline-flex h-10 min-w-0 grow-0 items-center justify-center gap-2 rounded-md bg-foreground/[0.04] px-3 text-sm font-semibold text-foreground/85 ring-1 ring-foreground/[0.06] transition-colors hover:bg-foreground/[0.08] hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50`}
           >
-            <ProviderGlyph presetId={provider.presetId} />
-            <span className="truncate">{provider.name || ssoLoginLabel(provider.presetId)}</span>
+            {submitting && single ? <Loader2 className="h-4 w-4 animate-spin" /> : <ProviderGlyph presetId={provider.presetId} />}
+            <span className="truncate">
+              {single ? `Sign in with ${provider.name || ssoLoginLabel(provider.presetId)}` : provider.name || ssoLoginLabel(provider.presetId)}
+            </span>
           </button>
         ))}
       </div>

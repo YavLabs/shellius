@@ -90,7 +90,7 @@ function AppLayout() {
                       <FlowRing key={i} className={`app-ring app-ring-${i + 1}`} colors={r.colors} seed={r.seed} dur={r.dur} />
                     ))}
                   </div>
-                  <main className="relative h-full overflow-y-auto overflow-x-hidden">
+                  <main className="app-main relative h-full overflow-y-auto overflow-x-hidden">
                     <div className="min-h-[calc(100%-3rem)]">
                       <Outlet />
                     </div>
