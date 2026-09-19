@@ -35,6 +35,7 @@ export const PERMISSION_GROUPS = [
   { key: 'policies', label: 'Policies & groups' },
   { key: 'sessions', label: 'Sessions & audit' },
   { key: 'keystore', label: 'Keystore' },
+  { key: 'vault', label: 'Personal vault' },
   { key: 'users', label: 'Users' },
   { key: 'roles', label: 'Roles' },
   { key: 'settings', label: 'Organization & settings' },
@@ -501,6 +502,36 @@ export const PERMISSIONS = [
     current: ADM,
     endpoints: ['POST /api/keystore/deployments', 'POST /api/keystore/deployments/:id/retry'],
     findings: ['F-09'],
+  },
+
+  // ------------------------------------------------------------ personal vault
+  // docs/personal-vault.md — private to each user; nobody else can see or use
+  // a personal item. Org switch: Organization.settings.vault.enabled.
+  {
+    key: 'vault.use',
+    group: 'vault',
+    label: 'Personal vault',
+    description:
+      'Keep private identities and SSH keys that only you can see, and use them in Quick Connect and My hosts. They can never be bound to org servers.',
+    defaults: M,
+    current: [],
+    endpoints: [
+      'GET/POST /api/keystore/credentials?scope=personal',
+      'GET/POST /api/keystore/keys?scope=personal',
+      'PATCH/DELETE/export/test on your own personal items',
+    ],
+    since: 2,
+  },
+  {
+    key: 'vault.hosts',
+    group: 'vault',
+    label: 'My hosts',
+    description:
+      'Save your own SSH hosts and connect to them. Same guards as Quick Connect: production servers are refused, DENY policies apply, sessions are audited and recorded.',
+    defaults: M,
+    current: [],
+    endpoints: ['GET/POST/PATCH/DELETE /api/vault/hosts', 'POST /api/vault/hosts/:id/connect'],
+    since: 2,
   },
 
   // -------------------------------------------------------------------- users

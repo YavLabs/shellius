@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useImperativeHandle, useState, forwardRef } from 'react';
-import { Pencil, Trash2, PlugZap, Eye, KeyRound } from 'lucide-react';
+import { Pencil, Trash2, PlugZap, Eye, KeyRound, Lock } from 'lucide-react';
 import DataTable from '@/components/shared/DataTable';
 import ConfirmDialog from '@/components/shared/ConfirmDialog';
 import EmptyState from '@/components/ui/EmptyState';
@@ -10,7 +10,7 @@ import TestConnectionModal from './TestConnectionModal';
 import { listCredentials, deleteCredential } from '@/services/keystoreService';
 import { relativeTime, formatDateTime } from '@/utils/time';
 
-const IdentitiesTab = forwardRef(function IdentitiesTab({ canManage }, ref) {
+const IdentitiesTab = forwardRef(function IdentitiesTab({ canManage, scope = 'org', canMoveToOrg = false }, ref) {
   const [credentials, setCredentials] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -29,7 +29,7 @@ const IdentitiesTab = forwardRef(function IdentitiesTab({ canManage }, ref) {
     setLoading(true);
     setError('');
     try {
-      const data = await listCredentials();
+      const data = await listCredentials({ scope });
       setCredentials(data);
       return data;
     } catch (err) {
@@ -38,7 +38,7 @@ const IdentitiesTab = forwardRef(function IdentitiesTab({ canManage }, ref) {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [scope]);
 
   useEffect(() => {
     fetch();
@@ -85,7 +85,10 @@ const IdentitiesTab = forwardRef(function IdentitiesTab({ canManage }, ref) {
       searchAccessor: (r) => `${r.name} ${r.username}`,
       render: (r) => (
         <div>
-          <span className="block font-medium text-foreground">{r.name}</span>
+          <span className="flex items-center gap-1.5 font-medium text-foreground">
+            {r.name}
+            {scope === 'personal' && <Lock className="h-3 w-3 shrink-0 text-muted-foreground" aria-label="Private" />}
+          </span>
           <span className="block font-mono text-[11px] text-muted-foreground">{r.username}</span>
         </div>
       ),
@@ -108,12 +111,16 @@ const IdentitiesTab = forwardRef(function IdentitiesTab({ canManage }, ref) {
           <span className="text-muted-foreground">-</span>
         ),
     },
-    {
-      key: 'serverCount',
-      label: 'Servers',
-      sortable: true,
-      render: (r) => <span className="tabular-nums">{r.serverCount ?? 0}</span>,
-    },
+    ...(scope === 'personal'
+      ? []
+      : [
+          {
+            key: 'serverCount',
+            label: 'Servers',
+            sortable: true,
+            render: (r) => <span className="tabular-nums">{r.serverCount ?? 0}</span>,
+          },
+        ]),
     {
       key: 'lastUsedAt',
       label: 'Last used',
@@ -166,21 +173,27 @@ const IdentitiesTab = forwardRef(function IdentitiesTab({ canManage }, ref) {
         </div>
       )}
 
-      <DataTable
-        columns={columns}
-        data={credentials}
-        loading={loading}
-        onRowClick={(r) => setDetailId(r.id)}
-        searchPlaceholder="Search identities..."
-        emptyState={
-          <EmptyState
-            icon={KeyRound}
-            title="No identities yet"
-            description="Identities pair a username and password/key so Shellius can connect to hosts that can't be bootstrapped with a CA certificate."
-            action={canManage ? { label: 'New identity', onClick: () => setFormOpen(true) } : undefined}
-          />
-        }
-      />
+      {!loading && credentials.length === 0 ? (
+        <EmptyState
+          icon={scope === 'personal' ? Lock : KeyRound}
+          title={scope === 'personal' ? 'No personal identities yet' : 'No identities yet'}
+          description={
+            scope === 'personal'
+              ? "Keep your own username and password/key here — visible only to you, never to admins or other Keystore viewers."
+              : "Identities pair a username and password/key so Shellius can connect to hosts that can't be bootstrapped with a CA certificate."
+          }
+          action={canManage ? { label: 'New identity', onClick: () => setFormOpen(true) } : undefined}
+        />
+      ) : (
+        <DataTable
+          columns={columns}
+          data={credentials}
+          loading={loading}
+          onRowClick={(r) => setDetailId(r.id)}
+          searchPlaceholder="Search identities..."
+          emptyMessage="No identities match your search"
+        />
+      )}
 
       <IdentityFormModal
         open={formOpen}
@@ -189,6 +202,7 @@ const IdentitiesTab = forwardRef(function IdentitiesTab({ canManage }, ref) {
           setEditing(null);
         }}
         identity={editing}
+        scope={scope}
         onSaved={fetch}
       />
 
@@ -196,6 +210,8 @@ const IdentitiesTab = forwardRef(function IdentitiesTab({ canManage }, ref) {
         open={!!detailId}
         credentialId={detailId}
         canManage={canManage}
+        scope={scope}
+        canMoveToOrg={canMoveToOrg}
         onClose={() => setDetailId(null)}
         onChanged={fetch}
       />
@@ -204,6 +220,7 @@ const IdentitiesTab = forwardRef(function IdentitiesTab({ canManage }, ref) {
         <TestConnectionModal
           open={!!testTarget}
           credential={testTarget}
+          scope={scope}
           onClose={() => setTestTarget(null)}
         />
       )}

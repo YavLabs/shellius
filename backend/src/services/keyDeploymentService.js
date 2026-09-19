@@ -162,13 +162,15 @@ export async function createBatch(
   }
   if (!sshKeyId) throw new ApiError(400, 'sshKeyId is required');
 
-  const sshKey = await prisma.sshKey.findFirst({ where: { id: sshKeyId, orgId } });
+  // Org keys/identities only — personal vault items are never deployed or
+  // used to deploy (docs/personal-vault.md).
+  const sshKey = await prisma.sshKey.findFirst({ where: { id: sshKeyId, orgId, ownerId: null } });
   if (!sshKey) throw new ApiError(404, 'Key not found');
 
   let oldSshKey = null;
   if (action === 'rotate') {
     if (!rotate?.oldSshKeyId) throw new ApiError(400, 'rotate.oldSshKeyId is required for action=rotate');
-    oldSshKey = await prisma.sshKey.findFirst({ where: { id: rotate.oldSshKeyId, orgId } });
+    oldSshKey = await prisma.sshKey.findFirst({ where: { id: rotate.oldSshKeyId, orgId, ownerId: null } });
     if (!oldSshKey) throw new ApiError(404, 'rotate.oldSshKeyId not found');
   }
 
@@ -177,7 +179,7 @@ export async function createBatch(
   if (mode === 'credential') {
     if (!auth.credentialId) throw new ApiError(400, 'auth.credentialId is required when auth.mode is "credential"');
     authCredential = await prisma.credential.findFirst({
-      where: { id: auth.credentialId, orgId },
+      where: { id: auth.credentialId, orgId, ownerId: null },
       include: { sshKey: true },
     });
     if (!authCredential) throw new ApiError(404, 'auth.credentialId not found');
@@ -423,7 +425,7 @@ async function runOverSsh2({ server, authOpts, command, stdin }) {
 async function resolveDeployAuth(row, server) {
   if (row.authMode === 'credential') {
     const credential = await prisma.credential.findFirst({
-      where: { id: row.authCredentialId, orgId: row.orgId },
+      where: { id: row.authCredentialId, orgId: row.orgId, ownerId: null },
       include: { sshKey: true },
     });
     if (!credential) throw new ApiError(400, 'Deployment auth credential no longer exists');
@@ -659,7 +661,7 @@ async function maybeFinalizeRotateBatch(batchId, orgId, meta) {
   const { oldSshKeyId } = meta.rotate;
   const newSshKeyId = rows[0].sshKeyId;
   const result = await prisma.credential.updateMany({
-    where: { orgId, sshKeyId: oldSshKeyId },
+    where: { orgId, sshKeyId: oldSshKeyId, ownerId: null },
     data: { sshKeyId: newSshKeyId },
   });
 

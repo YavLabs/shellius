@@ -4,6 +4,7 @@ import { Loader2, XCircle } from 'lucide-react';
 import { useAuth } from '@/context/AuthContext';
 import MfaChallenge from '@/components/auth/MfaChallenge';
 import api from '@/services/api';
+import AuthShell from '@/components/auth/AuthShell';
 
 /**
  * What each `#error=` code means, in plain language. Mirrors the outcome map
@@ -200,7 +201,7 @@ function AuthCallback() {
   };
 
   return (
-    <div className="flex min-h-screen items-center justify-center bg-background px-4">
+    <AuthShell>
       <div className="w-full max-w-sm rounded-lg border border-border bg-card p-6 text-center shadow-sm">
         {status === 'working' && (
           <>
@@ -242,7 +243,7 @@ function AuthCallback() {
           </>
         )}
       </div>
-    </div>
+    </AuthShell>
   );
 }
 

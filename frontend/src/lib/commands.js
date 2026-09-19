@@ -19,6 +19,7 @@ import { Cable,
   Command as CommandIcon,
   Keyboard,
   ShieldCheck,
+  Lock,
 } from 'lucide-react';
 import { can, canAny } from '@/lib/permissions';
 
@@ -113,6 +114,14 @@ export const QUICK_ACTIONS = [
     shortcutHint: 'g q',
   },
   {
+    id: 'add-my-host',
+    label: 'Add host to My hosts',
+    group: 'Create',
+    icon: Lock,
+    perm: 'vault.hosts',
+    href: '/my-hosts?action=new',
+  },
+  {
     id: 'deploy-ssh-key',
     label: 'Export key to servers',
     group: 'Operate',
@@ -156,7 +165,8 @@ export const ROUTE_ACCESS = {
   '/servers': { anyOf: ['servers.view'] },
   '/policies': { anyOf: ['policies.view'] },
   '/certificates': { anyOf: ['certificates.view_all'] },
-  '/keystore': { anyOf: ['keystore.view'] },
+  '/keystore': { anyOf: ['keystore.view', 'vault.use'] },
+  '/my-hosts': { anyOf: ['vault.hosts'] },
   '/sessions': { anyOf: ['sessions.view_all'] },
   '/audit-log': { anyOf: ['audit.view'] },
   '/users': { anyOf: ['users.view'] },
@@ -197,6 +207,7 @@ export const NAV_ITEMS = [
   { id: 'policies', label: 'Policies', icon: Shield, to: '/policies' },
   { id: 'certificates', label: 'Certificates', icon: FileKey, to: '/certificates' },
   { id: 'keystore', label: 'Keystore', icon: KeySquare, to: '/keystore' },
+  { id: 'my-hosts', label: 'My hosts', icon: Lock, to: '/my-hosts' },
   { id: 'connections', label: 'Recent connections', icon: Cable, to: '/connections' },
   { id: 'sessions', label: 'Sessions', icon: Terminal, to: '/sessions' },
   { id: 'audit-log', label: 'Audit log', icon: ScrollText, to: '/audit-log' },
@@ -242,6 +253,7 @@ export const NAV_SEQUENCES = [
   { keys: ['g', 'c'], label: 'Go to customers', to: '/customers' },
   { keys: ['g', 'a'], label: 'Go to access requests', to: '/access-requests' },
   { keys: ['g', 'k'], label: 'Go to keystore', to: '/keystore' },
+  { keys: ['g', 'h'], label: 'Go to my hosts', to: '/my-hosts' },
   { keys: ['g', 'p'], label: 'Go to policies', to: '/policies' },
   { keys: ['g', 'e'], label: 'Go to certificates', to: '/certificates' },
   { keys: ['g', 'i'], label: 'Go to sessions', to: '/sessions' },
@@ -260,6 +272,7 @@ export const CREATE_SEQUENCES = [
   { keys: ['c', 'u'], label: 'Invite user', to: '/users?action=invite', perm: 'users.invite' },
   { keys: ['c', 'p'], label: 'New policy', to: '/policies?action=new', perm: 'policies.manage' },
   { keys: ['c', 'r'], label: 'New access request', to: '/access-requests?action=new', perm: 'access.request' },
+  { keys: ['c', 'h'], label: 'Add host to My hosts', to: '/my-hosts?action=new', perm: 'vault.hosts' },
 ];
 
 export const SEQUENCES = [...NAV_SEQUENCES, ...CREATE_SEQUENCES];

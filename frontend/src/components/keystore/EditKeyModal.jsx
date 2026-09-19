@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import Modal from '@/components/shared/Modal';
 import { Button } from '@/components/ui/button';
+import { Checkbox } from '@/components/ui/checkbox';
 import { updateKey, getKey } from '@/services/keystoreService';
 
 const inputCls =
@@ -108,14 +109,12 @@ function EditKeyModal({ open, onClose, sshKey, onSaved }) {
             </label>
             {(originalCertText || certificate) && (
               <label className="flex cursor-pointer items-center gap-1.5 text-xs text-muted-foreground">
-                <input
-                  type="checkbox"
+                <Checkbox
                   checked={clearCertificate}
                   onChange={(e) => {
                     setClearCertificate(e.target.checked);
                     if (e.target.checked) setCertificate('');
                   }}
-                  className="rounded border-border accent-primary"
                 />
                 Clear certificate
               </label>

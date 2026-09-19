@@ -36,6 +36,7 @@ import prisma from '../config/db.js';
 import ApiError from '../utils/ApiError.js';
 import * as hub from './terminalHub.js';
 import * as quickConnectService from './quickConnectService.js';
+import * as vaultService from './vaultService.js';
 
 const SERVER_SELECT = { id: true, displayName: true, hostname: true, environment: true };
 
@@ -157,6 +158,28 @@ export async function describe(sessionId, { userId, orgId }) {
     return { ...base, action: 'request_access', actionDetail: detail };
   }
 
+  if (kind === 'quick_connect' && meta.quickConnect?.personalHostId) {
+    // My hosts: reconnect through the host (its identity and pinned key).
+    const host = await prisma.personalHost.findFirst({
+      where: { id: meta.quickConnect.personalHostId, orgId, ownerId: userId },
+      select: { id: true, name: true, credentialId: true },
+    });
+    if (!host) return { ...base, action: 'none', actionDetail: 'This host was removed from My hosts.' };
+    if (!host.credentialId) {
+      return {
+        ...base,
+        action: 'none',
+        actionDetail: `“${host.name}” asks for a password or key each time — connect again from My hosts.`,
+      };
+    }
+    return {
+      ...base,
+      action: 'reconnect',
+      actionDetail: `Reconnect to “${host.name}” from My hosts.`,
+      prefill: { personalHostId: host.id },
+    };
+  }
+
   if (kind === 'quick_connect') {
     const qc = meta.quickConnect || {};
     const prefill = {
@@ -167,7 +190,10 @@ export async function describe(sessionId, { userId, orgId }) {
       ...(qc.credentialId ? { credentialId: qc.credentialId } : {}),
     };
     if (qc.authType === 'credential' && qc.credentialId) {
-      const cred = await prisma.credential.findFirst({ where: { id: qc.credentialId, orgId }, select: { id: true } });
+      const cred = await prisma.credential.findFirst({
+        where: { id: qc.credentialId, orgId, OR: [{ ownerId: null }, { ownerId: userId }] },
+        select: { id: true },
+      });
       if (cred) {
         return {
           ...base,
@@ -209,6 +235,10 @@ export async function reconnect(sessionId, { userId, orgId, role, permissions })
   }
   if (info.kind === 'access_request') {
     return { connect: { requestId: info.requestId, ...(info.principal ? { principal: info.principal } : {}) } };
+  }
+  if (info.prefill?.personalHostId) {
+    const ticket = await vaultService.connectHost(orgId, { id: userId, role, permissions }, info.prefill.personalHostId);
+    return { connect: { ticket: ticket.ticket } };
   }
   // Quick Connect with a saved identity: the regular ticket path (prod-host
   // guard, identity lookup, org scoping) mints a fresh single-use ticket.

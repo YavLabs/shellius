@@ -179,6 +179,7 @@ async function searchIdentities(orgId, q, limit) {
   const rows = await prisma.credential.findMany({
     where: {
       orgId,
+      ownerId: null, // org Keystore only — personal vault items never appear in search
       OR: [
         { name: { contains: q, mode: 'insensitive' } },
         { username: { contains: q, mode: 'insensitive' } },
@@ -203,6 +204,7 @@ async function searchKeys(orgId, q, limit) {
   const rows = await prisma.sshKey.findMany({
     where: {
       orgId,
+      ownerId: null, // org Keystore only — personal vault items never appear in search
       OR: [
         { name: { contains: q, mode: 'insensitive' } },
         { fingerprint: { contains: q, mode: 'insensitive' } },
@@ -310,6 +312,7 @@ function countIdentities(orgId, q) {
   return prisma.credential.count({
     where: {
       orgId,
+      ownerId: null, // org Keystore only — personal vault items never appear in search
       OR: [
         { name: { contains: q, mode: 'insensitive' } },
         { username: { contains: q, mode: 'insensitive' } },
@@ -322,6 +325,7 @@ function countKeys(orgId, q) {
   return prisma.sshKey.count({
     where: {
       orgId,
+      ownerId: null, // org Keystore only — personal vault items never appear in search
       OR: [
         { name: { contains: q, mode: 'insensitive' } },
         { fingerprint: { contains: q, mode: 'insensitive' } },

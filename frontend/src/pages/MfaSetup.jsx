@@ -7,6 +7,7 @@ import TotpEnrollPanel from '@/components/mfa/TotpEnrollPanel';
 import BackupCodesPanel from '@/components/mfa/BackupCodesPanel';
 import { useAuth } from '@/context/AuthContext';
 import { getMfa, beginTotp, confirmTotp, enableEmailMfa } from '@/services/mfaService';
+import AuthShell from '@/components/auth/AuthShell';
 
 /**
  * MfaSetup — forced-enrollment screen. Rendered when the org enforces MFA
@@ -100,7 +101,7 @@ function MfaSetup() {
   const enrolled = !!data?.status?.enrolled;
 
   return (
-    <div className="flex min-h-screen items-center justify-center bg-background px-4">
+    <AuthShell>
       <div className="w-full max-w-sm">
         <div className="mb-8 text-center">
           <div className="mx-auto mb-4 flex justify-center">
@@ -171,7 +172,7 @@ function MfaSetup() {
           </div>
         </div>
       </div>
-    </div>
+    </AuthShell>
   );
 }
 

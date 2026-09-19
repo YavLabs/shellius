@@ -14,6 +14,7 @@ import { log as auditLog, ACTIONS } from './auditService.js';
 import * as terminalService from './terminalService.js';
 import logger from '../utils/logger.js';
 import { permissionsForUser } from './roleService.js';
+import { isVaultEnabled } from './orgService.js';
 
 const REFRESH_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 
@@ -64,6 +65,8 @@ async function accessOf(user) {
       ? { id: assigned.id, key: assigned.key, name: assigned.name, isSystem: assigned.isSystem, baseRole: assigned.baseRole }
       : null,
     permissions: permissionsForUser({ ...user, assignedRole: assigned }),
+    // Org switches the UI needs alongside permissions.
+    features: { personalVault: await isVaultEnabled(user.orgId) },
   };
 }
 

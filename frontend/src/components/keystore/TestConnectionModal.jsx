@@ -11,8 +11,9 @@ import { listServers } from '@/services/serverService';
  * TestConnectionModal — tests a Keystore identity against either a saved
  * server or an ad-hoc host:port.
  */
-function TestConnectionModal({ open, onClose, credential }) {
-  const [mode, setMode] = useState('server'); // 'server' | 'manual'
+function TestConnectionModal({ open, onClose, credential, scope = 'org' }) {
+  const isPersonal = scope === 'personal';
+  const [mode, setMode] = useState(isPersonal ? 'manual' : 'server'); // 'server' | 'manual'
   const [serverId, setServerId] = useState('');
   const [servers, setServers] = useState([]);
   const [host, setHost] = useState('');
@@ -23,16 +24,17 @@ function TestConnectionModal({ open, onClose, credential }) {
 
   useEffect(() => {
     if (!open) return;
-    setMode('server');
+    setMode(isPersonal ? 'manual' : 'server');
     setServerId('');
     setHost('');
     setPort('22');
     setResult(null);
     setError('');
+    if (isPersonal) return;
     listServers({ page: 1, pageSize: 500 })
       .then((data) => setServers(data.items || []))
       .catch(() => setServers([]));
-  }, [open]);
+  }, [open, isPersonal]);
 
   const handleTest = async () => {
     setError('');
@@ -54,16 +56,18 @@ function TestConnectionModal({ open, onClose, credential }) {
   return (
     <Modal open={open} onClose={onClose} title={`Test connection — ${credential?.name || ''}`} size="sm">
       <div className="space-y-4">
-        <div className="flex gap-4 text-sm">
-          <label className="flex cursor-pointer items-center gap-2">
-            <input type="radio" checked={mode === 'server'} onChange={() => setMode('server')} />
-            Saved server
-          </label>
-          <label className="flex cursor-pointer items-center gap-2">
-            <input type="radio" checked={mode === 'manual'} onChange={() => setMode('manual')} />
-            Host / port
-          </label>
-        </div>
+        {!isPersonal && (
+          <div className="flex gap-4 text-sm">
+            <label className="flex cursor-pointer items-center gap-2">
+              <input type="radio" checked={mode === 'server'} onChange={() => setMode('server')} />
+              Saved server
+            </label>
+            <label className="flex cursor-pointer items-center gap-2">
+              <input type="radio" checked={mode === 'manual'} onChange={() => setMode('manual')} />
+              Host / port
+            </label>
+          </div>
+        )}
 
         {mode === 'server' ? (
           <SearchableSelect

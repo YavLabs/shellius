@@ -2,6 +2,7 @@ import { useState, useRef } from 'react';
 import { X, Terminal, Upload, Key, Lock, CheckCircle2, AlertCircle, Loader2 } from 'lucide-react';
 import { provisionServer } from '@/services/serverService';
 import PasswordInput from '@/components/ui/PasswordInput';
+import { Checkbox } from '@/components/ui/checkbox';
 
 function ProvisionModal({ server, onClose }) {
   const [step, setStep] = useState('form'); // 'form' | 'running' | 'done' | 'error'
@@ -148,12 +149,7 @@ function ProvisionModal({ server, onClose }) {
 
               <div className="space-y-3">
                 <label className="flex cursor-pointer items-center gap-2 text-sm font-medium text-foreground">
-                  <input
-                    type="checkbox"
-                    checked={needsSudo}
-                    onChange={(e) => setNeedsSudo(e.target.checked)}
-                    className="rounded border-border"
-                  />
+                  <Checkbox checked={needsSudo} onChange={(e) => setNeedsSudo(e.target.checked)} />
                   <Lock className="h-3.5 w-3.5" />
                   Sudo requires a password
                 </label>

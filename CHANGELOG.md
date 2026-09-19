@@ -9,6 +9,38 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 Tracked here as work lands on `main`; moved into a dated section on release
 (`node scripts/version.mjs bump <major|minor|patch>`).
 
+## [1.3.0] - 2026-09-19
+
+### Added
+
+- **Personal vault**: everyone can keep their own identities and SSH keys, visible only to them.
+  - The Keystore has a Personal / Organization switch. Members see only their personal items.
+  - Personal items can be used in Quick Connect. They can never be bound to org servers or used for key deployment.
+  - Owners who also hold Manage Keystore can move a personal identity or key into the organization Keystore.
+  - Deleting a user deletes their personal vault.
+- **My hosts**: a private list of SSH hosts per user, connected with personal (or permitted org) identities.
+  - Same checks as Quick Connect: production servers refused, DENY policies applied, audited, recorded.
+  - Host keys are pinned on first connect.
+  - Quick Connect can save a target to My hosts.
+- Permissions `vault.use` and `vault.hosts`, granted to every built-in role on upgrade.
+- Org switch in Settings → Access to turn the personal vault off.
+- See `docs/personal-vault.md`.
+
+### Changed
+
+- Identity and key names are unique per scope: org names across the org, personal names per owner.
+- The auth pages use a shared layout with a faint grid and legal footer; the content area has a faint grid.
+- Checkboxes are themed for light and dark mode across the app, with a partial state on select-all; table header checkboxes and the bulk-selection bar are aligned.
+
+### Security
+
+- Testing a stored identity against a typed-in host now refuses production servers and hosts a DENY policy keeps you from (previously only saved-server tests were vetted).
+
+### Migration notes
+
+- Database migration `20260920000000_personal_vault`: adds `owner_id` to `ssh_keys` and `credentials`, and the `personal_hosts` table. Existing identities and keys stay in the organization Keystore.
+- On first boot every built-in role (and custom roles, by base tier) gets `vault.use` and `vault.hosts`. Remove them on the Roles page, or turn the feature off in Settings → Access, if you don't want personal vaults.
+
 ## [1.2.2] - 2026-09-19
 
 ### Added

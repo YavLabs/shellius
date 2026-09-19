@@ -17,6 +17,7 @@ export function QuickConnectProvider({ children }) {
   const { user } = useAuth();
   const [allowed, setAllowed] = useState(false);
   const [canUseStoredIdentity, setCanUseStoredIdentity] = useState(false);
+  const [canUsePersonalIdentity, setCanUsePersonalIdentity] = useState(false);
   const [open, setOpen] = useState(false);
   const [prefill, setPrefill] = useState(null);
   const permsKey = (user?.permissions || []).join(',');
@@ -28,6 +29,7 @@ export function QuickConnectProvider({ children }) {
         if (cancelled) return;
         setAllowed(!!data?.allowed);
         setCanUseStoredIdentity(!!data?.canUseStoredIdentity);
+        setCanUsePersonalIdentity(!!data?.canUsePersonalIdentity);
       })
       .catch(() => {
         if (!cancelled) setAllowed(false);
@@ -47,8 +49,16 @@ export function QuickConnectProvider({ children }) {
   const closeQuickConnect = useCallback(() => setOpen(false), []);
 
   const value = useMemo(
-    () => ({ allowed, canUseStoredIdentity, open, openQuickConnect, closeQuickConnect, prefill }),
-    [allowed, canUseStoredIdentity, open, openQuickConnect, closeQuickConnect, prefill]
+    () => ({
+      allowed,
+      canUseStoredIdentity,
+      canUsePersonalIdentity,
+      open,
+      openQuickConnect,
+      closeQuickConnect,
+      prefill,
+    }),
+    [allowed, canUseStoredIdentity, canUsePersonalIdentity, open, openQuickConnect, closeQuickConnect, prefill]
   );
 
   return (

@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import { Checkbox } from '@/components/ui/checkbox';
 
 function slugify(value) {
   return value
@@ -106,12 +107,7 @@ function CustomerForm({ customer, onSubmit, onCancel }) {
 
       {isEdit && (
         <label className="flex items-center gap-2 text-sm text-foreground">
-          <input
-            type="checkbox"
-            checked={isActive}
-            onChange={(e) => setIsActive(e.target.checked)}
-            className="h-4 w-4 rounded border-input"
-          />
+          <Checkbox checked={isActive} onChange={(e) => setIsActive(e.target.checked)} />
           Active
         </label>
       )}

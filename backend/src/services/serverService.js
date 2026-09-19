@@ -82,7 +82,8 @@ async function validateAuthMode(orgId, { authMode, credentialId }) {
     if (!credentialId) {
       throw new ApiError(400, 'credentialId is required when authMode is "credential"');
     }
-    const credential = await prisma.credential.findFirst({ where: { id: credentialId, orgId } });
+    // Org identities only: a personal vault identity is never bound to a server.
+    const credential = await prisma.credential.findFirst({ where: { id: credentialId, orgId, ownerId: null } });
     if (!credential) throw new ApiError(400, 'credentialId not found in organization');
     return { authMode: 'credential', credentialId };
   }
@@ -91,7 +92,7 @@ async function validateAuthMode(orgId, { authMode, credentialId }) {
   }
   // authMode not changing, but credentialId was — validate it belongs to org.
   if (credentialId) {
-    const credential = await prisma.credential.findFirst({ where: { id: credentialId, orgId } });
+    const credential = await prisma.credential.findFirst({ where: { id: credentialId, orgId, ownerId: null } });
     if (!credential) throw new ApiError(400, 'credentialId not found in organization');
   }
   return credentialId !== undefined ? { credentialId } : {};

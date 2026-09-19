@@ -2,6 +2,7 @@ import { Fragment, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { AlertTriangle, Check, Download, Minus } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import { Checkbox } from '@/components/ui/checkbox';
 import { cn } from '@/lib/utils';
 
 /**
@@ -39,7 +40,7 @@ function RoleMatrix({ catalog, roles }) {
     <div className="space-y-3">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <label className="flex items-center gap-2 text-sm text-muted-foreground">
-          <input type="checkbox" className="h-4 w-4 accent-primary" checked={onlyDiff} onChange={(e) => setOnlyDiff(e.target.checked)} />
+          <Checkbox checked={onlyDiff} onChange={(e) => setOnlyDiff(e.target.checked)} />
           Only show permissions where roles differ
         </label>
         <Button variant="outline" size="sm" onClick={exportCsv}>

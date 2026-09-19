@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { Lock, KeyRound } from 'lucide-react';
 import Modal from '@/components/shared/Modal';
 import { Button } from '@/components/ui/button';
+import { Checkbox } from '@/components/ui/checkbox';
 import PasswordInput from '@/components/ui/PasswordInput';
 import SearchableSelect from '@/components/ui/SearchableSelect';
 import PrivateKeyInput from './PrivateKeyInput';
@@ -51,7 +52,7 @@ function ToggleCard({ active, icon: Icon, title, description, onClick }) {
  * Props:
  *   open, onClose, identity (edit target, or null for create), onSaved
  */
-function IdentityFormModal({ open, onClose, identity, onSaved }) {
+function IdentityFormModal({ open, onClose, identity, onSaved, scope = 'org' }) {
   const isEdit = !!identity;
 
   const [name, setName] = useState('');
@@ -92,10 +93,10 @@ function IdentityFormModal({ open, onClose, identity, onSaved }) {
     setGenKeyType('ed25519');
     setGenBits('');
     setError('');
-    listKeys()
+    listKeys({ scope })
       .then(setKeys)
       .catch(() => setKeys([]));
-  }, [open, identity]);
+  }, [open, identity, scope]);
 
   const authType = usePassword && useKey ? 'key_password' : useKey ? 'key' : 'password';
 
@@ -116,6 +117,9 @@ function IdentityFormModal({ open, onClose, identity, onSaved }) {
       description: description.trim() || undefined,
       username: username.trim(),
       authType,
+      // Scope is fixed at creation — PATCH never changes it (see "Move to
+      // organization" for the one-way, audited path).
+      ...(isEdit ? {} : { scope }),
     };
 
     if (usePassword) {
@@ -157,7 +161,12 @@ function IdentityFormModal({ open, onClose, identity, onSaved }) {
   };
 
   return (
-    <Modal open={open} onClose={onClose} title={isEdit ? 'Edit Identity' : 'New Identity'} size="md">
+    <Modal
+      open={open}
+      onClose={onClose}
+      title={isEdit ? 'Edit Identity' : scope === 'personal' ? 'New personal identity' : 'New Identity'}
+      size="md"
+    >
       <form onSubmit={handleSubmit} className="space-y-4">
         {error && (
           <div className="rounded-md border border-destructive/50 bg-destructive/10 px-3 py-2 text-sm text-destructive">
@@ -244,12 +253,7 @@ function IdentityFormModal({ open, onClose, identity, onSaved }) {
             />
             {isEdit && identity?.hasPassword && !password && (
               <label className="mt-1.5 flex items-center gap-2 text-xs text-muted-foreground">
-                <input
-                  type="checkbox"
-                  checked={clearPassword}
-                  onChange={(e) => setClearPassword(e.target.checked)}
-                  className="rounded border-border accent-primary"
-                />
+                <Checkbox checked={clearPassword} onChange={(e) => setClearPassword(e.target.checked)} />
                 Clear stored password
               </label>
             )}

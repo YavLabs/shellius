@@ -13,6 +13,7 @@ import {
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { Checkbox } from '@/components/ui/checkbox';
 import SearchableSelect from '@/components/ui/SearchableSelect';
 import {
   DropdownMenu,
@@ -409,9 +410,12 @@ function DataTable({
   // Render
   // -------------------------------------------------------------------
   return (
-    <div className={cn('space-y-0', className)}>
+    // One consistent vertical rhythm for every section (filters → bulk bar →
+    // table → pagination) instead of each section owning its own margin —
+    // that used to let the bulk-actions bar end up flush against the table.
+    <div className={cn('space-y-3', className)}>
       {/* Toolbar: filters slot + search */}
-      <div className="mb-3 flex flex-col gap-2 sm:flex-row sm:items-center sm:flex-wrap">
+      <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:flex-wrap">
         {filters && <div className="flex flex-wrap items-center gap-2">{filters}</div>}
         <div className="relative min-w-0 flex-1 max-w-sm">
           <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
@@ -427,9 +431,7 @@ function DataTable({
       </div>
 
       {/* Bulk actions bar */}
-      {selectable && selectedIds.length > 0 && bulkActions && (
-        <div className="mb-3">{bulkActions}</div>
-      )}
+      {selectable && selectedIds.length > 0 && bulkActions && <div>{bulkActions}</div>}
 
       {/* Table */}
       <div className="overflow-hidden rounded-lg border border-border bg-card">
@@ -441,16 +443,15 @@ function DataTable({
                 {effectiveColumns.map((col) => {
                   if (col.key === '__select__') {
                     return (
-                      <th key="__select__" className="w-10 px-4 py-2.5">
-                        <input
-                          type="checkbox"
-                          checked={allSelected}
-                          ref={(el) => {
-                            if (el) el.indeterminate = someSelected && !allSelected;
-                          }}
-                          onChange={toggleAll}
-                          className="h-4 w-4 cursor-pointer accent-primary"
-                        />
+                      <th key="__select__" className="w-10 px-4 py-2.5 align-middle">
+                        <div className="flex h-4 items-center">
+                          <Checkbox
+                            checked={allSelected}
+                            indeterminate={someSelected && !allSelected}
+                            onChange={toggleAll}
+                            aria-label="Select all rows"
+                          />
+                        </div>
                       </th>
                     );
                   }
@@ -561,14 +562,15 @@ function DataTable({
                       {effectiveColumns.map((col) => {
                         if (col.key === '__select__') {
                           return (
-                            <td key="__select__" className="px-4 py-3">
-                              <input
-                                type="checkbox"
-                                checked={isSelected}
-                                onChange={() => toggleRow(row.id)}
-                                onClick={(e) => e.stopPropagation()}
-                                className="h-4 w-4 cursor-pointer accent-primary"
-                              />
+                            <td key="__select__" className="w-10 px-4 py-3 align-middle">
+                              <div className="flex h-4 items-center">
+                                <Checkbox
+                                  checked={isSelected}
+                                  onChange={() => toggleRow(row.id)}
+                                  onClick={(e) => e.stopPropagation()}
+                                  aria-label="Select row"
+                                />
+                              </div>
                             </td>
                           );
                         }
@@ -614,7 +616,7 @@ function DataTable({
 
       {/* Pagination footer */}
       {!loading && total > 0 && (
-        <div className="flex flex-col gap-2 pt-3 text-sm text-muted-foreground sm:flex-row sm:items-center sm:justify-between">
+        <div className="flex flex-col gap-2 text-sm text-muted-foreground sm:flex-row sm:items-center sm:justify-between">
           {/* Left: page size selector */}
           <div className="flex items-center gap-2">
             <span className="whitespace-nowrap">Rows per page</span>

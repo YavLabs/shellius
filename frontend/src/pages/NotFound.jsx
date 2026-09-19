@@ -1,9 +1,10 @@
 import { Link } from 'react-router-dom';
 import { FileQuestion } from 'lucide-react';
+import AuthShell from '@/components/auth/AuthShell';
 
 function NotFound() {
   return (
-    <div className="flex min-h-screen flex-col items-center justify-center bg-background px-6">
+    <AuthShell className="px-6">
       <div className="flex h-16 w-16 items-center justify-center rounded-full bg-muted mb-6">
         <FileQuestion className="h-8 w-8 text-muted-foreground" />
       </div>
@@ -18,7 +19,7 @@ function NotFound() {
       >
         Go back home
       </Link>
-    </div>
+    </AuthShell>
   );
 }
 

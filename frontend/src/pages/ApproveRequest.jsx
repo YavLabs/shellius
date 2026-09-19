@@ -5,6 +5,7 @@ import { BrandMark } from '@/components/common/BrandLogo';
 import EnvironmentBadge from '@/components/shared/EnvironmentBadge';
 import UserCell from '@/components/shared/UserCell';
 import { getApprovalRequest, submitApprovalDecision } from '@/services/approvalService';
+import AuthShell from '@/components/auth/AuthShell';
 
 function fmtDuration(seconds) {
   const mins = Math.round((seconds || 0) / 60);
@@ -67,7 +68,7 @@ function ApproveRequest() {
   const env = request?.server?.environment;
 
   return (
-    <div className="flex min-h-screen items-center justify-center bg-background px-4">
+    <AuthShell>
       <div className="w-full max-w-md">
         <div className="mb-8 text-center">
           <div className="mx-auto mb-4 flex justify-center">
@@ -197,7 +198,7 @@ function ApproveRequest() {
           )}
         </div>
       </div>
-    </div>
+    </AuthShell>
   );
 }
 

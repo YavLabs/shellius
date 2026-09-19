@@ -442,6 +442,31 @@ function humanizeConnectError(err, authMethod, host) {
 }
 
 /**
+ * My hosts (docs/personal-vault.md): connection stats + TOFU host-key pin on
+ * the owner's PersonalHost row. Best-effort — never breaks a live session.
+ */
+function touchPersonalHost(sessionMeta, { status, error, hostKeyInfo } = {}) {
+  const { personalHostId, userId, orgId } = sessionMeta;
+  if (!personalHostId) return;
+  const where = { id: personalHostId, orgId, ownerId: userId };
+  const data = {
+    lastConnectedAt: new Date(),
+    lastStatus: status,
+    lastError: status === 'failed' ? (error ? String(error).slice(0, 500) : null) : null,
+    ...(status === 'connected' ? { connectCount: { increment: 1 } } : {}),
+  };
+  prisma.personalHost.updateMany({ where, data }).catch(() => {});
+  if (hostKeyInfo) {
+    prisma.personalHost
+      .updateMany({
+        where: { ...where, hostKeyFingerprint: null },
+        data: { hostKeyFingerprint: hostKeyInfo.fingerprint, hostKeyAlgorithm: hostKeyInfo.algorithm, hostKeyPinnedAt: new Date() },
+      })
+      .catch(() => {});
+  }
+}
+
+/**
  * @param {import('ws').WebSocket} ws
  * @param {import('http').IncomingMessage} req
  * @param {object} params
@@ -467,7 +492,9 @@ async function runSsh2Session(ws, req, { connect, pinServer, sessionMeta, rows, 
     const humanMsg = humanizeConnectError(err, sessionMeta.authMethod, sessionMeta.targetHost);
     sendError(ws, humanMsg);
     safeClose(ws, 1011, 'SSH connection failed');
-    if (sessionMeta.authMethod === 'quick_connect') {
+    if (sessionMeta.personalHostId) {
+      touchPersonalHost(sessionMeta, { status: 'failed', error: humanMsg });
+    } else if (sessionMeta.authMethod === 'quick_connect') {
       quickConnectService
         .recordHistory({
           orgId: sessionMeta.orgId,
@@ -537,6 +564,7 @@ async function runSsh2Session(ws, req, { connect, pinServer, sessionMeta, rows, 
               quickConnect: {
                 authType: sessionMeta.quickConnectAuthType || null,
                 credentialId: sessionMeta.quickConnectCredentialId || null,
+                ...(sessionMeta.personalHostId ? { personalHostId: sessionMeta.personalHostId } : {}),
               },
             }
           : {}),
@@ -645,7 +673,9 @@ async function runSsh2Session(ws, req, { connect, pinServer, sessionMeta, rows, 
       label,
     });
 
-    if (sessionMeta.authMethod === 'quick_connect') {
+    if (sessionMeta.personalHostId) {
+      touchPersonalHost(sessionMeta, { status: 'connected', hostKeyInfo });
+    } else if (sessionMeta.authMethod === 'quick_connect') {
       quickConnectService
         .recordHistory({
           orgId,
@@ -678,6 +708,8 @@ function buildConnectSpec(sessionMeta) {
       username: sessionMeta.targetUser,
       auth: sessionMeta.quickConnectRawAuth,
       expectedHostKey: sessionMeta.quickConnectExpectedHostKey || null,
+      via: sessionMeta.personalHostId ? 'personal_host' : 'quick_connect',
+      personalHostId: sessionMeta.personalHostId || null,
     };
   }
   if (sessionMeta.accessRequestId) {
@@ -878,6 +910,7 @@ async function handleConnection(ws, req) {
         // (encrypted at rest there) — for the "Duplicate" flow. Never logged.
         quickConnectRawAuth: connect.rawAuth,
         quickConnectExpectedHostKey: connect.expectedHostKey || null,
+        personalHostId: connect.personalHostId || null,
       },
       rows,
       cols,

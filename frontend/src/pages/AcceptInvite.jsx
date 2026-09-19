@@ -5,6 +5,8 @@ import { BrandMark } from '@/components/common/BrandLogo';
 import MfaChallenge from '@/components/auth/MfaChallenge';
 import { useAuth } from '@/context/AuthContext';
 import { getInvite, acceptInvite } from '@/services/userTokenService';
+import AuthShell from '@/components/auth/AuthShell';
+import { Checkbox } from '@/components/ui/checkbox';
 
 function validatePassword(password) {
   if (password.length < 12) return 'Password must be at least 12 characters.';
@@ -86,7 +88,7 @@ function AcceptInvite() {
   };
 
   return (
-    <div className="flex min-h-screen items-center justify-center bg-background px-4">
+    <AuthShell>
       <div className="w-full max-w-sm">
         <div className="mb-8 text-center">
           <div className="mx-auto mb-4 flex justify-center">
@@ -241,12 +243,11 @@ function AcceptInvite() {
               </div>
 
               <div className="flex items-start gap-2 pt-1">
-                <input
+                <Checkbox
                   id="invite-terms"
-                  type="checkbox"
                   checked={termsAccepted}
                   onChange={(e) => setTermsAccepted(e.target.checked)}
-                  className="mt-0.5 h-4 w-4 shrink-0 rounded border-input accent-primary"
+                  className="mt-0.5 shrink-0"
                 />
                 <label htmlFor="invite-terms" className="text-sm text-muted-foreground leading-snug">
                   I agree to the{' '}
@@ -285,7 +286,7 @@ function AcceptInvite() {
           )}
         </div>
       </div>
-    </div>
+    </AuthShell>
   );
 }
 

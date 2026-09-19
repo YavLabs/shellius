@@ -117,6 +117,8 @@ shellius/
 - **Session** — An active or historical SSH/RDP connection with optional recording (`serverId` is null for Quick Connect sessions)
 - **Credential ("Identity")** — Keystore entry: username + password and/or stored SshKey, reusable across servers with `authMode: credential`
 - **SshKey** — Keystore key pair (generated or imported); can be deployed/rotated across hosts via **KeyDeployment**
+- **Scope** — identities and keys are either **org** (`ownerId` null, the shared Keystore) or **personal** (`ownerId` = user, only that user can see or use them). See `docs/personal-vault.md`.
+- **PersonalHost ("My hosts")** — a user's private SSH target. Not a Server: never in inventory, policies or approvals; connects through the Quick Connect ticket engine (prod / DENY / target guards)
 - **AuditLog** — Immutable record of every action in the system
 
 ## Roles and permissions
@@ -147,5 +149,6 @@ shellius/
 - NEVER store SSH private keys server-side after returning them to the user (Keystore keys are the documented exception: encrypted, admin-managed, never in list/get responses)
 - NEVER skip org_id scoping on database queries
 - NEVER allow direct production server access without the approval flow for a requester who can't skip it (`access.prod_bypass` + org switch) — applies to certificate AND credential servers, break-glass, key deployment and direct cert issuance; Quick Connect refuses hosts matching a saved prod server. Requesters who may skip it still get an audited, notified `APPROVED` request — never a silent, unaudited connection.
+- NEVER return or use another user's personal vault item: Keystore queries MUST filter `ownerId` (null for org views, the caller for personal ones); personal items can never be bound to servers, deployed, or searched.
 - NEVER gate on role names (`role === 'admin'`) — use permissions. NEVER let a role or user edit grant permissions the actor doesn't hold.
 - NEVER hard-delete cloud-terminated servers — mark as terminated to preserve audit trail

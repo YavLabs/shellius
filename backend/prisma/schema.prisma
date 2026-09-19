@@ -56,6 +56,7 @@ model Organization {
   sessions        Session[]
   sshKeys         SshKey[]
   credentials     Credential[]
+  personalHosts   PersonalHost[]
   keyDeployments  KeyDeployment[]
   roles           Role[]
   selfServiceRegistrationEnabled Boolean @default(false) @map("self_service_registration_enabled")
@@ -124,6 +125,10 @@ model User {
   accessRequestApprovals  AccessRequestApprover[]
   notifications           Notification[]
   sessions                Session[]
+  // Personal vault (docs/personal-vault.md) — private to this user.
+  personalSshKeys         SshKey[]       @relation("PersonalSshKeys")
+  personalCredentials     Credential[]   @relation("PersonalCredentials")
+  personalHosts           PersonalHost[]
 
   @@unique([orgId, email])
   @@unique([orgId, jitUid], map: "user_org_jit_uid_unique")
@@ -898,16 +903,23 @@ model SshKey {
   // this key. When present, connections authenticate with the certificate.
   certificate         String?  @db.Text
   createdById         String?  @map("created_by_id")
+  // null = organization Keystore; set = personal vault of that user (only
+  // they can see or use it — docs/personal-vault.md).
+  ownerId             String?  @map("owner_id")
   lastExportedAt      DateTime? @map("last_exported_at")
   createdAt           DateTime @default(now()) @map("created_at")
   updatedAt           DateTime @updatedAt @map("updated_at")
 
   organization Organization    @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  owner        User?           @relation("PersonalSshKeys", fields: [ownerId], references: [id], onDelete: Cascade)
   credentials  Credential[]
   deployments  KeyDeployment[]
 
-  @@unique([orgId, name])
+  // Personal names are unique per owner. Org names (owner NULL) are checked
+  // in keystoreService — Postgres treats NULLs as distinct here.
+  @@unique([orgId, ownerId, name])
   @@index([orgId])
+  @@index([ownerId])
   @@index([orgId, fingerprint])
   @@map("ssh_keys")
 }
@@ -925,17 +937,22 @@ model Credential {
   sshKeyId          String?   @map("ssh_key_id")
   tags              String[]  @default([])
   createdById       String?   @map("created_by_id")
+  // null = organization Keystore; set = personal vault of that user.
+  ownerId           String?   @map("owner_id")
   lastUsedAt        DateTime? @map("last_used_at")
   createdAt         DateTime  @default(now()) @map("created_at")
   updatedAt         DateTime  @updatedAt @map("updated_at")
 
-  organization Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
-  sshKey       SshKey?      @relation(fields: [sshKeyId], references: [id], onDelete: Restrict)
-  servers      Server[]
+  organization  Organization   @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  owner         User?          @relation("PersonalCredentials", fields: [ownerId], references: [id], onDelete: Cascade)
+  sshKey        SshKey?        @relation(fields: [sshKeyId], references: [id], onDelete: Restrict)
+  servers       Server[]
+  personalHosts PersonalHost[]
 
-  @@unique([orgId, name])
+  @@unique([orgId, ownerId, name])
   @@index([orgId])
   @@index([sshKeyId])
+  @@index([ownerId])
   @@map("credentials")
 }
 
@@ -967,6 +984,41 @@ model KeyDeployment {
   @@index([sshKeyId])
   @@index([serverId])
   @@map("key_deployments")
+}
+
+/// A user's private SSH target ("My hosts"). Not a Server: never in the
+/// inventory, policies, approvals or metrics, and only its owner sees it.
+/// Connections go through the Quick Connect ticket engine (prod / DENY /
+/// target guards) — see docs/personal-vault.md.
+model PersonalHost {
+  id                 String    @id @default(cuid())
+  orgId              String    @map("org_id")
+  ownerId            String    @map("owner_id")
+  name               String
+  host               String
+  port               Int       @default(22)
+  username           String? // null = the identity's username
+  credentialId       String?   @map("credential_id")
+  description        String?
+  tags               String[]  @default([])
+  hostKeyFingerprint String?   @map("host_key_fingerprint")
+  hostKeyAlgorithm   String?   @map("host_key_algorithm")
+  hostKeyPinnedAt    DateTime? @map("host_key_pinned_at")
+  lastConnectedAt    DateTime? @map("last_connected_at")
+  lastStatus         String?   @map("last_status") // connected | failed
+  lastError          String?   @map("last_error")
+  connectCount       Int       @default(0) @map("connect_count")
+  createdAt          DateTime  @default(now()) @map("created_at")
+  updatedAt          DateTime  @updatedAt @map("updated_at")
+
+  organization Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  owner        User         @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  credential   Credential?  @relation(fields: [credentialId], references: [id], onDelete: SetNull)
+
+  @@unique([ownerId, name])
+  @@index([orgId, ownerId])
+  @@index([credentialId])
+  @@map("personal_hosts")
 }
 
 /// Per-user Quick Connect history (dashboard "Recent Quick Connects").

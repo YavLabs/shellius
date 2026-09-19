@@ -115,3 +115,21 @@
     display: none;
   }
 }
+
+/* Faint square grid used behind page content and the auth screens. Lines use
+   the theme's border colour, so it adapts to light / dark. `.bg-grid-fade`
+   (for a decorative overlay layer only — a mask hides everything inside the
+   element) fades the grid out towards the edges. */
+@layer utilities {
+  .bg-grid {
+    background-image:
+      linear-gradient(to right, hsl(var(--border) / 0.2) 1px, transparent 1px),
+      linear-gradient(to bottom, hsl(var(--border) / 0.2) 1px, transparent 1px);
+    background-size: 15px 15px;
+    background-position: -1px -1px;
+  }
+  .bg-grid-fade {
+    -webkit-mask-image: radial-gradient(ellipse 70% 60% at 50% 40%, #000 35%, transparent 100%);
+    mask-image: radial-gradient(ellipse 70% 60% at 50% 40%, #000 35%, transparent 100%);
+  }
+}

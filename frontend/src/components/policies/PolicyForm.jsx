@@ -9,6 +9,7 @@ import { listGroups } from '@/services/groupService';
 import PolicyEvaluator from '@/components/policies/PolicyEvaluator';
 import SubjectsPicker from '@/components/policies/SubjectsPicker';
 import SearchableSelect from '@/components/ui/SearchableSelect';
+import { Checkbox } from '@/components/ui/checkbox';
 import { listRoles } from '@/services/roleService';
 
 const ENVIRONMENTS = ['demo', 'dev', 'staging', 'prod'];
@@ -208,11 +209,9 @@ function Step1({ form, onChange, errors }) {
         </div>
         <div className="flex flex-col justify-end pb-1">
           <label className="flex items-center gap-2 cursor-pointer">
-            <input
-              type="checkbox"
+            <Checkbox
               checked={form.isActive}
               onChange={(e) => onChange('isActive', e.target.checked)}
-              className="accent-primary h-4 w-4"
             />
             <span className="text-sm font-medium text-foreground">Active</span>
           </label>
@@ -525,11 +524,10 @@ function Step4({ form, onChange, errors }) {
 
       <div className="rounded-md border border-border p-4 space-y-4">
         <label className="flex items-start gap-3 cursor-pointer">
-          <input
-            type="checkbox"
+          <Checkbox
             checked={form.requireApproval}
             onChange={(e) => onChange('requireApproval', e.target.checked)}
-            className="accent-primary h-4 w-4 mt-0.5 shrink-0"
+            className="mt-0.5 shrink-0"
           />
           <div>
             <span className="text-sm font-medium text-foreground">Require approval</span>
@@ -540,11 +538,10 @@ function Step4({ form, onChange, errors }) {
         </label>
 
         <label className="flex items-start gap-3 cursor-pointer">
-          <input
-            type="checkbox"
+          <Checkbox
             checked={form.autoApprove}
             onChange={(e) => onChange('autoApprove', e.target.checked)}
-            className="accent-primary h-4 w-4 mt-0.5 shrink-0"
+            className="mt-0.5 shrink-0"
           />
           <div>
             <span className="text-sm font-medium text-foreground">Auto-approve</span>
@@ -582,11 +579,9 @@ function Step4({ form, onChange, errors }) {
           <div className="flex flex-wrap gap-3">
             {approverRoleOptions.map((role) => (
               <label key={role.key} className="flex items-center gap-2 text-sm">
-                <input
-                  type="checkbox"
+                <Checkbox
                   checked={(form.approverRoles || []).includes(role.key)}
                   onChange={() => toggleApproverRole(role.key)}
-                  className="accent-primary h-4 w-4"
                 />
                 {role.name}
               </label>
@@ -648,13 +643,12 @@ function Step4({ form, onChange, errors }) {
         </div>
 
         <label className="flex items-start gap-3 cursor-pointer">
-          <input
-            type="checkbox"
+          <Checkbox
             checked={!!form.osProvisioning?.aclRecursive}
             onChange={(e) =>
               onChange('osProvisioning', { ...(form.osProvisioning || {}), aclRecursive: e.target.checked })
             }
-            className="accent-primary h-4 w-4 mt-0.5 shrink-0"
+            className="mt-0.5 shrink-0"
           />
           <div>
             <span className="text-sm font-medium text-foreground">ACL recursive</span>
@@ -665,13 +659,12 @@ function Step4({ form, onChange, errors }) {
         </label>
 
         <label className="flex items-start gap-3 cursor-pointer">
-          <input
-            type="checkbox"
+          <Checkbox
             checked={!!form.osProvisioning?.sudo}
             onChange={(e) =>
               onChange('osProvisioning', { ...(form.osProvisioning || {}), sudo: e.target.checked })
             }
-            className="accent-primary h-4 w-4 mt-0.5 shrink-0"
+            className="mt-0.5 shrink-0"
           />
           <div>
             <span className="text-sm font-medium text-foreground">Grant sudo (NOPASSWD)</span>
@@ -682,13 +675,12 @@ function Step4({ form, onChange, errors }) {
         </label>
 
         <label className="flex items-start gap-3 cursor-pointer">
-          <input
-            type="checkbox"
+          <Checkbox
             checked={!!form.osProvisioning?.hardCutoff}
             onChange={(e) =>
               onChange('osProvisioning', { ...(form.osProvisioning || {}), hardCutoff: e.target.checked })
             }
-            className="accent-primary h-4 w-4 mt-0.5 shrink-0"
+            className="mt-0.5 shrink-0"
           />
           <div>
             <span className="text-sm font-medium text-foreground">Hard cutoff on lease expiry</span>
@@ -702,11 +694,10 @@ function Step4({ form, onChange, errors }) {
       {/* Phase 21A — key download + break-glass flags */}
       <div className="rounded-md border border-border p-4 space-y-4">
         <label className="flex items-start gap-3 cursor-pointer">
-          <input
-            type="checkbox"
+          <Checkbox
             checked={!!form.allowKeyDownload}
             onChange={(e) => onChange('allowKeyDownload', e.target.checked)}
-            className="accent-primary h-4 w-4 mt-0.5 shrink-0"
+            className="mt-0.5 shrink-0"
           />
           <div>
             <span className="text-sm font-medium text-foreground">Allow SSH key download</span>
@@ -717,11 +708,10 @@ function Step4({ form, onChange, errors }) {
         </label>
 
         <label className="flex items-start gap-3 cursor-pointer">
-          <input
-            type="checkbox"
+          <Checkbox
             checked={!!form.isBreakGlass}
             onChange={(e) => onChange('isBreakGlass', e.target.checked)}
-            className="accent-primary h-4 w-4 mt-0.5 shrink-0"
+            className="mt-0.5 shrink-0"
           />
           <div>
             <span className="text-sm font-medium text-foreground">Break-glass policy</span>

@@ -38,6 +38,7 @@ import InstallCli from './pages/InstallCli';
 import ApproveRequest from './pages/ApproveRequest';
 import BulkImport from './pages/BulkImport';
 import Keystore from './pages/Keystore';
+import MyHosts from './pages/MyHosts';
 import Roles from './pages/Roles';
 import MfaSetup from './pages/MfaSetup';
 
@@ -86,6 +87,7 @@ function App() {
                     <Route path="/servers/:id" element={<ServerDetail />} />
                     <Route path="/sessions" element={<Sessions />} />
                     <Route path="/keystore" element={<Keystore />} />
+                    <Route path="/my-hosts" element={<MyHosts />} />
                     <Route path="/users" element={<Users />} />
                     <Route path="/roles" element={<Roles />} />
                     <Route path="/roles/:id" element={<Roles />} />

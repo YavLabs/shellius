@@ -4,6 +4,7 @@ import { Loader2, Check, X } from 'lucide-react';
 import { BrandMark } from '@/components/common/BrandLogo';
 import api from '@/services/api';
 import { useAuth } from '@/context/AuthContext';
+import AuthShell from '@/components/auth/AuthShell';
 
 function Device() {
   const [params] = useSearchParams();
@@ -32,7 +33,7 @@ function Device() {
   };
 
   return (
-    <div className="flex min-h-screen items-center justify-center bg-background px-4">
+    <AuthShell>
       <div className="w-full max-w-sm">
         <div className="mb-8 text-center">
           <div className="mx-auto mb-4 flex justify-center">
@@ -95,7 +96,7 @@ function Device() {
           )}
         </div>
       </div>
-    </div>
+    </AuthShell>
   );
 }
 

@@ -11,7 +11,7 @@ const labelCls = 'mb-1.5 block text-sm font-medium text-foreground';
 const textareaCls =
   'w-full rounded-md border border-input bg-background px-3 py-2 font-mono text-xs text-foreground focus:outline-none focus:ring-2 focus:ring-ring';
 
-function ImportKeyModal({ open, onClose, onSaved }) {
+function ImportKeyModal({ open, onClose, onSaved, scope = 'org' }) {
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
   const [moreOpen, setMoreOpen] = useState(false);
@@ -54,6 +54,7 @@ function ImportKeyModal({ open, onClose, onSaved }) {
         passphrase: passphrase || undefined,
         publicKey: publicKey.trim() || undefined,
         certificate: certificate.trim() || undefined,
+        scope,
       });
       onSaved?.(key);
       onClose();
@@ -75,7 +76,7 @@ function ImportKeyModal({ open, onClose, onSaved }) {
   const canSubmit = !!name.trim() && !!privateKey.trim() && !inspectState.inspecting && !submitting;
 
   return (
-    <Modal open={open} onClose={onClose} title="Import SSH key" size="sm">
+    <Modal open={open} onClose={onClose} title={scope === 'personal' ? 'Import personal SSH key' : 'Import SSH key'} size="sm">
       <form onSubmit={handleSubmit} className="space-y-4">
         {error && (
           <div className="rounded-md border border-destructive/50 bg-destructive/10 px-3 py-2 text-sm text-destructive">

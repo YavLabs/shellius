@@ -31,6 +31,7 @@ import * as sshConnect from './sshConnect.js';
 import { resolveCredentialAuth } from './keystoreService.js';
 import { log as auditLog } from './auditService.js';
 import * as policyService from './policyService.js';
+import { isVaultEnabled } from './orgService.js';
 
 // Who may use Quick Connect is the `quick_connect.use` permission (the old
 // settings.quickConnect.minRole was migrated onto the built-in roles by
@@ -46,9 +47,9 @@ const HISTORY_RETENTION_DAYS = 7;
 
 const HOSTNAME_RE =
   /^[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(?:\.[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)*$/;
-const USERNAME_RE = /^[A-Za-z0-9._-]{1,64}$/;
+export const USERNAME_RE = /^[A-Za-z0-9._-]{1,64}$/;
 
-function isValidHost(host) {
+export function isValidHost(host) {
   if (!host || typeof host !== 'string' || /\s/.test(host)) return false;
   if (net.isIP(host) !== 0) return true;
   return HOSTNAME_RE.test(host) && host.length <= 253;
@@ -73,10 +74,13 @@ async function loadQuickConnectSettings(orgId) {
 export async function getSettings(orgId, caller) {
   const { enabled } = await loadQuickConnectSettings(orgId);
   const allowed = enabled && has(caller, 'quick_connect.use');
+  const vaultEnabled = await isVaultEnabled(orgId);
   return {
     enabled,
     allowed,
     canUseStoredIdentity: allowed && has(caller, 'quick_connect.use_stored_identity'),
+    // Personal vault identities (docs/personal-vault.md).
+    canUsePersonalIdentity: allowed && vaultEnabled && has(caller, 'vault.use'),
     canSaveServer: has(caller, 'quick_connect.save_server'),
   };
 }
@@ -194,18 +198,39 @@ function validateAuthShape(auth) {
   }
 }
 
-export async function createTicket(orgId, user, { host, port, username, auth, expectedHostKey }) {
-  const settings = await getSettings(orgId, user);
-  if (!settings.enabled) {
-    throw new ApiError(403, 'Quick Connect is disabled for this organization', { code: 'QUICK_CONNECT_DISABLED' });
-  }
-  if (!settings.allowed) {
-    throw new ApiError(403, 'Your role does not permit Quick Connect', { code: 'QUICK_CONNECT_FORBIDDEN' });
-  }
-  if (auth?.type === 'credential' && !settings.canUseStoredIdentity) {
-    throw new ApiError(403, 'Your role does not permit using stored identities in Quick Connect', {
-      code: 'QUICK_CONNECT_FORBIDDEN',
-    });
+/**
+ * Load a stored identity the caller may see: an org identity, or one of the
+ * caller's own personal identities. Someone else's personal identity is a 404.
+ */
+async function findUsableCredential(orgId, userId, credentialId, { includeKey = false } = {}) {
+  return prisma.credential.findFirst({
+    where: { id: credentialId, orgId, OR: [{ ownerId: null }, { ownerId: userId }] },
+    ...(includeKey ? { include: { sshKey: true } } : {}),
+  });
+}
+
+/**
+ * @param {object} [opts]
+ * @param {'quick_connect'|'personal_host'} [opts.via] - personal hosts (My
+ *   hosts) are gated by vault.hosts + the vault switch instead of Quick
+ *   Connect's permission/switch; every target guard below still runs.
+ * @param {string} [opts.personalHostId]
+ */
+export async function createTicket(orgId, user, { host, port, username, auth, expectedHostKey }, { via = 'quick_connect', personalHostId = null } = {}) {
+  const vaultEnabled = await isVaultEnabled(orgId);
+  if (via === 'personal_host') {
+    if (!vaultEnabled) throw new ApiError(403, 'The personal vault is turned off for this organization', { code: 'VAULT_DISABLED' });
+    if (!has(user, 'vault.hosts')) {
+      throw new ApiError(403, 'Your role does not permit My hosts', { code: 'PERMISSION_DENIED', details: { missing: ['vault.hosts'] } });
+    }
+  } else {
+    const settings = await getSettings(orgId, user);
+    if (!settings.enabled) {
+      throw new ApiError(403, 'Quick Connect is disabled for this organization', { code: 'QUICK_CONNECT_DISABLED' });
+    }
+    if (!settings.allowed) {
+      throw new ApiError(403, 'Your role does not permit Quick Connect', { code: 'QUICK_CONNECT_FORBIDDEN' });
+    }
   }
 
   if (!isValidHost(host)) throw new ApiError(400, 'host must be a valid hostname, IPv4, or IPv6 address');
@@ -216,8 +241,19 @@ export async function createTicket(orgId, user, { host, port, username, auth, ex
 
   let effectiveUsername = username || null;
   if (auth.type === 'credential') {
-    const cred = await prisma.credential.findFirst({ where: { id: auth.credentialId, orgId } });
+    const cred = await findUsableCredential(orgId, user.id, auth.credentialId);
     if (!cred) throw new ApiError(404, 'auth.credentialId not found in organization');
+    if (cred.ownerId) {
+      if (!vaultEnabled || !has(user, 'vault.use')) {
+        throw new ApiError(403, 'Your role does not permit using your personal vault', {
+          code: 'QUICK_CONNECT_FORBIDDEN',
+        });
+      }
+    } else if (!has(user, 'quick_connect.use_stored_identity')) {
+      throw new ApiError(403, 'Your role does not permit using stored identities in Quick Connect', {
+        code: 'QUICK_CONNECT_FORBIDDEN',
+      });
+    }
     effectiveUsername = username || cred.username;
   } else {
     if (!username || !USERNAME_RE.test(username)) {
@@ -250,6 +286,8 @@ export async function createTicket(orgId, user, { host, port, username, auth, ex
     username: effectiveUsername,
     auth,
     expectedHostKey: expectedHostKey || null,
+    via,
+    personalHostId,
   };
 
   const ticket = crypto.randomBytes(32).toString('hex');
@@ -261,7 +299,7 @@ export async function createTicket(orgId, user, { host, port, username, auth, ex
     action: 'quick_connect.ticket',
     resourceType: 'QuickConnect',
     resourceId: null,
-    metadata: { host, port: effectivePort, username: effectiveUsername, authType: auth.type },
+    metadata: { host, port: effectivePort, username: effectiveUsername, authType: auth.type, via, ...(personalHostId ? { personalHostId } : {}) },
   });
 
   return { ticket, expiresIn: TICKET_TTL_SECONDS };
@@ -311,10 +349,7 @@ export async function consumeTicket(ticket, { userId, orgId }) {
     connect.passphrase = payload.auth.passphrase || undefined;
     if (payload.auth.password) connect.password = payload.auth.password;
   } else if (payload.auth.type === 'credential') {
-    const cred = await prisma.credential.findFirst({
-      where: { id: payload.auth.credentialId, orgId },
-      include: { sshKey: true },
-    });
+    const cred = await findUsableCredential(orgId, userId, payload.auth.credentialId, { includeKey: true });
     if (!cred) throw new ApiError(404, 'The identity used for this Quick Connect no longer exists');
     const opts = resolveCredentialAuth(cred);
     connect.username = payload.username || cred.username;
@@ -339,6 +374,8 @@ export async function consumeTicket(ticket, { userId, orgId }) {
     // retain this.
     rawAuth: payload.auth,
     expectedHostKey: payload.expectedHostKey || null,
+    via: payload.via || 'quick_connect',
+    personalHostId: payload.personalHostId || null,
   };
 }
 
@@ -349,8 +386,13 @@ export async function consumeTicket(ticket, { userId, orgId }) {
  * guard (permissions, target validation, prod/DENY guards) re-runs exactly as it
  * would for a brand-new Quick Connect.
  */
-export async function createTicketFromSpec(orgId, user, { host, port, username, auth, expectedHostKey }) {
-  return createTicket(orgId, user, { host, port, username, auth, expectedHostKey });
+export async function createTicketFromSpec(orgId, user, { host, port, username, auth, expectedHostKey, via, personalHostId }) {
+  if (via === 'personal_host') {
+    // The host must still exist and still be the caller's.
+    const owned = await prisma.personalHost.findFirst({ where: { id: personalHostId || '', orgId, ownerId: user.id }, select: { id: true } });
+    if (!owned) throw new ApiError(409, 'This host is no longer in My hosts', { code: 'CANNOT_DUPLICATE' });
+  }
+  return createTicket(orgId, user, { host, port, username, auth, expectedHostKey }, { via, personalHostId });
 }
 
 /**
@@ -358,7 +400,7 @@ export async function createTicketFromSpec(orgId, user, { host, port, username, 
  * reaches it through Quick Connect (G6) — otherwise Quick Connect is a way
  * around "this group may never touch that host".
  */
-async function assertNotDeniedHost(orgId, userId, host, resolvedIps = []) {
+export async function assertNotDeniedHost(orgId, userId, host, resolvedIps = []) {
   const candidates = [host, ...resolvedIps];
   const servers = await prisma.server.findMany({
     where: {
@@ -399,6 +441,11 @@ export async function saveAsServer(orgId, actor, body) {
 
   const isIp = net.isIP(host) !== 0;
 
+  if (identity.mode === 'new' && identity.name) {
+    const clash = await prisma.credential.findFirst({ where: { orgId, ownerId: null, name: identity.name }, select: { id: true } });
+    if (clash) throw new ApiError(409, `An identity named "${identity.name}" already exists`);
+  }
+
   const result = await prisma.$transaction(async (tx) => {
     let credentialId = null;
     let authMode = 'certificate';
@@ -408,7 +455,8 @@ export async function saveAsServer(orgId, actor, body) {
     }
     if (identity.mode === 'existing') {
       if (!identity.credentialId) throw new ApiError(400, 'identity.credentialId is required for mode "existing"');
-      const cred = await tx.credential.findFirst({ where: { id: identity.credentialId, orgId } });
+      // Org identities only — a personal identity can never be bound to an org server.
+      const cred = await tx.credential.findFirst({ where: { id: identity.credentialId, orgId, ownerId: null } });
       if (!cred) throw new ApiError(404, 'identity.credentialId not found in organization');
       credentialId = cred.id;
       authMode = 'credential';
@@ -585,7 +633,10 @@ export async function listHistory(orgId, userId, { limit = 10 } = {}) {
 
   const [credentials, servers] = await Promise.all([
     credentialIds.length
-      ? prisma.credential.findMany({ where: { id: { in: credentialIds }, orgId }, select: { id: true, name: true } })
+      ? prisma.credential.findMany({
+          where: { id: { in: credentialIds }, orgId, OR: [{ ownerId: null }, { ownerId: userId }] },
+          select: { id: true, name: true },
+        })
       : [],
     serverIds.length
       ? prisma.server.findMany({
@@ -645,7 +696,7 @@ export async function reconnectFromHistory(orgId, user, id) {
     );
   }
 
-  const cred = await prisma.credential.findFirst({ where: { id: row.credentialId, orgId } });
+  const cred = await findUsableCredential(orgId, user.id, row.credentialId);
   if (!cred) {
     throw new ApiError(
       409,

@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom';
 import { Mail, Loader2 } from 'lucide-react';
 import { BrandMark } from '@/components/common/BrandLogo';
 import { requestPasswordReset } from '@/services/userTokenService';
+import AuthShell from '@/components/auth/AuthShell';
 
 function ForgotPassword() {
   const [email, setEmail] = useState('');
@@ -25,7 +26,7 @@ function ForgotPassword() {
   };
 
   return (
-    <div className="flex min-h-screen items-center justify-center bg-background px-4">
+    <AuthShell>
       <div className="w-full max-w-sm">
         <div className="mb-8 text-center">
           <div className="mx-auto mb-4 flex justify-center">
@@ -104,7 +105,7 @@ function ForgotPassword() {
           )}
         </div>
       </div>
-    </div>
+    </AuthShell>
   );
 }
 
