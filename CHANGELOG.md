@@ -9,6 +9,21 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 Tracked here as work lands on `main`; moved into a dated section on release
 (`node scripts/version.mjs bump <major|minor|patch>`).
 
+## [1.2.2] - 2026-09-19
+
+### Added
+
+- `docs/tui-parity.md`: what the CLI can and can't do compared with the web UI, with a phased plan.
+
+### Changed
+
+- Dashboard rows adapt to the cards each person can see:
+  - Recent connections takes the whole row when your role has no quick actions.
+  - "My access" spans the full width (servers in two columns) when Recent activity isn't shown.
+  - My access "View all" scrolls inside the card instead of stretching the page.
+  - The metric grid follows the number of cards shown.
+- CLI releases (`tui/v*`) no longer take GitHub's "Latest" badge from the app release.
+
 ## [1.2.1] - 2026-09-19
 
 Security fix release. Upgrade recommended. If you don't use `TRAEFIK_HOST`, set `APP_URL` to the
