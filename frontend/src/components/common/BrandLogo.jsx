@@ -28,9 +28,9 @@
  */
 
 const SIZE_MAP = {
-  sm: { box: 'h-7 w-7 rounded-md', icon: 'h-4 w-4', mark: 'h-7 w-7', text: 'text-[17px]' },
-  md: { box: 'h-9 w-9 rounded-lg', icon: 'h-5 w-5', mark: 'h-9 w-9', text: 'text-[21px]' },
-  lg: { box: 'h-12 w-12 rounded-lg', icon: 'h-6 w-6', mark: 'h-12 w-12', text: 'text-[30px]' },
+  sm: { box: 'h-7 w-7 rounded-md', icon: 'h-4 w-4', mark: 'h-7 w-7', text: 'text-[19px]', gap: 'gap-[7px]' },
+  md: { box: 'h-9 w-9 rounded-lg', icon: 'h-5 w-5', mark: 'h-9 w-9', text: 'text-[25px]', gap: 'gap-[9px]' },
+  lg: { box: 'h-12 w-12 rounded-lg', icon: 'h-6 w-6', mark: 'h-12 w-12', text: 'text-[33px]', gap: 'gap-3' },
 };
 
 // Read once at module load — Vite inlines import.meta.env.* at build time.
@@ -75,14 +75,14 @@ export function BrandMark({ size = 'md', className = '' }) {
  */
 export function BrandWordmark({ compact = false, className = '' }) {
   if (BRAND_NAME !== 'Shellius' || compact) {
-    return <span className={`font-brand font-bold tracking-[-0.02em] text-foreground ${className}`}>{BRAND_NAME}</span>;
+    return <span className={`font-brand font-bold leading-none tracking-[-0.02em] text-foreground ${className}`}>{BRAND_NAME}</span>;
   }
   return (
-    <span className={`font-brand font-bold uppercase tracking-[-0.02em] text-foreground ${className}`} aria-label={BRAND_NAME}>
+    <span className={`inline-flex items-center font-brand font-bold uppercase leading-none tracking-[-0.02em] text-foreground ${className}`} aria-label={BRAND_NAME}>
       <span aria-hidden="true">SHELL</span>
       <span
         aria-hidden="true"
-        className="bg-brand-gradient mx-[0.07em] inline-block h-[0.72em] w-[0.34em] translate-y-[0.02em] rounded-[0.05em] align-baseline"
+        className="bg-brand-gradient mx-[0.07em] inline-block h-[0.72em] w-[0.34em] rounded-[0.05em]"
       />
       <span aria-hidden="true">US</span>
     </span>
@@ -96,7 +96,7 @@ export function BrandWordmark({ compact = false, className = '' }) {
 export default function BrandLogo({ size = 'md', className = '', wordmarkClassName = '', showWordmark = true, compact = false }) {
   const s = pickSize(size);
   return (
-    <div className={`flex items-center gap-2.5 ${className}`}>
+    <div className={`flex items-center ${s.gap} ${className}`}>
       <BrandMark size={size} />
       {showWordmark && <BrandWordmark compact={compact} className={`${s.text} ${wordmarkClassName}`} />}
     </div>
