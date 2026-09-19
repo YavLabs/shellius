@@ -67,13 +67,9 @@ function SsoTextButtons({ providers, submitting, onSelect }) {
             onClick={() => onSelect(provider.id)}
             disabled={submitting}
             title={`Sign in with ${provider.name || ssoLoginLabel(provider.presetId)}`}
-            className={`relative inline-flex h-10 w-full min-w-0 items-center justify-center rounded-md bg-foreground/[0.04] px-11 text-sm font-semibold text-foreground/85 ring-1 ring-foreground/[0.06] transition-colors hover:bg-foreground/[0.08] hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50`}
+            className={`inline-flex h-10 w-full min-w-0 items-center justify-center gap-2 rounded-md bg-foreground/[0.04] px-3 text-sm font-semibold text-foreground/85 ring-1 ring-foreground/[0.06] transition-colors hover:bg-foreground/[0.08] hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50`}
           >
-            {/* Icons share one left inset so they line up down the stack;
-                labels stay centred (px-11 keeps them clear of the icon). */}
-            <span className="absolute left-4 top-1/2 flex h-4 w-4 -translate-y-1/2 items-center justify-center">
-              {submitting && single ? <Loader2 className="h-4 w-4 animate-spin" /> : <ProviderGlyph presetId={provider.presetId} />}
-            </span>
+            {submitting && single ? <Loader2 className="h-4 w-4 animate-spin" /> : <ProviderGlyph presetId={provider.presetId} />}
             <span className="truncate">
               Sign in with {provider.name || ssoLoginLabel(provider.presetId)}
             </span>
