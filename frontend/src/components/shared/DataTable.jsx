@@ -29,6 +29,10 @@ const PAGE_SIZE_OPTIONS = [10, 20, 50, 100];
 // ---------------------------------------------------------------------------
 
 function ActionMenu({ actions, row }) {
+  // Nothing this row can offer (e.g. every action is permission-hidden):
+  // render no "⋯" button rather than an empty menu.
+  const visible = actions.filter((a) => !a.separator && !(typeof a.hidden === 'function' && a.hidden(row)));
+  if (visible.length === 0) return null;
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>

@@ -34,11 +34,9 @@ import { useAuth } from '@/context/AuthContext';
 import { relativeTime, formatDateTime } from '@/utils/time';
 import { ACCESS_REQUEST_STATUS_LABELS } from '@/lib/labels';
 import { PENDING_REVIEWS_EVENT } from '@/hooks/usePendingReviewCount';
+import { can } from '@/lib/permissions';
 
-const ROLE_RANK = { super_admin: 4, admin: 3, manager: 2, member: 1 };
-function isAtLeast(user, role) {
-  return (ROLE_RANK[user?.role] || 0) >= (ROLE_RANK[role] || 0);
-}
+
 
 const STATUS_META = {
   PENDING: { label: 'Pending', variant: 'warning', Icon: Clock },
@@ -118,12 +116,10 @@ function RequestDetailModal({ requestId, open, onClose, onRefresh, currentUser }
   };
 
   const isRequester = currentUser?.id === request?.requesterId;
-  const isReviewer =
-    isAtLeast(currentUser, 'admin') ||
-    currentUser?.id === request?.reviewerId ||
-    currentUser?.id === request?.requester?.managerId;
-  const canRevoke =
-    request?.status === 'APPROVED' && (isRequester || isAtLeast(currentUser, 'admin'));
+  // The API says what this viewer may do with the request (approver set,
+  // access_requests.revoke_any), so the buttons always match what it allows.
+  const isReviewer = !!request?.viewer?.canReview;
+  const canRevoke = !!request?.viewer?.canRevoke;
 
   return (
     <Modal open={open} onClose={onClose} title="Access Request Details" size="lg">
@@ -233,7 +229,7 @@ const STATUSES = ['PENDING', 'APPROVED', 'DENIED', 'EXPIRED', 'REVOKED'];
 function AccessRequests() {
   const { user } = useAuth();
   const { openTab } = useTerminalWorkspace();
-  const isAdmin = isAtLeast(user, 'admin');
+  const isAdmin = can(user, 'access_requests.view_all');
   const tabs = isAdmin ? [...TABS, { key: 'all', label: 'All' }] : TABS;
 
   const [activeTab, setActiveTab] = useState('mine');
@@ -438,7 +434,7 @@ function AccessRequests() {
           icon: Eye,
           onClick: (r) => openDetail(r.id),
         },
-        ...(isAdmin
+        ...(can(user, 'access_requests.revoke_any')
           ? [{
               label: 'Revoke',
               icon: Ban,

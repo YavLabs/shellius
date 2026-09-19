@@ -31,6 +31,7 @@ const routeNames = {
   '/keystore': 'Keystore',
   '/terminals': 'Terminals',
   '/connections': 'Recent connections',
+  '/roles': 'Roles',
   '/dashboard': 'Dashboard',
   '/profile': 'Profile',
   '/notifications': 'Notifications',

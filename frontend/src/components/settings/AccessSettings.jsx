@@ -1,57 +1,32 @@
 import { useState, useEffect, useCallback } from 'react';
+import { Link } from 'react-router-dom';
 import { ShieldCheck } from 'lucide-react';
 import { SectionCard } from './shared';
-import { Button } from '@/components/ui/button';
-import { Badge } from '@/components/ui/badge';
+import { SwitchField } from '@/components/ui/switch';
+import RolesWithPermission from '@/components/roles/RolesWithPermission';
 import { getAccessSettings, updateAccessSettings } from '@/services/orgService';
 import { useAuth } from '@/context/AuthContext';
-import { roleAtLeast } from '@/lib/permissions';
-
-const OPTIONS = [
-  {
-    value: 'admin',
-    label: 'Admins and super admins connect without approval',
-    badge: 'Recommended',
-    body: 'Admins and super admins get immediate access to production servers. Managers and members always need approval.',
-  },
-  {
-    value: 'super_admin',
-    label: 'Only super admins',
-    body: 'Only super admins connect without approval. Admins, managers, and members always need approval on production servers.',
-  },
-  {
-    value: 'none',
-    label: 'Everyone requires approval',
-    body: 'No role bypasses the approval flow — every production access request, regardless of role, needs a manager to approve it first.',
-  },
-];
 
 /**
- * AccessSettings — org-wide "Production approval" policy
- * (Organization.settings.access.prodApprovalBypassMinRole). Admins can view;
- * only super_admins can change it. See docs/auth-hardening.md "Production
- * approval".
+ * AccessSettings — who may skip production approval.
+ *
+ * That is the role permission "Production without approval"
+ * (access.prod_bypass), edited on the Roles page. This tab shows which roles
+ * hold it and owns the org-wide switch: turn it off and nobody skips
+ * approval, not even super admins. Needs org.access_settings.
  */
 function AccessSettings() {
-  const { user } = useAuth();
-  const canEdit = roleAtLeast(user, 'super_admin');
-
-  const [value, setValue] = useState('admin');
-  const [saved, setSaved] = useState('admin');
+  const { can } = useAuth();
+  const [settings, setSettings] = useState(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
-  const [success, setSuccess] = useState(false);
 
   const refresh = useCallback(() => {
     setLoading(true);
     setError('');
     return getAccessSettings()
-      .then((data) => {
-        const v = data?.prodApprovalBypassMinRole || 'admin';
-        setValue(v);
-        setSaved(v);
-      })
+      .then(setSettings)
       .catch((err) =>
         setError(err.response?.data?.error?.message || err.message || 'Failed to load access settings')
       )
@@ -62,16 +37,15 @@ function AccessSettings() {
     refresh();
   }, [refresh]);
 
-  const handleSave = async () => {
+  const toggle = async (next) => {
     setSaving(true);
     setError('');
-    setSuccess(false);
+    const previous = settings;
+    setSettings((s) => ({ ...s, prodBypassEnabled: next }));
     try {
-      await updateAccessSettings({ prodApprovalBypassMinRole: value });
-      setSaved(value);
-      setSuccess(true);
-      setTimeout(() => setSuccess(false), 3000);
+      setSettings(await updateAccessSettings({ prodBypassEnabled: next }));
     } catch (err) {
+      setSettings(previous);
       setError(err.response?.data?.error?.message || err.message || 'Failed to save access settings');
     } finally {
       setSaving(false);
@@ -85,7 +59,7 @@ function AccessSettings() {
     >
       {loading ? (
         <div className="space-y-3 py-2">
-          {[1, 2, 3].map((i) => (
+          {[1, 2].map((i) => (
             <div key={i} className="h-16 animate-pulse rounded bg-muted" />
           ))}
         </div>
@@ -93,16 +67,12 @@ function AccessSettings() {
         <div className="space-y-4">
           <div className="flex items-start gap-3 rounded-md border border-border bg-muted/20 p-4">
             <ShieldCheck className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" />
-            <div className="text-xs text-muted-foreground">
-              <p className="font-medium text-foreground">Production approval</p>
-              <p className="mt-1">
-                Production servers always require approval — this isn&apos;t configurable. What you
-                can control is which roles are trusted to bypass the wait: a bypass still creates an
-                approved access request, is fully audited, and the server&apos;s approvers are
-                notified after the fact. Managers and members always need approval on production,
-                regardless of this setting.
-              </p>
-            </div>
+            <p className="text-xs text-muted-foreground">
+              Production servers require an approved access request. Roles with the{' '}
+              <span className="font-medium text-foreground">Production without approval</span> permission skip the
+              wait — the request is still created with a reason, audited, and the server&apos;s approvers are
+              notified afterwards.
+            </p>
           </div>
 
           {error && (
@@ -110,54 +80,40 @@ function AccessSettings() {
               {error}
             </div>
           )}
-          {success && (
-            <div className="rounded-md border border-emerald-500/40 bg-emerald-500/10 px-3 py-2 text-sm text-emerald-700 dark:text-emerald-300">
-              Access settings saved.
-            </div>
-          )}
 
-          <fieldset className="space-y-2" disabled={!canEdit}>
-            <legend className="sr-only">Production approval bypass role</legend>
-            {OPTIONS.map((opt) => (
-              <label
-                key={opt.value}
-                className={[
-                  'flex cursor-pointer items-start gap-3 rounded-lg border p-4 transition-colors',
-                  value === opt.value ? 'border-primary bg-primary/5' : 'border-border hover:bg-accent',
-                  !canEdit && 'cursor-not-allowed opacity-70',
-                ].join(' ')}
-              >
-                <input
-                  type="radio"
-                  name="prodApprovalBypassMinRole"
-                  value={opt.value}
-                  checked={value === opt.value}
-                  onChange={(e) => setValue(e.target.value)}
-                  className="mt-0.5 h-4 w-4 accent-primary"
-                />
-                <span>
-                  <span className="flex items-center gap-2">
-                    <span className="text-sm font-medium text-foreground">{opt.label}</span>
-                    {opt.badge && (
-                      <Badge tone="success">{opt.badge}</Badge>
-                    )}
-                  </span>
-                  <span className="mt-0.5 block text-xs text-muted-foreground">{opt.body}</span>
-                </span>
-              </label>
-            ))}
-          </fieldset>
+          <SwitchField
+            bordered
+            label="Allow skipping production approval"
+            description={
+              settings?.prodBypassEnabled
+                ? 'On: roles with “Production without approval” connect to production immediately.'
+                : 'Off: every production request needs an approver — including super admins. Break-glass to production is also blocked.'
+            }
+            checked={!!settings?.prodBypassEnabled}
+            disabled={saving}
+            onCheckedChange={toggle}
+          />
 
-          {canEdit && (
-            <div className="pt-1">
-              <Button type="button" onClick={handleSave} disabled={saving || value === saved}>
-                {saving ? 'Saving...' : 'Save changes'}
-              </Button>
+          <div className="rounded-lg border border-border p-4">
+            <div className="mb-2 flex items-center justify-between gap-2">
+              <p className="text-sm font-medium text-foreground">Roles with “Production without approval”</p>
+              {can('roles.view') && (
+                <Link to="/roles" className="text-xs font-medium text-primary hover:underline">
+                  Manage roles
+                </Link>
+              )}
             </div>
-          )}
-          {!canEdit && (
-            <p className="text-xs text-muted-foreground">Only super admins can change this setting.</p>
-          )}
+            <RolesWithPermission
+              permission="access.prod_bypass"
+              roles={settings?.rolesWithBypass || []}
+              emptyText="No role can skip production approval."
+            />
+            {!settings?.prodBypassEnabled && (settings?.rolesWithBypass || []).length > 0 && (
+              <p className="mt-2 text-xs text-amber-600 dark:text-amber-400">
+                Not in effect while the switch above is off.
+              </p>
+            )}
+          </div>
         </div>
       )}
     </SectionCard>

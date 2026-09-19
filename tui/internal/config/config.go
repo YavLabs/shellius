@@ -34,6 +34,8 @@ type Credentials struct {
 	TokenExpiresAt time.Time `yaml:"tokenExpiresAt"`
 	Username       string    `yaml:"username"`
 	Role           string    `yaml:"role"`
+	RoleName       string    `yaml:"roleName,omitempty"`
+	Permissions    []string  `yaml:"permissions,omitempty"`
 	OrgID          string    `yaml:"orgId"`
 	OrgSlug        string    `yaml:"orgSlug,omitempty"`
 }
@@ -53,7 +55,9 @@ type Config struct {
 	RefreshToken   string
 	TokenExpiresAt time.Time
 	Username       string
-	Role           string
+	Role           string // base tier of the user's role
+	RoleName       string // display name (custom roles have their own)
+	Permissions    []string
 	OrgID          string
 	OrgSlug        string
 
@@ -205,6 +209,8 @@ func Load(configPath string) (*Config, error) {
 		cfg.TokenExpiresAt = creds.TokenExpiresAt
 		cfg.Username = creds.Username
 		cfg.Role = creds.Role
+		cfg.RoleName = creds.RoleName
+		cfg.Permissions = creds.Permissions
 		cfg.OrgID = creds.OrgID
 		if cfg.OrgSlug == "" {
 			cfg.OrgSlug = creds.OrgSlug
@@ -302,6 +308,8 @@ func (c *Config) Save() error {
 		TokenExpiresAt: c.TokenExpiresAt,
 		Username:       c.Username,
 		Role:           c.Role,
+		RoleName:       c.RoleName,
+		Permissions:    c.Permissions,
 		OrgID:          c.OrgID,
 		OrgSlug:        c.OrgSlug,
 	}
@@ -319,6 +327,8 @@ func (c *Config) Clear() error {
 	c.TokenExpiresAt = time.Time{}
 	c.Username = ""
 	c.Role = ""
+	c.RoleName = ""
+	c.Permissions = nil
 	c.OrgID = ""
 	return nil
 }
@@ -344,4 +354,31 @@ func (c *Config) CredentialsPath() string {
 func (c *Config) SetPath(p string) {
 	c.configPath = p
 	c.credsPath = filepath.Join(filepath.Dir(p), credsFileName)
+}
+
+// Has reports whether the signed-in user's role holds permission `key`
+// (keys from the backend's permission catalogue, e.g. "access.prod_bypass").
+// Credentials saved by older CLI versions carry no permission list; for
+// those, fall back to the built-in role defaults of the stored tier.
+func (c *Config) Has(key string) bool {
+	if c.Permissions != nil {
+		for _, p := range c.Permissions {
+			if p == key {
+				return true
+			}
+		}
+		return false
+	}
+	if key == "access.prod_bypass" {
+		return c.Role == "admin" || c.Role == "super_admin"
+	}
+	return false
+}
+
+// DisplayRole is the role name to show (custom name, else the tier).
+func (c *Config) DisplayRole() string {
+	if c.RoleName != "" {
+		return c.RoleName
+	}
+	return c.Role
 }

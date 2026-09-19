@@ -9,6 +9,40 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 Tracked here as work lands on `main`; moved into a dated section on release
 (`node scripts/version.mjs bump <major|minor|patch>`).
 
+### Added
+
+- **Custom roles.** Sidebar → Administration → **Roles** (`/roles`):
+  - Every permission is a switch, grouped by area, with sensitive ones flagged.
+  - Create a role from scratch or copy an existing one, edit the built-in Admin / Manager / Member
+    (with Reset to defaults), and delete a role after moving its users.
+  - A **Matrix** view compares every role side by side and exports CSV.
+  - Example: copy Admin into "Senior admin" and add Email server, MFA policy and Audit export,
+    without making them super admins.
+  - You can only grant permissions you hold. Nobody can edit their own role, and Super admin
+    always has everything.
+- 61 permissions replace the fixed role checks everywhere: API, UI, command palette, shortcuts and
+  CLI. Changes to a role apply immediately; open browsers refresh their permissions on their own.
+- Access policies and approver lists can target custom roles. A custom role "based on" a built-in
+  role also matches that role's policies.
+- RBAC audit in `docs/rbac/`: per-permission and per-endpoint matrices, how the default policies
+  work, and every gap found.
+
+### Changed
+
+- Who may skip production approval is now the **Production without approval** role permission,
+  plus an organization-wide switch in Settings → Access. Who may use Quick Connect is the **Use
+  Quick Connect** permission. Existing settings carry over on upgrade.
+- Tightened defaults for the built-in roles:
+  - Managers no longer change a server's environment, bind stored identities to servers, use
+    stored identities in Quick Connect or watch session recordings.
+  - Members no longer change dynamic IPs.
+  - Managers can see their own direct reports.
+  - Anything removed can be granted back on the Roles page.
+- Personal notification preferences moved to **Profile**; Settings now has an **Email server** tab.
+- Pages you can't open now say so instead of silently sending you to the dashboard.
+- Dashboard shows "My live sessions" and "My certificates" to people who can't see everyone's.
+- The CLI reads the permission list at login to show which production servers need approval.
+
 ### Changed
 
 - Dashboard: **Recent connections** replaces "Recent quick connects" and is shown to everyone.
@@ -34,8 +68,39 @@ Tracked here as work lands on `main`; moved into a dated section on release
   Connect sessions show `user@host` instead of the placeholder "host". Someone else's session or
   request is still named ("Jane Doe on sshtest.local").
 
+### Security
+
+Fixes from the RBAC audit (details in `docs/rbac/rbac-audit.md`):
+
+- An admin could take over a super admin account (set their password or email, demote or
+  suspend them, or send them an invite / reset link). You can now only manage users whose role
+  you could assign. Passwords can't be set for other users, and invites only work for pending
+  accounts and never reactivate suspended ones.
+- `POST /api/certificates/issue` let any user get a CA-signed certificate for any login name
+  (for example `root`) without a policy check. It now needs its own permission (super admin by
+  default) and a server, checks every principal, issues user certificates only and never prod.
+- Admins could change the super-admin-only production setting through `PUT /api/org`.
+- Managers could move servers out of prod, bind stored identities to servers, and use or test
+  stored secrets against any host. Members could re-point any dynamic-IP server.
+- Access-request revoke wasn't limited to the caller's organization.
+- Break-glass access and deploying keys to prod ignored the production approval setting.
+- Approvers could grant longer than the policy's maximum session length, and email approval
+  links kept working after the approver was suspended.
+- Quick Connect ignored DENY policies on saved servers.
+- Deleting a customer turned its customer-scoped policies into organization-wide ones. They're
+  now switched off.
+- Access-policy role, user and group references are validated. SSO can't auto-assign Super admin
+  or a role with sensitive permissions, and its default role no longer uses the nonexistent
+  `viewer`.
+- Server, customer, group, user, install-link and recording-download actions are now audited.
+
 ### Fixed
 
+- Secondary approvers can open and revoke the requests they're asked to approve. Approve and
+  Revoke buttons now match what the API allows.
+- Admins no longer see Delete buttons that the API rejects.
+- Opening a policy with selected subjects no longer crashes: an import was commented out.
+- Switches were invisible in dark mode. Settings checkboxes are now switches.
 - The seed strips one pair of matching outer quotes from `SEED_*` values. `docker run --env-file`
   passes quotes through literally, which stored names like `"Local Admin"` (quotes included) for
   the super admin and organization.

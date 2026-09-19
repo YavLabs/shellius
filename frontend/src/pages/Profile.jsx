@@ -9,6 +9,7 @@ import Avatar from '@/components/ui/Avatar';
 import PasswordCard from '@/components/profile/PasswordCard';
 import MfaCard from '@/components/profile/MfaCard';
 import SessionsCard from '@/components/profile/SessionsCard';
+import NotificationPreferencesCard from '@/components/profile/NotificationPreferencesCard';
 import SignInMethodsCard from '@/components/profile/SignInMethodsCard';
 import {
   getMe,
@@ -18,6 +19,7 @@ import {
   uploadMyAvatar,
   removeMyAvatar,
 } from '@/services/userService';
+import { roleName } from '@/lib/permissions';
 
 const AVATAR_OUTPUT_SIZE = 128;
 const AVATAR_MAX_INPUT_BYTES = 5 * 1024 * 1024; // 5MB
@@ -344,7 +346,7 @@ function Profile() {
 
           <div className="divide-y divide-border">
             <InfoRow label="Email" value={profile?.email} />
-            <InfoRow label="Role" value={profile?.role} />
+            <InfoRow label="Role" value={roleName(profile)} />
             <InfoRow
               label="Created"
               value={
@@ -379,6 +381,7 @@ function Profile() {
         <MfaCard hasPassword={hasPassword} />
         <SignInMethodsCard hasPassword={hasPassword} ssoProvider={ssoProvider} />
         <SessionsCard />
+        <NotificationPreferencesCard />
 
         {/* Data export section */}
         <SectionCard

@@ -42,8 +42,9 @@ import {
   unlockUser,
   revokeUserSessions,
 } from '@/services/userService';
+import { listRoles } from '@/services/roleService';
+import { useAuth } from '@/context/AuthContext';
 
-const ROLES = ['super_admin', 'admin', 'manager', 'member'];
 const STATUSES = ['active', 'invited', 'suspended', 'deactivated'];
 
 function isLocked(u) {
@@ -91,6 +92,18 @@ function Users() {
   const [role, setRole] = useState('');
   const [status, setStatus] = useState('');
 
+  const { user: me, can } = useAuth();
+  const [roles, setRoles] = useState([]);
+  useEffect(() => {
+    listRoles()
+      .then(setRoles)
+      .catch(() => setRoles([]));
+  }, []);
+  const assignableRoleIds = new Set(roles.filter((r) => r.assignable).map((r) => r.id));
+  const isMe = (r) => r.id === me?.id;
+  // You can manage yourself, and anyone whose role you could assign.
+  const manageable = (r) => isMe(r) || assignableRoleIds.has(r.roleId);
+
   const [formOpen, setFormOpen] = useState(false);
   const [editingUser, setEditingUser] = useState(null);
 
@@ -137,7 +150,7 @@ function Users() {
     setError('');
     try {
       const params = { page, pageSize };
-      if (role) params.role = role;
+      if (role) params.roleId = role;
       if (status) params.status = status;
       const data = await listUsers(params);
       setUsers(data.items || []);
@@ -271,7 +284,7 @@ function Users() {
         onChange={(v) => { setRole(v); setPage(1); }}
         options={[
           { value: '', label: 'All roles' },
-          ...ROLES.map((r) => ({ value: r, label: ROLE_LABELS[r] || formatLabel(r) })),
+          ...roles.map((r) => ({ value: r.id, label: r.name })),
         ]}
         placeholder="All roles"
         searchable={false}
@@ -304,8 +317,10 @@ function Users() {
       key: 'role',
       label: 'Role',
       sortable: true,
-      searchAccessor: (r) => r.role || '',
-      render: (r) => <Badge tone={roleTone(r.role).tone}>{roleTone(r.role).label}</Badge>,
+      searchAccessor: (r) => r.roleInfo?.name || r.role || '',
+      render: (r) => (
+        <Badge tone={roleTone(r.role).tone}>{r.roleInfo?.name || roleTone(r.role).label}</Badge>
+      ),
     },
     {
       key: 'status',
@@ -353,15 +368,53 @@ function Users() {
       label: '',
       className: 'w-10',
       actions: [
-        { label: 'Edit', icon: Pencil, onClick: (r) => openEdit(r) },
-        { label: 'Upload SSH Key', icon: KeyRound, onClick: (r) => openSsh(r) },
-        { label: 'Resend invite', icon: Mail, onClick: (r) => handleResendInvite(r) },
-        { label: 'Send password reset', icon: RotateCcw, onClick: (r) => handleTriggerPasswordReset(r) },
-        { label: 'Unlock account', icon: Unlock, hidden: (r) => !isLocked(r), onClick: (r) => handleUnlock(r) },
-        { label: 'Sign out all sessions', icon: LogOut, onClick: (r) => handleRevokeSessions(r) },
-        { label: 'Deactivate', icon: UserX, onClick: (r) => handleDeactivate(r) },
-        { separator: true },
-        { label: 'Delete', icon: Trash2, variant: 'destructive', onClick: (r) => handleDelete(r) },
+        // Each action: its permission AND the right to manage this user
+        // (you can only act on users whose role you could assign).
+        {
+          label: 'Edit',
+          icon: Pencil,
+          hidden: (r) => !manageable(r) || !(can('users.update') || can('users.assign_role') || can('users.suspend')),
+          onClick: (r) => openEdit(r),
+        },
+        { label: 'Upload SSH Key', icon: KeyRound, hidden: (r) => !manageable(r) || !can('users.update'), onClick: (r) => openSsh(r) },
+        {
+          label: 'Resend invite',
+          icon: Mail,
+          hidden: (r) => r.status !== 'invited' || !manageable(r) || !can('users.invite'),
+          onClick: (r) => handleResendInvite(r),
+        },
+        {
+          label: 'Send password reset',
+          icon: RotateCcw,
+          hidden: (r) => r.status !== 'active' || isMe(r) || !manageable(r) || !can('users.reset_credentials'),
+          onClick: (r) => handleTriggerPasswordReset(r),
+        },
+        {
+          label: 'Unlock account',
+          icon: Unlock,
+          hidden: (r) => !isLocked(r) || !manageable(r) || !can('users.reset_credentials'),
+          onClick: (r) => handleUnlock(r),
+        },
+        {
+          label: 'Sign out all sessions',
+          icon: LogOut,
+          hidden: (r) => !manageable(r) || !can('users.revoke_sessions'),
+          onClick: (r) => handleRevokeSessions(r),
+        },
+        {
+          label: 'Deactivate',
+          icon: UserX,
+          hidden: (r) => isMe(r) || !manageable(r) || !can('users.suspend'),
+          onClick: (r) => handleDeactivate(r),
+        },
+        { separator: true, hidden: (r) => isMe(r) || !manageable(r) || !can('users.delete') },
+        {
+          label: 'Delete',
+          icon: Trash2,
+          variant: 'destructive',
+          hidden: (r) => isMe(r) || !manageable(r) || !can('users.delete'),
+          onClick: (r) => handleDelete(r),
+        },
       ],
     },
   ];
@@ -369,9 +422,11 @@ function Users() {
   return (
     <div className="space-y-6 p-6">
       <PageHeader icon={UsersIcon} title="Users" subtitle="Manage user accounts, roles, and access." helpKey="users">
-        <Button onClick={openCreate}>
-          <Plus className="mr-2 h-4 w-4" /> Add User
-        </Button>
+        {can('users.invite') && (
+          <Button onClick={openCreate}>
+            <Plus className="mr-2 h-4 w-4" /> Add User
+          </Button>
+        )}
       </PageHeader>
 
       {error && (

@@ -10,6 +10,7 @@ import {
 } from 'lucide-react';
 import { useAuth } from '@/context/AuthContext';
 import Avatar from '@/components/ui/Avatar';
+import { canAccessRoute } from '@/lib/commands';
 
 /**
  * UserMenu — the shared dropdown that opens from the topbar avatar
@@ -30,8 +31,8 @@ import Avatar from '@/components/ui/Avatar';
  * Items always shown:
  *   - User identity header (name + email)
  *   - Profile       → /profile
- *   - Settings      → /settings     (only for admin / super_admin)
- *   - Bulk import   → /bulk-import  (only for admin / super_admin)
+ *   - Settings      → /settings     (roles with any settings permission)
+ *   - Bulk import   → /bulk-import  (import.run)
  *   - Install CLI   → /install-cli
  *   - Keyboard shortcuts → opens the ShortcutsDialog
  *   - Sign out (destructive)
@@ -74,7 +75,8 @@ function UserMenu({ trigger, align = 'right', verticalAlign = 'below' }) {
     navigate(path);
   };
 
-  const isAdmin = user?.role === 'admin' || user?.role === 'super_admin';
+  const canSettings = canAccessRoute(user, '/settings');
+  const canImport = canAccessRoute(user, '/bulk-import');
 
   // Position classes for the dropdown panel.
   const horizontalCls = align === 'left' ? 'left-0' : 'right-0';
@@ -103,14 +105,14 @@ function UserMenu({ trigger, align = 'right', verticalAlign = 'below' }) {
 
           {/* Profile / Settings */}
           <MenuItem icon={UserIcon} label="Profile" onClick={() => go('/profile')} />
-          {isAdmin && (
+          {canSettings && (
             <MenuItem
               icon={SettingsIcon}
               label="Settings"
               onClick={() => go('/settings')}
             />
           )}
-          {isAdmin && (
+          {canImport && (
             <MenuItem
               icon={Upload}
               label="Bulk import"

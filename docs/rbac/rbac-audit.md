@@ -135,3 +135,32 @@ The IDs refer to the detailed write-ups:
 ### Example: "more than admin, less than super admin"
 
 Clone **Admin** into **Senior admin** and add `settings.smtp`, `settings.mfa`, `audit.export` and `users.delete`. Leave out `settings.sso`, `settings.storage`, `ca.rotate` and `roles.manage`. Senior admins then get those extra screens and buttons. A super admin creates it, since it holds permissions admins don't have. An admin can't assign, edit or copy it for the same reason.
+
+## Status after the custom-roles work
+
+**Fixed:**
+- **Critical:** F-01, F-02, F-03, F-04.
+- **High:** F-05, F-06, F-07, F-09, F-10, F-14/G4, F-17, G5, G6.
+- **Medium:**
+  - F-08, F-11, F-12, F-13, F-15 (UI-2.9–2.11), F-22, F-24, F-25, G20, G22.
+  - F-20 (partly): user, server, customer, group, install-link and recording-download actions are now audited.
+  - F-18 (partly): changing the login user at connect time is now checked against policy, and on prod it needs its own approval.
+  - G12 (changed): super admins no longer skip DENY policies.
+  - G8: prod-bypass notices fall back to everyone who can revoke access.
+- **Low / UI:** UI-2.1–2.8, UI-3.1, UI-3.3, UI-3.4, the CLI prod status, and the Policy subjects picker crash (a commented-out import).
+- **F-16 (partial):** storage is now a sensitive permission, but still install-wide. A separate platform-operator role remains to do.
+
+**Still open:**
+
+| ID | What | Suggested next step |
+|---|---|---|
+| F-19 | RDP gateway token can be replayed within 5 minutes | Single-use token plus a re-check at WS connect |
+| F-21 | Demotion leaves already-approved access in place | Revoke the user's APPROVED requests when their role loses `access.prod_bypass` / `access.request` |
+| G7 | Policy `autoApprove` / `isBreakGlass` are never read | Drop them from the model or make them real |
+| G9 | Managers with no `managerId` can't request prod ("no approver") | Add approver routing to the seeded "Admins & Managers" prod policy |
+| G11 | Deleted default policies/groups come back on restart | Seed once per org (record a marker) |
+| G13 / F-26 | Key download is allowed if *any* policy allows it | Check the matched policy |
+| G15 | Default principals miss `debian`, `centos`, `deploy`… | Include the server's `sshUser` automatically |
+| G18 / G19 | Priority ties; the policy simulator ignores prod rules | Tie-break by id; run the prod rule in the simulator |
+| UI-3.5 / 3.6 | No page for members' own certificates; no UI for break-glass | Add "My certificates" and a break-glass action |
+| F-27 | Minor items: stale MFA allowlist entry, legacy heartbeat org binding, a few unscoped `findUnique` calls | Housekeeping |

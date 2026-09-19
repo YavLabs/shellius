@@ -10,8 +10,12 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { listGroups, createGroup } from '@/services/groupService';
 import { relativeTime } from '@/utils/time';
+import { useAuth } from '@/context/AuthContext';
 
 function Groups() {
+  const { can } = useAuth();
+  // Viewing needs groups.view (route); changing them needs groups.manage.
+  const canManage = can('groups.manage');
   const [groups, setGroups] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -88,17 +92,21 @@ function Groups() {
       className: 'w-10',
       actions: [
         {
-          label: 'Manage',
+          label: canManage ? 'Manage' : 'View',
           icon: Pencil,
           onClick: (g) => navigate(`/groups/${g.id}`),
         },
-        { separator: true },
-        {
-          label: 'Delete',
-          icon: Trash2,
-          variant: 'destructive',
-          onClick: (g) => handleDelete(g),
-        },
+        ...(canManage
+          ? [
+              { separator: true },
+              {
+                label: 'Delete',
+                icon: Trash2,
+                variant: 'destructive',
+                onClick: (g) => handleDelete(g),
+              },
+            ]
+          : []),
       ],
     },
   ];
@@ -106,9 +114,11 @@ function Groups() {
   return (
     <div className="space-y-6 p-6">
       <PageHeader icon={UsersRound} title="Groups" subtitle="Organize users into access groups." helpKey="groups">
-        <Button onClick={() => setCreateOpen(true)}>
-          <Plus className="mr-2 h-4 w-4" /> Create Group
-        </Button>
+        {canManage && (
+          <Button onClick={() => setCreateOpen(true)}>
+            <Plus className="mr-2 h-4 w-4" /> Create Group
+          </Button>
+        )}
       </PageHeader>
 
       {error && (

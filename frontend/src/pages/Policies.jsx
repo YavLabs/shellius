@@ -22,11 +22,8 @@ import { listPolicies, createPolicy, updatePolicy, getPolicy } from '@/services/
 import { listCustomers } from '@/services/customerService';
 import { useAuth } from '@/context/AuthContext';
 import { relativeTime } from '@/utils/time';
+import { can } from '@/lib/permissions';
 
-const ROLE_RANK = { super_admin: 4, admin: 3, manager: 2, member: 1 };
-function isAtLeast(user, role) {
-  return (ROLE_RANK[user?.role] || 0) >= (ROLE_RANK[role] || 0);
-}
 
 function EffectBadge({ effect }) {
   const { tone, label } = policyEffectTone(effect);
@@ -35,7 +32,7 @@ function EffectBadge({ effect }) {
 
 function Policies() {
   const { user } = useAuth();
-  const canAdmin = isAtLeast(user, 'admin');
+  const canAdmin = can(user, 'policies.manage');
 
   const [policies, setPolicies] = useState([]);
   const [total, setTotal] = useState(0);

@@ -36,7 +36,7 @@ import RequestForm from '@/components/access-requests/RequestForm';
 import { useAuth } from '@/context/AuthContext';
 import { useCommandPalette } from '@/context/CommandPaletteContext';
 import { useQuickConnect } from '@/context/QuickConnectContext';
-import { roleAtLeast } from '@/lib/permissions';
+import { can } from '@/lib/permissions';
 import { QUICK_ACTIONS, NAV_ITEMS, isQuickActionVisible, isNavItemVisible, matchesQuery } from '@/lib/commands';
 import { globalSearch } from '@/services/searchService';
 import { getAccessIntent } from '@/services/accessRequestService';
@@ -107,7 +107,7 @@ function CommandPalette() {
   const abortRef = useRef(null);
   const copyTimerRef = useRef(null);
 
-  const canDeployKeys = roleAtLeast(user, 'admin');
+  const canDeployKeys = can(user, 'keystore.deploy');
 
   // ⌘K / Ctrl+K opens from anywhere, even while typing in another input.
   useEffect(() => {

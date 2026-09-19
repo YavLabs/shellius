@@ -231,7 +231,7 @@ func runDoctor(configPath, logPath string) int {
 			fmt.Printf("Org         : %s\n", cfg.OrgSlug)
 		}
 		if cfg.Role != "" {
-			fmt.Printf("Role        : %s\n", cfg.Role)
+			fmt.Printf("Role        : %s\n", cfg.DisplayRole())
 		}
 	}
 

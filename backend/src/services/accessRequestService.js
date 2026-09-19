@@ -487,19 +487,24 @@ export async function submit({
         serverId,
         requestedPrincipal,
       });
-      const approvers = await resolveApprovers({
+      let approvers = await resolveApprovers({
         orgId,
         requesterId,
         policy: approverPolicy,
         manager: requester.manager,
       });
+      // No approver routing (e.g. the admin prod policies) and no manager:
+      // tell the people who can revoke it instead of nobody (G8).
+      if (approvers.length === 0) {
+        approvers = await usersWithPermission(orgId, 'access_requests.revoke_any', { excludeUserId: requesterId });
+      }
       for (const approver of approvers) {
         await notificationService.create({
           orgId,
           userId: approver.id,
           type: 'ACCESS_REQUEST_APPROVED',
           title: `Production access bypass — ${requester.name}`,
-          body: `${requester.name} (${callerRole}) was auto-approved for ${protocol} access to ${server.hostname} (prod) without review, per your organization's approval bypass setting. Reason: ${reason}`,
+          body: `${requester.name} (${callerRole}) was auto-approved for ${protocol} access to ${server.hostname} (prod) without review, because their role may skip production approval. Reason: ${reason}`,
           metadata: { accessRequestId: accessRequest.id, requesterId, serverId, bypass: true },
         });
       }

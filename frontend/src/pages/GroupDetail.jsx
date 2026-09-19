@@ -17,10 +17,13 @@ import {
   removeGroupMember,
 } from '@/services/groupService';
 import { listUsers } from '@/services/userService';
+import { useAuth } from '@/context/AuthContext';
 
 function GroupDetail() {
   const { id } = useParams();
   const navigate = useNavigate();
+  const { can } = useAuth();
+  const canManage = can('groups.manage');
   const [group, setGroup] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -92,12 +95,16 @@ function GroupDetail() {
         title={group.name}
         subtitle={group.description}
       >
-        <Button variant="outline" onClick={() => setEditOpen(true)}>
-          <Pencil className="mr-2 h-4 w-4" /> Edit
-        </Button>
-        <Button variant="destructive" onClick={() => setConfirmDelete(true)}>
-          <Trash2 className="mr-2 h-4 w-4" /> Delete
-        </Button>
+        {canManage && (
+          <>
+            <Button variant="outline" onClick={() => setEditOpen(true)}>
+              <Pencil className="mr-2 h-4 w-4" /> Edit
+            </Button>
+            <Button variant="destructive" onClick={() => setConfirmDelete(true)}>
+              <Trash2 className="mr-2 h-4 w-4" /> Delete
+            </Button>
+          </>
+        )}
       </PageHeader>
 
       <div className="rounded-lg border border-border bg-card">
@@ -105,9 +112,11 @@ function GroupDetail() {
           <h2 className="text-sm font-semibold text-foreground">
             Members ({members.length})
           </h2>
-          <Button size="sm" onClick={() => setAddOpen(true)}>
-            <Plus className="mr-1.5 h-3.5 w-3.5" /> Add Member
-          </Button>
+          {canManage && (
+            <Button size="sm" onClick={() => setAddOpen(true)}>
+              <Plus className="mr-1.5 h-3.5 w-3.5" /> Add Member
+            </Button>
+          )}
         </div>
         {members.length === 0 ? (
           <div className="p-8 text-center text-sm text-muted-foreground">No members yet</div>
@@ -120,6 +129,7 @@ function GroupDetail() {
                   <UserCell user={u} />
                   <div className="flex items-center gap-3">
                     {u.role && <Badge tone={roleTone(u.role).tone}>{roleTone(u.role).label}</Badge>}
+                    {canManage && (
                     <Button
                       variant="ghost"
                       size="icon"
@@ -129,6 +139,7 @@ function GroupDetail() {
                     >
                       <X className="h-4 w-4" />
                     </Button>
+                    )}
                   </div>
                 </li>
               );

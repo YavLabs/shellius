@@ -184,16 +184,23 @@ accounts live in `UserIdentity` (one row per provider per user; unique on
 ### Production approval
 
 `server.environment === 'prod'` requires approval **unless the requester's role
-is at or above the org's bypass role** — `Organization.settings.access.prodApprovalBypassMinRole`:
-`'admin'` (default: admins and super_admins get immediate access), `'super_admin'`,
-or `'none'` (everyone needs approval). Policy `autoApprove` is **ignored on prod
-for requesters below the bypass role** (it can no longer grant managers/members
-unreviewed prod access). A bypass still creates an `APPROVED` AccessRequest
-(reason required), is audited as `access_request.prod_bypass`, and notifies the
-server's approvers after the fact. Break-glass is unchanged.
+holds `access.prod_bypass`** (Admin and Super admin by default; edited on the
+Roles page) **and** the org switch `Organization.settings.access.prodBypassEnabled`
+is on. With the switch off nobody skips approval — not even super admins — and
+break-glass can't reach prod either. Policy `autoApprove` is **ignored on prod**.
+A bypass still creates an `APPROVED` AccessRequest (reason required), is audited
+as `access_request.prod_bypass`, and notifies the server's approvers after the
+fact (or, with no approver routing, everyone who can revoke access).
 
-- `GET /api/org/access-settings` (admin) → `{ prodApprovalBypassMinRole }`
-- `PUT /api/org/access-settings` (super_admin) `{ prodApprovalBypassMinRole }`
+- `GET /api/org/access-settings` (`org.access_settings`) →
+  `{ prodBypassEnabled, rolesWithBypass: [{id,key,name,isSystem}], prodApprovalBypassMinRole }`
+  (`prodApprovalBypassMinRole` is a derived legacy summary).
+- `PUT /api/org/access-settings` (`org.access_settings`) `{ prodBypassEnabled }`.
+  The legacy `{ prodApprovalBypassMinRole: 'admin'|'super_admin'|'none' }` is
+  still accepted: it sets the switch and grants/removes the built-in Admin
+  role's `access.prod_bypass`.
+- Upgrades: the old setting is migrated onto the built-in roles when they are
+  first created (`roleService.syncSystemRoles`).
 
 ### Search totals
 

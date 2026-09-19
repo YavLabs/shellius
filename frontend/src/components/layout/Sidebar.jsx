@@ -20,11 +20,13 @@ import {
   PanelLeftClose,
   Menu,
   X,
+  ShieldCheck,
 } from 'lucide-react';
 import { useAuth } from '@/context/AuthContext';
 import { useNotifications } from '@/context/NotificationContext';
 import { useTerminalWorkspace } from '@/context/TerminalWorkspaceContext';
 import { cn } from '@/lib/utils';
+import { canAccessRoute } from '@/lib/commands';
 import BrandLogo, { BrandMark } from '@/components/common/BrandLogo';
 import UserMenu from '@/components/layout/UserMenu';
 import Avatar from '@/components/ui/Avatar';
@@ -44,10 +46,6 @@ const COLLAPSED_KEY = 'shellius_sidebar_collapsed';
 const EXPANDED_WIDTH = 'w-60';
 const COLLAPSED_WIDTH = 'w-14';
 
-const ROLE_RANK = { super_admin: 4, admin: 3, manager: 2, member: 1 };
-function isAtLeast(user, role) {
-  return (ROLE_RANK[user?.role] || 0) >= (ROLE_RANK[role] || 0);
-}
 
 // ---------------------------------------------------------------------------
 // Grouped navigation config
@@ -72,36 +70,35 @@ const NAV_SECTIONS = [
     label: 'Access',
     items: [
       { id: 'access-requests', label: 'Access requests', icon: KeyRound, to: '/access-requests' },
-      { id: 'policies', label: 'Policies', icon: Shield, to: '/policies', minRole: 'admin' },
+      { id: 'policies', label: 'Policies', icon: Shield, to: '/policies' },
       {
         id: 'certificates',
         label: 'Certificates',
         icon: FileKey,
         to: '/certificates',
-        minRole: 'admin',
       },
       {
         id: 'keystore',
         label: 'Keystore',
         icon: KeySquare,
         to: '/keystore',
-        minRole: 'manager',
       },
     ],
   },
   {
     label: 'Audit',
     items: [
-      { id: 'sessions', label: 'Sessions', icon: Terminal, to: '/sessions', minRole: 'manager' },
-      { id: 'audit-log', label: 'Audit log', icon: ScrollText, to: '/audit-log', minRole: 'admin' },
+      { id: 'sessions', label: 'Sessions', icon: Terminal, to: '/sessions' },
+      { id: 'audit-log', label: 'Audit log', icon: ScrollText, to: '/audit-log' },
       { id: 'notifications', label: 'Notifications', icon: Bell, to: '/notifications' },
     ],
   },
   {
     label: 'Administration',
     items: [
-      { id: 'users', label: 'Users', icon: Users, to: '/users', minRole: 'admin' },
-      { id: 'groups', label: 'Groups', icon: UsersRound, to: '/groups', minRole: 'admin' },
+      { id: 'users', label: 'Users', icon: Users, to: '/users' },
+      { id: 'roles', label: 'Roles', icon: ShieldCheck, to: '/roles' },
+      { id: 'groups', label: 'Groups', icon: UsersRound, to: '/groups' },
     ],
   },
 ];
@@ -202,7 +199,8 @@ function SidebarBody({ collapsed, onToggle, onNavigate }) {
   // which matched nothing on the Access requests page.)
   const pendingReviews = usePendingReviewCount(unreadCount);
 
-  const canSee = (item) => !item.minRole || isAtLeast(user, item.minRole);
+  // Visibility comes from ROUTE_ACCESS (lib/commands.js), same as the router.
+  const canSee = (item) => canAccessRoute(user, item.to);
 
   const renderItem = (item) => {
     if (!canSee(item)) return null;

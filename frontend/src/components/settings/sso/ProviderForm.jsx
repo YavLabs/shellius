@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { CheckCircle, Wifi, WifiOff, XCircle } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -13,6 +13,7 @@ import {
   testSavedSsoProvider,
 } from '@/services/ssoConfigService';
 import { SwitchField } from '@/components/ui/switch';
+import { listRoles } from '@/services/roleService';
 
 // Mirrors the shadcn <Input> default styling so PasswordInput (raw input) matches.
 const SHADCN_INPUT_CLS =
@@ -67,6 +68,23 @@ export default function ProviderForm({ preset, existingProvider, orgGroups, onSa
   const [isActive, setIsActive] = useState(existingProvider?.isActive ?? true);
 
   const [defaultRole, setDefaultRole] = useState(existingProvider?.defaultRole || 'member');
+  // Roles SSO may hand out automatically: never Super admin, never a role
+  // with sensitive permissions (the API refuses those too).
+  const [roleOptions, setRoleOptions] = useState([
+    { value: 'member', label: 'Member' },
+    { value: 'manager', label: 'Manager' },
+  ]);
+  useEffect(() => {
+    listRoles()
+      .then((roles) =>
+        setRoleOptions(
+          roles
+            .filter((r) => !r.locked && (r.sensitivePermissions || []).length === 0)
+            .map((r) => ({ value: r.key, label: r.name }))
+        )
+      )
+      .catch(() => {});
+  }, []);
   const [defaultGroupId, setDefaultGroupId] = useState(existingProvider?.defaultGroupId || '');
   const [autoProvision, setAutoProvision] = useState(existingProvider?.autoProvision ?? true);
   const [allowedDomains, setAllowedDomains] = useState(existingProvider?.allowedDomains || []);
@@ -298,11 +316,7 @@ export default function ProviderForm({ preset, existingProvider, orgGroups, onSa
               onChange={(v) => setDefaultRole(v)}
               searchable={false}
               clearable={false}
-              options={[
-                { value: 'member', label: 'Member' },
-                { value: 'manager', label: 'Manager' },
-                { value: 'admin', label: 'Admin' },
-              ]}
+              options={roleOptions}
             />
           </div>
           <div>

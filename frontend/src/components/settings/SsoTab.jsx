@@ -17,11 +17,11 @@ import { getProvider } from '@/config/ssoProviders';
 import { listSsoProviders } from '@/services/ssoConfigService';
 import { listGroups as listOrgGroups } from '@/services/groupService';
 import { useAuth } from '@/context/AuthContext';
-import { roleAtLeast } from '@/lib/permissions';
+import { can } from '@/lib/permissions';
 
 function SsoTab() {
   const { user } = useAuth();
-  const canManage = roleAtLeast(user, 'super_admin');
+  const canManage = can(user, 'settings.sso');
 
   const [providers, setProviders] = useState([]);
   const [orgGroups, setOrgGroups] = useState([]);

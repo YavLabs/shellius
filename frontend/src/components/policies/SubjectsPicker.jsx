@@ -1,5 +1,4 @@
 /**
-import { Badge } from '@/components/ui/badge';
  * SubjectsPicker — unified searchable picker for Users, Groups, and Roles
  * in the Policy form (Step 2 — "Who does this apply to?").
  *
@@ -21,34 +20,22 @@ import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { X, Search, Users, UsersRound, ShieldCheck, Loader2 } from 'lucide-react';
 import { listUsers } from '@/services/userService';
 import { listGroups } from '@/services/groupService';
+import { listRoles } from '@/services/roleService';
 import { formatLabel } from '@/utils/format';
 import { initialsOf } from '@/components/ui/Avatar';
+import { Badge } from '@/components/ui/badge';
 
 // How many rows to show per category before "Show more" appears.
 const WINDOW_SIZE = 50;
 
-// Static role definitions — these never change.
-const ROLES = [
-  {
-    id: 'super_admin',
-    label: 'Super admin',
-    description: 'Full access, bypasses policy evaluation',
-  },
-  {
-    id: 'admin',
-    label: 'Admin',
-    description: 'Manages users, servers, and policies',
-  },
-  {
-    id: 'manager',
-    label: 'Manager',
-    description: 'Production access without approval; can approve others',
-  },
-  {
-    id: 'member',
-    label: 'Member',
-    description: 'Self-serve dev/staging; production requires approval',
-  },
+// Built-in roles — shown until the org's roles load (or if they can't be).
+// Policies match a role by its key; a custom role based on Admin also
+// matches policies that target "admin".
+const FALLBACK_ROLES = [
+  { id: 'super_admin', label: 'Super admin', description: 'Built-in role' },
+  { id: 'admin', label: 'Admin', description: 'Built-in role' },
+  { id: 'manager', label: 'Manager', description: 'Built-in role' },
+  { id: 'member', label: 'Member', description: 'Built-in role' },
 ];
 
 // Debounce hook — returns the debounced value after `delay` ms.
@@ -134,6 +121,20 @@ function TypeTabStrip({ active, onChange }) {
 export default function SubjectsPicker({ subjects = [], onChange }) {
   const [allUsers, setAllUsers] = useState([]);
   const [allGroups, setAllGroups] = useState([]);
+  const [ROLES, setRoles] = useState(FALLBACK_ROLES);
+  useEffect(() => {
+    listRoles()
+      .then((roles) =>
+        setRoles(
+          roles.map((r) => ({
+            id: r.key,
+            label: r.name,
+            description: r.isSystem ? r.description || 'Built-in role' : `Custom role · based on ${r.baseRole}`,
+          }))
+        )
+      )
+      .catch(() => {});
+  }, []);
   const [loadingUsers, setLoadingUsers] = useState(true);
   const [loadingGroups, setLoadingGroups] = useState(true);
 
@@ -194,9 +195,9 @@ export default function SubjectsPicker({ subjects = [], onChange }) {
     return ROLES.filter(
       (r) =>
         r.label.toLowerCase().includes(q) ||
-        r.description.toLowerCase().includes(q)
+        (r.description || '').toLowerCase().includes(q)
     );
-  }, [debouncedSearch]);
+  }, [debouncedSearch, ROLES]);
 
   // Quick-lookup set for O(1) selected checks.
   const selectedSet = useMemo(

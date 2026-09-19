@@ -9,15 +9,16 @@ import CustomerForm from '@/components/customers/CustomerForm';
 import PageHeader from '@/components/common/PageHeader';
 import { Button } from '@/components/ui/button';
 import { useAuth } from '@/context/AuthContext';
-import { roleAtLeast } from '@/lib/permissions';
+import { can } from '@/lib/permissions';
 import { listCustomers, createCustomer, updateCustomer } from '@/services/customerService';
 import DeleteCustomerDialog from '@/components/customers/DeleteCustomerDialog';
 
 function Customers() {
   const navigate = useNavigate();
   const { user } = useAuth();
-  const canManage = roleAtLeast(user, 'manager'); // create / edit
-  const canDelete = roleAtLeast(user, 'admin');
+  const canCreate = can(user, 'customers.create');
+  const canManage = can(user, 'customers.update');
+  const canDelete = can(user, 'customers.delete');
   const [customers, setCustomers] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -29,7 +30,7 @@ function Customers() {
 
   // Deep link: /customers?action=new — open the create modal on mount.
   useEffect(() => {
-    if (searchParams.get('action') === 'new' && canManage) {
+    if (searchParams.get('action') === 'new' && canCreate) {
       setCreateOpen(true);
       const next = new URLSearchParams(searchParams);
       next.delete('action');
@@ -150,7 +151,7 @@ function Customers() {
           <Button variant="outline" onClick={() => fetch()} disabled={loading}>
             <RefreshCw className={`mr-2 h-4 w-4 ${loading ? 'animate-spin' : ''}`} /> Refresh
           </Button>
-          {canManage && (
+          {canCreate && (
             <Button onClick={() => setCreateOpen(true)}>
               <Plus className="mr-2 h-4 w-4" /> Add Customer
             </Button>

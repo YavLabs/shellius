@@ -26,6 +26,7 @@ import { listAudit, exportAudit } from '@/services/auditService';
 import { useAuth } from '@/context/AuthContext';
 import { relativeTime, formatDateTime } from '@/utils/time';
 import { formatLabel } from '@/utils/format';
+import { can } from '@/lib/permissions';
 
 // ---------------------------------------------------------------------------
 // Action category configuration
@@ -100,10 +101,6 @@ function ActionBadge({ action }) {
   return <Badge tone={auditCategoryTone(category)}>{action}</Badge>;
 }
 
-const ROLE_RANK = { super_admin: 4, admin: 3, manager: 2, member: 1 };
-function isAtLeast(user, role) {
-  return (ROLE_RANK[user?.role] || 0) >= (ROLE_RANK[role] || 0);
-}
 
 const RESOURCE_TYPES = [
   'User', 'Group', 'Customer', 'Server', 'Certificate', 'CaKeyPair',
@@ -123,7 +120,7 @@ function MetadataPanel({ metadata }) {
 
 function AuditLog() {
   const { user } = useAuth();
-  const canExport = isAtLeast(user, 'super_admin');
+  const canExport = can(user, 'audit.export');
 
   const [items, setItems] = useState([]);
   const [total, setTotal] = useState(0);

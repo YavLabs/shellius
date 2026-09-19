@@ -1,5 +1,6 @@
-import { createContext, useContext, useState, useEffect, useCallback } from 'react';
+import { createContext, useContext, useState, useEffect, useCallback, useRef } from 'react';
 import api from '@/services/api';
+import { PERMISSIONS_STALE_EVENT } from '@/lib/permissions';
 
 const AuthContext = createContext(null);
 
@@ -31,6 +32,41 @@ export function AuthProvider({ children }) {
   useEffect(() => {
     loadMe();
   }, [loadMe]);
+
+  // Permissions change without a new login (an admin edits your role), so
+  // re-read /auth/me quietly: when the API says we lack a permission (the UI
+  // may be stale), when the tab regains focus, and every few minutes.
+  // Never logs out on failure — the api interceptor handles real 401s.
+  const lastSync = useRef(0);
+  const syncPermissions = useCallback(async (force = false) => {
+    if (!localStorage.getItem('accessToken')) return;
+    if (!force && Date.now() - lastSync.current < 30000) return;
+    lastSync.current = Date.now();
+    try {
+      const res = await api.get('/auth/me');
+      const fresh = res.data?.data?.user;
+      if (fresh) setUser(fresh);
+    } catch {
+      /* keep what we have */
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!user) return undefined;
+    const onStale = () => syncPermissions(true);
+    const onFocus = () => syncPermissions(false);
+    const id = setInterval(() => syncPermissions(true), 5 * 60 * 1000);
+    window.addEventListener(PERMISSIONS_STALE_EVENT, onStale);
+    window.addEventListener('focus', onFocus);
+    return () => {
+      clearInterval(id);
+      window.removeEventListener(PERMISSIONS_STALE_EVENT, onStale);
+      window.removeEventListener('focus', onFocus);
+    };
+  }, [user, syncPermissions]);
+
+  // Permission check for components: can('servers.create').
+  const can = useCallback((permission) => !!user?.permissions?.includes(permission), [user]);
 
   // Store a token pair + hydrate user from a login/MFA response. Returns the
   // user, or the raw challenge object when MFA is required (no tokens yet).
@@ -137,6 +173,7 @@ export function AuthProvider({ children }) {
     loading: isLoading,
     error,
     isAuthenticated: !!user,
+    can,
     login,
     loginWithTokens,
     completeMfa,

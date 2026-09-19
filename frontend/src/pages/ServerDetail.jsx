@@ -38,7 +38,7 @@ import {
   DropdownMenuSeparator,
 } from '@/components/ui/dropdown-menu';
 import { useAuth } from '@/context/AuthContext';
-import { roleAtLeast } from '@/lib/permissions';
+import { can } from '@/lib/permissions';
 import {
   getServer,
   updateServer,
@@ -131,16 +131,20 @@ function ServerDetail() {
     }
   };
 
-  const canManage = roleAtLeast(currentUser, 'manager'); // onboard/edit servers
-  const canDelete = roleAtLeast(currentUser, 'admin');
-  const canDeployKeys = roleAtLeast(currentUser, 'admin');
+  // Same permission keys the API checks for each action.
+  const canEdit = can(currentUser, 'servers.update');
+  const canOnboard = can(currentUser, 'servers.onboard');
+  const canManage = canEdit || canOnboard;
+  const canDelete = can(currentUser, 'servers.delete');
+  const canDeployKeys = can(currentUser, 'keystore.deploy');
+  const canResetHostKey = can(currentUser, 'servers.reset_host_key');
   const isCredentialMode = server?.authMode === 'credential';
   const canProvision =
     server &&
     !isCredentialMode &&
     (server.protocol === 'ssh' || server.protocol === 'both') &&
     server.osType !== 'windows' &&
-    canManage;
+    canOnboard;
 
   const handleResetHostKey = async () => {
     setResettingHostKey(true);
@@ -209,12 +213,12 @@ function ServerDetail() {
               or Request Access (when one doesn't) — same source of truth as
               the Servers list row, so the two views can never disagree. */}
           <QuickConnectButton server={server} currentUser={currentUser} />
-          {canManage && (
+          {canEdit && (
             <Button variant="outline" size="sm" onClick={() => setEditOpen(true)}>
               <Pencil className="mr-2 h-4 w-4" /> Edit
             </Button>
           )}
-          {(canManage || canDelete) && (
+          {(canOnboard || canDelete || canDeployKeys || canResetHostKey) && (
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
                 <Button variant="outline" size="sm" aria-label="More actions">
@@ -222,7 +226,7 @@ function ServerDetail() {
                 </Button>
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end" className="w-56">
-                {canManage && (
+                {canOnboard && (
                   <>
                     <DropdownMenuLabel className="text-xs font-medium text-muted-foreground">
                       Host
@@ -253,17 +257,21 @@ function ServerDetail() {
                     )}
                   </>
                 )}
-                {canDeployKeys && (server?.protocol === 'ssh' || server?.protocol === 'both') && (
+                {(canDeployKeys || canResetHostKey) && (server?.protocol === 'ssh' || server?.protocol === 'both') && (
                   <>
                     <DropdownMenuLabel className="text-xs font-medium text-muted-foreground">
                       Keystore
                     </DropdownMenuLabel>
-                    <DropdownMenuItem onSelect={() => setDeployWizardOpen(true)}>
-                      <Send className="mr-2 h-4 w-4" /> Export key to servers…
-                    </DropdownMenuItem>
-                    <DropdownMenuItem onSelect={() => setResetHostKeyConfirm(true)}>
-                      <RotateCw className="mr-2 h-4 w-4" /> Reset host key
-                    </DropdownMenuItem>
+                    {canDeployKeys && (
+                      <DropdownMenuItem onSelect={() => setDeployWizardOpen(true)}>
+                        <Send className="mr-2 h-4 w-4" /> Export key to servers…
+                      </DropdownMenuItem>
+                    )}
+                    {canResetHostKey && (
+                      <DropdownMenuItem onSelect={() => setResetHostKeyConfirm(true)}>
+                        <RotateCw className="mr-2 h-4 w-4" /> Reset host key
+                      </DropdownMenuItem>
+                    )}
                   </>
                 )}
                 {canDelete && (
