@@ -359,10 +359,10 @@ function Login() {
           )}
 
         <div className="text-center">
-          <h1 className="text-3xl font-semibold">
+          <h1 className="sr-only">
             {step === 'mfa' ? 'Verify it’s you' : step === 'sent' ? 'Check your inbox' : 'Sign in'}
           </h1>
-          <p className="mx-auto mt-2 max-w-[19rem] text-sm leading-relaxed text-muted-foreground">
+          <p className="mx-auto max-w-[20rem] text-[0.9375rem] leading-relaxed text-muted-foreground">
             {step === 'password'
               ? 'Enter your password to continue.'
               : step === 'sso'
@@ -371,7 +371,7 @@ function Login() {
                   ? 'One more step to keep your account safe.'
                   : step === 'sent'
                     ? 'We’ve sent a link to set your password.'
-                    : `Enter your work email, or continue with your organization’s sign-in.`}
+                    : 'Sign in with your work email, or continue with your organization.'}
           </p>
         </div>
 

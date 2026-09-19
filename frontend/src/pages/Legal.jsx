@@ -114,7 +114,7 @@ function Legal() {
           <ArrowLeft className="h-4 w-4" /> {back.label}
         </Link>
         <div className="rounded-lg border border-border bg-card p-6 shadow-sm sm:p-8">
-          <h1 className="mb-2 text-3xl font-bold tracking-tight text-foreground">{content.title}</h1>
+          <h1 className="auth-heading mb-2 text-3xl font-bold tracking-tight text-foreground">{content.title}</h1>
           <p className="mb-8 text-sm text-muted-foreground">Last updated: {new Date().toISOString().slice(0, 10)}</p>
           <p className="mb-8 text-base leading-relaxed text-foreground/90">{content.intro}</p>
           <div className="space-y-6">
