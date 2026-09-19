@@ -509,7 +509,7 @@ function TerminalTabBar({ tabs, activeTabId, onSelect, workspace, onNewConnectio
         role="tablist"
         aria-label="Open terminals"
         ref={scrollRef}
-        className="no-scrollbar flex h-11 shrink-0 items-center gap-1.5 overflow-x-auto overflow-y-hidden bg-background px-2"
+        className="no-scrollbar flex h-9 shrink-0 items-center gap-1.5 overflow-x-auto overflow-y-hidden"
       >
         {items.map((item, index) =>
           item.type === 'workspace' ? (

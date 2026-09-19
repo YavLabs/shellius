@@ -237,7 +237,7 @@ function SessionsPanel({ workspace, onClose, onNewConnection }) {
 
   return (
     <TooltipProvider delayDuration={300}>
-      <aside className="flex h-full w-80 shrink-0 flex-col border-l border-border bg-card" aria-label="Sessions">
+      <aside className="flex h-full w-80 shrink-0 flex-col overflow-hidden rounded-lg border border-border bg-card" aria-label="Sessions">
         <div className="flex h-9 shrink-0 items-center gap-2 border-b border-border px-3">
           <span className="text-sm font-medium text-foreground">Sessions</span>
           {total > 0 && (

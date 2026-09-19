@@ -583,7 +583,7 @@ const TerminalView = forwardRef(function TerminalView(
           rendered ~1 row taller than the visible box and clipped the last
           line/cursor below the fold. Keeping containerRef padding-free
           makes its clientHeight exactly the terminal's real budget. */}
-      <div className="min-h-0 flex-1 overflow-hidden p-2">
+      <div className="min-h-0 flex-1 overflow-hidden p-3">
         <div ref={containerRef} className="h-full min-h-0 w-full" />
       </div>
     </div>
