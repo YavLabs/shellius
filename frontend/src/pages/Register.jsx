@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom';
 import { Mail, User, Lock, Eye, EyeOff, Loader2 } from 'lucide-react';
 import { BrandMark } from '@/components/common/BrandLogo';
 import { getRegistrationStatus, register } from '@/services/registrationService';
+import AuthShell from '@/components/auth/AuthShell';
 
 function validatePassword(password) {
   if (password.length < 12) return 'Password must be at least 12 characters.';
@@ -67,7 +68,7 @@ function Register() {
   };
 
   return (
-    <div className="flex min-h-screen items-center justify-center bg-background px-4">
+    <AuthShell>
       <div className="w-full max-w-sm">
         <div className="mb-8 text-center">
           <div className="mx-auto mb-4 flex justify-center">
@@ -257,7 +258,7 @@ function Register() {
           )}
         </div>
       </div>
-    </div>
+    </AuthShell>
   );
 }
 

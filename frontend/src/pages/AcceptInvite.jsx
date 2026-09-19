@@ -5,6 +5,7 @@ import { BrandMark } from '@/components/common/BrandLogo';
 import MfaChallenge from '@/components/auth/MfaChallenge';
 import { useAuth } from '@/context/AuthContext';
 import { getInvite, acceptInvite } from '@/services/userTokenService';
+import AuthShell from '@/components/auth/AuthShell';
 
 function validatePassword(password) {
   if (password.length < 12) return 'Password must be at least 12 characters.';
@@ -86,7 +87,7 @@ function AcceptInvite() {
   };
 
   return (
-    <div className="flex min-h-screen items-center justify-center bg-background px-4">
+    <AuthShell>
       <div className="w-full max-w-sm">
         <div className="mb-8 text-center">
           <div className="mx-auto mb-4 flex justify-center">
@@ -285,7 +286,7 @@ function AcceptInvite() {
           )}
         </div>
       </div>
-    </div>
+    </AuthShell>
   );
 }
 

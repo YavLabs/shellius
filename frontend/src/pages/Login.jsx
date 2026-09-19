@@ -7,6 +7,7 @@ import ProviderIcon from '@/components/settings/sso/ProviderIcon';
 import { useAuth } from '@/context/AuthContext';
 import { getRegistrationStatus } from '@/services/registrationService';
 import api from '@/services/api';
+import AuthShell from '@/components/auth/AuthShell';
 
 // Inline multi-color Google "G" mark — avoids pulling in an icon pack
 // just for the brand logo and stays crisp at any size.
@@ -300,7 +301,7 @@ function Login() {
   const locked = !!lockout && retryRemaining > 0;
 
   return (
-    <div className="flex min-h-screen items-center justify-center bg-background px-4">
+    <AuthShell>
       <div className="w-full max-w-sm">
         {isDeleted && (
           <div className="mb-4 rounded-md border border-amber-500/40 bg-amber-500/10 px-4 py-3 text-sm text-amber-700 dark:text-amber-400">
@@ -537,7 +538,7 @@ function Login() {
           )}
         </div>
       </div>
-    </div>
+    </AuthShell>
   );
 }
 

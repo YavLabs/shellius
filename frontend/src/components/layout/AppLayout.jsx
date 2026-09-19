@@ -70,7 +70,8 @@ function AppLayout() {
                   <Outlet />
                 </main>
               ) : (
-                <main className="flex-1 overflow-y-auto overflow-x-hidden bg-muted/30">
+                // Faint grid behind page content (cards stay solid on top).
+                <main className="bg-grid flex-1 overflow-y-auto overflow-x-hidden bg-muted/30">
                   <div className="min-h-[calc(100%-3rem)]">
                     <Outlet />
                   </div>
