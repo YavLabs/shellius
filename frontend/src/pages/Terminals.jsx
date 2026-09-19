@@ -176,7 +176,7 @@ function Terminals() {
   }, [tabs, activeTabId, closeTab, selectTab, workspace]);
 
   return (
-    <div className="flex h-full min-h-0 flex-col">
+    <div className="flex h-full min-h-0 flex-col gap-2 p-3 pt-2">
       <TerminalTabBar
         tabs={tabs}
         activeTabId={activeTabId}
@@ -189,8 +189,8 @@ function Terminals() {
 
       <DisconnectedBanner workspace={workspace} />
 
-      <div className="flex min-h-0 flex-1">
-        <div className="min-w-0 flex-1">
+      <div className="flex min-h-0 flex-1 gap-2">
+        <div className="min-w-0 flex-1 overflow-hidden rounded-lg">
           {tabs.length === 0 ? (
             <EmptyState onNewConnection={() => setNewConnOpen(true)} />
           ) : (

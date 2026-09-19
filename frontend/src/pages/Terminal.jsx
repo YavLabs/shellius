@@ -203,7 +203,7 @@ function Terminal() {
 
       <div className="flex-1 min-h-0 rounded-lg border border-border overflow-hidden">
         {loadingRequest ? (
-          <div className="flex h-full items-center justify-center bg-[#0a0a0a]">
+          <div className="flex h-full items-center justify-center bg-ink">
             <div className="h-5 w-5 animate-spin rounded-full border-2 border-muted border-t-foreground" />
           </div>
         ) : isRdp ? (

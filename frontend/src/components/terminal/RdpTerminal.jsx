@@ -204,9 +204,9 @@ function RdpTerminal({ requestId, onClose }) {
   };
 
   return (
-    <div className="flex flex-col h-full bg-[#0a0a0a] rounded-lg overflow-hidden border border-border">
+    <div className="flex flex-col h-full bg-ink rounded-lg overflow-hidden border border-border">
       {/* Status bar */}
-      <div className="flex items-center justify-between px-4 py-2 border-b border-border/50 bg-[#111111] shrink-0">
+      <div className="flex items-center justify-between px-4 py-2 border-b border-border/50 bg-ink-raised shrink-0">
         <StatusIndicator status={status} />
         <div className="flex items-center gap-2">
           {status === STATUS.DISCONNECTED && (
@@ -247,7 +247,7 @@ function RdpTerminal({ requestId, onClose }) {
       <div
         ref={containerRef}
         className="flex-1 min-h-0 overflow-hidden cursor-none"
-        style={{ background: '#000000' }}
+        style={{ background: '#09090C' }}
       />
     </div>
   );

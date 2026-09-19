@@ -51,7 +51,7 @@ function ProvisionModal({ server, onClose }) {
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
-      <div className="relative flex h-[85vh] w-full max-w-2xl flex-col overflow-hidden rounded-xl border border-border bg-background shadow-2xl">
+      <div className="relative flex h-[85vh] w-full max-w-2xl flex-col overflow-hidden rounded-lg border border-border bg-background shadow-2xl">
         {/* Header */}
         <div className="flex items-center justify-between border-b border-border px-6 py-4">
           <div className="flex items-center gap-3">
@@ -168,7 +168,7 @@ function ProvisionModal({ server, onClose }) {
 
           {(step === 'running' || step === 'done' || step === 'error') && (
             <div className="flex h-full flex-col">
-              <div className="flex-1 overflow-y-auto bg-zinc-950 p-4 font-mono text-xs text-zinc-300">
+              <div className="flex-1 overflow-y-auto bg-ink p-4 font-mono text-xs text-ink-fg/80">
                 {logs.map((line, i) => (
                   <div
                     key={i}
@@ -177,14 +177,14 @@ function ProvisionModal({ server, onClose }) {
                         ? 'text-emerald-400'
                         : line.startsWith('[stderr]')
                         ? 'text-red-400'
-                        : 'text-zinc-300'
+                        : 'text-ink-fg/80'
                     }`}
                   >
                     {line}
                   </div>
                 ))}
                 {step === 'running' && (
-                  <div className="mt-1 flex items-center gap-2 text-zinc-500">
+                  <div className="mt-1 flex items-center gap-2 text-ink-muted">
                     <Loader2 className="h-3 w-3 animate-spin" />
                     <span>Running bootstrap...</span>
                   </div>

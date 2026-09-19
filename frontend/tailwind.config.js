@@ -38,11 +38,43 @@ export default {
           DEFAULT: 'hsl(var(--popover))',
           foreground: 'hsl(var(--popover-foreground))',
         },
+        // Always-dark surfaces (terminal, RDP, command snippets) in the
+        // brand palette, whatever the app theme: Ink canvas, Light text.
+        ink: {
+          DEFAULT: '#09090C',
+          raised: '#10121A',
+          fg: '#EDEEF2',
+          muted: '#8A8D94',
+        },
+      },
+      // One radius scale, driven by --radius (index.css):
+      //   sm / DEFAULT  6px  — badges, chips, kbd, tiny icon buttons
+      //   md           10px  — controls: inputs, selects, buttons
+      //   lg           12px  — containers: cards, tables, modals, panels
+      //   xl / 2xl     16px  — large surfaces (auth page boxes)
+      //   full               — pills, avatars, switches, dots only
+      fontFamily: {
+        // Brand typography (brand/README.txt): Space Grotesk for the
+        // wordmark and headings, Manrope for product UI, JetBrains Mono for
+        // machine data. Self-hosted via @fontsource (CSP: font-src 'self').
+        brand: ['"Space Grotesk"', 'ui-sans-serif', 'system-ui', 'sans-serif'],
+        ui: ['"Manrope Variable"', 'Manrope', 'ui-sans-serif', 'system-ui', 'sans-serif'],
+        mono: ['"JetBrains Mono Variable"', '"JetBrains Mono"', 'ui-monospace', 'SFMono-Regular', 'Menlo', 'monospace'],
       },
       borderRadius: {
+        '2xl': 'calc(var(--radius) + 4px)',
+        xl: 'calc(var(--radius) + 4px)',
         lg: 'var(--radius)',
         md: 'calc(var(--radius) - 2px)',
-        sm: 'calc(var(--radius) - 4px)',
+        sm: 'calc(var(--radius) - 6px)',
+        DEFAULT: 'calc(var(--radius) - 6px)',
+      },
+      // Overlays (menus, popovers, modals): soft, ink-tinted and diffuse
+      // rather than a hard grey drop.
+      boxShadow: {
+        md: '0 6px 16px -6px rgb(9 9 12 / 0.16), 0 2px 4px -2px rgb(9 9 12 / 0.06)',
+        lg: '0 16px 36px -12px rgb(9 9 12 / 0.24), 0 4px 10px -4px rgb(9 9 12 / 0.08)',
+        '2xl': '0 28px 64px -16px rgb(9 9 12 / 0.36)',
       },
       keyframes: {
         'accordion-down': {

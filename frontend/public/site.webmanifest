@@ -3,10 +3,30 @@
   "short_name": "Shellius",
   "description": "Centralized SSH/RDP access management",
   "icons": [
-    { "src": "/favicon.svg", "sizes": "any", "type": "image/svg+xml" }
+    {
+      "src": "/favicon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml"
+    },
+    {
+      "src": "/brand/png/shellius-app-icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png"
+    },
+    {
+      "src": "/brand/png/shellius-app-icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png"
+    },
+    {
+      "src": "/brand/png/shellius-app-icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    }
   ],
-  "theme_color": "#0a0a0a",
-  "background_color": "#0a0a0a",
+  "theme_color": "#09090C",
+  "background_color": "#09090C",
   "display": "standalone",
   "start_url": "/"
 }

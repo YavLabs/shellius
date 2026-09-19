@@ -9,6 +9,26 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 Tracked here as work lands on `main`; moved into a dated section on release
 (`node scripts/version.mjs bump <major|minor|patch>`).
 
+## [1.4.0] - 2026-09-19
+
+### Changed
+
+- **New look across the app**, following the Shellius brand guideline (`frontend/public/brand/README.txt`).
+  - Brand colours in light and dark mode: an Ink canvas in dark mode, with Sky and Lavender accents.
+  - Brand fonts: Manrope for the interface, Space Grotesk for headings and the logo, JetBrains Mono for code and terminals. The fonts are self-hosted.
+  - Primary buttons and checked boxes use the brand gradient. Page titles use the gradient text.
+  - A faint brand glow sits behind page content. Menus and dialogs have softer shadows.
+  - New logo, favicon and app icons from the brand kit.
+- **Sign-in pages redesigned.** Sign-in shows the centred logo and a single email field. The other sign-in pages show the logo top-left. All of them have a faint animated terminal background.
+- **Web terminal, RDP viewer and command snippets** use the brand terminal colours (Ink background, Sky cursor).
+- Text fields, selects and buttons share one size and corner radius across the app.
+- **Terminal workspace**: tabs are rounded pills with no divider below them. The workspace has padding around it. The sessions panel is a rounded card.
+- Sign-in lists SSO providers as full-width "Sign in with …" buttons, one per row, under an "or continue with" divider.
+
+### Fixed
+
+- Adding an SSO provider other than GitHub failed with `"allowedOrgs" is required`. The GitHub organization list is now optional, and other providers don't send it.
+
 ## [1.3.0] - 2026-09-19
 
 ### Added

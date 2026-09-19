@@ -112,12 +112,12 @@ function TabItem({ tab, index, active, split, onSelect, onClose, menu, dragProps
         if (e.key === 'Enter' || e.key === ' ') onSelect();
       }}
       className={cn(
-        'group relative flex h-full shrink-0 cursor-pointer select-none items-center gap-1.5 border-r border-border px-3 text-sm transition-colors',
+        'group relative flex h-8 shrink-0 cursor-pointer select-none items-center gap-1.5 rounded-md px-3 text-sm transition-colors',
         active
-          ? 'bg-background text-foreground'
+          ? 'bg-foreground/[0.10] text-foreground'
           : split?.onScreen
-            ? 'bg-background/60 text-foreground/80 hover:bg-muted/70'
-            : 'bg-muted/40 text-muted-foreground hover:bg-muted/70',
+            ? 'bg-foreground/[0.07] text-foreground/80 hover:bg-foreground/[0.09]'
+            : 'bg-foreground/[0.04] text-muted-foreground hover:bg-foreground/[0.07] hover:text-foreground/90',
         dragProps.isDragging(tab.id) && 'opacity-40'
       )}
       title={
@@ -129,7 +129,7 @@ function TabItem({ tab, index, active, split, onSelect, onClose, menu, dragProps
       }
     >
       {dragProps.insertBefore === index && (
-        <span className="absolute -left-px top-0.5 bottom-0.5 w-0.5 rounded bg-primary" aria-hidden="true" />
+        <span className="absolute -left-[4px] top-1 bottom-1 w-0.5 rounded bg-primary" aria-hidden="true" />
       )}
       {tab.kind === 'request' ? (
         <Clock className="h-3 w-3 shrink-0 text-muted-foreground" aria-hidden="true" />
@@ -167,7 +167,7 @@ function TabItem({ tab, index, active, split, onSelect, onClose, menu, dragProps
           <button
             type="button"
             onClick={(e) => e.stopPropagation()}
-            className={cn('rounded p-0.5 hover:bg-accent group-hover:opacity-100', menuOpen ? 'opacity-100' : 'opacity-0')}
+            className={cn('rounded p-0.5 hover:bg-foreground/10 group-hover:opacity-100', menuOpen ? 'opacity-100' : 'opacity-0')}
             aria-label={`Options for ${tab.label}`}
           >
             <MoreHorizontal className="h-3.5 w-3.5" />
@@ -218,7 +218,7 @@ function TabItem({ tab, index, active, split, onSelect, onClose, menu, dragProps
           e.stopPropagation();
           onClose();
         }}
-        className="rounded p-0.5 opacity-0 hover:bg-accent group-hover:opacity-100"
+        className="rounded p-0.5 opacity-0 hover:bg-foreground/10 group-hover:opacity-100"
         aria-label={`Close ${tab.label}`}
       >
         <X className="h-3.5 w-3.5" />
@@ -298,13 +298,15 @@ function WorkspaceItem({ item, index, active, onSelect, workspace, onEndAll, dra
       }}
       title={`${group.name || 'Workspace'}: ${tabs.map((t) => t.label).join(', ')}`}
       className={cn(
-        'group relative flex h-full shrink-0 cursor-pointer select-none items-center gap-1.5 border-r border-border px-3 text-sm transition-colors',
-        active ? 'bg-background text-foreground' : 'bg-muted/40 text-muted-foreground hover:bg-muted/70',
+        'group relative flex h-8 shrink-0 cursor-pointer select-none items-center gap-1.5 rounded-md px-3 text-sm transition-colors',
+        active
+          ? 'bg-foreground/[0.10] text-foreground'
+          : 'bg-foreground/[0.04] text-muted-foreground hover:bg-foreground/[0.07] hover:text-foreground/90',
         dragProps.isDragging(group.id) && 'opacity-40'
       )}
     >
       {dragProps.insertBefore === index && (
-        <span className="absolute -left-px top-0.5 bottom-0.5 w-0.5 rounded bg-primary" aria-hidden="true" />
+        <span className="absolute -left-[4px] top-1 bottom-1 w-0.5 rounded bg-primary" aria-hidden="true" />
       )}
       <Icon className={cn('h-3.5 w-3.5 shrink-0', active ? 'text-primary' : 'text-muted-foreground')} aria-hidden="true" />
       {renaming ? (
@@ -326,7 +328,7 @@ function WorkspaceItem({ item, index, active, onSelect, workspace, onEndAll, dra
       ) : (
         <span className="max-w-[10rem] truncate font-medium">{group.name || 'Workspace'}</span>
       )}
-      <span className="rounded bg-muted px-1 text-[10px] font-semibold tabular-nums text-muted-foreground" aria-label={`${tabs.length} terminals`}>
+      <span className="rounded bg-foreground/[0.08] px-1 text-[10px] font-semibold tabular-nums text-muted-foreground" aria-label={`${tabs.length} terminals`}>
         {tabs.length}
       </span>
       <span className={cn('h-1.5 w-1.5 shrink-0 rounded-full', STATUS_DOT[state] || STATUS_DOT.detached)} aria-hidden="true" />
@@ -336,7 +338,7 @@ function WorkspaceItem({ item, index, active, onSelect, workspace, onEndAll, dra
           <button
             type="button"
             onClick={(e) => e.stopPropagation()}
-            className={cn('rounded p-0.5 hover:bg-accent group-hover:opacity-100', menuOpen ? 'opacity-100' : 'opacity-0')}
+            className={cn('rounded p-0.5 hover:bg-foreground/10 group-hover:opacity-100', menuOpen ? 'opacity-100' : 'opacity-0')}
             aria-label={`Options for ${group.name || 'Workspace'}`}
           >
             <MoreHorizontal className="h-3.5 w-3.5" />
@@ -370,7 +372,7 @@ function WorkspaceItem({ item, index, active, onSelect, workspace, onEndAll, dra
           e.stopPropagation();
           closeAll();
         }}
-        className="rounded p-0.5 opacity-0 hover:bg-accent group-hover:opacity-100"
+        className="rounded p-0.5 opacity-0 hover:bg-foreground/10 group-hover:opacity-100"
         aria-label={`Close ${group.name || 'Workspace'}`}
         title="Close workspace (sessions keep running)"
       >
@@ -503,11 +505,14 @@ function TerminalTabBar({ tabs, activeTabId, onSelect, workspace, onNewConnectio
 
   return (
     <TooltipProvider delayDuration={300}>
+      {/* Only the tab strip scrolls; the toolbar sits outside it so its
+          badges aren't clipped by the strip's overflow. */}
+      <div className="flex h-9 shrink-0 items-center gap-1.5">
       <div
         role="tablist"
         aria-label="Open terminals"
         ref={scrollRef}
-        className="no-scrollbar flex h-9 shrink-0 items-stretch overflow-x-auto overflow-y-hidden border-b border-border bg-muted/20"
+        className="no-scrollbar flex h-full min-w-0 flex-1 items-center gap-1.5 overflow-x-auto overflow-y-hidden"
       >
         {items.map((item, index) =>
           item.type === 'workspace' ? (
@@ -538,24 +543,23 @@ function TerminalTabBar({ tabs, activeTabId, onSelect, workspace, onNewConnectio
         <button
           type="button"
           onClick={onNewConnection}
-          className="flex h-full w-9 shrink-0 items-center justify-center text-muted-foreground hover:bg-accent hover:text-foreground"
+          className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-foreground/[0.07] hover:text-foreground"
           aria-label="New connection"
           title="New connection (Ctrl+Shift+T)"
         >
           <Plus className="h-4 w-4" />
         </button>
-
-        <div className="flex-1" />
+      </div>
 
         {tabs.length > 0 && (
-          <div className="flex shrink-0 items-center gap-0.5 px-1.5">
+          <div className="flex shrink-0 items-center gap-1">
             <DropdownMenu>
               <Tooltip>
                 <TooltipTrigger asChild>
                   <DropdownMenuTrigger asChild>
                     <button
                       type="button"
-                      className="flex h-6 items-center gap-0.5 rounded px-1 text-muted-foreground hover:bg-accent hover:text-foreground"
+                      className="flex h-8 items-center gap-0.5 rounded-md px-2 text-muted-foreground transition-colors hover:bg-foreground/[0.07] hover:text-foreground"
                       aria-label="Layout"
                     >
                       {(() => {
@@ -592,13 +596,13 @@ function TerminalTabBar({ tabs, activeTabId, onSelect, workspace, onNewConnectio
                   aria-label="Toggle sessions panel"
                   aria-pressed={sessionsOpen}
                   className={cn(
-                    'relative flex h-6 w-6 items-center justify-center rounded text-muted-foreground hover:bg-accent hover:text-foreground',
-                    sessionsOpen && 'bg-accent text-foreground'
+                    'relative flex h-8 w-8 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-foreground/[0.07] hover:text-foreground',
+                    sessionsOpen && 'bg-foreground/[0.10] text-foreground'
                   )}
                 >
                   <PanelRight className="h-3.5 w-3.5" />
                   {detachedCount > 0 && (
-                    <span className="absolute -right-1 -top-1 flex h-3.5 min-w-3.5 items-center justify-center rounded-full bg-primary px-0.5 text-[9px] font-semibold text-primary-foreground">
+                    <span className="absolute -right-0.5 -top-0.5 flex h-3.5 min-w-3.5 items-center justify-center rounded-full bg-primary px-0.5 text-[9px] font-semibold text-primary-foreground">
                       {detachedCount}
                     </span>
                   )}

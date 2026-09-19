@@ -3,52 +3,55 @@
 @tailwind utilities;
 
 @layer base {
+  /* Brand palette (brand/README.txt). Light: cool off-white canvas with
+     the deep Sky→Lavender pair; dark: Ink canvas, Sky accent. */
   :root {
-    --background: 0 0% 100%;
-    --foreground: 240 10% 3.9%;
+    --background: 228 20% 97%;
+    --foreground: 229 33% 7%;
     --card: 0 0% 100%;
-    --card-foreground: 240 10% 3.9%;
+    --card-foreground: 229 33% 7%;
     --popover: 0 0% 100%;
-    --popover-foreground: 240 10% 3.9%;
-    --primary: 240 5.9% 10%;
-    --primary-foreground: 0 0% 98%;
-    --secondary: 240 4.8% 95.9%;
-    --secondary-foreground: 240 5.9% 10%;
-    --muted: 240 4.8% 95.9%;
-    --muted-foreground: 240 3.8% 46.1%;
-    --accent: 240 4.8% 95.9%;
-    --accent-foreground: 240 5.9% 10%;
-    --destructive: 0 84.2% 60.2%;
-    --destructive-foreground: 0 0% 98%;
-    --border: 240 5.9% 90%;
-    --input: 240 5.9% 90%;
-    --ring: 240 5.9% 10%;
-    --radius: 0.5rem;
+    --popover-foreground: 229 33% 7%;
+    --primary: 221 50% 48%; /* #3D63B8 */
+    --primary-foreground: 0 0% 100%;
+    --secondary: 228 18% 94%;
+    --secondary-foreground: 229 33% 7%;
+    --muted: 228 18% 94%;
+    --muted-foreground: 223 5% 44%;
+    --accent: 228 20% 94%;
+    --accent-foreground: 229 33% 7%;
+    --destructive: 4 72% 52%;
+    --destructive-foreground: 0 0% 100%;
+    --border: 228 16% 90%;
+    --input: 228 14% 87%;
+    --ring: 221 50% 48%;
+    --brand: 221 50% 48%;
+    --radius: 0.75rem;
   }
 
   .dark {
-    /* Lifted zinc palette: page ≈ #18181b, cards/popovers one step up, so
-       surfaces separate without the near-black of the shadcn default. */
-    --background: 240 5.9% 10%;
-    --foreground: 0 0% 98%;
-    --card: 240 5.2% 12.5%;
-    --card-foreground: 0 0% 98%;
-    --popover: 240 5.2% 13.5%;
-    --popover-foreground: 0 0% 98%;
-    --primary: 0 0% 98%;
-    --primary-foreground: 240 5.9% 10%;
-    --secondary: 240 4.4% 18.5%;
-    --secondary-foreground: 0 0% 98%;
-    --muted: 240 4.4% 18.5%;
-    --muted-foreground: 240 5% 68%;
-    --accent: 240 4.4% 20%;
-    --accent-foreground: 0 0% 98%;
-    --destructive: 0 62.8% 42%;
-    --destructive-foreground: 0 0% 98%;
-    --border: 240 4.4% 21%;
-    --input: 240 4.4% 23%;
-    --ring: 240 4.9% 83.9%;
-  }}
+    --background: 240 14% 4.1%; /* Ink #09090C */
+    --foreground: 228 14% 94%; /* Light #EDEEF2 */
+    --card: 228 22% 6.5%;
+    --card-foreground: 228 14% 94%;
+    --popover: 228 22% 8%;
+    --popover-foreground: 228 14% 94%;
+    --primary: 217 83% 76%; /* Sky #8FB6F5 */
+    --primary-foreground: 229 33% 7%;
+    --secondary: 228 18% 11%;
+    --secondary-foreground: 228 14% 94%;
+    --muted: 228 18% 10%;
+    --muted-foreground: 223 4% 56%; /* Muted #8A8D94 */
+    --accent: 228 18% 11%;
+    --accent-foreground: 228 14% 94%;
+    --destructive: 4 86% 69%; /* #F4776C */
+    --destructive-foreground: 229 33% 7%;
+    --border: 228 16% 12.5%;
+    --input: 228 16% 15%;
+    --ring: 217 83% 76%;
+    --brand: 217 83% 76%;
+  }
+}
 
 @layer base {
   * {
@@ -56,8 +59,7 @@
   }
   body {
     @apply bg-background text-foreground;
-    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto,
-      'Helvetica Neue', Arial, sans-serif;
+    font-family: theme('fontFamily.ui');
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
   }
@@ -131,5 +133,387 @@
   .bg-grid-fade {
     -webkit-mask-image: radial-gradient(ellipse 70% 60% at 50% 40%, #000 35%, transparent 100%);
     mask-image: radial-gradient(ellipse 70% 60% at 50% 40%, #000 35%, transparent 100%);
+  }
+}
+
+/* ---------------------------------------------------------------------------
+   Soft fields (exploration, temp/fey-auth-ui) — every text-like field that
+   uses the standard `border-input` look gets a filled, borderless-feeling
+   surface with a quiet focus halo instead of the hard ring. Specificity is
+   deliberately above single Tailwind utilities so it applies app-wide
+   without touching each component.
+   --------------------------------------------------------------------------- */
+/* Native controls (select popups, date pickers, scrollbars) follow the theme. */
+@layer base {
+  :root {
+    color-scheme: light;
+  }
+  .dark {
+    color-scheme: dark;
+  }
+}
+
+@layer base {
+  :root {
+    --field: 228 22% 97.5%;
+    --field-border: 228 14% 88%;
+  }
+  .dark {
+    --field: 228 20% 7.5%;
+    --field-border: 228 16% 13%;
+  }
+}
+
+@layer components {
+  :is(input:not([type='checkbox']):not([type='radio']):not([type='range']):not([type='file']), textarea, select).border-input {
+    background-color: hsl(var(--field));
+    border-color: hsl(var(--field-border));
+    border-radius: calc(var(--radius) - 2px);
+    transition: border-color 150ms, box-shadow 150ms, background-color 150ms;
+  }
+  :is(input:not([type='checkbox']):not([type='radio']):not([type='range']):not([type='file']), textarea, select).border-input:hover {
+    border-color: hsl(var(--foreground) / 0.16);
+  }
+  :is(input:not([type='checkbox']):not([type='radio']):not([type='range']):not([type='file']), textarea, select).border-input:focus,
+  :is(input:not([type='checkbox']):not([type='radio']):not([type='range']):not([type='file']), textarea, select).border-input:focus-visible {
+    outline: none;
+    border-color: hsl(var(--foreground) / 0.28);
+    box-shadow: 0 0 0 4px hsl(var(--foreground) / 0.06);
+  }
+  /* Same surface for field-like controls that aren't inputs (select
+     triggers, chip inputs). */
+  .field-soft.border-input {
+    background-color: hsl(var(--field));
+    border-color: hsl(var(--field-border));
+    border-radius: calc(var(--radius) - 2px);
+    transition: border-color 150ms, box-shadow 150ms, background-color 150ms;
+  }
+  .field-soft.border-input:hover {
+    border-color: hsl(var(--foreground) / 0.16);
+  }
+  .field-soft.border-input:is(:focus, :focus-visible, :focus-within) {
+    outline: none;
+    border-color: hsl(var(--foreground) / 0.28);
+    box-shadow: 0 0 0 4px hsl(var(--foreground) / 0.06);
+  }
+  :is(input, textarea).border-input[readonly] {
+    background-color: hsl(var(--field) / 0.6);
+  }
+}
+
+/* ---------------------------------------------------------------------------
+   Auth pages (Fey-style): near-black canvas, a soft coloured aura behind the
+   form, gradient headline, cards flattened so the form floats, pill fields
+   and pill buttons. Scoped to `.auth-fey` (AuthShell).
+   --------------------------------------------------------------------------- */
+@layer components {
+  .auth-fey {
+    --auth-canvas: 228 20% 97%;
+    background-color: hsl(var(--auth-canvas));
+    font-family: theme('fontFamily.ui');
+  }
+  .dark .auth-fey {
+    --auth-canvas: 240 14% 4.1%; /* Ink #09090C */
+  }
+
+  /* Sign-in (.auth-stacked): the big lockup is the heading, so the h1
+     reads as the quiet purpose line under it. Other auth pages keep a
+     real brand heading. */
+  .auth-fey.auth-stacked main h1:not(.auth-heading) {
+    font-family: theme('fontFamily.ui');
+    font-size: 0.9375rem;
+    line-height: 1.5rem;
+    font-weight: 500;
+    letter-spacing: 0;
+    color: hsl(var(--muted-foreground));
+  }
+  .auth-fey:not(.auth-stacked) main h1:not(.auth-heading) {
+    font-size: 1.625rem;
+    line-height: 2rem;
+    font-family: theme('fontFamily.brand');
+    font-weight: 700;
+    letter-spacing: -0.02em;
+    background-image: var(--brand-gradient);
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+  }
+  .auth-fey main h1.auth-heading {
+    font-family: theme('fontFamily.brand');
+    font-weight: 700;
+    letter-spacing: -0.02em;
+    background-image: var(--brand-gradient);
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+  }
+
+  /* The form floats — no card chrome. */
+  .auth-fey main .bg-card.border {
+    background-color: transparent;
+    border-color: transparent;
+    box-shadow: none;
+    padding: 0;
+  }
+
+  /* Pill fields and buttons. */
+  .auth-fey :is(input:not([type='checkbox']):not([type='radio']):not([type='range']):not([type='file'])).border-input {
+    height: 2.5rem;
+    border-radius: calc(var(--radius) - 2px);
+    padding-left: 1.125rem;
+  }
+  .auth-fey :is(input:not([type='checkbox']):not([type='radio']):not([type='range']):not([type='file'])).border-input.pl-9 {
+    padding-left: 2.5rem;
+  }
+  .auth-fey main :is(button, a).bg-primary {
+    height: 2.5rem;
+    background-image: var(--brand-gradient);
+    color: var(--brand-on-gradient);
+  }
+  /* Buttons match the app: 40px, 10px corners, semibold. */
+  .auth-fey main :is(button, a):is(.rounded, .rounded-sm, .rounded-md, .rounded-lg, .bg-primary, .border-input) {
+    border-radius: calc(var(--radius) - 2px);
+  }
+  .auth-fey main :is(button, a):is(.bg-primary, .inline-flex.whitespace-nowrap.font-medium, .text-sm.font-medium) {
+    font-weight: 600;
+  }
+  .auth-fey main :is(button, a).h-9 {
+    height: 2.5rem;
+  }
+  .auth-fey main textarea.border-input,
+  .auth-fey main .field-soft.border-input {
+    border-radius: calc(var(--radius) - 2px);
+  }
+  /* Auth pages use the app's radius scale: boxes 12px, controls 10px. */
+  .auth-fey main :is(div, section, form, p, ul).rounded,
+  .auth-fey main :is(div, section, form, p, ul).rounded-sm,
+  .auth-fey main :is(div, section, form, p, ul).rounded-md,
+  .auth-fey main :is(div, section, form, p, ul).rounded-lg {
+    border-radius: var(--radius);
+  }
+  .auth-fey main label {
+    font-weight: 400;
+    color: hsl(var(--muted-foreground));
+  }
+}
+
+/* Hairline that fades out at both ends (auth footer divider). */
+@layer utilities {
+  .hairline-fade {
+    height: 1px;
+    background: linear-gradient(90deg, transparent, hsl(var(--foreground) / 0.12), transparent);
+  }
+}
+
+/* Auth backdrop container (components/auth/AuthShell.jsx). */
+.auth-backdrop {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  pointer-events: none;
+}
+
+/* Slow drift for the app's ambient rings (.app-ring). */
+@keyframes auth-drift {
+  0% { transform: translate3d(0, 0, 0) rotate(0deg) scale(1); }
+  50% { transform: translate3d(var(--dx), var(--dy), 0) rotate(35deg) scale(1.08); }
+  100% { transform: translate3d(calc(var(--dx) * -0.6), calc(var(--dy) * 0.8), 0) rotate(-20deg) scale(0.94); }
+}
+
+/* quiet grey lift behind the form */
+.auth-aura {
+  position: absolute;
+  left: 50%;
+  top: 46%;
+  width: min(620px, 120vw);
+  height: min(460px, 90vw);
+  transform: translate(-50%, -50%);
+  border-radius: 9999px;
+  background: radial-gradient(closest-side, hsl(var(--foreground) / 0.045), transparent);
+  filter: blur(30px);
+}
+
+
+
+/* ---------------------------------------------------------------------------
+   App chrome in the brand look: gradient primary actions, faint ambient
+   bloom behind the content area, gradient page titles, accent focus.
+   --------------------------------------------------------------------------- */
+/* Brand gradient on primary actions and "on" controls. */
+.bg-primary,
+input[type='checkbox']:checked,
+input[type='checkbox']:indeterminate {
+  background-image: var(--brand-gradient);
+  border-color: transparent;
+}
+:is(button, a).bg-primary:hover {
+  filter: brightness(1.06);
+}
+/* Dark text on the light gradient reads thinner than light-on-dark —
+   semibold keeps every button the same visual weight. */
+:is(button, a).bg-primary,
+:is(button, a).inline-flex.whitespace-nowrap.font-medium {
+  font-weight: 600;
+}
+:is(button, a).bg-primary:disabled {
+  opacity: 0.55;
+  filter: saturate(0.55);
+}
+:is(button, a).border-input:hover {
+  border-color: hsl(var(--brand) / 0.45);
+}
+/* Faint brand ambience in the content area. */
+.app-ambient .brand-bloom {
+  opacity: 0.25;
+}
+.dark .app-ambient .brand-bloom {
+  opacity: 0.35;
+}
+.app-ring {
+  position: absolute;
+  width: var(--size);
+  height: var(--size);
+  filter: blur(70px);
+  opacity: 0.04;
+  animation: auth-drift var(--dur, 60s) ease-in-out var(--delay, 0s) infinite alternate;
+}
+.dark .app-ring {
+  opacity: 0.05;
+}
+.app-ring-1 { --size: 620px; top: -22%; right: -8%; --dx: -90px; --dy: 60px; --dur: 40s; }
+.app-ring-2 { --size: 520px; bottom: -24%; left: -6%; --dx: 80px; --dy: -50px; --dur: 46s; --delay: -12s; }
+.app-ring-3 { --size: 380px; top: 36%; left: 46%; --dx: -60px; --dy: 40px; --dur: 52s; --delay: -24s; }
+@media (prefers-reduced-motion: reduce) {
+  .app-ring {
+    animation: none;
+  }
+}
+/* Surfaces: a faint top highlight instead of a heavier border. */
+.bg-card.border {
+  box-shadow: inset 0 1px 0 hsl(var(--foreground) / 0.04), 0 1px 2px hsl(0 0% 0% / 0.04);
+}
+/* Page titles: same gradient as the auth page titles. The h1 is sized to
+   its text so the full Sky → Lavender sweep lands on the words instead of
+   stretching across the whole header row. */
+.app-main h1 {
+  width: fit-content;
+  max-width: 100%;
+  font-family: theme('fontFamily.brand');
+  letter-spacing: -0.02em;
+  background-image: var(--brand-gradient);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+.app-main h1 svg {
+  color: hsl(var(--brand));
+}
+/* Focus and selection use the accent. */
+:focus-visible {
+  outline-color: hsl(var(--ring));
+}
+::selection {
+  background: hsl(var(--brand) / 0.3);
+}
+/* Active sidebar item: accent tint. */
+aside a[aria-current='page'] {
+  background: hsl(var(--brand) / 0.12);
+}
+/* Content-area grid a touch quieter on the darker canvas. */
+.bg-grid {
+  opacity: 0.6;
+}
+
+/* ---------------------------------------------------------------------------
+   Brand (frontend/public/brand, brand/README.txt)
+     Ink #09090C · Indigo #141A2E · Plum #241C3B · Sky #8FB6F5
+     Lavender #B9A6F2 · Light #EDEEF2 · Muted #8A8D94
+     Gradient 135° Sky → Lavender (on light: #3D63B8 → #6B54C4)
+   --------------------------------------------------------------------------- */
+:root {
+  --brand-gradient: linear-gradient(135deg, #3d63b8, #6b54c4);
+  --brand-on-gradient: #ffffff;
+  --brand-bloom-a: rgba(143, 182, 245, 0.18);
+  --brand-bloom-b: rgba(185, 166, 242, 0.16);
+}
+.dark {
+  --brand-gradient: linear-gradient(135deg, #8fb6f5, #b9a6f2);
+  --brand-on-gradient: #0b0d16;
+  --brand-bloom-a: rgba(20, 26, 46, 0.9); /* Indigo */
+  --brand-bloom-b: rgba(36, 28, 59, 0.85); /* Plum */
+}
+.bg-brand-gradient {
+  background-image: var(--brand-gradient);
+}
+/* Wordmark cursor bar: exactly the capital height (0.7em fallback). */
+.wordmark-bar {
+  height: 0.7em;
+  height: 1cap;
+}
+.text-brand-gradient {
+  background-image: var(--brand-gradient);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+/* Ambient bloom — indigo + plum radials on ink (brand guideline 04). */
+.brand-bloom {
+  background:
+    radial-gradient(ellipse 55% 45% at 22% 28%, var(--brand-bloom-a), transparent 70%),
+    radial-gradient(ellipse 50% 45% at 78% 72%, var(--brand-bloom-b), transparent 70%);
+}
+
+/* ---------------------------------------------------------------------------
+   Terminal backdrop (auth pages, alternative to the rings) —
+   components/auth/TerminalBackdrop.jsx. Faint panes of terminal output in
+   the brand palette drifting upward; the centre is masked clear so the form
+   stays clean.
+   --------------------------------------------------------------------------- */
+.term-backdrop {
+  font-family: theme('fontFamily.mono');
+  font-size: 12px;
+  line-height: 3.2; /* airy — lines shouldn't read as a dense wall */
+  filter: blur(1.4px);
+  -webkit-mask-image: radial-gradient(ellipse 34% 50% at 50% 47%, transparent 55%, #000 100%);
+  mask-image: radial-gradient(ellipse 34% 50% at 50% 47%, transparent 55%, #000 100%);
+}
+.term-pane {
+  position: absolute;
+  top: 0;
+  height: 100%;
+  width: 23vw;
+  overflow: hidden;
+  opacity: var(--o, 0.08);
+  -webkit-mask-image: linear-gradient(to bottom, transparent, #000 20%, #000 80%, transparent);
+  mask-image: linear-gradient(to bottom, transparent, #000 20%, #000 80%, transparent);
+}
+.dark .term-pane {
+  opacity: var(--od, 0.07);
+}
+/* Four columns, no overlap; the middle two are fainter (behind the form). */
+.term-pane-1 { left: 1%; --dur: 300s; }
+.term-pane-2 { left: 26%; --dur: 380s; --o: 0.045; --od: 0.04; }
+.term-pane-3 { left: 51%; --dur: 340s; --o: 0.045; --od: 0.04; }
+.term-pane-4 { left: 76%; --dur: 280s; }
+.term-scroll {
+  animation: term-up var(--dur, 120s) linear infinite;
+  white-space: nowrap;
+}
+@keyframes term-up {
+  from { transform: translate3d(0, 0, 0); }
+  to { transform: translate3d(0, -50%, 0); }
+}
+.term-line { overflow: hidden; text-overflow: ellipsis; }
+.term-prompt { color: #6b54c4; }
+.term-info { color: #3d63b8; }
+.term-ok { color: #059669; }
+.term-dim { color: #64748b; }
+.dark .term-prompt { color: #b9a6f2; } /* Lavender */
+.dark .term-info { color: #8fb6f5; } /* Sky */
+.dark .term-ok { color: #6ee7a8; } /* connected */
+.dark .term-dim { color: #8a8d94; } /* Muted */
+@media (prefers-reduced-motion: reduce) {
+  .term-scroll {
+    animation: none;
   }
 }

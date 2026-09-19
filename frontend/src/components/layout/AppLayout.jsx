@@ -3,6 +3,14 @@ import { Outlet, useLocation } from 'react-router-dom';
 import Sidebar from './Sidebar';
 import Topbar from './Topbar';
 import Footer from './Footer';
+import FlowRing from '@/components/common/FlowRing';
+
+// Same rings as the auth pages, far fainter (see .app-ambient in index.css).
+const AMBIENT_RINGS = [
+  { colors: ['#8FB6F5', '#A7AEF4', '#B9A6F2'], seed: 7, dur: 22 },
+  { colors: ['#6B54C4', '#B9A6F2', '#8FB6F5'], seed: 19, dur: 26 },
+  { colors: ['#3D63B8', '#8FB6F5', '#B9A6F2'], seed: 29, dur: 24 },
+];
 import CommandPalette from '@/components/command/CommandPalette';
 import ShortcutsDialog from '@/components/command/ShortcutsDialog';
 import { CommandPaletteProvider } from '@/context/CommandPaletteContext';
@@ -75,7 +83,14 @@ function AppLayout() {
                 // on <main> itself would fade the page content too.
                 <div className="relative min-h-0 flex-1 bg-muted/30">
                   <div aria-hidden="true" className="bg-grid bg-grid-fade pointer-events-none absolute inset-0" />
-                  <main className="relative h-full overflow-y-auto overflow-x-hidden">
+                  {/* Faint brand ambience: bloom + slow blurred rings. */}
+                  <div aria-hidden="true" className="app-ambient pointer-events-none absolute inset-0 overflow-hidden">
+                    <div className="brand-bloom absolute inset-0" />
+                    {AMBIENT_RINGS.map((r, i) => (
+                      <FlowRing key={i} className={`app-ring app-ring-${i + 1}`} colors={r.colors} seed={r.seed} dur={r.dur} />
+                    ))}
+                  </div>
+                  <main className="app-main relative h-full overflow-y-auto overflow-x-hidden">
                     <div className="min-h-[calc(100%-3rem)]">
                       <Outlet />
                     </div>

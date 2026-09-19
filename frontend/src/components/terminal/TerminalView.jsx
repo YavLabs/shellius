@@ -22,26 +22,29 @@ function isWorkspaceShortcut(e) {
 }
 
 const XTERM_THEME = {
-  background: '#0a0a0a',
-  foreground: '#e4e4e4',
-  cursor: '#e4e4e4',
-  selectionBackground: '#ffffff33',
-  black: '#1e1e1e',
-  red: '#f28779',
-  green: '#87d987',
-  yellow: '#ffd580',
-  blue: '#5ccfe6',
-  magenta: '#d4bfff',
-  cyan: '#95e6cb',
-  white: '#d0d0d0',
-  brightBlack: '#636363',
-  brightRed: '#ff6e67',
-  brightGreen: '#a1ef8b',
-  brightYellow: '#ffe585',
-  brightBlue: '#6dcfef',
-  brightMagenta: '#e0cfff',
-  brightCyan: '#a8f5d4',
-  brightWhite: '#ffffff',
+  // Brand palette (brand/README.txt): Ink canvas, Light text, Sky cursor,
+  // Sky / Lavender for blue / magenta, the status tones for red / green.
+  background: '#09090C',
+  foreground: '#EDEEF2',
+  cursor: '#8FB6F5',
+  cursorAccent: '#09090C',
+  selectionBackground: '#8FB6F540',
+  black: '#1A1D27',
+  red: '#F4776C',
+  green: '#6EE7A8',
+  yellow: '#F2D48A',
+  blue: '#8FB6F5',
+  magenta: '#B9A6F2',
+  cyan: '#7FD8E8',
+  white: '#C9CBD3',
+  brightBlack: '#5A5E6B',
+  brightRed: '#FF928A',
+  brightGreen: '#94F0C0',
+  brightYellow: '#F7E2A6',
+  brightBlue: '#B3CEFA',
+  brightMagenta: '#D0C3F7',
+  brightCyan: '#A6E8F2',
+  brightWhite: '#FFFFFF',
 };
 
 /**
@@ -516,7 +519,7 @@ const TerminalView = forwardRef(function TerminalView(
   }, [connectKey]);
 
   return (
-    <div className={`relative flex h-full min-h-0 flex-col bg-[#0a0a0a] ${className}`}>
+    <div className={`relative flex h-full min-h-0 flex-col bg-ink ${className}`}>
       {error && status !== 'ended' && status !== 'reconnecting' && (
         <div className="flex shrink-0 items-center justify-between gap-3 border-b border-red-500/20 bg-red-500/10 px-3 py-1.5">
           <p className="flex-1 text-xs text-red-400">{error}</p>
@@ -548,7 +551,7 @@ const TerminalView = forwardRef(function TerminalView(
       )}
 
       {status === 'connecting' && (
-        <div className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center bg-[#0a0a0a]">
+        <div className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center bg-ink">
           <span className="flex items-center gap-2 text-xs text-muted-foreground">
             <Loader2 className="h-3.5 w-3.5 animate-spin" /> Connecting…
           </span>
@@ -557,7 +560,7 @@ const TerminalView = forwardRef(function TerminalView(
 
       {/* The workspace renders its own recovery card for these (statusOverlay=false). */}
       {statusOverlay && (status === 'ended' || status === 'lost') && (
-        <div className="absolute inset-0 z-10 flex flex-col items-center justify-center gap-2 bg-[#0a0a0a]/95 text-center">
+        <div className="absolute inset-0 z-10 flex flex-col items-center justify-center gap-2 bg-ink/95 text-center">
           <p className="text-sm font-medium text-foreground">
             {status === 'lost' ? 'This session is no longer running' : 'Session ended'}
           </p>
@@ -580,7 +583,7 @@ const TerminalView = forwardRef(function TerminalView(
           rendered ~1 row taller than the visible box and clipped the last
           line/cursor below the fold. Keeping containerRef padding-free
           makes its clientHeight exactly the terminal's real budget. */}
-      <div className="min-h-0 flex-1 overflow-hidden p-2">
+      <div className="min-h-0 flex-1 overflow-hidden p-3">
         <div ref={containerRef} className="h-full min-h-0 w-full" />
       </div>
     </div>

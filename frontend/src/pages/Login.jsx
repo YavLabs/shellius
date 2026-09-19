@@ -1,39 +1,13 @@
 import { useState, useEffect, useRef } from 'react';
 import { useNavigate, Link, useSearchParams } from 'react-router-dom';
-import { Mail, Lock, Eye, EyeOff, Loader2, ShieldAlert, LogOut } from 'lucide-react';
-import { BrandMark } from '@/components/common/BrandLogo';
+import { Mail, Eye, EyeOff, Loader2, ShieldAlert, LogOut } from 'lucide-react';
 import MfaChallenge from '@/components/auth/MfaChallenge';
-import ProviderIcon from '@/components/settings/sso/ProviderIcon';
+import ProviderGlyph from '@/components/auth/ProviderGlyph';
 import { useAuth } from '@/context/AuthContext';
 import { getRegistrationStatus } from '@/services/registrationService';
 import api from '@/services/api';
 import AuthShell from '@/components/auth/AuthShell';
-
-// Inline multi-color Google "G" mark — avoids pulling in an icon pack
-// just for the brand logo and stays crisp at any size.
-function GoogleGlyph({ className = '' }) {
-  return (
-    <svg viewBox="0 0 48 48" className={className} aria-hidden="true">
-      <path
-        fill="#EA4335"
-        d="M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.72 17.74 9.5 24 9.5z"
-      />
-      <path
-        fill="#4285F4"
-        d="M46.98 24.55c0-1.57-.15-3.09-.38-4.55H24v9.02h12.94c-.58 2.96-2.26 5.48-4.78 7.18l7.73 6c4.51-4.18 7.09-10.36 7.09-17.65z"
-      />
-      <path
-        fill="#FBBC05"
-        d="M10.53 28.59c-.48-1.45-.76-2.99-.76-4.59s.27-3.14.76-4.59l-7.98-6.19C.92 16.46 0 20.12 0 24c0 3.88.92 7.54 2.56 10.78l7.97-6.19z"
-      />
-      <path
-        fill="#34A853"
-        d="M24 48c6.48 0 11.93-2.13 15.89-5.81l-7.73-6c-2.15 1.45-4.92 2.3-8.16 2.3-6.26 0-11.57-4.22-13.47-9.91l-7.98 6.19C6.51 42.62 14.62 48 24 48z"
-      />
-      <path fill="none" d="M0 0h48v48H0z" />
-    </svg>
-  );
-}
+import PillField from '@/components/auth/PillField';
 
 // Live "Try again in Nm Ss" countdown driven by details.retryAfterSeconds
 // from a 423 ACCOUNT_LOCKED response.
@@ -72,28 +46,36 @@ function ssoLoginLabel(presetId) {
   return names[presetId] || 'SSO';
 }
 
-/** One "Continue with {name}" button per active SSO provider. */
-function SsoProviderButtons({ providers, submitting, onSelect }) {
+/**
+ * Fey-style sign-in buttons under an "or continue with" divider: one
+ * full-width "Sign in with X" button per provider, stacked.
+ */
+function SsoTextButtons({ providers, submitting, onSelect }) {
+  const single = providers.length === 1;
   return (
-    <div className="space-y-2">
-      {providers.map((provider) => (
-        <button
-          key={provider.id ?? provider.presetId}
-          type="button"
-          onClick={() => onSelect(provider.id)}
-          disabled={submitting}
-          className="flex h-9 w-full items-center justify-center rounded-md border border-input bg-background text-sm font-medium text-foreground transition-colors hover:bg-accent disabled:cursor-not-allowed disabled:opacity-50"
-        >
-          {submitting ? (
-            <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-          ) : provider.presetId === 'google' ? (
-            <GoogleGlyph className="mr-2 h-4 w-4" />
-          ) : (
-            <ProviderIcon presetId={provider.presetId} className="mr-2 h-4 w-4" />
-          )}
-          {submitting ? 'Opening sign-in window…' : `Continue with ${provider.name || ssoLoginLabel(provider.presetId)}`}
-        </button>
-      ))}
+    <div className="space-y-3">
+      <div className="flex items-center gap-3 text-[11px] uppercase tracking-[0.14em] text-muted-foreground/70">
+        <div className="hairline-fade flex-1" />
+        or continue with
+        <div className="hairline-fade flex-1" />
+      </div>
+      <div className="flex flex-col gap-2">
+        {providers.map((provider) => (
+          <button
+            key={provider.id ?? provider.presetId}
+            type="button"
+            onClick={() => onSelect(provider.id)}
+            disabled={submitting}
+            title={`Sign in with ${provider.name || ssoLoginLabel(provider.presetId)}`}
+            className={`inline-flex h-10 w-full min-w-0 items-center justify-center gap-2 rounded-md bg-foreground/[0.04] px-3 text-sm font-semibold text-foreground/85 ring-1 ring-foreground/[0.06] transition-colors hover:bg-foreground/[0.08] hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50`}
+          >
+            {submitting && single ? <Loader2 className="h-4 w-4 animate-spin" /> : <ProviderGlyph presetId={provider.presetId} />}
+            <span className="truncate">
+              Sign in with {provider.name || ssoLoginLabel(provider.presetId)}
+            </span>
+          </button>
+        ))}
+      </div>
     </div>
   );
 }
@@ -300,76 +282,93 @@ function Login() {
 
   const locked = !!lockout && retryRemaining > 0;
 
+  const ssoList = ssoStatus.providers?.length
+    ? ssoStatus.providers
+    : [{ id: null, name: ssoLoginLabel(ssoStatus.presetId), presetId: ssoStatus.presetId }];
+
+  const notice = (tone, children) => (
+    <div
+      className={
+        tone === 'error'
+          ? 'mx-auto max-w-xs text-center text-sm text-red-500 dark:text-red-400'
+          : 'mx-auto max-w-sm text-center text-sm text-amber-700 dark:text-amber-300/90'
+      }
+      role={tone === 'error' ? 'alert' : undefined}
+      aria-live="polite"
+    >
+      {children}
+    </div>
+  );
+
   return (
-    <AuthShell>
-      <div className="w-full max-w-sm">
-        {isDeleted && (
-          <div className="mb-4 rounded-md border border-amber-500/40 bg-amber-500/10 px-4 py-3 text-sm text-amber-700 dark:text-amber-400">
-            Your account has been deleted. If this was a mistake, contact your administrator within
-            30 days.
-          </div>
-        )}
-
-        {sessionRevoked && !isDeleted && (
-          <div className="mb-4 flex items-start gap-2 rounded-md border border-amber-500/40 bg-amber-500/10 px-4 py-3 text-sm text-amber-700 dark:text-amber-400">
-            <LogOut className="mt-0.5 h-4 w-4 shrink-0" />
-            <span>
-              You were signed out because your session was revoked or your account changed. Please
-              sign in again.
+    <AuthShell
+      logo="stacked"
+      footer={
+        registrationEnabled && (
+          <>
+            Don&apos;t have an account yet?{' '}
+            <Link to="/register" className="font-medium text-foreground hover:underline underline-offset-4">
+              Sign up.
+            </Link>
+          </>
+        )
+      }
+    >
+      <div className="w-full max-w-sm space-y-6">
+        {isDeleted &&
+          notice(
+            'warn',
+            'Your account has been deleted. If this was a mistake, contact your administrator within 30 days.'
+          )}
+        {sessionRevoked && !isDeleted &&
+          notice(
+            'warn',
+            <span className="inline-flex items-start gap-1.5">
+              <LogOut className="mt-0.5 h-4 w-4 shrink-0" />
+              You were signed out because your session was revoked or your account changed.
             </span>
-          </div>
-        )}
+          )}
 
-        <div className="mb-8 text-center">
-          <div className="mx-auto mb-4 flex justify-center">
-            <BrandMark size="lg" />
-          </div>
-          <h1 className="text-2xl font-bold tracking-tight text-foreground">
-            {import.meta.env.VITE_BRAND_NAME || 'Shellius'}
+        <div className="text-center">
+          <h1 className="sr-only">
+            {step === 'mfa' ? 'Verify it’s you' : step === 'sent' ? 'Check your inbox' : 'Sign in'}
           </h1>
-          <p className="mt-1 text-sm text-muted-foreground">Sign in to your account</p>
+          <p className="mx-auto max-w-[20rem] text-[0.9375rem] leading-relaxed text-muted-foreground">
+            {step === 'password'
+              ? 'Enter your password to continue.'
+              : step === 'sso'
+                ? 'Your organization signs you in with single sign-on.'
+                : step === 'mfa'
+                  ? 'One more step to keep your account safe.'
+                  : step === 'sent'
+                    ? 'We’ve sent a link to set your password.'
+                    : 'Sign in with your work email, or continue with your organization.'}
+          </p>
         </div>
 
-        <div className="rounded-lg border border-border bg-card p-6 shadow-sm">
-          {step === 'sent' ? (
-            <div className="space-y-4 text-center">
-              <Mail className="mx-auto h-10 w-10 text-emerald-500" />
-              <p className="text-sm text-foreground">
-                If <span className="font-medium">{email}</span> has an account, we&apos;ve sent a
-                link to set your password. Check your inbox to continue.
-              </p>
-              <button
-                type="button"
-                onClick={resetToEmail}
-                className="text-sm text-primary underline-offset-4 hover:underline"
-              >
-                Use a different email
-              </button>
-            </div>
-          ) : step === 'sso' ? (
-            <div className="space-y-4">
-              <p className="text-center text-sm text-foreground">
-                <span className="font-medium">{email}</span> signs in with single sign-on.
-              </p>
-              <SsoProviderButtons
-                providers={ssoStatus.providers}
-                submitting={ssoSubmitting}
-                onSelect={(id) => handleSsoLogin(id)}
-              />
-              {error && (
-                <div role="alert" className="rounded-md border border-destructive/50 bg-destructive/10 px-3 py-2 text-sm text-destructive">
-                  {error}
-                </div>
-              )}
-              <button
-                type="button"
-                onClick={resetToEmail}
-                className="block w-full text-center text-sm text-muted-foreground hover:text-foreground"
-              >
-                Use a different email
-              </button>
-            </div>
-          ) : step === 'mfa' ? (
+        {step === 'sent' ? (
+          <div className="space-y-5 text-center">
+            <Mail className="mx-auto h-8 w-8 text-muted-foreground" />
+            <p className="text-sm text-muted-foreground">
+              If <span className="text-foreground">{email}</span> has an account, the link is on its way.
+            </p>
+            <button type="button" onClick={resetToEmail} className="text-sm font-medium text-foreground hover:underline underline-offset-4">
+              Use a different email
+            </button>
+          </div>
+        ) : step === 'sso' ? (
+          <div className="space-y-4">
+            <p className="text-center text-sm text-muted-foreground">
+              <span className="text-foreground">{email}</span>
+            </p>
+            <SsoTextButtons providers={ssoStatus.providers} submitting={ssoSubmitting} onSelect={(id) => handleSsoLogin(id)} />
+            {error && notice('error', error)}
+            <button type="button" onClick={resetToEmail} className="block w-full text-center text-sm text-muted-foreground hover:text-foreground">
+              Use a different email
+            </button>
+          </div>
+        ) : step === 'mfa' ? (
+          <div className="rounded-xl bg-foreground/[0.03] p-5 ring-1 ring-foreground/[0.06]">
             <MfaChallenge
               mfaToken={mfaChallenge?.mfaToken}
               methods={mfaChallenge?.methods}
@@ -377,166 +376,89 @@ function Login() {
               onSuccess={handleMfaSuccess}
               onStartOver={resetToEmail}
             />
-          ) : (
+          </div>
+        ) : (
           <form onSubmit={step === 'password' ? handleSubmit : handleContinue} className="space-y-4">
-            {error && (
-              <div
-                role="alert"
-                aria-live="polite"
-                className="rounded-md border border-destructive/50 bg-destructive/10 px-3 py-2 text-sm text-destructive"
-              >
-                <div className="flex items-start gap-2">
-                  {locked && <ShieldAlert className="mt-0.5 h-4 w-4 shrink-0" />}
-                  <span>
-                    {error}
-                    {locked && (
-                      <span className="block mt-0.5">
-                        Try again in <span className="font-medium tabular-nums">{formatRetry(retryRemaining)}</span>.
-                      </span>
-                    )}
-                  </span>
-                </div>
-              </div>
-            )}
-
-            <div>
-              <label htmlFor="email" className="mb-1.5 block text-sm font-medium text-foreground">
-                Email <span className="text-destructive">*</span>
-              </label>
-              <div className="relative">
-                <Mail className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-                <input
-                  id="email"
-                  type="email"
-                  autoComplete="email"
-                  value={email}
-                  onChange={(e) => setEmail(e.target.value)}
-                  placeholder="you@company.com"
-                  required
-                  readOnly={step === 'password'}
-                  className={`h-9 w-full rounded-md border border-input pl-9 pr-3 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring ${step === 'password' ? 'bg-muted/40 cursor-default' : 'bg-background'}`}
-                />
-                {step === 'password' && (
-                  <button
-                    type="button"
-                    onClick={resetToEmail}
-                    className="absolute right-2 top-1/2 -translate-y-1/2 rounded px-1.5 text-xs text-muted-foreground hover:text-foreground"
-                    tabIndex={-1}
-                  >
-                    Change
-                  </button>
-                )}
-              </div>
-            </div>
-
-            {step === 'password' && (
-            <div>
-              <div className="mb-1.5 flex items-center justify-between">
-                <label htmlFor="password" className="text-sm font-medium text-foreground">
-                  Password <span className="text-destructive">*</span>
-                </label>
-                <Link
-                  to="/forgot-password"
-                  className="text-xs text-muted-foreground hover:text-foreground underline-offset-4 hover:underline"
+            {step === 'password' ? (
+              <>
+                <button
+                  type="button"
+                  onClick={resetToEmail}
+                  className="mx-auto flex max-w-full items-center gap-2 rounded-full bg-foreground/[0.05] px-3 py-1 text-xs text-muted-foreground transition-colors hover:text-foreground"
+                  title="Use a different email"
                 >
-                  Forgot password?
-                </Link>
-              </div>
-              <div className="relative">
-                <Lock className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-                <input
+                  <span className="truncate">{email}</span>
+                  <span className="text-foreground/60">Change</span>
+                </button>
+                <PillField
                   id="password"
                   type={showPassword ? 'text' : 'password'}
                   autoComplete="current-password"
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
-                  placeholder="Enter your password"
+                  placeholder="Password"
+                  aria-label="Password"
                   required
                   autoFocus
-                  className="h-9 w-full rounded-md border border-input bg-background pl-9 pr-9 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring"
-                />
-                <button
-                  type="button"
-                  onClick={() => setShowPassword((p) => !p)}
-                  className="absolute right-2 top-1/2 -translate-y-1/2 rounded p-1 text-muted-foreground hover:text-foreground"
-                  tabIndex={-1}
-                >
-                  {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
-                </button>
-              </div>
-            </div>
-            )}
-
-            {step === 'password' ? (
-              <button
-                type="submit"
-                disabled={submitting || locked}
-                className="flex h-9 w-full items-center justify-center rounded-md bg-primary text-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-50"
-              >
-                {submitting ? (
-                  <>
-                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                    Signing in...
-                  </>
-                ) : locked ? (
-                  `Try again in ${formatRetry(retryRemaining)}`
-                ) : (
-                  'Sign in'
-                )}
-              </button>
-            ) : (
-              <button
-                type="submit"
-                disabled={continuing || ssoSubmitting}
-                className="flex h-9 w-full items-center justify-center rounded-md bg-primary text-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-50"
-              >
-                {continuing ? (
-                  <>
-                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                    Continuing...
-                  </>
-                ) : (
-                  'Continue'
-                )}
-              </button>
-            )}
-
-            {ssoStatus.enabled && (
-              <>
-                <div className="relative my-2">
-                  <div className="absolute inset-0 flex items-center">
-                    <div className="w-full border-t border-border" />
-                  </div>
-                  <div className="relative flex justify-center text-xs">
-                    <span className="bg-card px-2 uppercase tracking-wider text-muted-foreground">
-                      or
-                    </span>
-                  </div>
-                </div>
-
-                <SsoProviderButtons
-                  providers={
-                    ssoStatus.providers?.length
-                      ? ssoStatus.providers
-                      : [{ id: null, name: ssoLoginLabel(ssoStatus.presetId), presetId: ssoStatus.presetId }]
+                  busy={submitting}
+                  disabled={locked}
+                  submitLabel="Sign in"
+                  trailing={
+                    <button
+                      type="button"
+                      onClick={() => setShowPassword((p) => !p)}
+                      className="rounded-full p-2 text-muted-foreground hover:text-foreground"
+                      aria-label={showPassword ? 'Hide password' : 'Show password'}
+                      tabIndex={-1}
+                    >
+                      {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                    </button>
                   }
-                  submitting={ssoSubmitting}
-                  onSelect={(id) => handleSsoLogin(id)}
                 />
+                <div className="text-center">
+                  <Link to="/forgot-password" className="text-xs text-muted-foreground hover:text-foreground">
+                    Forgot password?
+                  </Link>
+                </div>
               </>
+            ) : (
+              <PillField
+                id="email"
+                type="email"
+                autoComplete="email"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                placeholder="Work email"
+                aria-label="Email"
+                required
+                autoFocus
+                busy={continuing}
+                disabled={ssoSubmitting}
+                submitLabel="Continue"
+              />
             )}
 
-            {registrationEnabled && (
-              <p className="text-center text-sm text-muted-foreground">
-                Don&apos;t have an account?{' '}
-                <Link to="/register" className="text-primary underline-offset-4 hover:underline">
-                  Sign up
-                </Link>
-              </p>
+            {error &&
+              notice(
+                'error',
+                <span className="inline-flex items-start gap-1.5">
+                  {locked && <ShieldAlert className="mt-0.5 h-4 w-4 shrink-0" />}
+                  <span>
+                    {error}
+                    {locked && (
+                      <>
+                        {' '}Try again in <span className="font-medium tabular-nums">{formatRetry(retryRemaining)}</span>.
+                      </>
+                    )}
+                  </span>
+                </span>
+              )}
+
+            {step === 'email' && ssoStatus.enabled && (
+              <SsoTextButtons providers={ssoList} submitting={ssoSubmitting} onSelect={(id) => handleSsoLogin(id)} />
             )}
           </form>
-          )}
-        </div>
+        )}
       </div>
     </AuthShell>
   );

@@ -188,7 +188,8 @@ const providerCreateSchema = Joi.object({
   defaultGroupId: Joi.string().allow(null, ''),
   autoProvision: Joi.boolean().required(),
   allowedDomains: Joi.array().items(Joi.string().pattern(DOMAIN_RE)).max(50).required(),
-  allowedOrgs: Joi.array().items(Joi.string().min(1).max(100)).max(50).required(),
+  // GitHub only (org membership gate); other providers don't send it.
+  allowedOrgs: Joi.array().items(Joi.string().min(1).max(100)).max(50).default([]),
   requireVerifiedEmail: Joi.boolean().required(),
   isActive: Joi.boolean().required(),
 });

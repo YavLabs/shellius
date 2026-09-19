@@ -3,7 +3,7 @@ import { cn } from '@/lib/utils';
 const colors = {
   healthy: 'bg-emerald-500',
   unhealthy: 'bg-red-500',
-  unknown: 'bg-zinc-400',
+  unknown: 'bg-muted-foreground/60',
   maintenance: 'bg-yellow-500',
 };
 

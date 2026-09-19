@@ -1,7 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useParams, useSearchParams, Link } from 'react-router-dom';
 import { Loader2, CheckCircle2, XCircle, ShieldCheck } from 'lucide-react';
-import { BrandMark } from '@/components/common/BrandLogo';
 import EnvironmentBadge from '@/components/shared/EnvironmentBadge';
 import UserCell from '@/components/shared/UserCell';
 import { getApprovalRequest, submitApprovalDecision } from '@/services/approvalService';
@@ -70,14 +69,8 @@ function ApproveRequest() {
   return (
     <AuthShell>
       <div className="w-full max-w-md">
-        <div className="mb-8 text-center">
-          <div className="mx-auto mb-4 flex justify-center">
-            <BrandMark size="lg" />
-          </div>
-          <h1 className="text-2xl font-bold tracking-tight text-foreground">
-            {import.meta.env.VITE_BRAND_NAME || 'Shellius'}
-          </h1>
-          <p className="mt-1 text-sm text-muted-foreground">Access request approval</p>
+        <div className="mb-6 text-center">
+          <h1 className="text-3xl font-semibold">Access request approval</h1>
         </div>
 
         <div className="rounded-lg border border-border bg-card p-6 shadow-sm">

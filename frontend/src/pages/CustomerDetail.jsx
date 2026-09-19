@@ -136,7 +136,7 @@ function HeroSkeleton() {
 const ENVIRONMENTS = ['demo', 'dev', 'staging', 'prod'];
 
 const ENV_DOT_COLORS = {
-  demo: 'bg-zinc-400',
+  demo: 'bg-muted-foreground/60',
   dev: 'bg-blue-500',
   staging: 'bg-amber-500',
   prod: 'bg-red-500',
@@ -517,7 +517,7 @@ function CustomerDetail() {
           icon={Clock}
           label="Last health check"
           value={lastHealthCheck ? relativeTime(new Date(lastHealthCheck)) : 'Never'}
-          iconClass="bg-zinc-500/10 text-zinc-500"
+          iconClass="bg-muted-foreground/10 text-muted-foreground"
         />
       </div>
 
@@ -582,7 +582,7 @@ function CustomerDetail() {
                 >
                   <span
                     className={`h-1.5 w-1.5 rounded-full ${
-                      customer.isActive ? 'bg-emerald-500' : 'bg-zinc-400'
+                      customer.isActive ? 'bg-emerald-500' : 'bg-muted-foreground/60'
                     }`}
                   />
                   {customer.isActive ? 'Active' : 'Inactive'}
@@ -616,7 +616,7 @@ function CustomerDetail() {
                 {
                   label: 'Unknown',
                   count: unknownCount,
-                  dotClass: 'bg-zinc-400',
+                  dotClass: 'bg-muted-foreground/60',
                   textClass: 'text-muted-foreground',
                 },
               ].map(({ label, count, dotClass, textClass }) => (
@@ -639,7 +639,7 @@ function CustomerDetail() {
                     <div key={e} className="flex items-center justify-between">
                       <span className="flex items-center gap-2 text-sm text-foreground">
                         <span
-                          className={`h-2 w-2 rounded-full ${ENV_DOT_COLORS[e] || 'bg-zinc-400'}`}
+                          className={`h-2 w-2 rounded-full ${ENV_DOT_COLORS[e] || 'bg-muted-foreground/60'}`}
                         />
                         <EnvironmentBadge environment={e} />
                       </span>
