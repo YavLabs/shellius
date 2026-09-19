@@ -241,7 +241,7 @@ export const HELP_CONTENT = {
       {
         heading: 'Email',
         body:
-          'Notification emails are sent based on your preferences in Settings → Notifications. Admins can configure SMTP under Settings → Notifications → SMTP.',
+          'Notification emails are sent based on your notification preferences on your Profile. Admins choose how email is delivered (SMTP, Google, Microsoft 365, SendGrid, Mailgun, Postmark or Resend) under Settings → Email.',
       },
     ],
   },
@@ -320,7 +320,7 @@ export const HELP_CONTENT = {
   settings: {
     title: 'Settings',
     summary:
-      "Org-level configuration: organization name, CA management, SSO, notification + SMTP setup.",
+      "Org-level configuration: organization name, CA management, SSO, access, storage, MFA, Quick Connect and email delivery.",
     sections: [
       {
         heading: 'Organization',
@@ -338,9 +338,9 @@ export const HELP_CONTENT = {
           'Configure single sign-on with Google Workspace, Microsoft Entra ID, Okta, Auth0, or any generic OIDC provider. Test the connection from the wizard before saving.',
       },
       {
-        heading: 'Notifications',
+        heading: 'Email',
         body:
-          'Per-user toggle for email notifications and (admin only) the SMTP server settings. Env-var defaults are picked up automatically — UI overrides take precedence.',
+          'Add one or more email providers (SMTP, Google / Gmail API, Microsoft 365 via Graph, SendGrid, Mailgun, Postmark, Resend) and make one active. Use "Send test email" to check delivery; failures show the provider’s own error. With no active provider, email falls back to the server’s SMTP_* settings, or is not sent.',
       },
     ],
   },

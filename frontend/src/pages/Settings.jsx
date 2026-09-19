@@ -1,11 +1,12 @@
 import { useState, useEffect, useCallback } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import {
   RefreshCw,
   AlertTriangle,
   Building2,
   Shield,
   Cloud,
-  Bell,
+  Mail,
   Wifi,
   Settings as SettingsIcon,
   HardDrive,
@@ -14,7 +15,6 @@ import {
   Lock,
 } from 'lucide-react';
 import ConfirmDialog from '@/components/shared/ConfirmDialog';
-import { Badge } from '@/components/ui/badge';
 import QuickConnectSettings from '@/components/settings/QuickConnectSettings';
 import PageHeader from '@/components/common/PageHeader';
 import { Button } from '@/components/ui/button';
@@ -27,12 +27,7 @@ import MfaTab from '@/components/settings/MfaTab';
 import AccessSettings from '@/components/settings/AccessSettings';
 import { getPublicKey, getStatus, rotate } from '@/services/caService';
 import { getOrg, updateOrg } from '@/services/orgService';
-import {
-  getSmtpConfig,
-  saveSmtpConfig,
-  deleteSmtpConfig,
-  testSmtpConfig,
-} from '@/services/smtpConfigService';
+import EmailTab from '@/components/settings/email/EmailTab';
 import {
   getStorageConfig,
   saveStorageConfig,
@@ -358,245 +353,6 @@ function CloudConnectorsTab() {
 }
 
 // ---------------------------------------------------------------------------
-// Tab 5 — Notifications
-// ---------------------------------------------------------------------------
-
-// ---------------------------------------------------------------------------
-// SMTP card — admin-only, lives at the top of the Notifications tab.
-// Mirrors the per-org / env-default precedence pattern: env defaults are
-// shown with an "Environment default" badge; UI overrides win.
-// ---------------------------------------------------------------------------
-function SmtpCard() {
-  const [config, setConfig] = useState(null);
-  const [loading, setLoading] = useState(true);
-  const [saving, setSaving] = useState(false);
-  const [testing, setTesting] = useState(false);
-  const [error, setError] = useState('');
-  const [saved, setSaved] = useState(false);
-  const [testResult, setTestResult] = useState(null);
-
-  const [host, setHost] = useState('');
-  const [port, setPort] = useState(587);
-  const [username, setUsername] = useState('');
-  const [password, setPassword] = useState('');
-  const [fromAddress, setFromAddress] = useState('');
-  const [useTls, setUseTls] = useState(true);
-
-  const refresh = useCallback(() => {
-    setLoading(true);
-    return getSmtpConfig()
-      .then((c) => {
-        setConfig(c);
-        setHost(c?.host || '');
-        setPort(c?.port || 587);
-        setUsername(c?.username || '');
-        setPassword('');
-        setFromAddress(c?.fromAddress || '');
-        setUseTls(c?.useTls ?? true);
-      })
-      .catch((err) => setError(err?.response?.data?.error?.message || err.message || 'Failed to load SMTP config'))
-      .finally(() => setLoading(false));
-  }, []);
-
-  useEffect(() => {
-    refresh();
-  }, [refresh]);
-
-  const sourceBadge = (field) => {
-    const src = config?.source?.[field];
-    if (src === 'env') {
-      return (
-        <Badge tone="info" className="ml-2">
-          Environment default
-        </Badge>
-      );
-    }
-    if (src === 'db') {
-      return (
-        <Badge tone="success" className="ml-2">
-          Overridden
-        </Badge>
-      );
-    }
-    return null;
-  };
-
-  const handleSave = async () => {
-    setSaving(true);
-    setError('');
-    setSaved(false);
-    try {
-      const body = { host, port: Number(port), username, fromAddress, useTls };
-      if (password) body.password = password;
-      await saveSmtpConfig(body);
-      setSaved(true);
-      setTimeout(() => setSaved(false), 3000);
-      await refresh();
-    } catch (err) {
-      setError(err?.response?.data?.error?.message || err.message || 'Failed to save SMTP config');
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  const handleTest = async () => {
-    setTesting(true);
-    setTestResult(null);
-    setError('');
-    try {
-      const r = await testSmtpConfig();
-      setTestResult({ ok: true, message: `Test email sent to ${r.sentTo}` });
-    } catch (err) {
-      setTestResult({
-        ok: false,
-        message: err?.response?.data?.error?.message || err.message || 'Test failed',
-      });
-    } finally {
-      setTesting(false);
-    }
-  };
-
-  const handleReset = async () => {
-    if (!window.confirm('Delete the per-org SMTP override? Falls back to environment defaults.')) return;
-    setError('');
-    try {
-      await deleteSmtpConfig();
-      await refresh();
-    } catch (err) {
-      setError(err?.response?.data?.error?.message || err.message || 'Failed to delete SMTP config');
-    }
-  };
-
-  return (
-    <SectionCard
-      title="SMTP Configuration"
-      description="Outgoing email server. Environment variables act as defaults — UI overrides take precedence and require no restart."
-    >
-      {loading ? (
-        <div className="space-y-2 py-2">
-          {[1, 2, 3].map((i) => (
-            <div key={i} className="h-10 animate-pulse rounded bg-muted" />
-          ))}
-        </div>
-      ) : (
-        <div className="space-y-4">
-          {error && (
-            <div className="rounded-md border border-destructive/50 bg-destructive/10 px-3 py-2 text-sm text-destructive">
-              {error}
-            </div>
-          )}
-          {saved && (
-            <div className="rounded-md border border-emerald-500/40 bg-emerald-500/10 px-3 py-2 text-sm text-emerald-700 dark:text-emerald-300">
-              SMTP configuration saved.
-            </div>
-          )}
-          {!config?.configured && !error && (
-            <div className="rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-sm text-amber-700 dark:text-amber-300">
-              No SMTP configured — emails are logged to stdout instead of sent.
-              Configure here or set <code>SMTP_HOST</code> in the backend
-              environment.
-            </div>
-          )}
-
-          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-            <div>
-              <label className="mb-1 flex items-center text-xs font-medium text-muted-foreground">
-                Host <span className="text-destructive">*</span> {sourceBadge('host')}
-              </label>
-              <Input value={host} onChange={(e) => setHost(e.target.value)} placeholder="smtp.sendgrid.net" />
-            </div>
-            <div>
-              <label className="mb-1 flex items-center text-xs font-medium text-muted-foreground">
-                Port {sourceBadge('port')}
-              </label>
-              <Input
-                type="number"
-                value={port}
-                onChange={(e) => setPort(e.target.value)}
-                placeholder="587"
-              />
-            </div>
-            <div>
-              <label className="mb-1 flex items-center text-xs font-medium text-muted-foreground">
-                Username {sourceBadge('username')}
-              </label>
-              <Input value={username} onChange={(e) => setUsername(e.target.value)} placeholder="apikey" />
-            </div>
-            <div>
-              <label className="mb-1 flex items-center text-xs font-medium text-muted-foreground">
-                Password {sourceBadge('password')}
-              </label>
-              <PasswordInput
-                className={SHADCN_INPUT_CLS}
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                placeholder={config?.hasPassword ? 'Stored — leave blank to keep' : ''}
-                autoComplete="new-password"
-              />
-            </div>
-            <div className="sm:col-span-2">
-              <label className="mb-1 flex items-center text-xs font-medium text-muted-foreground">
-                From address {sourceBadge('fromAddress')}
-              </label>
-              <Input
-                type="email"
-                value={fromAddress}
-                onChange={(e) => setFromAddress(e.target.value)}
-                placeholder="noreply@shellius.example.com"
-              />
-            </div>
-          </div>
-
-          <SwitchField
-            bordered
-            label="Use TLS"
-            description="Connect over TLS (implicit TLS on 465, STARTTLS otherwise)."
-            checked={useTls}
-            onCheckedChange={setUseTls}
-          />
-
-          {testResult && (
-            <div
-              className={[
-                'rounded-md border px-3 py-2 text-sm',
-                testResult.ok
-                  ? 'border-emerald-500/40 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300'
-                  : 'border-destructive/50 bg-destructive/10 text-destructive',
-              ].join(' ')}
-            >
-              {testResult.message}
-            </div>
-          )}
-
-          <div className="flex flex-wrap gap-2 pt-1">
-            <Button onClick={handleSave} disabled={saving || !host}>
-              {saving ? 'Saving...' : 'Save'}
-            </Button>
-            <Button variant="outline" onClick={handleTest} disabled={testing || !config?.configured}>
-              {testing ? 'Sending...' : 'Send test email'}
-            </Button>
-            {config?.source?.host === 'db' && (
-              <Button variant="outline" onClick={handleReset}>
-                Reset to env defaults
-              </Button>
-            )}
-          </div>
-        </div>
-      )}
-    </SectionCard>
-  );
-}
-
-function EmailServerTab() {
-  return <SmtpCard />;
-}
-
-
-// ---------------------------------------------------------------------------
-// Tabs config
-// ---------------------------------------------------------------------------
-
-// ---------------------------------------------------------------------------
 // Tab — Object Storage (super_admin only)
 // ---------------------------------------------------------------------------
 
@@ -863,7 +619,7 @@ const TABS = [
   { key: 'storage', label: 'Storage', icon: HardDrive, perm: 'settings.storage', Component: StorageTab },
   { key: 'mfa', label: 'MFA', icon: ShieldCheck, perm: 'settings.mfa', Component: MfaTab },
   { key: 'quickconnect', label: 'Quick Connect', icon: Zap, perm: 'quick_connect.settings', Component: QuickConnectSettings },
-  { key: 'email', label: 'Email server', icon: Bell, perm: 'settings.smtp', Component: EmailServerTab },
+  { key: 'email', label: 'Email', icon: Mail, perm: 'settings.smtp', Component: EmailTab },
 ];
 
 // ---------------------------------------------------------------------------
@@ -873,7 +629,10 @@ const TABS = [
 function Settings() {
   const { user } = useAuth();
   const visibleTabs = TABS.filter((tab) => can(user, tab.perm));
-  const [chosenTab, setActiveTab] = useState(null);
+  // ?tab=<key> deep-links a tab (e.g. the Google OAuth callback returns to
+  // /settings?tab=email).
+  const [searchParams] = useSearchParams();
+  const [chosenTab, setActiveTab] = useState(() => searchParams.get('tab'));
   const activeTab = visibleTabs.some((t) => t.key === chosenTab) ? chosenTab : visibleTabs[0]?.key;
   const Active = visibleTabs.find((t) => t.key === activeTab)?.Component;
 
