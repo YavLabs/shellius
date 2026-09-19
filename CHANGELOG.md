@@ -9,6 +9,13 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 Tracked here as work lands on `main`; moved into a dated section on release
 (`node scripts/version.mjs bump <major|minor|patch>`).
 
+## [1.2.0] - 2026-09-18
+
+This release adds **custom roles** and fixes the gaps found in a full RBAC audit, including
+admin → super admin account takeover and an unrestricted certificate-issue endpoint. Upgrading is
+automatic, but **read the Migration notes**: some Manager and Member permissions are tighter by
+default.
+
 ### Added
 
 - **Custom roles.** Sidebar → Administration → **Roles** (`/roles`):
@@ -42,9 +49,6 @@ Tracked here as work lands on `main`; moved into a dated section on release
 - Pages you can't open now say so instead of silently sending you to the dashboard.
 - Dashboard shows "My live sessions" and "My certificates" to people who can't see everyone's.
 - The CLI reads the permission list at login to show which production servers need approval.
-
-### Changed
-
 - Dashboard: **Recent connections** replaces "Recent quick connects" and is shown to everyone.
   - **Active now:** your live sessions. "Go to terminal" if the session is open in a tab or
     Workspace; "Connect now" if it's running in the background. End from the row menu.
@@ -67,6 +71,15 @@ Tracked here as work lands on `main`; moved into a dated section on release
   ended session Local Admin on host" is now "Local Admin ended session sshtest.local". Quick
   Connect sessions show `user@host` instead of the placeholder "host". Someone else's session or
   request is still named ("Jane Doe on sshtest.local").
+- Secondary approvers can open and revoke the requests they're asked to approve. Approve and
+  Revoke buttons now match what the API allows.
+- Admins no longer see Delete buttons that the API rejects.
+- Opening a policy with selected subjects no longer crashes: an import was commented out.
+- Switches were invisible in dark mode. Settings checkboxes are now switches.
+- The seed strips one pair of matching outer quotes from `SEED_*` values. `docker run --env-file`
+  passes quotes through literally, which stored names like `"Local Admin"` (quotes included) for
+  the super admin and organization.
+- Avatar initials ignore punctuation, so a quoted or bracketed name no longer shows `"A`.
 
 ### Security
 
@@ -94,17 +107,22 @@ Fixes from the RBAC audit (details in `docs/rbac/rbac-audit.md`):
   `viewer`.
 - Server, customer, group, user, install-link and recording-download actions are now audited.
 
-### Fixed
+### Migration notes
 
-- Secondary approvers can open and revoke the requests they're asked to approve. Approve and
-  Revoke buttons now match what the API allows.
-- Admins no longer see Delete buttons that the API rejects.
-- Opening a policy with selected subjects no longer crashes: an import was commented out.
-- Switches were invisible in dark mode. Settings checkboxes are now switches.
-- The seed strips one pair of matching outer quotes from `SEED_*` values. `docker run --env-file`
-  passes quotes through literally, which stored names like `"Local Admin"` (quotes included) for
-  the super admin and organization.
-- Avatar initials ignore punctuation, so a quoted or bracketed name no longer shows `"A`.
+- A migration adds the `roles` table and `users.role_id`. On startup every organization gets its
+  four built-in roles and every user is linked to one, before the server takes requests.
+- Your current settings carry over:
+  - The "which roles skip production approval" setting becomes the Admin role's **Production
+    without approval** permission plus the Settings → Access switch.
+  - Quick Connect's minimum role becomes the **Use Quick Connect** permission.
+- Manager and Member defaults are tighter (see Changed). If your managers relied on changing
+  server environments, binding identities, using stored identities in Quick Connect or watching
+  recordings, grant those back on the Roles page.
+- `PUT /api/users/:id` no longer accepts `password` or `avatarUrl`, and `PUT /api/org` no longer
+  accepts `settings`. `POST /api/certificates/issue` requires `serverId` and the new
+  `certificates.issue_direct` permission. The web UI and CLI don't use any of these.
+- CLI: sign in again (`shellius login`) to get the new permission list. Until you do, it falls
+  back to the stored role.
 
 ## [1.1.0] - 2026-09-18
 
