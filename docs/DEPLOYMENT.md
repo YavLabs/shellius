@@ -157,11 +157,11 @@ platform's env var UI, never commit it). Full precedent copies live in
 | `SSH_TARGET_ALLOW_LOOPBACK` | No | `false` | No | Allow outbound SSH (web terminal, Quick Connect, key deployment) to loopback targets. **Never `true` in production** — dev-only, for SSHing into throwaway containers on the same host |
 | `AUTH_LOCKOUT_THRESHOLD` | No | `5` | No | Consecutive failed local logins before a temporary lock |
 | `AUTH_LOCKOUT_MINUTES` | No | `15` | No | Lockout duration |
-| `MFA_ENABLED` / `MFA_ENFORCED` | No | `false` / `false` | No | Org-wide MFA defaults (a super_admin can override per-org from Settings → MFA) |
+| `MFA_ENABLED` / `MFA_ENFORCED` | No | `false` / `false` | No | Org-wide MFA defaults (a super_admin can override per-org from Administration → Two-factor) |
 | `MFA_ALLOW_TOTP` / `MFA_ALLOW_EMAIL_OTP` | No | `true` / `true` | No | Which MFA methods are offered |
 | `MFA_ISSUER` | No | `Shellius` | No | TOTP issuer label shown in authenticator apps |
 
-### SSO (optional — prefer Settings → SSO for multi-provider setups)
+### SSO (optional — prefer Administration → Single sign-on for multi-provider setups)
 
 | Variable | Required | Default | Secret? | Description |
 |---|---|---|---|---|
@@ -180,7 +180,7 @@ Full details: [`docs/sso-configuration.md`](./sso-configuration.md) and the
 ### Email
 
 Email providers (SMTP, Google / Gmail API, Microsoft 365 via Graph, SendGrid,
-Mailgun, Postmark, Resend) are configured per org in **Settings → Email** — no
+Mailgun, Postmark, Resend) are configured per org in **Administration → Email** — no
 environment variables needed, no restart. The `SMTP_*` variables below are
 only the fallback used when an org has no active provider; without them (and
 without a provider) Shellius runs in log-only mode. See
@@ -215,7 +215,7 @@ The Google email provider's OAuth redirect URI is
 | `RECORDINGS_DIR` | No | `./data/recordings` | No | Local-disk fallback when no provider is configured — **not durable across container recreation**, recommended for dev only |
 | `RECORDING_RETENTION_DAYS` | No | `90` | No | Session recordings older than this are pruned by the hourly cleanup job |
 
-Can be overridden at runtime from Settings → Storage by a super_admin (DB
+Can be overridden at runtime from Administration → Storage by a super_admin (DB
 wins over env, no restart).
 
 ### Background jobs / terminal workspace
@@ -744,10 +744,10 @@ UI's terminal and run the same `pg_dump` command from §5.
       your own nginx, or a CDN in front) — Shellius itself does not terminate
       TLS
 - [ ] MFA enforced for `admin`/`super_admin` accounts at minimum
-      (`Settings → MFA`, or `MFA_ENFORCED=true`)
+      (`Administration → Two-factor`, or `MFA_ENFORCED=true`)
 - [ ] `AUTH_LOCKOUT_THRESHOLD`/`AUTH_LOCKOUT_MINUTES` left at sane defaults
       (5/15) or tightened for internet-facing deployments
-- [ ] `prodApprovalBypassMinRole` (Settings → Access, or
+- [ ] `prodApprovalBypassMinRole` (Administration → Access rules, or
       `PUT /api/org/access-settings`) reviewed — decide deliberately whether
       admins should bypass production approval, rather than leaving the
       default unexamined

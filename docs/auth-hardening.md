@@ -186,8 +186,8 @@ accounts live in `UserIdentity` (one row per provider per user; unique on
 ### Production approval
 
 `server.environment === 'prod'` requires approval **unless the requester's role
-holds `access.prod_bypass`** (Admin and Super admin by default; edited on the
-Roles page) **and** the org switch `Organization.settings.access.prodBypassEnabled`
+holds `access.prod_bypass`** (Admin and Super admin by default; edited under
+Administration → Roles) **and** the org switch `Organization.settings.access.prodBypassEnabled`
 is on. With the switch off nobody skips approval — not even super admins — and
 break-glass can't reach prod either. Policy `autoApprove` is **ignored on prod**.
 A bypass still creates an `APPROVED` AccessRequest (reason required), is audited

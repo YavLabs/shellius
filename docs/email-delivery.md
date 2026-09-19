@@ -3,19 +3,19 @@
 Shellius sends email for invitations, password resets, access-request
 approvals, certificate expiry warnings, account deletion and email sign-in
 codes. Admins with the **Email delivery** permission (`settings.smtp`) choose
-how it is sent under **Settings → Email**.
+how it is sent under **Administration → Email** (`/admin/email`).
 
 ## How Shellius picks a sender
 
 For every email, fresh on each send (no restart needed):
 
-1. **The org's active email provider** (Settings → Email). An org can define
+1. **The org's active email provider** (Administration → Email). An org can define
    several providers; exactly one — or none — is active.
 2. **`SMTP_*` environment variables**, when no provider is active. This is
    the behaviour of earlier releases and is reported as transport `env-smtp`.
 3. **Log-only mode** when neither exists: nothing is sent, and the backend
    log records the subject and the start of the text body (so an admin can
-   copy an invite or reset link). The Users page shows such links directly.
+   copy an invite or reset link). Administration → Users shows such links directly.
 
 If the active provider fails, Shellius does **not** silently fall back to the
 environment settings: the send fails, the caller sees `delivered: false`
@@ -202,7 +202,7 @@ All routes need `settings.smtp`, except the OAuth callback.
 | POST | `/api/settings/email/providers/:id/deactivate` | |
 | POST | `/api/settings/email/providers/:id/test` | `{ to? }` (defaults to the caller). → `{ ok, sentTo, error, provider }`; a failed delivery is `ok: false`, not an HTTP error. |
 | POST | `/api/settings/email/providers/:id/google/connect` | → `{ authUrl, redirectUri }` |
-| GET | `/api/settings/email/google/callback` | Google redirect target. Redirects to `/settings?tab=email&connected=1` or `&error=<code>`. |
+| GET | `/api/settings/email/google/callback` | Google redirect target. Redirects to `/admin/email?connected=1` or `/admin/email?error=<code>`. |
 
 Secrets appear in responses only as `{ "set": true|false }`.
 
