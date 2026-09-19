@@ -50,15 +50,17 @@ function ssoLoginLabel(presetId) {
  * Fey-style sign-in buttons under an "or continue with" divider: one
  * full-width "Sign in with X" button per provider, stacked.
  */
-function SsoTextButtons({ providers, submitting, onSelect }) {
+function SsoTextButtons({ providers, submitting, onSelect, showDivider = true, verb = 'Sign in with' }) {
   const single = providers.length === 1;
   return (
     <div className="space-y-3">
-      <div className="flex items-center gap-3 text-[11px] uppercase tracking-[0.14em] text-muted-foreground/70">
-        <div className="hairline-fade flex-1" />
-        or continue with
-        <div className="hairline-fade flex-1" />
-      </div>
+      {showDivider && (
+        <div className="flex items-center gap-3 text-[11px] uppercase tracking-[0.14em] text-muted-foreground/70">
+          <div className="hairline-fade flex-1" />
+          or continue with
+          <div className="hairline-fade flex-1" />
+        </div>
+      )}
       <div className="flex flex-col gap-2">
         {providers.map((provider) => (
           <button
@@ -66,12 +68,12 @@ function SsoTextButtons({ providers, submitting, onSelect }) {
             type="button"
             onClick={() => onSelect(provider.id)}
             disabled={submitting}
-            title={`Sign in with ${provider.name || ssoLoginLabel(provider.presetId)}`}
+            title={`${verb} ${provider.name || ssoLoginLabel(provider.presetId)}`}
             className={`inline-flex h-10 w-full min-w-0 items-center justify-center gap-2 rounded-md bg-foreground/[0.04] px-3 text-sm font-semibold text-foreground/85 ring-1 ring-foreground/[0.06] transition-colors hover:bg-foreground/[0.08] hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50`}
           >
             {submitting && single ? <Loader2 className="h-4 w-4 animate-spin" /> : <ProviderGlyph presetId={provider.presetId} />}
             <span className="truncate">
-              Sign in with {provider.name || ssoLoginLabel(provider.presetId)}
+              {verb} {provider.name || ssoLoginLabel(provider.presetId)}
             </span>
           </button>
         ))}
@@ -82,6 +84,9 @@ function SsoTextButtons({ providers, submitting, onSelect }) {
 
 function Login() {
   const [step, setStep] = useState('email'); // 'email' | 'password' | 'mfa' | 'sent' | 'sso'
+  // Why the SSO step is shown: 'required' (org requires SSO), 'single' (this
+  // account signs in with one provider), 'multi' (pick a provider).
+  const [ssoReason, setSsoReason] = useState('multi');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
@@ -207,22 +212,20 @@ function Login() {
       const r = await api.post('/auth/login-options', { email });
       const opts = r.data?.data || {};
       const providers = Array.isArray(opts.providers) ? opts.providers : null;
-      if (opts.hasPassword) {
+      if (opts.hasPassword && !opts.ssoRequired) {
         setStep('password');
       } else if (providers && providers.length > 0) {
-        // No local password — show the provider button(s) prominently rather
-        // than guessing which one to redirect to.
+        // No usable password (none set, or the org requires SSO) — show the
+        // provider button(s) and let the person choose; never redirect away
+        // without a click.
         setSsoStatus((prev) => ({
           ...prev,
           enabled: true,
           providers,
           orgSlug: opts.orgSlug || prev.orgSlug,
         }));
-        if (providers.length === 1) {
-          handleSsoLogin(providers[0].id, opts.orgSlug);
-        } else {
-          setStep('sso');
-        }
+        setSsoReason(opts.ssoRequired ? 'required' : providers.length === 1 ? 'single' : 'multi');
+        setStep('sso');
       } else if (opts.ssoEnabled) {
         // Legacy single-provider backend with no `providers` array — go
         // straight to the identity provider.
@@ -259,6 +262,11 @@ function Login() {
         setError('Too many failed attempts.');
       } else if (err.code === 'ACCOUNT_DISABLED') {
         setError('This account has been disabled. Contact your administrator.');
+      } else if (err.code === 'SSO_REQUIRED') {
+        setPassword('');
+        setSsoReason('required');
+        if (ssoStatus.enabled) setStep('sso');
+        setError('Your organization signs in with single sign-on.');
       } else {
         setError(err.message || 'Login failed');
       }
@@ -274,6 +282,7 @@ function Login() {
 
   const resetToEmail = () => {
     setStep('email');
+    setSsoReason('multi');
     setPassword('');
     setError('');
     setLockout(null);
@@ -337,7 +346,11 @@ function Login() {
             {step === 'password'
               ? 'Enter your password to continue.'
               : step === 'sso'
-                ? 'Your organization signs you in with single sign-on.'
+                ? ssoReason === 'required'
+                  ? 'Your organization signs in with single sign-on.'
+                  : ssoReason === 'single'
+                    ? `This account signs in with ${ssoStatus.providers?.[0]?.name || ssoLoginLabel(ssoStatus.providers?.[0]?.presetId)}.`
+                    : 'Your organization signs you in with single sign-on.'
                 : step === 'mfa'
                   ? 'One more step to keep your account safe.'
                   : step === 'sent'
@@ -361,8 +374,14 @@ function Login() {
             <p className="text-center text-sm text-muted-foreground">
               <span className="text-foreground">{email}</span>
             </p>
-            <SsoTextButtons providers={ssoStatus.providers} submitting={ssoSubmitting} onSelect={(id) => handleSsoLogin(id)} />
-            {error && notice('error', error)}
+            <SsoTextButtons
+              providers={ssoStatus.providers}
+              submitting={ssoSubmitting}
+              onSelect={(id) => handleSsoLogin(id)}
+              showDivider={false}
+              verb={ssoReason === 'single' ? 'Continue with' : 'Sign in with'}
+            />
+            {error && ssoReason !== 'required' && notice('error', error)}
             <button type="button" onClick={resetToEmail} className="block w-full text-center text-sm text-muted-foreground hover:text-foreground">
               Use a different email
             </button>

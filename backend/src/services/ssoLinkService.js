@@ -34,7 +34,7 @@ import { renderTemplate } from '../email/index.js';
 import { log as auditLog, ACTIONS } from './auditService.js';
 import * as mfaService from './mfaService.js';
 import * as authService from './authService.js';
-import { linkIdentityToUser, deleteUserIdentity, listUserIdentities, ssoError } from './ssoService.js';
+import { linkIdentityToUser, deleteUserIdentity, listUserIdentities, ssoError, materializeEnvGoogle } from './ssoService.js';
 import { assertCanManageUser } from './userService.js';
 import { passwordSignInBlocked } from './orgService.js';
 
@@ -445,7 +445,10 @@ export async function approvePendingLink(token, { ipAddress, userAgent } = {}) {
 
 /** Validate a connect/start request. Returns the provider row. */
 export async function assertCanStartConnect({ orgId, userId, providerId }) {
-  const row = await prisma.ssoConfig.findFirst({ where: { id: providerId, orgId, isActive: true } });
+  // The env-configured Google preset is listed as 'env-google' until its
+  // first use materialises a real row.
+  const resolvedId = providerId === 'env-google' ? (await materializeEnvGoogle(orgId))?.id : providerId;
+  const row = resolvedId ? await prisma.ssoConfig.findFirst({ where: { id: resolvedId, orgId, isActive: true } }) : null;
   if (!row) throw new ApiError(404, 'Sign-in provider not found');
   const existing = await prisma.userIdentity.findFirst({ where: { userId, orgId, ssoConfigId: row.id } });
   if (existing) {

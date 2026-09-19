@@ -952,6 +952,18 @@ router.post(
 // links to THIS user only — never by email.
 // ---------------------------------------------------------------------------
 
+// GET /api/auth/sso/connect/providers — the caller's org's active providers
+// (for Profile → Sign-in methods). Same public-safe DTO as the login page.
+router.get(
+  '/connect/providers',
+  authenticate,
+  tenant,
+  asyncHandler(async (req, res) => {
+    const providers = await ssoConfigService.listActiveProviders(req.orgId);
+    res.json({ success: true, data: { providers } });
+  })
+);
+
 router.post(
   '/connect/start',
   authenticate,
