@@ -1,5 +1,12 @@
 # SMTP Configuration
 
+> **Superseded.** Email delivery is now configured with email providers in
+> Settings → Email (SMTP, Google, Microsoft 365, SendGrid, Mailgun, Postmark,
+> Resend) — see [`email-delivery.md`](./email-delivery.md). The `SMTP_*`
+> environment variables below still apply as the fallback when no provider is
+> active; the per-org UI override described here was migrated into an "SMTP"
+> email provider, and `/api/settings/smtp` is a deprecated shim over it.
+
 Shellius can resolve SMTP credentials from two sources, in this
 precedence order:
 

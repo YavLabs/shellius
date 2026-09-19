@@ -2,14 +2,16 @@
 
 Shellius sends every email through a small registry of HTML templates
 under `backend/src/email/`. Each template renders an inline-styled HTML
-body that matches the Shellius web UI theme (dark header, emerald
-accent) plus a plain-text fallback that's readable on its own.
+body in the Shellius brand (Ink → Indigo header with the Shellius lockup,
+Sky → Lavender accent rule and buttons) plus a plain-text fallback that's
+readable on its own. Delivery is covered in `docs/email-delivery.md`.
 
 ## Directory layout
 
 ```
 backend/src/email/
 ├── escape.js              # tiny HTML escape helper (no deps)
+├── brand.js               # brand colours + header logo URL resolution
 ├── layout.js              # shared inline-styled HTML layout
 ├── button.js              # CTA button helper with MSO conditional fallback
 ├── index.js               # registry + renderTemplate(name, vars)
@@ -125,6 +127,25 @@ node backend/scripts/preview-email.js invite --text
 user-supplied data without `esc(...)`. The Jest suite verifies this
 with `<script>x</script>` and `&` test cases on the invite template
 — extend the suite when you add a template that takes new user input.
+
+## Header logo
+
+The header shows the hosted PNG lockup
+`${APP_URL}/brand/png/shellius-lockup-dark-bg-640x128.png` (served by the web
+app from `frontend/public/brand/png/`) at 200×40 with `alt="Shellius"`. The
+app URL is resolved like every other link (`APP_URL` → `PUBLIC_BASE_URL` →
+`FRONTEND_URL` → `https://$TRAEFIK_HOST`). When none is set, or it points at
+localhost (which a recipient's mail client can't reach), the header renders
+an HTML-only wordmark instead — "SHELL", a small Sky → Lavender block, "US" —
+so there is never a broken image. Never use `data:` URIs or SVG in emails:
+Gmail and Outlook block them.
+
+Brand colours (`brand.js`): Ink `#09090C`, Indigo `#141A2E`, Sky `#8FB6F5`,
+Lavender `#B9A6F2`, Light `#EDEEF2`, Muted `#8A8D94`. Buttons use the
+Sky → Lavender gradient with Ink text and a solid Sky `background` /
+`bgcolor` / VML fill for clients without CSS gradients (Outlook desktop).
+`button({ href, label, color })` with an explicit `color` renders a solid
+button with white text (e.g. the red "Reject").
 
 ## Mail-client compatibility
 

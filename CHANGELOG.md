@@ -9,6 +9,33 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 Tracked here as work lands on `main`; moved into a dated section on release
 (`node scripts/version.mjs bump <major|minor|patch>`).
 
+### Added
+
+- **Email providers.** Settings → Email (was "Email server") can hold several ways to send email, and one is active at a time:
+  - SMTP, Google (Gmail API), Microsoft 365 (Microsoft Graph), SendGrid, Mailgun, Postmark and Resend.
+  - Google: "Connect Google account" signs in once and only asks for permission to send email. Google Workspace service accounts (domain-wide delegation) work too. The OAuth client defaults to `SSO_GOOGLE_CLIENT_ID` / `SSO_GOOGLE_CLIENT_SECRET`.
+  - Microsoft 365: an Entra ID app with the Mail.Send application permission sends from a chosen mailbox.
+  - "Send test email" sends to any address (your own by default) and shows the provider's own error when it fails. Each provider shows its last test result.
+  - A notice says what happens when no provider is active: emails use the server's `SMTP_*` settings, or are not sent at all.
+  - API keys, client secrets, passwords and Google sign-in tokens are encrypted and never shown again. Leave a secret blank when editing to keep it.
+  - Every change and test is in the audit log, without secrets.
+  - See `docs/email-delivery.md`.
+- `SMTP_SECURITY` (`none`, `starttls` or `tls`) and `SMTP_FROM_NAME` for the environment SMTP settings.
+
+### Changed
+
+- **Emails use the new Shellius brand.** The header shows the Shellius logo, loaded from the app's public URL (`APP_URL` or `TRAEFIK_HOST`). Without a public URL it shows a text logo instead of a broken image. The old header icon was blocked by Gmail and Outlook. Buttons use the brand gradient.
+- SMTP has an explicit Security setting: STARTTLS, TLS, or None. Before, the TLS switch only applied on port 465.
+- The "Email server" permission is now called "Email delivery" (same key, `settings.smtp`), and is marked as sensitive.
+- `/api/settings/smtp` is deprecated. It still works, and now reads and writes the org's active SMTP provider.
+
+### Migration notes
+
+- The `20260921000000_email_providers` migration adds the `email_providers` table. It copies each org's SMTP settings from Settings → Notifications → SMTP into an active "SMTP" provider. The SMTP password is moved into the provider's encrypted settings when the backend starts, so start the backend once after `prisma migrate deploy`.
+- The old SMTP "Use TLS" switch becomes Security: TLS on port 465, STARTTLS (required) on other ports, None when it was off. If your mail server doesn't support STARTTLS on port 587, set Security to None.
+- The `smtp_configs` table is kept unchanged, so rolling back to 1.4.x keeps working. Changes made after upgrading aren't copied back to it.
+- To use a Google provider with OAuth, add `https://<your host>/api/settings/email/google/callback` to the Google OAuth client's redirect URIs.
+
 ## [1.4.1] - 2026-09-19
 
 ### Fixed

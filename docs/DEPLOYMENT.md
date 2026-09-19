@@ -177,20 +177,32 @@ platform's env var UI, never commit it). Full precedent copies live in
 Full details: [`docs/sso-configuration.md`](./sso-configuration.md) and the
 "Revision 2" section of [`docs/auth-hardening.md`](./auth-hardening.md).
 
-### Email (SMTP)
+### Email
+
+Email providers (SMTP, Google / Gmail API, Microsoft 365 via Graph, SendGrid,
+Mailgun, Postmark, Resend) are configured per org in **Settings → Email** — no
+environment variables needed, no restart. The `SMTP_*` variables below are
+only the fallback used when an org has no active provider; without them (and
+without a provider) Shellius runs in log-only mode. See
+[`docs/email-delivery.md`](./email-delivery.md).
 
 | Variable | Required | Default | Secret? | Description |
 |---|---|---|---|---|
-| `SMTP_HOST` | No (log-only mode without it) | — | No | SMTP server hostname |
+| `SMTP_HOST` | No (log-only mode without it or a provider) | — | No | SMTP server hostname |
 | `SMTP_PORT` | No | `587` | No | SMTP port |
 | `SMTP_USER` | No | — | No | SMTP username |
 | `SMTP_PASS` | No | — | **Yes** | SMTP password |
-| `SMTP_FROM` | No | — | No | From address |
-| `SMTP_SECURE` | No | `true` | No | STARTTLS toggle |
+| `SMTP_FROM` | No | `SMTP_USER` if an address | No | From address |
+| `SMTP_FROM_NAME` | No | — | No | From display name |
+| `SMTP_SECURITY` | No | TLS on 465, else STARTTLS if offered | No | `none` \| `starttls` \| `tls` |
+| `SMTP_SECURE` | No | `true` | No | Legacy; only used when `SMTP_SECURITY` is unset |
+| `SSO_GOOGLE_CLIENT_ID` / `SSO_GOOGLE_CLIENT_SECRET` | No | — | Secret | Also the default OAuth client for a Google email provider |
 
-Can also be set per-org from Settings → Notifications → SMTP (DB overrides
-env, no restart needed). See
-[`docs/smtp-configuration.md`](./smtp-configuration.md).
+The Google email provider's OAuth redirect URI is
+`https://<host>/api/settings/email/google/callback` (derived from `APP_URL` /
+`TRAEFIK_HOST`). Email headers load the logo from
+`<app URL>/brand/png/shellius-lockup-dark-bg-640x128.png`, so set `APP_URL` or
+`TRAEFIK_HOST` to the public URL.
 
 ### Object storage (session recordings)
 
