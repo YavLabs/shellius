@@ -177,6 +177,32 @@ router.get(
 );
 
 // ---------------------------------------------------------------------------
+// GET /api/posture/servers/:serverId/metrics — resource history drill-down
+// ---------------------------------------------------------------------------
+
+const metricsQuerySchema = Joi.object({
+  from: Joi.date().iso(),
+  to: Joi.date().iso(),
+  // `auto` picks a bucket that keeps the range under ~500 points.
+  bucket: Joi.string().valid('auto', ...Object.keys(postureQueryService.METRIC_BUCKETS)).default('auto'),
+});
+
+router.get(
+  '/servers/:serverId/metrics',
+  requirePermission('posture.read'),
+  validateQuery(metricsQuerySchema),
+  asyncHandler(async (req, res) => {
+    const data = await postureQueryService.getServerMetrics(
+      req.orgId,
+      req.params.serverId,
+      req.scope,
+      req.query
+    );
+    res.json({ success: true, data });
+  })
+);
+
+// ---------------------------------------------------------------------------
 // Finding lifecycle — posture.mute, audited
 // ---------------------------------------------------------------------------
 

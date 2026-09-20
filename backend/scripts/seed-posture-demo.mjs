@@ -19,8 +19,9 @@
  * newest one it already has.
  *
  * `--history` also ingests two earlier snapshots (2h and 1h ago) with a
- * couple of ports absent, so the UI has resolved findings, a re-open, and a
- * metric sparkline rather than a single flat point.
+ * couple of ports absent, so the UI has resolved findings and a re-open, and
+ * backfills 7 days of resource samples at the collection interval so the
+ * Resources drill-down has something to aggregate over.
  *
  * Local/dev only. It writes to whatever DATABASE_URL points at, so it prints
  * the target server and refuses to run without one.
@@ -31,6 +32,7 @@ import prisma from '../src/config/db.js';
 import * as postureService from '../src/services/postureService.js';
 import * as postureSettingsService from '../src/services/postureSettingsService.js';
 
+const HISTORY_DAYS = 7;
 const DEFAULT_SERVER_ID = 'cmua6ruxg000pcux3fw6da8p9'; // "Onprem Dev Demo 1"
 
 // --- the scan -------------------------------------------------------------
@@ -152,6 +154,68 @@ function buildPayload(collectedAt, { omitPorts = [], includeTransient = false, m
   };
 }
 
+/**
+ * Backfill resource samples at the collection interval.
+ *
+ * Written straight to hostMetricSample rather than through ingest: ingest
+ * records one sample per snapshot, and 2000 snapshots to get 2000 samples
+ * would be a lie about how often the host was scanned.
+ *
+ * The shape is deliberately not noise — a daily business-hours cycle on CPU,
+ * memory climbing and sawtoothing on restarts, disk creeping up all week.
+ * Flat random data makes every aggregation look identical and tells you
+ * nothing about whether the charts work.
+ */
+async function backfillMetrics(orgId, serverId, { days, intervalSeconds }) {
+  const step = intervalSeconds * 1000;
+  const end = Date.now();
+  const start = end - days * 24 * 60 * 60 * 1000;
+  const rows = [];
+
+  let mem = 55;
+  for (let t = start; t <= end; t += step) {
+    const d = new Date(t);
+    const hour = d.getHours() + d.getMinutes() / 60;
+    const weekday = d.getDay() !== 0 && d.getDay() !== 6;
+    const progress = (t - start) / (end - start);
+
+    // CPU: quiet at night, busy 09:00-18:00 on weekdays, with jitter.
+    const busy = Math.exp(-(((hour - 13.5) / 4) ** 2)) * (weekday ? 1 : 0.35);
+    const cpu = clamp(8 + busy * 55 + (Math.random() - 0.5) * 9, 1, 99);
+
+    // Memory: creeps up, drops when something restarts (~every 18h).
+    mem += 0.045 + (Math.random() - 0.45) * 0.1;
+    if (Math.random() < step / (18 * 60 * 60 * 1000)) mem -= 12 + Math.random() * 8;
+    mem = clamp(mem, 42, 94);
+
+    // Disk: monotonic creep — the thing you want a week of history to see.
+    const disk = clamp(48 + progress * 9 + (Math.random() - 0.5) * 0.4, 1, 99);
+
+    // Load tracks CPU on a 4-core box, with heavier tails.
+    const load = Math.max(0.05, (cpu / 100) * 4 + (Math.random() - 0.4) * 1.1);
+
+    rows.push({
+      orgId,
+      serverId,
+      at: d,
+      cpuPct: round1(cpu),
+      memPct: round1(mem),
+      diskPct: round1(disk),
+      load1: round2(load),
+    });
+  }
+
+  // createMany in chunks — one statement with 2000 rows is needlessly large.
+  for (let i = 0; i < rows.length; i += 500) {
+    await prisma.hostMetricSample.createMany({ data: rows.slice(i, i + 500) });
+  }
+  return rows.length;
+}
+
+const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
+const round1 = (v) => Math.round(v * 10) / 10;
+const round2 = (v) => Math.round(v * 100) / 100;
+
 async function main() {
   const args = process.argv.slice(2);
   const serverId = args.find((a) => !a.startsWith('--')) || DEFAULT_SERVER_ID;
@@ -225,6 +289,24 @@ async function main() {
         `opened=${result.findings.opened} continuing=${result.findings.continuing} ` +
         `reopened=${result.findings.reopened} resolved=${result.findings.resolved}`
     );
+  }
+
+  if (withHistory) {
+    // Resource retention defaults to 24h, so a 7-day backfill would be pruned
+    // on the next run and the drill-down would have nothing to show. Raise it
+    // for this org — a dev database, and the script says what it changed.
+    const settingsNow = await postureSettingsService.getSettings(server.orgId);
+    if (settingsNow.metricRetentionHours < HISTORY_DAYS * 24) {
+      await postureSettingsService.updateSettings(server.orgId, {
+        metricRetentionHours: HISTORY_DAYS * 24,
+      });
+      console.log(`Raised metric retention to ${HISTORY_DAYS * 24}h so the backfill survives pruning.`);
+    }
+    const written = await backfillMetrics(server.orgId, server.id, {
+      days: HISTORY_DAYS,
+      intervalSeconds: settingsNow.collectIntervalSeconds || 300,
+    });
+    console.log(`Backfilled ${written} resource samples over ${HISTORY_DAYS} days.`);
   }
 
   const bySeverity = await prisma.exposureFinding.groupBy({

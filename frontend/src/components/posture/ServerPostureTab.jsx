@@ -1,6 +1,10 @@
 import { useCallback, useEffect, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { AlertTriangle, Check, Cpu, Database, Gauge, HardDrive, Radar, ShieldCheck, ShieldOff, Volume1, VolumeX, Wifi } from 'lucide-react';
 import DataTable from '@/components/shared/DataTable';
+import { serviceLabel } from '@/lib/postureLabels';
+import FindingDetailModal from '@/components/posture/FindingDetailModal';
+import ListenerDetailModal from '@/components/posture/ListenerDetailModal';
 import EmptyState from '@/components/ui/EmptyState';
 import { Badge } from '@/components/ui/badge';
 import SeverityBadge from '@/components/posture/SeverityBadge';
@@ -20,10 +24,18 @@ function StatRow({ label, children }) {
   );
 }
 
-function GaugeCard({ icon: Icon, label, points, unit = '%', color }) {
+function GaugeCard({ icon: Icon, label, points, unit = '%', color, onClick }) {
   const last = [...points].reverse().find((v) => v !== null && v !== undefined && !Number.isNaN(v));
+  const Tag = onClick ? 'button' : 'div';
   return (
-    <div className="flex items-center justify-between gap-3 rounded-lg border border-border bg-card p-3.5">
+    <Tag
+      type={onClick ? 'button' : undefined}
+      onClick={onClick}
+      title={onClick ? `${label} history` : undefined}
+      className={`flex w-full items-center justify-between gap-3 rounded-lg border border-border bg-card p-3.5 text-left ${
+        onClick ? 'transition-colors hover:border-primary/40 hover:bg-accent/40' : ''
+      }`}
+    >
       <div className="min-w-0">
         <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
           <Icon className="h-3.5 w-3.5" />
@@ -34,7 +46,7 @@ function GaugeCard({ icon: Icon, label, points, unit = '%', color }) {
         </p>
       </div>
       <Sparkline points={points} max={unit === '%' ? 100 : Math.max(1, ...points.filter((v) => v != null))} color={color} />
-    </div>
+    </Tag>
   );
 }
 
@@ -42,12 +54,17 @@ function GaugeCard({ icon: Icon, label, points, unit = '%', color }) {
  * Server detail → Posture tab (docs/posture/posture-spec.md §8). Its own
  * fetch/loading/error cycle so it only runs while the tab is open.
  */
+
 function ServerPostureTab({ serverId, canMute, authMode, canBootstrap, onBootstrap }) {
+  const navigate = useNavigate();
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [busyId, setBusyId] = useState(null);
   const [muteTarget, setMuteTarget] = useState(null);
+  // Row click opens the detail view; the row's … menu keeps the quick actions.
+  const [detailFinding, setDetailFinding] = useState(null);
+  const [detailListener, setDetailListener] = useState(null);
   const [muteSubmitting, setMuteSubmitting] = useState(false);
   const [muteError, setMuteError] = useState('');
 
@@ -203,8 +220,18 @@ function ServerPostureTab({ serverId, canMute, authMode, canBootstrap, onBootstr
     {
       key: 'service',
       label: 'Service',
-      mobile: { slot: 'secondary', render: (r) => r.service || 'Unknown service' },
-      render: (r) => <span className="text-foreground">{r.service || <span className="text-muted-foreground">Unknown</span>}</span>,
+      // Search what the cell actually shows, so "docker" or "pm2" finds the
+      // rows the column now labels that way.
+      searchAccessor: (r) => serviceLabel(r).text,
+      mobile: { slot: 'secondary', render: (r) => serviceLabel(r).text },
+      render: (r) => {
+        const { text, inferred } = serviceLabel(r);
+        return (
+          <span className={inferred ? 'text-muted-foreground' : 'text-foreground'} title={text}>
+            {text}
+          </span>
+        );
+      },
     },
     {
       key: 'owner',
@@ -381,12 +408,21 @@ function ServerPostureTab({ serverId, canMute, authMode, canBootstrap, onBootstr
 
       {metrics.length > 0 && (
         <div>
-          <h3 className="mb-2 text-sm font-semibold text-foreground">Resources (~24h)</h3>
+          <div className="mb-2 flex items-center justify-between gap-3">
+            <h3 className="text-sm font-semibold text-foreground">Resources (~24h)</h3>
+            <button
+              type="button"
+              onClick={() => navigate(`/servers/${serverId}/resources`)}
+              className="text-xs text-primary hover:underline"
+            >
+              View history
+            </button>
+          </div>
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
-            <GaugeCard icon={Cpu} label="CPU" points={cpu} color="primary" />
-            <GaugeCard icon={Gauge} label="Memory" points={mem} color="violet" />
-            <GaugeCard icon={HardDrive} label="Disk" points={disk} color="amber" />
-            <GaugeCard icon={Database} label="Load (1m)" points={load} unit="" color="emerald" />
+            <GaugeCard icon={Cpu} label="CPU" points={cpu} color="primary" onClick={() => navigate(`/servers/${serverId}/resources`)} />
+            <GaugeCard icon={Gauge} label="Memory" points={mem} color="violet" onClick={() => navigate(`/servers/${serverId}/resources`)} />
+            <GaugeCard icon={HardDrive} label="Disk" points={disk} color="amber" onClick={() => navigate(`/servers/${serverId}/resources`)} />
+            <GaugeCard icon={Database} label="Load (1m)" points={load} unit="" color="emerald" onClick={() => navigate(`/servers/${serverId}/resources`)} />
           </div>
         </div>
       )}
@@ -396,7 +432,13 @@ function ServerPostureTab({ serverId, canMute, authMode, canBootstrap, onBootstr
         {findings.length === 0 ? (
           <EmptyState icon={ShieldCheck} title="No open findings" description="This host is clean as of the last snapshot." />
         ) : (
-          <DataTable columns={findingColumns} data={findings} showSearch={false} emptyMessage="No open findings" />
+          <DataTable
+            columns={findingColumns}
+            data={findings}
+            onRowClick={setDetailFinding}
+            showSearch={false}
+            emptyMessage="No open findings"
+          />
         )}
       </div>
 
@@ -405,12 +447,33 @@ function ServerPostureTab({ serverId, canMute, authMode, canBootstrap, onBootstr
         <DataTable
           columns={listenerColumns}
           data={listeners}
+          onRowClick={setDetailListener}
           showSearch={listeners.length > 8}
           searchPlaceholder="Search port, service or owner..."
           emptyMessage="No listening ports reported"
           mobile={{ accent: (r) => (r.reachability === 'internet' ? { tone: 'danger', label: 'INTERNET' } : null) }}
         />
       </div>
+
+      <FindingDetailModal
+        open={!!detailFinding}
+        finding={detailFinding}
+        onClose={() => setDetailFinding(null)}
+        canMute={canMute}
+        busy={busyId === detailFinding?.id}
+        showServerLink={false}
+        onAcknowledge={(f) => { setDetailFinding(null); handleAcknowledge(f); }}
+        onMute={(f) => { setDetailFinding(null); setMuteTarget({ id: f.id }); }}
+        onUnmute={(f) => { setDetailFinding(null); handleUnmute(f); }}
+      />
+
+      <ListenerDetailModal
+        open={!!detailListener}
+        listener={detailListener}
+        findings={findings}
+        onClose={() => setDetailListener(null)}
+        onOpenFinding={(f) => { setDetailListener(null); setDetailFinding(f); }}
+      />
 
       <MuteDialog
         open={!!muteTarget}

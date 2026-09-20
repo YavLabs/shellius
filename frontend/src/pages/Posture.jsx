@@ -22,6 +22,7 @@ import SeverityBadge from '@/components/posture/SeverityBadge';
 import FindingStatusBadge from '@/components/posture/FindingStatusBadge';
 import MuteDialog from '@/components/posture/MuteDialog';
 import CollectorCoverageModal from '@/components/posture/CollectorCoverageModal';
+import FindingDetailModal from '@/components/posture/FindingDetailModal';
 import BootstrapWizard from '@/components/servers/BootstrapWizard';
 import BootstrapModal from '@/components/servers/BootstrapModal';
 import ProvisionModal from '@/components/servers/ProvisionModal';
@@ -78,6 +79,8 @@ function Posture() {
 
   const [selected, setSelected] = useState([]);
   const [muteTarget, setMuteTarget] = useState(null); // { ids: [...] } or null
+  // Row click opens the finding; the row's … menu keeps the quick actions.
+  const [detailFinding, setDetailFinding] = useState(null);
   const [muteSubmitting, setMuteSubmitting] = useState(false);
   const [muteError, setMuteError] = useState('');
   const [busyId, setBusyId] = useState(null);
@@ -483,6 +486,7 @@ function Posture() {
         <DataTable
           columns={columns}
           data={findings}
+          onRowClick={setDetailFinding}
           loading={loading}
           emptyState={emptyState}
           showSearch={false}
@@ -559,6 +563,17 @@ function Posture() {
           }}
         />
       )}
+
+      <FindingDetailModal
+        open={!!detailFinding}
+        finding={detailFinding}
+        onClose={() => setDetailFinding(null)}
+        canMute={canMute}
+        busy={busyId === detailFinding?.id}
+        onAcknowledge={(f) => { setDetailFinding(null); handleAcknowledge(f); }}
+        onMute={(f) => { setDetailFinding(null); setMuteTarget({ ids: [f.id] }); }}
+        onUnmute={(f) => { setDetailFinding(null); handleUnmute(f); }}
+      />
 
       <MuteDialog
         open={!!muteTarget}

@@ -19,6 +19,13 @@ export const listFindings = (params) =>
 export const getServerPosture = (serverId) =>
   api.get(`/posture/servers/${serverId}`).then((r) => r.data?.data ?? r.data);
 
+/**
+ * Resource history for the drill-down page.
+ * `params`: { from?: ISO, to?: ISO, bucket?: 'auto'|'raw'|'5m'|'15m'|'1h'|'6h'|'1d' }
+ */
+export const getServerMetrics = (serverId, params) =>
+  api.get(`/posture/servers/${serverId}/metrics`, { params }).then((r) => r.data?.data ?? r.data);
+
 // ---------------------------------------------------------------------------
 // Finding actions
 // ---------------------------------------------------------------------------

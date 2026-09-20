@@ -435,3 +435,151 @@ export default {
   unmuteFinding,
   acknowledgeFinding,
 };
+
+// ---------------------------------------------------------------------------
+// Resource history — the drill-down behind the sparklines
+// ---------------------------------------------------------------------------
+
+/** Bucket sizes offered to the client, smallest first. */
+export const METRIC_BUCKETS = {
+  raw: 0,
+  '5m': 5 * 60 * 1000,
+  '15m': 15 * 60 * 1000,
+  '1h': 60 * 60 * 1000,
+  '6h': 6 * 60 * 60 * 1000,
+  '1d': 24 * 60 * 60 * 1000,
+};
+
+const METRIC_FIELDS = ['cpuPct', 'memPct', 'diskPct', 'load1'];
+
+/**
+ * Pick a bucket that keeps a range under ~500 points when the caller said
+ * "auto". A chart with 20k points is slower to draw and no more informative
+ * than one with 500, and the raw rows still exist for anyone who asks.
+ */
+function autoBucket(rangeMs, intervalSeconds) {
+  const sampleMs = Math.max((intervalSeconds || 300) * 1000, 60 * 1000);
+  const target = 500;
+  const needed = (rangeMs / sampleMs) / target;
+  if (needed <= 1) return 'raw';
+  const ordered = ['5m', '15m', '1h', '6h', '1d'];
+  for (const key of ordered) {
+    if (rangeMs / METRIC_BUCKETS[key] <= target) return key;
+  }
+  return '1d';
+}
+
+function summarize(values) {
+  if (values.length === 0) return null;
+  const sorted = [...values].sort((a, b) => a - b);
+  const sum = values.reduce((a, b) => a + b, 0);
+  const at = (q) => sorted[Math.min(sorted.length - 1, Math.floor(q * sorted.length))];
+  return {
+    min: sorted[0],
+    max: sorted[sorted.length - 1],
+    avg: sum / values.length,
+    p50: at(0.5),
+    p95: at(0.95),
+    samples: values.length,
+  };
+}
+
+/**
+ * Resource samples for one server over a window, bucketed for charting.
+ *
+ * Returns the aggregate for the whole window alongside the series, because
+ * "was this host at 95% for an hour or for a week" is the question the
+ * sparkline cannot answer — and the answer must come from the same rows the
+ * chart draws, not a second query that could disagree with it.
+ *
+ * @param {string} orgId
+ * @param {string} serverId
+ * @param {object} scope   caller's customer scope — the server lookup applies it
+ * @param {{from?: Date, to?: Date, bucket?: string}} opts
+ */
+export async function getServerMetrics(orgId, serverId, scope, { from, to, bucket = 'auto' } = {}) {
+  const server = await prisma.server.findFirst({
+    where: { id: serverId, orgId, ...serverScopeWhere(scope) },
+    select: SERVER_SELECT,
+  });
+  if (!server) throw new ApiError(404, 'Server not found');
+
+  const settings = await postureSettingsService.getSettings(orgId);
+  const until = to || new Date();
+  const since = from || new Date(until.getTime() - 24 * 60 * 60 * 1000);
+  if (since >= until) throw new ApiError(400, '`from` must be before `to`');
+
+  const rows = await prisma.hostMetricSample.findMany({
+    where: { orgId, serverId, at: { gte: since, lte: until } },
+    orderBy: { at: 'asc' },
+    select: { at: true, cpuPct: true, memPct: true, diskPct: true, load1: true },
+  });
+
+  const chosen =
+    bucket === 'auto' ? autoBucket(until.getTime() - since.getTime(), settings.collectIntervalSeconds) : bucket;
+  const width = METRIC_BUCKETS[chosen] ?? 0;
+
+  let series;
+  if (width === 0) {
+    series = rows.map((r) => ({
+      at: r.at,
+      cpuPct: r.cpuPct,
+      memPct: r.memPct,
+      diskPct: r.diskPct,
+      load1: r.load1,
+      samples: 1,
+    }));
+  } else {
+    // Floor each row into a fixed bucket and average within it. Buckets with
+    // no rows are simply absent — inventing zeroes for a window when the
+    // collector was down would read as "idle host" instead of "no data".
+    const buckets = new Map();
+    for (const r of rows) {
+      const key = Math.floor(new Date(r.at).getTime() / width) * width;
+      let b = buckets.get(key);
+      if (!b) {
+        b = { at: new Date(key), cpuPct: [], memPct: [], diskPct: [], load1: [] };
+        buckets.set(key, b);
+      }
+      for (const f of METRIC_FIELDS) {
+        if (r[f] !== null && r[f] !== undefined) b[f].push(r[f]);
+      }
+    }
+    series = [...buckets.values()]
+      .sort((a, b) => a.at - b.at)
+      .map((b) => {
+        const out = { at: b.at, samples: Math.max(...METRIC_FIELDS.map((f) => b[f].length)) };
+        for (const f of METRIC_FIELDS) {
+          out[f] = b[f].length ? b[f].reduce((x, y) => x + y, 0) / b[f].length : null;
+        }
+        return out;
+      });
+  }
+
+  const summary = {};
+  for (const f of METRIC_FIELDS) {
+    summary[f] = summarize(rows.map((r) => r[f]).filter((v) => v !== null && v !== undefined));
+  }
+
+  // The oldest row we actually hold, so the UI can say "retention is 24h"
+  // rather than drawing an empty chart for a range nobody can satisfy.
+  const oldest = await prisma.hostMetricSample.findFirst({
+    where: { orgId, serverId },
+    orderBy: { at: 'asc' },
+    select: { at: true },
+  });
+
+  return {
+    server,
+    range: { from: since, to: until },
+    bucket: chosen,
+    bucketMs: width,
+    series,
+    summary,
+    retention: {
+      hours: settings.metricRetentionHours,
+      oldestSampleAt: oldest?.at || null,
+      collectIntervalSeconds: settings.collectIntervalSeconds,
+    },
+  };
+}

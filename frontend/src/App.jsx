@@ -15,6 +15,7 @@ import Customers from './pages/Customers';
 import CustomerDetail from './pages/CustomerDetail';
 import Servers from './pages/Servers';
 import ServerDetail from './pages/ServerDetail';
+import ServerResources from './pages/ServerResources';
 import Certificates from './pages/Certificates';
 import Posture from './pages/Posture';
 import Administration from './pages/Administration';
@@ -105,6 +106,7 @@ function App() {
                     <Route path="/customers/:id" element={<CustomerDetail />} />
                     <Route path="/servers" element={<Servers />} />
                     <Route path="/servers/:id" element={<ServerDetail />} />
+                    <Route path="/servers/:id/resources" element={<ServerResources />} />
                     <Route path="/sessions" element={<Sessions />} />
                     <Route path="/keystore" element={<Keystore />} />
                     <Route path="/my-hosts" element={<MyHosts />} />
