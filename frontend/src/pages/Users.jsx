@@ -305,34 +305,29 @@ function Users() {
     }
   };
 
-  const filterSlot = (
-    <>
-      <SearchableSelect
-        className="w-[160px]"
-        value={role}
-        onChange={(v) => { setRole(v); setPage(1); }}
-        options={[
-          { value: '', label: 'All roles' },
-          ...roles.map((r) => ({ value: r.id, label: r.name })),
-        ]}
-        placeholder="All roles"
-        searchable={false}
-        clearable={false}
-      />
-      <SearchableSelect
-        className="w-[160px]"
-        value={status}
-        onChange={(v) => { setStatus(v); setPage(1); }}
-        options={[
-          { value: '', label: 'All statuses' },
-          ...STATUSES.map((s) => ({ value: s, label: USER_STATUS_LABELS[s] || formatLabel(s) })),
-        ]}
-        placeholder="All statuses"
-        searchable={false}
-        clearable={false}
-      />
-    </>
-  );
+  const filterDefs = [
+    {
+      key: 'role',
+      label: 'Role',
+      placeholder: 'All roles',
+      options: [{ value: '', label: 'All roles' }, ...roles.map((r) => ({ value: r.id, label: r.name }))],
+    },
+    {
+      key: 'status',
+      label: 'Status',
+      placeholder: 'All statuses',
+      options: [
+        { value: '', label: 'All statuses' },
+        ...STATUSES.map((st) => ({ value: st, label: USER_STATUS_LABELS[st] || formatLabel(st) })),
+      ],
+    },
+  ];
+  const filterValues = { role, status };
+  const applyFilters = (next) => {
+    setRole(next.role ?? '');
+    setStatus(next.status ?? '');
+    setPage(1);
+  };
 
   const columns = [
     {
@@ -521,8 +516,9 @@ function Users() {
         loading={loading}
         emptyMessage="No users found"
         searchPlaceholder="Search by name or email..."
-        filters={filterSlot}
-        onResetFilters={() => { setRole(''); setStatus(''); setPage(1); }}
+        filterDefs={filterDefs}
+        filterValues={filterValues}
+        onFilterChange={applyFilters}
         mobile={{
           leading: (r) => <Avatar name={r.name} email={r.email} avatarUrl={r.avatarUrl} size="md" />,
           corner: (r) =>

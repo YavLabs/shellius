@@ -14,7 +14,6 @@ import PageHeader from '@/components/common/PageHeader';
 import DataTable from '@/components/shared/DataTable';
 import EmptyState from '@/components/ui/EmptyState';
 import MetricCard from '@/components/dashboard/MetricCard';
-import SearchableSelect from '@/components/ui/SearchableSelect';
 import EnvironmentBadge from '@/components/shared/EnvironmentBadge';
 import ServerName, { serverSearchString } from '@/components/shared/ServerName';
 import SeverityBadge from '@/components/posture/SeverityBadge';
@@ -179,86 +178,72 @@ function ServiceInventory() {
     Boolean
   ).length;
 
-  const filterSlot = (
-    <>
-      <SearchableSelect
-        className="w-[130px]"
-        value={proto}
-        onChange={(v) => patch({ proto: v })}
-        options={[
-          { value: '', label: 'All protocols' },
-          ...(facets?.protos || []).map((p) => ({ value: p.value, label: `${p.value.toUpperCase()} (${p.count})` })),
-        ]}
-        placeholder="All protocols"
-        searchable={false}
-        clearable={false}
-      />
-      <SearchableSelect
-        className="w-[170px]"
-        value={reachability}
-        onChange={(v) => patch({ reachability: v })}
-        options={[
-          { value: '', label: 'All reachability' },
-          ...(facets?.reachability || []).map((r) => ({
-            value: r.value,
-            label: `${reachabilityTone(r.value).label} (${r.count})`,
-          })),
-        ]}
-        placeholder="All reachability"
-        searchable={false}
-        clearable={false}
-      />
-      <SearchableSelect
-        className="w-[150px]"
-        value={ownerKind}
-        onChange={(v) => patch({ ownerKind: v })}
-        options={[
-          { value: '', label: 'All runtimes' },
-          ...(facets?.ownerKinds || []).map((k) => ({
-            value: k.value,
-            label: `${KIND_LABELS[k.value] || k.value} (${k.count})`,
-          })),
-        ]}
-        placeholder="All runtimes"
-        searchable={false}
-        clearable={false}
-      />
-      <SearchableSelect
-        className="w-[160px]"
-        value={environment}
-        onChange={(v) => patch({ environment: v })}
-        options={[
-          { value: '', label: 'All environments' },
-          ...ENVIRONMENTS.map((e) => ({ value: e, label: ENVIRONMENT_LABELS[e] || e })),
-        ]}
-        placeholder="All environments"
-        searchable={false}
-        clearable={false}
-      />
-      <SearchableSelect
-        className="w-[150px]"
-        value={state}
-        onChange={(v) => patch({ state: v })}
-        options={[
-          { value: '', label: 'Any state' },
-          { value: 'running', label: 'Running' },
-          { value: 'stopped', label: 'Installed, stopped' },
-        ]}
-        placeholder="Any state"
-        searchable={false}
-        clearable={false}
-      />
-      <SearchableSelect
-        className="w-[180px]"
-        value={customerId}
-        onChange={(v) => patch({ customerId: v })}
-        options={[{ value: '', label: 'All customers' }, ...customers.map((c) => ({ value: c.id, label: c.name }))]}
-        placeholder="All customers"
-        searchable
-        clearable={false}
-      />
-    </>
-  );
+  // Declarative: DataTable renders these behind one "Filters" button, in a
+  // drawer, as a draft until Apply. Six selects in a row above the table
+  // wrapped onto two lines on a laptop and fired a request per change.
+  const filterDefs = [
+    {
+      key: 'proto',
+      label: 'Protocol',
+      placeholder: 'All protocols',
+      options: [
+        { value: '', label: 'All protocols' },
+        ...(facets?.protos || []).map((p) => ({ value: p.value, label: `${p.value.toUpperCase()} (${p.count})` })),
+      ],
+    },
+    {
+      key: 'reachability',
+      label: 'Reachability',
+      placeholder: 'All reachability',
+      options: [
+        { value: '', label: 'All reachability' },
+        ...(facets?.reachability || []).map((r) => ({
+          value: r.value,
+          label: `${reachabilityTone(r.value).label} (${r.count})`,
+        })),
+      ],
+    },
+    {
+      key: 'ownerKind',
+      label: 'Runtime',
+      placeholder: 'All runtimes',
+      options: [
+        { value: '', label: 'All runtimes' },
+        ...(facets?.ownerKinds || []).map((k) => ({
+          value: k.value,
+          label: `${KIND_LABELS[k.value] || k.value} (${k.count})`,
+        })),
+      ],
+    },
+    {
+      key: 'state',
+      label: 'State',
+      placeholder: 'Any state',
+      options: [
+        { value: '', label: 'Any state' },
+        { value: 'running', label: 'Running' },
+        { value: 'stopped', label: 'Installed, stopped' },
+      ],
+    },
+    {
+      key: 'environment',
+      label: 'Environment',
+      placeholder: 'All environments',
+      options: [
+        { value: '', label: 'All environments' },
+        ...ENVIRONMENTS.map((e) => ({ value: e, label: ENVIRONMENT_LABELS[e] || e })),
+      ],
+    },
+    {
+      key: 'customerId',
+      label: 'Customer',
+      placeholder: 'All customers',
+      searchable: true,
+      options: [{ value: '', label: 'All customers' }, ...customers.map((c) => ({ value: c.id, label: c.name }))],
+    },
+  ];
+
+  const filterValues = { proto, reachability, ownerKind, state, environment, customerId };
 
   const filtered = !!(activeFilterCount || q);
   const emptyState = (
@@ -521,10 +506,10 @@ function ServiceInventory() {
         columns={listenerColumns}
         data={listeners?.items || []}
         loading={loading}
-        filters={filterSlot}
+        filterDefs={filterDefs}
+        filterValues={filterValues}
+        onFilterChange={(next) => patch(next)}
         toolbarActions={exportButton}
-        activeFilterCount={activeFilterCount}
-        onResetFilters={resetFilters}
         searchPlaceholder="Search service, port, host, owner or customer..."
         onSearchChange={(value) => patch({ q: value })}
         onRowClick={(r) => r.server?.id && openServer(r.server.id)}

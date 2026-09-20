@@ -28,6 +28,7 @@ import { relativeTime, formatDateTime } from '@/utils/time';
 import { formatLabel } from '@/utils/format';
 import { can } from '@/lib/permissions';
 import useIsMobile from '@/hooks/useIsMobile';
+import FilterControl from '@/components/shared/FilterControl';
 import useMobilePages from '@/hooks/useMobilePages';
 import { MobileCard, MobileCardList, MobileCardSkeleton, MobileEmptyCard } from '@/components/mobile/MobileCard';
 import { MobileFiltersButton, MobileLoadMore, MobileSearch } from '@/components/mobile/MobileListControls';
@@ -416,104 +417,67 @@ function AuditLog() {
   );
 
   // Build the filter JSX for the DataTable filters slot
-  const filterSlot = (
-    <div className="space-y-3 rounded-lg border border-border bg-card p-4 w-full">
-      <div className="flex items-center gap-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">
-        <Filter className="h-3.5 w-3.5" />
-        Filters
-        {hasFilters && (
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={clearFilters}
-            className="ml-auto h-6 px-2 text-xs text-muted-foreground"
-          >
-            <X className="mr-1 h-3 w-3" />
-            Clear
-          </Button>
-        )}
+  // The audit log's filters were a bordered card above the table holding a
+  // search box, two text inputs, two selects and two date fields — the
+  // widest, tallest piece of chrome in the app, permanently occupying the
+  // space where the log should be. Search stays on the toolbar; the rest
+  // moved into the shared drawer.
+  const filterDefs = [
+    { key: 'actorSearch', label: 'Actor ID', type: 'text', placeholder: 'User ID…' },
+    {
+      key: 'action',
+      label: 'Action',
+      placeholder: 'All actions',
+      searchable: true,
+      options: [
+        { value: '', label: 'All actions' },
+        ...Object.entries(ACTION_CATEGORIES).flatMap(([, cat]) =>
+          cat.actions.map((action) => ({ value: action, label: formatLabel(action) }))
+        ),
+      ],
+    },
+    {
+      key: 'resourceType',
+      label: 'Resource type',
+      placeholder: 'All types',
+      searchable: true,
+      options: [{ value: '', label: 'All types' }, ...RESOURCE_TYPES.map((t) => ({ value: t, label: t }))],
+    },
+    { key: 'startDate', label: 'From', type: 'date' },
+    { key: 'endDate', label: 'To', type: 'date' },
+  ];
+
+  const filterValues = {
+    actorSearch,
+    action: actionFilter,
+    resourceType: resourceTypeFilter,
+    startDate,
+    endDate,
+  };
+
+  const applyFilters = (next) => {
+    setActorSearch(next.actorSearch ?? '');
+    setActionFilter(next.action ?? '');
+    setResourceTypeFilter(next.resourceType ?? '');
+    setStartDate(next.startDate ?? '');
+    setEndDate(next.endDate ?? '');
+    setPage(1);
+  };
+
+  const desktopToolbar = (
+    <div className="flex flex-wrap items-center gap-2">
+      <div className="relative min-w-0 flex-1 max-w-sm">
+        <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+        <Input
+          value={search}
+          onChange={(e) => handleFilterChange(setSearch)(e.target.value)}
+          placeholder="Search actions, resources..."
+          aria-label="Search actions, resources"
+          className="h-9 pl-9"
+          type="search"
+        />
       </div>
-
-      <div className="flex flex-wrap items-end gap-3">
-        {/* Free-text search */}
-        <div className="min-w-48 flex-1">
-          <label className="mb-1 block text-xs text-muted-foreground">Search</label>
-          <div className="relative">
-            <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-            <Input
-              value={search}
-              onChange={(e) => handleFilterChange(setSearch)(e.target.value)}
-              placeholder="Search actions, resources..."
-              className="pl-9"
-            />
-          </div>
-        </div>
-
-        {/* Actor search */}
-        <div className="min-w-36">
-          <label className="mb-1 block text-xs text-muted-foreground">Actor ID</label>
-          <Input
-            type="text"
-            value={actorSearch}
-            onChange={(e) => handleFilterChange(setActorSearch)(e.target.value)}
-            placeholder="User ID..."
-          />
-        </div>
-
-        {/* Action filter */}
-        <div className="min-w-44">
-          <label className="mb-1 block text-xs text-muted-foreground">Action</label>
-          <SearchableSelect
-            value={actionFilter}
-            onChange={(v) => handleFilterChange(setActionFilter)(v)}
-            searchable={false}
-            clearable={false}
-            options={[
-              { value: '', label: 'All actions' },
-              ...Object.entries(ACTION_CATEGORIES).flatMap(([, cat]) =>
-                cat.actions.map((action) => ({ value: action, label: formatLabel(action) }))
-              ),
-            ]}
-          />
-        </div>
-
-        {/* Resource type filter */}
-        <div className="min-w-36">
-          <label className="mb-1 block text-xs text-muted-foreground">Resource type</label>
-          <SearchableSelect
-            className="w-full"
-            value={resourceTypeFilter}
-            onChange={(v) => handleFilterChange(setResourceTypeFilter)(v)}
-            placeholder="All types"
-            searchable={false}
-            clearable={false}
-            options={[
-              { value: '', label: 'All types' },
-              ...RESOURCE_TYPES.map((t) => ({ value: t, label: t })),
-            ]}
-          />
-        </div>
-
-        {/* Date range */}
-        <div className="min-w-36">
-          <label className="mb-1 block text-xs text-muted-foreground">From</label>
-          <input
-            type="date"
-            value={startDate}
-            onChange={(e) => handleFilterChange(setStartDate)(e.target.value)}
-            className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
-          />
-        </div>
-        <div className="min-w-36">
-          <label className="mb-1 block text-xs text-muted-foreground">To</label>
-          <input
-            type="date"
-            value={endDate}
-            onChange={(e) => handleFilterChange(setEndDate)(e.target.value)}
-            className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
-          />
-        </div>
-      </div>
+      <FilterControl defs={filterDefs} values={filterValues} onChange={applyFilters} />
     </div>
   );
 
@@ -541,7 +505,7 @@ function AuditLog() {
       />
 
       {/* Filter panel (not inside DataTable — rendered as a standalone block) */}
-      {!isMobile && filterSlot}
+      {!isMobile && desktopToolbar}
 
       {error && (
         <div className="rounded-md border border-destructive/50 bg-destructive/10 px-3 py-2 text-sm text-destructive">

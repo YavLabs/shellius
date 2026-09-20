@@ -236,47 +236,43 @@ function Servers() {
   };
   const bulkFieldLabel = BULK_FIELDS.find((f) => f.value === bulkField)?.label || '';
 
-  const filterSlot = (
-    <>
-      <SearchableSelect
-        className="w-[160px]"
-        value={environment}
-        onChange={(v) => { setEnvironment(v); setPage(1); }}
-        options={[
-          { value: '', label: 'All environments' },
-          ...ENVIRONMENTS.map((e) => ({ value: e, label: ENVIRONMENT_LABELS[e] || e })),
-        ]}
-        placeholder="All environments"
-        searchable={false}
-        clearable={false}
-      />
-      <SearchableSelect
-        className="w-[150px]"
-        value={healthStatus}
-        onChange={(v) => { setHealthStatus(v); setPage(1); }}
-        options={[
-          { value: '', label: 'All health' },
-          ...HEALTH_STATUSES.map((h) => ({ value: h, label: HEALTH_STATUS_LABELS[h] || h })),
-        ]}
-        placeholder="All health"
-        searchable={false}
-        clearable={false}
-      />
-      <SearchableSelect
-        className="w-[180px]"
-        value={customerFilter}
-        onChange={(v) => { setCustomerFilter(v); setPage(1); }}
-        options={[
-          { value: '', label: 'All customers' },
-          ...customers.map((c) => ({ value: c.id, label: c.name })),
-        ]}
-        placeholder="All customers"
-        searchable={true}
-        clearable={false}
-        emptyMessage={isScoped ? 'No customers in your assigned scope' : 'No matches'}
-      />
-    </>
-  );
+  const filterDefs = [
+    {
+      key: 'environment',
+      label: 'Environment',
+      placeholder: 'All environments',
+      options: [
+        { value: '', label: 'All environments' },
+        ...ENVIRONMENTS.map((e) => ({ value: e, label: ENVIRONMENT_LABELS[e] || e })),
+      ],
+    },
+    {
+      key: 'healthStatus',
+      label: 'Health',
+      placeholder: 'All health',
+      options: [
+        { value: '', label: 'All health' },
+        ...HEALTH_STATUSES.map((h) => ({ value: h, label: HEALTH_STATUS_LABELS[h] || h })),
+      ],
+    },
+    {
+      key: 'customerId',
+      label: 'Customer',
+      placeholder: 'All customers',
+      searchable: true,
+      options: [
+        { value: '', label: 'All customers' },
+        ...customers.map((c) => ({ value: c.id, label: c.name })),
+      ],
+    },
+  ];
+  const filterValues = { environment, healthStatus, customerId: customerFilter };
+  const applyFilters = (next) => {
+    setEnvironment(next.environment ?? '');
+    setHealthStatus(next.healthStatus ?? '');
+    setCustomerFilter(next.customerId ?? '');
+    setPage(1);
+  };
 
   const bulkActionsSlot =
     selected.length > 0 ? (
@@ -618,8 +614,9 @@ function Servers() {
         }
         searchPlaceholder="Search name, hostname or IP..."
         onSearchChange={handleSearchChange}
-        filters={filterSlot}
-        onResetFilters={() => { setEnvironment(''); setHealthStatus(''); setCustomerFilter(''); setPage(1); }}
+        filterDefs={filterDefs}
+        filterValues={filterValues}
+        onFilterChange={applyFilters}
         selectable={canBulk}
         selectedIds={selected}
         onSelectionChange={setSelected}

@@ -21,6 +21,7 @@ import EnvironmentBadge from '@/components/shared/EnvironmentBadge';
 import SeverityBadge from '@/components/posture/SeverityBadge';
 import FindingStatusBadge from '@/components/posture/FindingStatusBadge';
 import FleetFindingsSection from '@/components/posture/FleetFindingsSection';
+import FilterControl from '@/components/shared/FilterControl';
 import MuteDialog from '@/components/posture/MuteDialog';
 import CollectorCoverageModal from '@/components/posture/CollectorCoverageModal';
 import FindingDetailModal from '@/components/posture/FindingDetailModal';
@@ -34,7 +35,6 @@ import BulkInstallModal from '@/components/servers/BulkInstallModal';
 import BootstrapModal from '@/components/servers/BootstrapModal';
 import ProvisionModal from '@/components/servers/ProvisionModal';
 import { Button } from '@/components/ui/button';
-import SearchableSelect from '@/components/ui/SearchableSelect';
 import {
   getPostureSummary,
   muteFinding,
@@ -472,37 +472,44 @@ function Posture() {
     },
   ];
 
-  const filterSlot = (
-    <>
-      <SearchableSelect
-        className="w-[150px]"
-        value={severity}
-        onChange={setSeverity}
-        options={[{ value: '', label: 'All severities' }, ...SEVERITIES.map((s) => ({ value: s, label: s[0].toUpperCase() + s.slice(1) }))]}
-        placeholder="All severities"
-        searchable={false}
-        clearable={false}
-      />
-      <SearchableSelect
-        className="w-[150px]"
-        value={environment}
-        onChange={setEnvironment}
-        options={[{ value: '', label: 'All environments' }, ...ENVIRONMENTS.map((e) => ({ value: e, label: ENVIRONMENT_LABELS[e] || e }))]}
-        placeholder="All environments"
-        searchable={false}
-        clearable={false}
-      />
-      <SearchableSelect
-        className="w-[180px]"
-        value={customerId}
-        onChange={setCustomerId}
-        options={[{ value: '', label: 'All customers' }, ...customers.map((c) => ({ value: c.id, label: c.name }))]}
-        placeholder="All customers"
-        searchable
-        clearable={false}
-      />
-    </>
-  );
+  // Declarative: one "Filters" button and a drawer, with the values as a
+  // draft until Apply. These narrow every section at once, so committing
+  // three of them used to mean three refetches of whichever was open.
+  const filterDefs = [
+    {
+      key: 'severity',
+      label: 'Severity',
+      placeholder: 'All severities',
+      options: [
+        { value: '', label: 'All severities' },
+        ...SEVERITIES.map((sv) => ({ value: sv, label: sv[0].toUpperCase() + sv.slice(1) })),
+      ],
+    },
+    {
+      key: 'environment',
+      label: 'Environment',
+      placeholder: 'All environments',
+      options: [
+        { value: '', label: 'All environments' },
+        ...ENVIRONMENTS.map((e) => ({ value: e, label: ENVIRONMENT_LABELS[e] || e })),
+      ],
+    },
+    {
+      key: 'customerId',
+      label: 'Customer',
+      placeholder: 'All customers',
+      searchable: true,
+      options: [{ value: '', label: 'All customers' }, ...customers.map((c) => ({ value: c.id, label: c.name }))],
+    },
+  ];
+
+  const filterValues = { severity, environment, customerId };
+  const applyFilters = (next) => {
+    setSeverity(next.severity ?? '');
+    setEnvironment(next.environment ?? '');
+    setCustomerId(next.customerId ?? '');
+  };
+
 
   // Findings currently selected, resolved from the loaded page. Bulk actions
   // only ever act on rows the user can actually see.
@@ -674,12 +681,7 @@ function Posture() {
               apply to all of them — a severity filter that only narrowed
               "Open" would make the other counts lie. */}
           <div className="flex flex-wrap items-center gap-2">
-            {filterSlot}
-            {hasActiveFilter && (
-              <button type="button" onClick={resetFilters} className="text-xs text-primary hover:underline">
-                Clear filters
-              </button>
-            )}
+            <FilterControl defs={filterDefs} values={filterValues} onChange={applyFilters} />
           </div>
 
           <div className="space-y-2">

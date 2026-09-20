@@ -24,6 +24,7 @@ import {
 } from '@/components/ui/dropdown-menu';
 import useIsMobile from '@/hooks/useIsMobile';
 import MobileDataList from '@/components/mobile/MobileDataList';
+import FilterControl from '@/components/shared/FilterControl';
 
 const PAGE_SIZE_OPTIONS = [10, 20, 50, 100];
 
@@ -163,8 +164,23 @@ function DataTable({
   // Search
   searchPlaceholder = 'Search...',
 
-  // Filters slot (JSX rendered above the search)
+  // Filters slot (legacy: live controls rendered inline beside the search).
+  // Prefer `filterDefs` — see below.
   filters,
+
+  // Declarative filters: [{ key, label, placeholder, options, type }] plus
+  // the current `filterValues` and an `onFilterChange(values)` that receives
+  // the whole object at once.
+  //
+  // This replaces the inline row of selects with one "Filters" button and a
+  // drawer. A row that grew a control every time someone added a filter had
+  // already reached six on Services & ports, wrapping onto two lines and
+  // reading as chrome rather than controls. The drawer also makes filters a
+  // draft until Apply, so changing four of them on a server-paginated list
+  // is one request instead of four.
+  filterDefs,
+  filterValues,
+  onFilterChange,
   // Rendered at the far right of the toolbar row, after the search. For
   // per-table actions (Export, and the like) that belong beside the filters
   // rather than in a page header the table may not have.
@@ -214,6 +230,7 @@ function DataTable({
   showSearch = true,
 }) {
   const isMobile = useIsMobile();
+  const hasFilterDefs = Array.isArray(filterDefs) && filterDefs.length > 0;
 
   // -------------------------------------------------------------------
   // Search
@@ -495,6 +512,9 @@ function DataTable({
         onSearch={setSearchRaw}
         searchPlaceholder={searchPlaceholder}
         filters={filters}
+        filterDefs={filterDefs}
+        filterValues={filterValues}
+        onFilterChange={onFilterChange}
         toolbarActions={toolbarActions}
         activeFilterCount={activeFilterCount}
         onResetFilters={onResetFilters}
@@ -529,9 +549,10 @@ function DataTable({
     // table → pagination) instead of each section owning its own margin —
     // that used to let the bulk-actions bar end up flush against the table.
     <div className={cn('space-y-3', className)}>
-      {/* Toolbar: filters slot + search */}
+      {/* Toolbar: search, then the Filters button and its applied-count chip.
+          Search stays on the row because it is the control people reach for
+          without thinking; everything else moved behind the button. */}
       <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:flex-wrap">
-        {filters && <div className="flex flex-wrap items-center gap-2">{filters}</div>}
         {showSearch && (
           <div className="relative min-w-0 flex-1 max-w-sm">
             <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
@@ -544,6 +565,11 @@ function DataTable({
               type="search"
             />
           </div>
+        )}
+        {hasFilterDefs ? (
+          <FilterControl defs={filterDefs} values={filterValues || {}} onChange={onFilterChange} />
+        ) : (
+          filters && <div className="flex flex-wrap items-center gap-2">{filters}</div>
         )}
         {toolbarActions && (
           <div className="flex items-center gap-2 sm:ml-auto">{toolbarActions}</div>

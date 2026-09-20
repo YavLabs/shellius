@@ -126,48 +126,45 @@ function Policies() {
 
   const customerMap = Object.fromEntries(customers.map((c) => [c.id, c.name]));
 
-  const filterSlot = (
-    <>
-      <SearchableSelect
-        className="w-[140px]"
-        value={effectFilter}
-        onChange={(v) => { setEffectFilter(v); setPage(1); }}
-        options={[
-          { value: '', label: 'All effects' },
-          { value: 'ALLOW', label: 'Allow' },
-          { value: 'DENY', label: 'Deny' },
-        ]}
-        placeholder="All effects"
-        searchable={false}
-        clearable={false}
-      />
-      <SearchableSelect
-        className="w-[160px]"
-        value={customerFilter}
-        onChange={(v) => { setCustomerFilter(v); setPage(1); }}
-        options={[
-          { value: '', label: 'All customers' },
-          ...customers.map((c) => ({ value: c.id, label: c.name })),
-        ]}
-        placeholder="All customers"
-        searchable={true}
-        clearable={false}
-      />
-      <SearchableSelect
-        className="w-[140px]"
-        value={activeFilter}
-        onChange={(v) => { setActiveFilter(v); setPage(1); }}
-        options={[
-          { value: '', label: 'All statuses' },
-          { value: 'true', label: 'Active' },
-          { value: 'false', label: 'Inactive' },
-        ]}
-        placeholder="All statuses"
-        searchable={false}
-        clearable={false}
-      />
-    </>
-  );
+  const filterDefs = [
+    {
+      key: 'effect',
+      label: 'Effect',
+      placeholder: 'All effects',
+      options: [
+        { value: '', label: 'All effects' },
+        { value: 'ALLOW', label: 'Allow' },
+        { value: 'DENY', label: 'Deny' },
+      ],
+    },
+    {
+      key: 'customerId',
+      label: 'Customer',
+      placeholder: 'All customers',
+      searchable: true,
+      options: [
+        { value: '', label: 'All customers' },
+        ...customers.map((c) => ({ value: c.id, label: c.name })),
+      ],
+    },
+    {
+      key: 'active',
+      label: 'Status',
+      placeholder: 'All statuses',
+      options: [
+        { value: '', label: 'All statuses' },
+        { value: 'true', label: 'Active' },
+        { value: 'false', label: 'Inactive' },
+      ],
+    },
+  ];
+  const filterValues = { effect: effectFilter, customerId: customerFilter, active: activeFilter };
+  const applyFilters = (next) => {
+    setEffectFilter(next.effect ?? '');
+    setCustomerFilter(next.customerId ?? '');
+    setActiveFilter(next.active ?? '');
+    setPage(1);
+  };
 
   const columns = [
     {
@@ -314,8 +311,9 @@ function Policies() {
         loading={loading}
         emptyMessage="No policies found. Create one to control server access."
         searchPlaceholder="Search by policy name..."
-        filters={filterSlot}
-        onResetFilters={() => { setEffectFilter(''); setCustomerFilter(''); setActiveFilter(''); setPage(1); }}
+        filterDefs={filterDefs}
+        filterValues={filterValues}
+        onFilterChange={applyFilters}
         mobile={{ corner: (r) => <CardStatus {...policyEffectTone(r.effect)} /> }}
         serverPagination={{
           page,

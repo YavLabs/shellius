@@ -8,7 +8,6 @@ import ExpectableMarker from '@/components/posture/ExpectableMarker';
 import FindingSection from '@/components/posture/FindingSection';
 import { serviceLabel, canMarkExpected, partitionFindings } from '@/lib/postureLabels';
 
-import SearchableSelect from '@/components/ui/SearchableSelect';
 import FindingDetailModal from '@/components/posture/FindingDetailModal';
 import ListenerDetailModal from '@/components/posture/ListenerDetailModal';
 import ExportDialog from '@/components/posture/ExportDialog';
@@ -535,104 +534,90 @@ function ServerPostureTab({
   // their own row (misaligned against the search on desktop) and, on a
   // phone, became a column of full-width selects where every other list in
   // the app has a single "Filters" button opening a sheet.
-  const findingFilterSlot = (
-    <>
-      <SearchableSelect
-        className="w-[150px]"
-        value={severityFilter}
-        onChange={setSeverityFilter}
-        options={[{ value: '', label: 'All severities' }, ...SEVERITY_TILES.map((t) => ({ value: t.key, label: t.label }))]}
-        placeholder="All severities"
-        searchable={false}
-      />
-      <SearchableSelect
-        className="w-[150px]"
-        value={statusFilter}
-        onChange={setStatusFilter}
-        options={[
-          { value: '', label: 'All statuses' },
-          { value: 'open', label: 'Open' },
-          { value: 'acknowledged', label: 'Acknowledged' },
-          { value: 'muted', label: 'Muted' },
-        ]}
-        placeholder="All statuses"
-        searchable={false}
-      />
-      <SearchableSelect
-        className="w-[190px]"
-        value={codeFilter}
-        onChange={setCodeFilter}
-        options={[{ value: '', label: 'All types' }, ...findingCodes.map((c) => ({ value: c, label: c }))]}
-        placeholder="All types"
-      />
-      {filtersActive && (
-        <button
-          type="button"
-          onClick={() => { setSeverityFilter(''); setStatusFilter(''); setCodeFilter(''); }}
-          className="text-xs text-primary hover:underline max-md:hidden"
-        >
-          Clear filters
-        </button>
-      )}
-    </>
-  );
+  // Declarative filter defs — DataTable renders these behind one "Filters"
+  // button and a drawer, as a draft until Apply. Three selects sitting in
+  // the toolbar was already the widest thing on the row.
+  const findingFilterDefs = [
+    {
+      key: 'severity',
+      label: 'Severity',
+      placeholder: 'All severities',
+      options: [
+        { value: '', label: 'All severities' },
+        ...SEVERITY_TILES.map((t) => ({ value: t.key, label: t.label })),
+      ],
+    },
+    {
+      key: 'status',
+      label: 'Status',
+      placeholder: 'All statuses',
+      options: [
+        { value: '', label: 'All statuses' },
+        { value: 'open', label: 'Open' },
+        { value: 'acknowledged', label: 'Acknowledged' },
+        { value: 'muted', label: 'Muted' },
+      ],
+    },
+    {
+      key: 'code',
+      label: 'Finding type',
+      placeholder: 'All types',
+      searchable: true,
+      options: [{ value: '', label: 'All types' }, ...findingCodes.map((c) => ({ value: c, label: c }))],
+    },
+  ];
+  const findingFilterValues = { severity: severityFilter, status: statusFilter, code: codeFilter };
+  const applyFindingFilters = (next) => {
+    setSeverityFilter(next.severity ?? '');
+    setStatusFilter(next.status ?? '');
+    setCodeFilter(next.code ?? '');
+  };
 
-  const portFilterSlot = (
-    <>
-      <SearchableSelect
-        className="w-[170px]"
-        value={reachFilter}
-        onChange={setReachFilter}
-        options={[
-          { value: '', label: 'All reachability' },
-          { value: 'INTERNET', label: 'Internet' },
-          { value: 'LAN', label: 'LAN' },
-          { value: 'FIREWALLED', label: 'Firewalled' },
-          { value: 'LOOPBACK', label: 'Loopback' },
-          { value: 'UNKNOWN', label: 'Unknown' },
-        ]}
-        placeholder="All reachability"
-        searchable={false}
-      />
-      <SearchableSelect
-        className="w-[150px]"
-        value={ownerKindFilter}
-        onChange={setOwnerKindFilter}
-        options={[{ value: '', label: 'All owners' }, ...ownerKinds.map((k) => ({ value: k, label: k }))]}
-        placeholder="All owners"
-        searchable={false}
-      />
-      <SearchableSelect
-        className="w-[180px]"
-        value={portStateFilter}
-        onChange={setPortStateFilter}
-        options={[
-          { value: '', label: 'All ports' },
-          { value: 'findings', label: 'Has open findings' },
-          { value: 'expected', label: 'Marked expected' },
-          {
-            value: 'stale',
-            label: staleExpected > 0 ? `Expected, not listening (${staleExpected})` : 'Expected, not listening',
-          },
-        ]}
-        placeholder="All ports"
-        searchable={false}
-      />
-      {portFiltersActive && (
-        <button
-          type="button"
-          onClick={() => {
-            setReachFilter('');
-            setOwnerKindFilter('');
-            setPortStateFilter('');
-          }}
-          className="text-xs text-primary hover:underline max-md:hidden"
-        >
-          Clear filters
-        </button>
-      )}
-    </>
-  );
+  const portFilterDefs = [
+    {
+      key: 'reachability',
+      label: 'Reachability',
+      placeholder: 'All reachability',
+      options: [
+        { value: '', label: 'All reachability' },
+        { value: 'INTERNET', label: 'Internet' },
+        { value: 'LAN', label: 'LAN' },
+        { value: 'FIREWALLED', label: 'Firewalled' },
+        { value: 'LOOPBACK', label: 'Loopback' },
+        { value: 'UNKNOWN', label: 'Unknown' },
+      ],
+    },
+    {
+      key: 'ownerKind',
+      label: 'Owner',
+      placeholder: 'All owners',
+      options: [{ value: '', label: 'All owners' }, ...ownerKinds.map((k) => ({ value: k, label: k }))],
+    },
+    {
+      key: 'portState',
+      label: 'Port state',
+      placeholder: 'All ports',
+      options: [
+        { value: '', label: 'All ports' },
+        { value: 'findings', label: 'Has open findings' },
+        { value: 'expected', label: 'Marked expected' },
+        {
+          value: 'stale',
+          label: staleExpected > 0 ? `Expected, not listening (${staleExpected})` : 'Expected, not listening',
+        },
+      ],
+    },
+  ];
+  const portFilterValues = {
+    reachability: reachFilter,
+    ownerKind: ownerKindFilter,
+    portState: portStateFilter,
+  };
+  const applyPortFilters = (next) => {
+    setReachFilter(next.reachability ?? '');
+    setOwnerKindFilter(next.ownerKind ?? '');
+    setPortStateFilter(next.portState ?? '');
+  };
 
   const listenerColumns = [
     {
@@ -1166,9 +1151,9 @@ function ServerPostureTab({
                     <DataTable
                       columns={findingColumns}
                       data={visible}
-                      filters={sec.key === 'open' ? findingFilterSlot : undefined}
-                      activeFilterCount={[severityFilter, statusFilter, codeFilter].filter(Boolean).length}
-                      onResetFilters={() => { setSeverityFilter(''); setStatusFilter(''); setCodeFilter(''); }}
+                      filterDefs={sec.key === 'open' ? findingFilterDefs : undefined}
+                      filterValues={findingFilterValues}
+                      onFilterChange={applyFindingFilters}
                       toolbarActions={
                         canExport && sec.key === 'open' ? (
                           <Button variant="outline" size="sm" onClick={() => setExportDataset('findings')}>
@@ -1210,7 +1195,9 @@ function ServerPostureTab({
         <DataTable
           columns={listenerColumns}
           data={visiblePorts}
-          filters={portFilterSlot}
+          filterDefs={portFilterDefs}
+          filterValues={portFilterValues}
+          onFilterChange={applyPortFilters}
           toolbarActions={
             canExport && listeners.length > 0 ? (
               <Button variant="outline" size="sm" onClick={() => setExportDataset('listeners')}>
