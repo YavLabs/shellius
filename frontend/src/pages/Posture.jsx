@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import {
   Radar,
   ShieldAlert,
@@ -70,8 +70,11 @@ function Posture() {
   const [autoOpen, setAutoOpen] = useState(false);
 
   const [status, setStatus] = useState('open');
-  const [severity, setSeverity] = useState('');
-  const [customerId, setCustomerId] = useState('');
+  // Seeded from the URL so a link in from Customer Details lands on the
+  // filtered view rather than the whole fleet.
+  const [searchParams] = useSearchParams();
+  const [severity, setSeverity] = useState(searchParams.get('severity') || '');
+  const [customerId, setCustomerId] = useState(searchParams.get('customerId') || '');
   const [environment, setEnvironment] = useState('');
   const [customers, setCustomers] = useState([]);
 

@@ -21,6 +21,7 @@ import {
 import { listUsers } from '@/services/userService';
 import { listCustomers } from '@/services/customerService';
 import { useAuth } from '@/context/AuthContext';
+import { useBreadcrumbs } from '@/context/BreadcrumbContext';
 
 function GroupDetail() {
   const { id } = useParams();
@@ -55,6 +56,12 @@ function GroupDetail() {
     await deleteGroup(id);
     navigate('/admin/groups');
   };
+
+  useBreadcrumbs([
+    { label: 'Administration', to: '/admin' },
+    { label: 'Groups', to: '/admin/groups' },
+    group ? { label: group.name } : null,
+  ]);
 
   const handleRemoveMember = async () => {
     await removeGroupMember(id, confirmRemove.id);

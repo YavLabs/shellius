@@ -1,5 +1,6 @@
 import { Routes, Route } from 'react-router-dom';
 import { AuthProvider } from './context/AuthContext';
+import { BreadcrumbProvider } from './context/BreadcrumbContext';
 import { ThemeProvider } from './context/ThemeContext';
 import { NotificationProvider } from './context/NotificationContext';
 import ProtectedRoute from './components/ProtectedRoute';
@@ -49,6 +50,7 @@ function App() {
     <AuthProvider>
       <ThemeProvider>
         <NotificationProvider>
+          <BreadcrumbProvider>
           <ErrorBoundary>
             <Routes>
               <Route path="/login" element={<Login />} />
@@ -121,6 +123,7 @@ function App() {
               <Route path="*" element={<NotFound />} />
             </Routes>
           </ErrorBoundary>
+          </BreadcrumbProvider>
         </NotificationProvider>
       </ThemeProvider>
     </AuthProvider>

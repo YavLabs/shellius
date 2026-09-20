@@ -20,6 +20,9 @@ import {
   RefreshCw,
   ExternalLink,
   Shield,
+  Radar,
+  ShieldAlert,
+  Info,
 } from 'lucide-react';
 import DataTable from '@/components/shared/DataTable';
 import { CardIcon, MobileCardSkeleton } from '@/components/mobile/MobileCard';
@@ -51,6 +54,9 @@ import { listSessions } from '@/services/sessionService';
 import { relativeTime, formatDateTime } from '@/utils/time';
 import Skeleton from '@/components/ui/Skeleton';
 import MobilePageHeader from '@/components/mobile/MobilePageHeader';
+import { fromState } from '@/hooks/useBackTarget';
+import { getPostureSummary } from '@/services/postureService';
+import { useBreadcrumbs } from '@/context/BreadcrumbContext';
 import useIsMobile from '@/hooks/useIsMobile';
 import { useAuth } from '@/context/AuthContext';
 import { can } from '@/lib/permissions';
@@ -158,6 +164,18 @@ const ENV_DOT_COLORS = {
 // Main page
 // ---------------------------------------------------------------------------
 
+/**
+ * Severity tiles for the customer's posture panel. Each links into the fleet
+ * Posture page pre-filtered to this customer, so the panel is a summary that
+ * hands off rather than a second findings inbox to keep in sync.
+ */
+const POSTURE_TILES = [
+  { key: 'critical', label: 'Critical', icon: ShieldAlert, tint: 'text-red-500' },
+  { key: 'high', label: 'High', icon: ShieldAlert, tint: 'text-orange-500' },
+  { key: 'medium', label: 'Medium', icon: Radar, tint: 'text-amber-500' },
+  { key: 'low', label: 'Low', icon: Info, tint: 'text-sky-500' },
+];
+
 function CustomerDetail() {
   const { id } = useParams();
   const navigate = useNavigate();
@@ -180,6 +198,7 @@ function CustomerDetail() {
 
   // server table filters
   const [envFilter, setEnvFilter] = useState('');
+  const [posture, setPosture] = useState(null);
 
   const loadData = useCallback(async () => {
     setLoading(true);
@@ -253,13 +272,18 @@ function CustomerDetail() {
     return dates.length ? Math.max(...dates) : null;
   }, [servers]);
 
-  // Env breakdown string — "prod 3 · staging 2 · dev 5"
-  const envSummary = useMemo(() => {
-    const parts = ENVIRONMENTS.filter((e) => (byEnv[e] || 0) > 0).map(
-      (e) => `${e} ${byEnv[e]}`
-    );
-    return parts.join(' · ') || 'No servers';
-  }, [byEnv]);
+  useBreadcrumbs([
+    { label: 'Customers', to: '/customers' },
+    customer ? { label: customer.name } : null,
+  ]);
+
+  const canViewPosture = can(user, 'posture.read');
+  useEffect(() => {
+    if (!canViewPosture || !id) return;
+    // Best-effort: this page is about the customer, and posture is one panel
+    // on it — a posture outage should not take the page with it.
+    getPostureSummary({ customerId: id }).then(setPosture).catch(() => setPosture(null));
+  }, [id, canViewPosture]);
 
   // Filtered servers for table
   const filteredServers = useMemo(() => {
@@ -282,7 +306,7 @@ function CustomerDetail() {
         const showHost = r.displayName && r.hostname && r.displayName !== r.hostname;
         return (
           <button
-            onClick={() => navigate(`/servers/${r.id}`)}
+            onClick={() => navigate(`/servers/${r.id}`, { state: fromState(`/customers/${id}`, customer?.name || 'customer') })}
             className="flex items-center gap-2 text-left hover:text-primary"
           >
             <ProtoIcon className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
@@ -375,7 +399,7 @@ function CustomerDetail() {
         {
           label: 'View details',
           icon: Eye,
-          onClick: (r) => navigate(`/servers/${r.id}`),
+          onClick: (r) => navigate(`/servers/${r.id}`, { state: fromState(`/customers/${id}`, customer?.name || 'customer') }),
         },
       ],
     },
@@ -499,23 +523,19 @@ function CustomerDetail() {
             <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg border border-border bg-card">
               <Building2 className="h-5 w-5 text-primary" />
             </div>
-            <div>
-              <h1 className="text-2xl font-bold tracking-tight text-foreground">
+            <div className="min-w-0">
+              <h1 className="truncate text-2xl font-bold tracking-tight text-foreground">
                 {customer.name}
               </h1>
-              <p className="text-sm text-muted-foreground">
-                <span className="font-mono">{customer.slug}</span>
-                {envSummary && envSummary !== 'No servers' && (
-                  <span className="ml-2 text-muted-foreground/60">&mdash; {envSummary}</span>
-                )}
-              </p>
+              {/* The slug and the per-environment counts both have a home
+                  further down the page — the slug in Details, the counts in
+                  their own tiles. Repeating them here made the header the
+                  densest thing on a page whose job is to orient you. */}
+              {customer.description && (
+                <p className="truncate text-sm text-muted-foreground">{customer.description}</p>
+              )}
             </div>
           </div>
-          {customer.description && (
-            <p className="max-w-2xl text-sm text-muted-foreground pl-[3.25rem]">
-              {customer.description}
-            </p>
-          )}
         </div>
 
         {/* Action group */}
@@ -593,6 +613,75 @@ function CustomerDetail() {
         />
       </div>
 
+      {/* ---- ZONE 1b: POSTURE ---- */}
+      {canViewPosture && posture && (
+        <section className="space-y-3">
+          <div className="flex items-center justify-between gap-3">
+            <h2 className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground/70">
+              Security posture
+            </h2>
+            <Link
+              to={`/posture?customerId=${id}`}
+              className="text-xs text-primary hover:underline"
+            >
+              Open in Posture
+            </Link>
+          </div>
+
+          {posture.servers.total > 0 && posture.servers.reporting === 0 ? (
+            <div className="flex items-start gap-2 rounded-lg border border-border bg-muted/40 px-3 py-2.5 text-xs text-muted-foreground">
+              <Radar className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+              <p>
+                No host for this customer is running the posture collector yet, so there is nothing
+                to report. Open a server and use <span className="font-medium text-foreground">Bootstrap host</span>{' '}
+                to install it.
+              </p>
+            </div>
+          ) : (
+            <>
+              <div className="grid grid-cols-2 gap-3 lg:grid-cols-5">
+                {POSTURE_TILES.map((t) => {
+                  const value = posture.findings[t.key] ?? 0;
+                  return (
+                    <Link
+                      key={t.key}
+                      to={`/posture?customerId=${id}&severity=${t.key.toUpperCase()}`}
+                      className="rounded-lg border border-border bg-card p-3.5 transition-colors hover:border-primary/40 hover:bg-accent/40"
+                    >
+                      <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                        <t.icon className={`h-3.5 w-3.5 ${t.tint}`} />
+                        {t.label}
+                      </span>
+                      <span className="mt-1 block text-2xl font-semibold tabular-nums text-foreground">
+                        {value}
+                      </span>
+                    </Link>
+                  );
+                })}
+                <div className="rounded-lg border border-border bg-card p-3.5">
+                  <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                    <Radar className="h-3.5 w-3.5 text-muted-foreground" />
+                    Reporting
+                  </span>
+                  <span className="mt-1 block text-2xl font-semibold tabular-nums text-foreground">
+                    {posture.servers.reporting}
+                    <span className="ml-1 text-sm font-normal text-muted-foreground">
+                      of {posture.servers.total}
+                    </span>
+                  </span>
+                </div>
+              </div>
+              {posture.servers.notInstalled > 0 && (
+                <p className="text-xs text-muted-foreground">
+                  {posture.servers.notInstalled} of this customer&rsquo;s servers have no collector
+                  installed, so their exposure is unknown rather than clean.
+                </p>
+              )}
+            </>
+          )}
+        </section>
+      )}
+
       {/* ---- ZONE 2: TWO-COLUMN MAIN CONTENT ---- */}
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
 
@@ -628,7 +717,7 @@ function CustomerDetail() {
                 }
                 searchPlaceholder="Search hostname or IP..."
                 filters={filterSlot}
-                onRowClick={(r) => navigate(`/servers/${r.id}`)}
+                onRowClick={(r) => navigate(`/servers/${r.id}`, { state: fromState(`/customers/${id}`, customer?.name || 'customer') })}
                 mobile={{ accent: (r) => envAccent(r.environment) }}
               />
             </div>

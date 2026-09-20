@@ -169,7 +169,14 @@ export async function listServerCoverage(orgId, scope, { state, page = 1, limit 
 // GET /api/posture/summary
 // ---------------------------------------------------------------------------
 
-export async function getSummary(orgId, scope) {
+/**
+ * Fleet posture summary, optionally narrowed to one customer.
+ *
+ * `customerId` is a filter ON TOP of the caller's scope, never instead of
+ * it — asking for a customer you cannot see returns that customer's empty
+ * summary rather than its real one.
+ */
+export async function getSummary(orgId, scope, { customerId } = {}) {
   if (!orgId) throw new ApiError(400, 'orgId is required');
 
   const settings = await postureSettingsService.getSettings(orgId);
@@ -177,7 +184,12 @@ export async function getSummary(orgId, scope) {
   // Servers bucket — scoped, active servers only (a terminated/inactive
   // server isn't part of the fleet a posture summary is reporting on).
   const servers = await prisma.server.findMany({
-    where: { orgId, isActive: true, ...serverScopeWhere(scope) },
+    where: {
+      orgId,
+      isActive: true,
+      ...serverScopeWhere(scope),
+      ...(customerId ? { AND: [{ customerId }] } : {}),
+    },
     select: { id: true },
   });
   const serverIds = servers.map((s) => s.id);
@@ -209,7 +221,14 @@ export async function getSummary(orgId, scope) {
   // Findings bucket — computed AFTER the scope filter (customer-scope-spec
   // §6.3: aggregates are the easiest place for a leak to slip through).
   const now = new Date();
-  const findingWhere = { orgId, resolvedAt: null, ...relationScopeWhere(scope, 'server') };
+  const findingWhere = {
+    orgId,
+    resolvedAt: null,
+    ...relationScopeWhere(scope, 'server'),
+    // Restricting by serverId (already scope-filtered above) rather than by
+    // a second customer predicate keeps the two filters from disagreeing.
+    ...(customerId ? { serverId: { in: serverIds } } : {}),
+  };
 
   const [severityGroups, mutedCount] = await Promise.all([
     prisma.exposureFinding.groupBy({

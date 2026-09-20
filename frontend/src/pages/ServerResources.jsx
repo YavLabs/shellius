@@ -9,6 +9,7 @@ import SearchableSelect from '@/components/ui/SearchableSelect';
 import EmptyState from '@/components/ui/EmptyState';
 import useIsMobile from '@/hooks/useIsMobile';
 import { getServerMetrics } from '@/services/postureService';
+import { useBreadcrumbs } from '@/context/BreadcrumbContext';
 import { formatDateTime } from '@/utils/time';
 import { cn } from '@/lib/utils';
 
@@ -126,6 +127,12 @@ function ServerResources() {
 
   const server = data?.server;
   const title = server ? server.displayName || server.hostname : 'Resources';
+
+  useBreadcrumbs([
+    { label: 'Servers', to: '/servers' },
+    server ? { label: title, to: `/servers/${id}` } : null,
+    { label: 'Resources' },
+  ]);
 
   // Did we ask for more history than the org keeps? Saying so beats drawing a
   // chart that starts two days into a seven-day window with no explanation.

@@ -11,8 +11,9 @@ import { downloadPost } from '@/utils/download';
 // Fleet summary + findings inbox
 // ---------------------------------------------------------------------------
 
-export const getPostureSummary = () =>
-  api.get('/posture/summary').then((r) => r.data?.data ?? r.data);
+/** `params.customerId` narrows the summary to one customer. */
+export const getPostureSummary = (params) =>
+  api.get('/posture/summary', { params }).then((r) => r.data?.data ?? r.data);
 
 export const listFindings = (params) =>
   api.get('/posture/findings', { params }).then((r) => r.data?.data ?? r.data);

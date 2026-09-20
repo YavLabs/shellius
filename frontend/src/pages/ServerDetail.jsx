@@ -30,6 +30,8 @@ import { shouldPromptBootstrap, bootstrapIneligibleReason } from '@/lib/bootstra
 import UninstallHostModal from '@/components/servers/UninstallHostModal';
 import QuickConnectButton from '@/components/servers/QuickConnectButton';
 import PrivateIPWarning from '@/components/servers/PrivateIPWarning';
+import useBackTarget from '@/hooks/useBackTarget';
+import { useBreadcrumbs } from '@/context/BreadcrumbContext';
 import BreakGlassModal from '@/components/access-requests/BreakGlassModal';
 import MobilePageHeader from '@/components/mobile/MobilePageHeader';
 import useIsMobile from '@/hooks/useIsMobile';
@@ -197,6 +199,19 @@ function ServerDetail() {
   // Resolved findings stay in the payload for history; the tab counts what is
   // still open. "Needs attention" is CRITICAL or HIGH only — badging every
   // severity would train people to ignore the badge.
+  // Where Back goes: whatever linked here said, else the servers list.
+  const back = useBackTarget({ to: '/servers', label: 'Back to servers' });
+
+  // Trail uses the customer's name when the server carries one, so arriving
+  // from Customer Details keeps that context visible. Never an id.
+  useBreadcrumbs([
+    { label: 'Servers', to: '/servers' },
+    server?.customer?.name
+      ? { label: server.customer.name, to: `/customers/${server.customer.id}` }
+      : null,
+    server ? { label: server.displayName || server.hostname } : null,
+  ]);
+
   const openFindings = (posture?.findings || []).filter((f) => f.status !== 'resolved');
   const needsAttention = openFindings.some((f) => f.severity === 'CRITICAL' || f.severity === 'HIGH');
 
@@ -279,10 +294,10 @@ function ServerDetail() {
     return (
       <div className="p-6">
         <button
-          onClick={() => navigate('/servers')}
+          onClick={() => navigate(back.to)}
           className="flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground"
         >
-          <ArrowLeft className="h-4 w-4" /> Back to servers
+          <ArrowLeft className="h-4 w-4" /> {back.label}
         </button>
         <div className="mt-4 rounded-md border border-destructive/50 bg-destructive/10 px-3 py-2 text-sm text-destructive">
           {error || 'Server not found'}
@@ -295,7 +310,7 @@ function ServerDetail() {
     <div className="space-y-5 p-6">
       {isMobile ? (
         <MobilePageHeader
-          back={{ onClick: () => navigate('/servers'), label: 'Back to servers' }}
+          back={{ onClick: () => navigate(back.to), label: back.label }}
           title={server.displayName || server.hostname}
           // Phones: one line — health dot, the environment code (as on the
           // cards) and the address.
@@ -347,10 +362,10 @@ function ServerDetail() {
       ) : (
       <>
       <button
-        onClick={() => navigate('/servers')}
+        onClick={() => navigate(back.to)}
         className="flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground"
       >
-        <ArrowLeft className="h-4 w-4" /> Back to servers
+        <ArrowLeft className="h-4 w-4" /> {back.label}
       </button>
 
       <div className="flex items-start justify-between">
