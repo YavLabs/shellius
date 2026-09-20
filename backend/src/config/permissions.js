@@ -679,6 +679,33 @@ export const PERMISSIONS = [
     since: 5,
   },
   {
+    key: 'posture.export',
+    group: 'posture',
+    label: 'Export posture data',
+    description:
+      'Download findings and listening-port inventories as CSV, JSON or PDF, for one server or in bulk. Separate from viewing because an export takes security data out of the product in a form that is no longer access-controlled.',
+    sensitive: true,
+    defaults: MGR,
+    current: [],
+    endpoints: ['GET /api/posture/export/fields', 'POST /api/posture/export'],
+    since: 6,
+  },
+  {
+    key: 'posture.expected_ports',
+    group: 'posture',
+    label: 'Mark ports as expected on a server',
+    description:
+      'Declare that a port is meant to be public on one specific host, which resolves its exposure findings and stops them reopening. Narrower than posture.settings, which does the same thing for the whole organization.',
+    sensitive: true,
+    defaults: MGR,
+    current: [],
+    endpoints: [
+      'GET/POST /api/posture/servers/:id/expected-ports',
+      'DELETE /api/posture/servers/:id/expected-ports/:entryId',
+    ],
+    since: 6,
+  },
+  {
     key: 'posture.settings',
     group: 'posture',
     label: 'Manage posture settings',

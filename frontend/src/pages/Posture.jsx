@@ -11,6 +11,7 @@ import {
   Eye,
   RefreshCw,
   Info,
+  Download,
 } from 'lucide-react';
 import DataTable from '@/components/shared/DataTable';
 import PageHeader from '@/components/common/PageHeader';
@@ -23,6 +24,8 @@ import FindingStatusBadge from '@/components/posture/FindingStatusBadge';
 import MuteDialog from '@/components/posture/MuteDialog';
 import CollectorCoverageModal from '@/components/posture/CollectorCoverageModal';
 import FindingDetailModal from '@/components/posture/FindingDetailModal';
+import ExportDialog from '@/components/posture/ExportDialog';
+import ExpectedPortDialog from '@/components/posture/ExpectedPortDialog';
 import BootstrapWizard from '@/components/servers/BootstrapWizard';
 import BootstrapModal from '@/components/servers/BootstrapModal';
 import ProvisionModal from '@/components/servers/ProvisionModal';
@@ -54,6 +57,8 @@ function Posture() {
   const navigate = useNavigate();
   const { user } = useAuth();
   const canMute = can(user, 'posture.mute');
+  const canExport = can(user, 'posture.export');
+  const canExpect = can(user, 'posture.expected_ports');
 
   const [summary, setSummary] = useState(null);
   const [summaryLoading, setSummaryLoading] = useState(true);
@@ -84,6 +89,11 @@ function Posture() {
   const [muteSubmitting, setMuteSubmitting] = useState(false);
   const [muteError, setMuteError] = useState('');
   const [busyId, setBusyId] = useState(null);
+  const [exportOpen, setExportOpen] = useState(false);
+  // Expected-public is per server, so a bulk selection spanning several hosts
+  // cannot be declared in one go — the dialog is only offered for a single
+  // server's worth of findings.
+  const [expectedTarget, setExpectedTarget] = useState(null); // { serverId, targets: [] }
 
   const fetchSummary = useCallback(async () => {
     setSummaryLoading(true);
@@ -385,14 +395,69 @@ function Posture() {
     </>
   );
 
+  // Findings currently selected, resolved from the loaded page. Bulk actions
+  // only ever act on rows the user can actually see.
+  const selectedFindings = findings.filter((f) => selected.includes(f.id));
+  const selectionServerIds = [...new Set(selectedFindings.map((f) => f.server?.id).filter(Boolean))];
+  const selectionIsOneServer = selectionServerIds.length === 1;
+
+  const openBulkExpected = () => {
+    if (!selectionIsOneServer) return;
+    setExpectedTarget({
+      serverId: selectionServerIds[0],
+      targets: selectedFindings.filter((f) => f.port).map((f) => ({ port: f.port, proto: f.proto })),
+    });
+  };
+
+  const handleBulkAcknowledge = async () => {
+    setBusyId('bulk');
+    try {
+      // Sequential, not Promise.all: each one is an audited write, and a
+      // burst of them against a shared API is a worse trade than a second of
+      // latency on a bulk action.
+      for (const id of selected) {
+        await acknowledgeFinding(id);
+      }
+      setSelected([]);
+      fetch();
+      fetchSummary();
+    } catch (err) {
+      setError(err.response?.data?.error?.message || 'Failed to acknowledge findings');
+    } finally {
+      setBusyId(null);
+    }
+  };
+
   const bulkActionsSlot =
     selected.length > 0 ? (
       <div className="flex flex-col gap-3 rounded-lg border border-border bg-accent/30 px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
         <span className="text-sm text-foreground">{selected.length} selected</span>
         <div className="flex flex-wrap items-center gap-2">
-          <Button size="sm" onClick={() => setMuteTarget({ ids: selected })}>
-            <VolumeX className="mr-1.5 h-4 w-4" /> Mute selected
-          </Button>
+          {canMute && (
+            <Button size="sm" onClick={() => setMuteTarget({ ids: selected })}>
+              <VolumeX className="mr-1.5 h-4 w-4" /> Mute
+            </Button>
+          )}
+          {canMute && (
+            <Button variant="outline" size="sm" onClick={handleBulkAcknowledge} disabled={busyId === 'bulk'}>
+              <Check className="mr-1.5 h-4 w-4" /> Acknowledge
+            </Button>
+          )}
+          {canExpect && (
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={openBulkExpected}
+              disabled={!selectionIsOneServer}
+              title={
+                selectionIsOneServer
+                  ? 'Declare these ports expected on this server'
+                  : 'Expected-public is per server — select findings from one server'
+              }
+            >
+              <ShieldCheck className="mr-1.5 h-4 w-4" /> Mark expected
+            </Button>
+          )}
           <Button variant="outline" size="sm" onClick={() => setSelected([])}>
             Clear
           </Button>
@@ -432,6 +497,7 @@ function Posture() {
         subtitle="Exposure findings across every server that reports to Shellius."
         helpKey="posture"
         actions={[
+          { key: 'export', label: 'Export', icon: Download, variant: 'outline', onClick: () => setExportOpen(true), hidden: !canExport },
           { key: 'refresh', label: 'Refresh', icon: RefreshCw, variant: 'outline', onClick: () => { fetch(); fetchSummary(); }, disabled: loading, spin: loading },
         ]}
       />
@@ -573,6 +639,23 @@ function Posture() {
         onAcknowledge={(f) => { setDetailFinding(null); handleAcknowledge(f); }}
         onMute={(f) => { setDetailFinding(null); setMuteTarget({ ids: [f.id] }); }}
         onUnmute={(f) => { setDetailFinding(null); handleUnmute(f); }}
+      />
+
+      <ExportDialog
+        open={exportOpen}
+        dataset="findings"
+        filters={{ status, severity: severity || undefined, environment: environment || undefined, customerId: customerId || undefined }}
+        serverCount={2}
+        scopeLabel="findings matching the current filters"
+        onClose={() => setExportOpen(false)}
+      />
+
+      <ExpectedPortDialog
+        open={!!expectedTarget}
+        serverId={expectedTarget?.serverId}
+        targets={expectedTarget?.targets || []}
+        onClose={() => setExpectedTarget(null)}
+        onDone={() => { setSelected([]); fetch(); fetchSummary(); }}
       />
 
       <MuteDialog

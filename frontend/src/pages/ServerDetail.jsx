@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import {
   ArrowLeft,
@@ -26,6 +26,7 @@ import ServerForm from '@/components/servers/ServerForm';
 import BootstrapModal from '@/components/servers/BootstrapModal';
 import ProvisionModal from '@/components/servers/ProvisionModal';
 import BootstrapWizard from '@/components/servers/BootstrapWizard';
+import { shouldPromptBootstrap, bootstrapIneligibleReason } from '@/lib/bootstrapEligibility';
 import UninstallHostModal from '@/components/servers/UninstallHostModal';
 import QuickConnectButton from '@/components/servers/QuickConnectButton';
 import PrivateIPWarning from '@/components/servers/PrivateIPWarning';
@@ -120,6 +121,7 @@ function ServerDetail() {
   // The install wizard (method + scope). On finish it opens BootstrapModal
   // (manual) or ProvisionModal (automatic) with the scope the user picked.
   const [wizardOpen, setWizardOpen] = useState(false);
+  const promptedRef = useRef(null);
   const [wizardScope, setWizardScope] = useState(null);
   const [installScope, setInstallScope] = useState('full');
   const [deployWizardOpen, setDeployWizardOpen] = useState(false);
@@ -127,6 +129,15 @@ function ServerDetail() {
   const [resetHostKeyConfirm, setResetHostKeyConfirm] = useState(false);
   const [resettingHostKey, setResettingHostKey] = useState(false);
   const [breakGlassOpen, setBreakGlassOpen] = useState(false);
+
+  // Same permission keys the API checks for each action.
+  const canEdit = can(currentUser, 'servers.update');
+  const canOnboard = can(currentUser, 'servers.onboard');
+  const canManage = canEdit || canOnboard;
+  const canDelete = can(currentUser, 'servers.delete');
+  const canDeployKeys = can(currentUser, 'keystore.deploy');
+  const canResetHostKey = can(currentUser, 'servers.reset_host_key');
+  const canBreakGlass = can(currentUser, 'access.break_glass');
 
   const fetch = useCallback(async () => {
     setLoading(true);
@@ -144,6 +155,24 @@ function ServerDetail() {
   useEffect(() => {
     fetch();
   }, [fetch]);
+
+  // Prompt to bootstrap on every visit until the host is done.
+  //
+  // `promptedRef` keys on the server id, not a boolean, so navigating between
+  // two un-bootstrapped servers prompts for each — while a refetch (after a
+  // health check, an edit, or the bootstrap itself) does not reopen the
+  // wizard the user just closed. Eligibility is shouldPromptBootstrap, so a
+  // Windows or RDP-only host is never nagged about an agent it cannot run,
+  // and a credential host — which already works — is offered it rather than
+  // interrupted by it.
+  useEffect(() => {
+    if (!server) return;
+    if (promptedRef.current === server.id) return;
+    if (!shouldPromptBootstrap(server, { canOnboard })) return;
+    promptedRef.current = server.id;
+    setWizardScope(null);
+    setWizardOpen(true);
+  }, [server, canOnboard]);
 
   const handleEdit = async (payload) => {
     await updateServer(id, payload);
@@ -168,14 +197,6 @@ function ServerDetail() {
     }
   };
 
-  // Same permission keys the API checks for each action.
-  const canEdit = can(currentUser, 'servers.update');
-  const canOnboard = can(currentUser, 'servers.onboard');
-  const canManage = canEdit || canOnboard;
-  const canDelete = can(currentUser, 'servers.delete');
-  const canDeployKeys = can(currentUser, 'keystore.deploy');
-  const canResetHostKey = can(currentUser, 'servers.reset_host_key');
-  const canBreakGlass = can(currentUser, 'access.break_glass');
   const isCredentialMode = server?.authMode === 'credential';
   // Credential-mode hosts can be bootstrapped too: the stored identity is
   // precisely what gets us in for the first connect, and the wizard's scope

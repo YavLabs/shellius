@@ -27,6 +27,8 @@ import { envAccent } from '@/lib/mobileCard';
 import ServerForm from '@/components/servers/ServerForm';
 import BootstrapModal from '@/components/servers/BootstrapModal';
 import BootstrapWizard from '@/components/servers/BootstrapWizard';
+import ExportDialog from '@/components/posture/ExportDialog';
+import { shouldPromptBootstrap } from '@/lib/bootstrapEligibility';
 import ProvisionModal from '@/components/servers/ProvisionModal';
 import UninstallHostModal from '@/components/servers/UninstallHostModal';
 import QuickConnectButton from '@/components/servers/QuickConnectButton';
@@ -60,7 +62,8 @@ function Servers() {
   const canOnboard = can(user, 'servers.onboard');
   const canDelete = can(user, 'servers.delete');
   const canDeployKeys = can(user, 'keystore.deploy');
-  const canBulk = canEdit || can(user, 'servers.change_environment') || canDeployKeys;
+  const canExportPosture = can(user, 'posture.export');
+  const canBulk = canEdit || can(user, 'servers.change_environment') || canDeployKeys || canExportPosture;
 
   const [servers, setServers] = useState([]);
   const [total, setTotal] = useState(0);
@@ -90,6 +93,10 @@ function Servers() {
   // ProvisionModal (automatic) — the same two modals as before, so the list
   // and the detail page can never drift into offering different installs.
   const [wizardServer, setWizardServer] = useState(null);
+  // Bulk posture export for the checked servers. Dataset is chosen by which
+  // bulk button was pressed; the dialog handles format, columns and whether a
+  // multi-server export comes back as one file or a ZIP per host.
+  const [exportDataset, setExportDataset] = useState(null);
   const [provisionServerTarget, setProvisionServerTarget] = useState(null);
   const [installScope, setInstallScope] = useState('full');
   const [bootstrapScope, setBootstrapScope] = useState('full');
@@ -166,8 +173,12 @@ function Servers() {
     setFormOpen(false);
     setEditing(null);
     fetch();
-    if (created?.id) {
-      setBootstrapServer(created);
+    // Open the install wizard for a host that actually needs it. This used to
+    // jump straight to the manual one-liner with no eligibility check at all,
+    // so a Windows or RDP-only host — which can never run the agent — was
+    // handed a script it could not use.
+    if (created?.id && shouldPromptBootstrap(created, { canOnboard })) {
+      setWizardServer(created);
     }
   };
 
@@ -315,6 +326,16 @@ function Servers() {
             <Button variant="outline" size="sm" onClick={() => setDeployWizardOpen(true)}>
               <Send className="mr-1 h-4 w-4" /> Export key to servers
             </Button>
+          )}
+          {canExportPosture && (
+            <>
+              <Button variant="outline" size="sm" onClick={() => setExportDataset('findings')}>
+                <Download className="mr-1 h-4 w-4" /> Findings
+              </Button>
+              <Button variant="outline" size="sm" onClick={() => setExportDataset('listeners')}>
+                <Download className="mr-1 h-4 w-4" /> Listeners
+              </Button>
+            </>
           )}
           <Button
             variant="outline"
@@ -613,6 +634,15 @@ function Servers() {
           }}
         />
       </Modal>
+
+      <ExportDialog
+        open={!!exportDataset}
+        dataset={exportDataset || 'findings'}
+        filters={{ serverIds: selected, ...(exportDataset === 'findings' ? { status: 'open' } : {}) }}
+        serverCount={selected.length}
+        scopeLabel={`${selected.length} selected server${selected.length === 1 ? '' : 's'}`}
+        onClose={() => setExportDataset(null)}
+      />
 
       <BootstrapWizard
         open={!!wizardServer}

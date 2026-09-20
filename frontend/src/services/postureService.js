@@ -1,4 +1,5 @@
 import api from './api';
+import { downloadPost } from '@/utils/download';
 
 /**
  * Posture — exposure findings, per-server snapshots and org settings/alert
@@ -39,6 +40,34 @@ export const unmuteFinding = (id) =>
 
 export const acknowledgeFinding = (id) =>
   api.post(`/posture/findings/${id}/acknowledge`).then((r) => r.data?.data ?? r.data);
+
+// ---------------------------------------------------------------------------
+// Per-server expected-public ports
+// ---------------------------------------------------------------------------
+
+export const listExpectedPorts = (serverId) =>
+  api.get(`/posture/servers/${serverId}/expected-ports`).then((r) => r.data?.data?.items ?? []);
+
+/** `entries`: [{ port, proto?, note }] — note is required by the API. */
+export const addExpectedPorts = (serverId, entries) =>
+  api.post(`/posture/servers/${serverId}/expected-ports`, { entries }).then((r) => r.data?.data ?? r.data);
+
+export const removeExpectedPort = (serverId, entryId) =>
+  api.delete(`/posture/servers/${serverId}/expected-ports/${entryId}`).then((r) => r.data?.data ?? r.data);
+
+// ---------------------------------------------------------------------------
+// Export
+// ---------------------------------------------------------------------------
+
+export const getExportFields = () =>
+  api.get('/posture/export/fields').then((r) => r.data?.data ?? r.data);
+
+/**
+ * Builds the file server-side and saves it.
+ * `{ dataset, format, bundle, fields, filters }` — see the API's exportSchema.
+ */
+export const exportPosture = (body) =>
+  downloadPost('/posture/export', body, `shellius-${body.dataset}.${body.format}`);
 
 // ---------------------------------------------------------------------------
 // Settings

@@ -1,10 +1,15 @@
 import { useCallback, useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { AlertTriangle, Check, Cpu, Database, Gauge, HardDrive, Radar, ShieldCheck, ShieldOff, Volume1, VolumeX, Wifi } from 'lucide-react';
+import { AlertTriangle, Check, Cpu, Database, Download, Gauge, HardDrive, Radar, ShieldCheck, ShieldOff, Trash2, Volume1, VolumeX, Wifi } from 'lucide-react';
 import DataTable from '@/components/shared/DataTable';
 import { serviceLabel } from '@/lib/postureLabels';
 import FindingDetailModal from '@/components/posture/FindingDetailModal';
 import ListenerDetailModal from '@/components/posture/ListenerDetailModal';
+import ExportDialog from '@/components/posture/ExportDialog';
+import ExpectedPortDialog from '@/components/posture/ExpectedPortDialog';
+import { Button } from '@/components/ui/button';
+import { can } from '@/lib/permissions';
+import { useAuth } from '@/context/AuthContext';
 import EmptyState from '@/components/ui/EmptyState';
 import { Badge } from '@/components/ui/badge';
 import SeverityBadge from '@/components/posture/SeverityBadge';
@@ -12,7 +17,7 @@ import FindingStatusBadge from '@/components/posture/FindingStatusBadge';
 import MuteDialog from '@/components/posture/MuteDialog';
 import Sparkline from '@/components/posture/Sparkline';
 import { reachabilityTone } from '@/lib/badgeTones';
-import { getServerPosture, muteFinding, unmuteFinding, acknowledgeFinding } from '@/services/postureService';
+import { getServerPosture, muteFinding, unmuteFinding, acknowledgeFinding, listExpectedPorts, removeExpectedPort } from '@/services/postureService';
 import { relativeTime, formatDateTime } from '@/utils/time';
 
 function StatRow({ label, children }) {
@@ -65,6 +70,13 @@ function ServerPostureTab({ serverId, canMute, authMode, canBootstrap, onBootstr
   // Row click opens the detail view; the row's … menu keeps the quick actions.
   const [detailFinding, setDetailFinding] = useState(null);
   const [detailListener, setDetailListener] = useState(null);
+  const [selected, setSelected] = useState([]);
+  const [exportDataset, setExportDataset] = useState(null); // 'findings' | 'listeners'
+  const [expectedTargets, setExpectedTargets] = useState(null);
+  const [expectedPorts, setExpectedPorts] = useState([]);
+  const { user } = useAuth();
+  const canExport = can(user, 'posture.export');
+  const canExpect = can(user, 'posture.expected_ports');
   const [muteSubmitting, setMuteSubmitting] = useState(false);
   const [muteError, setMuteError] = useState('');
 
@@ -84,6 +96,16 @@ function ServerPostureTab({ serverId, canMute, authMode, canBootstrap, onBootstr
   useEffect(() => {
     fetch();
   }, [fetch]);
+
+  const loadExpected = useCallback(() => {
+    // Best-effort: the tab is still useful without it, and a viewer who
+    // cannot read the list should not see an error banner over the findings.
+    listExpectedPorts(serverId).then(setExpectedPorts).catch(() => setExpectedPorts([]));
+  }, [serverId]);
+
+  useEffect(() => {
+    loadExpected();
+  }, [loadExpected]);
 
   const handleAcknowledge = async (finding) => {
     setBusyId(finding.id);
@@ -181,6 +203,58 @@ function ServerPostureTab({ serverId, canMute, authMode, canBootstrap, onBootstr
 
   const listeners = data.listeners || [];
   const findings = (data.findings || []).filter((f) => f.status !== 'resolved');
+
+  const selectedFindings = findings.filter((f) => selected.includes(f.id));
+
+  const handleBulkAcknowledge = async () => {
+    setBusyId('bulk');
+    try {
+      // Sequential: each is an audited write, and a burst against a shared
+      // API is a worse trade than a second of latency on a bulk action.
+      for (const id of selected) await acknowledgeFinding(id);
+      setSelected([]);
+      fetch();
+    } catch (err) {
+      setError(err.response?.data?.error?.message || 'Failed to acknowledge findings');
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  const bulkBar = (
+    <div className="flex flex-col gap-3 rounded-lg border border-border bg-accent/30 px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
+      <span className="text-sm text-foreground">{selected.length} selected</span>
+      <div className="flex flex-wrap items-center gap-2">
+        {canMute && (
+          <Button size="sm" onClick={() => setMuteTarget({ ids: selected })}>
+            <VolumeX className="mr-1.5 h-4 w-4" /> Mute
+          </Button>
+        )}
+        {canMute && (
+          <Button variant="outline" size="sm" onClick={handleBulkAcknowledge} disabled={busyId === 'bulk'}>
+            <Check className="mr-1.5 h-4 w-4" /> Acknowledge
+          </Button>
+        )}
+        {canExpect && (
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() =>
+              setExpectedTargets(
+                selectedFindings.filter((f) => f.port).map((f) => ({ port: f.port, proto: f.proto }))
+              )
+            }
+            disabled={!selectedFindings.some((f) => f.port)}
+          >
+            <ShieldCheck className="mr-1.5 h-4 w-4" /> Mark expected
+          </Button>
+        )}
+        <Button variant="outline" size="sm" onClick={() => setSelected([])}>
+          Clear
+        </Button>
+      </div>
+    </div>
+  );
   const metrics = data.metrics || [];
   const cpu = metrics.map((m) => m.cpuPct ?? null);
   const mem = metrics.map((m) => m.memPct ?? null);
@@ -428,7 +502,14 @@ function ServerPostureTab({ serverId, canMute, authMode, canBootstrap, onBootstr
       )}
 
       <div>
-        <h3 className="mb-2 text-sm font-semibold text-foreground">Open findings</h3>
+        <div className="mb-2 flex items-center justify-between gap-3">
+          <h3 className="text-sm font-semibold text-foreground">Open findings</h3>
+          {canExport && findings.length > 0 && (
+            <Button variant="outline" size="sm" onClick={() => setExportDataset('findings')}>
+              <Download className="mr-1.5 h-4 w-4" /> Export
+            </Button>
+          )}
+        </div>
         {findings.length === 0 ? (
           <EmptyState icon={ShieldCheck} title="No open findings" description="This host is clean as of the last snapshot." />
         ) : (
@@ -438,12 +519,62 @@ function ServerPostureTab({ serverId, canMute, authMode, canBootstrap, onBootstr
             onRowClick={setDetailFinding}
             showSearch={false}
             emptyMessage="No open findings"
+            selectable={canMute || canExpect}
+            selectedIds={selected}
+            onSelectionChange={setSelected}
+            bulkActions={bulkBar}
           />
         )}
       </div>
 
+      {expectedPorts.length > 0 && (
+        <div>
+          <h3 className="mb-2 text-sm font-semibold text-foreground">Expected on this server</h3>
+          <ul className="divide-y divide-border overflow-hidden rounded-lg border border-border">
+            {expectedPorts.map((e) => (
+              <li key={e.id} className="flex items-center gap-3 px-3 py-2 text-sm">
+                <span className="shrink-0 font-mono text-foreground">
+                  {e.proto === 'any' ? 'ANY' : e.proto.toUpperCase()}/{e.port}
+                </span>
+                <span className="min-w-0 flex-1 truncate text-xs text-muted-foreground" title={e.note}>
+                  {e.note}
+                  {e.createdBy?.name ? ` · ${e.createdBy.name}` : ''}
+                </span>
+                {canExpect && (
+                  <button
+                    type="button"
+                    onClick={async () => {
+                      await removeExpectedPort(serverId, e.id);
+                      loadExpected();
+                      fetch();
+                    }}
+                    className="shrink-0 rounded p-1 text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
+                    aria-label={`Stop expecting port ${e.port}`}
+                    title="Stop expecting this port"
+                  >
+                    <Trash2 className="h-3.5 w-3.5" />
+                  </button>
+                )}
+              </li>
+            ))}
+          </ul>
+          <p className="mt-1.5 text-xs text-muted-foreground">
+            These ports are not reported as exposed on this host. Removing an entry does not reopen
+            the finding immediately — it comes back on the next snapshot if the port is still
+            listening, which is the only evidence that justifies reopening it.
+          </p>
+        </div>
+      )}
+
       <div>
-        <h3 className="mb-2 text-sm font-semibold text-foreground">Listeners</h3>
+        <div className="mb-2 flex items-center justify-between gap-3">
+          <h3 className="text-sm font-semibold text-foreground">Listeners</h3>
+          {canExport && listeners.length > 0 && (
+            <Button variant="outline" size="sm" onClick={() => setExportDataset('listeners')}>
+              <Download className="mr-1.5 h-4 w-4" /> Export
+            </Button>
+          )}
+        </div>
         <DataTable
           columns={listenerColumns}
           data={listeners}
@@ -455,6 +586,22 @@ function ServerPostureTab({ serverId, canMute, authMode, canBootstrap, onBootstr
         />
       </div>
 
+      <ExportDialog
+        open={!!exportDataset}
+        dataset={exportDataset || 'findings'}
+        filters={{ serverId, ...(exportDataset === 'findings' ? { status: 'open' } : {}) }}
+        scopeLabel={exportDataset === 'listeners' ? 'this server\u2019s listening ports' : 'this server\u2019s open findings'}
+        onClose={() => setExportDataset(null)}
+      />
+
+      <ExpectedPortDialog
+        open={!!expectedTargets}
+        serverId={serverId}
+        targets={expectedTargets || []}
+        onClose={() => setExpectedTargets(null)}
+        onDone={() => { setSelected([]); fetch(); loadExpected(); }}
+      />
+
       <FindingDetailModal
         open={!!detailFinding}
         finding={detailFinding}
@@ -465,6 +612,11 @@ function ServerPostureTab({ serverId, canMute, authMode, canBootstrap, onBootstr
         onAcknowledge={(f) => { setDetailFinding(null); handleAcknowledge(f); }}
         onMute={(f) => { setDetailFinding(null); setMuteTarget({ id: f.id }); }}
         onUnmute={(f) => { setDetailFinding(null); handleUnmute(f); }}
+        canExpect={canExpect}
+        onMarkExpected={(f) => {
+          setDetailFinding(null);
+          setExpectedTargets([{ port: f.port, proto: f.proto }]);
+        }}
       />
 
       <ListenerDetailModal

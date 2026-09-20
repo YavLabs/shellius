@@ -74,6 +74,7 @@ model Organization {
   postureListeners  HostListener[]
   postureFindings   ExposureFinding[]
   metricSamples     HostMetricSample[]
+  expectedPorts     ServerExpectedPort[]
   postureAlertRules PostureAlertRule[]
   postureSettings   PostureSettings?
 
@@ -293,9 +294,9 @@ model Server {
   createdAt            DateTime       @default(now()) @map("created_at")
   updatedAt            DateTime       @updatedAt @map("updated_at")
 
-  organization     Organization       @relation(fields: [orgId], references: [id], onDelete: Cascade)
-  customer         Customer           @relation(fields: [customerId], references: [id], onDelete: Cascade)
-  credential       Credential?        @relation(fields: [credentialId], references: [id], onDelete: SetNull)
+  organization     Organization         @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  customer         Customer             @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  credential       Credential?          @relation(fields: [credentialId], references: [id], onDelete: SetNull)
   keyDeployments   KeyDeployment[]
   certificates     Certificate[]
   accessRequests   AccessRequest[]
@@ -304,6 +305,7 @@ model Server {
   postureListeners HostListener[]
   postureFindings  ExposureFinding[]
   metricSamples    HostMetricSample[]
+  expectedPorts    ServerExpectedPort[]
 
   @@index([orgId, customerId])
   @@index([orgId, environment])
@@ -360,8 +362,8 @@ model AuditLog {
 }
 
 model Group {
-  id          String   @id @default(cuid())
-  orgId       String   @map("org_id")
+  id          String      @id @default(cuid())
+  orgId       String      @map("org_id")
   name        String
   description String?
   // How much of the org every CUSTOMERS-scoped member sees while in this
@@ -371,8 +373,8 @@ model Group {
   // an ALL group becomes effectively unscoped (lib/scope.js resolveScope).
   // See docs/rbac/customer-scope-spec.md.
   accessScope AccessScope @default(CUSTOMERS) @map("access_scope")
-  createdAt   DateTime @default(now()) @map("created_at")
-  updatedAt   DateTime @updatedAt @map("updated_at")
+  createdAt   DateTime    @default(now()) @map("created_at")
+  updatedAt   DateTime    @updatedAt @map("updated_at")
 
   organization   Organization         @relation(fields: [orgId], references: [id], onDelete: Cascade)
   memberships    GroupMembership[]
@@ -1253,6 +1255,35 @@ model ExposureFinding {
   @@index([orgId, severity, resolvedAt])
   @@index([orgId, serverId])
   @@map("exposure_findings")
+}
+
+/// Ports a specific host is *expected* to publish.
+///
+/// The org-wide list on PostureSettings says "port 8080 is fine everywhere",
+/// which is too blunt: 8080 on a demo box is routine, 8080 on a database host
+/// is worth knowing about. This is the per-server answer, so silencing one
+/// host never silences the fleet. Both lists are consulted; either match
+/// downgrades a finding to EXPECTED_PUBLIC.
+model ServerExpectedPort {
+  id          String   @id @default(cuid())
+  orgId       String   @map("org_id")
+  serverId    String   @map("server_id")
+  port        Int
+  /// tcp | udp | any — "any" covers a service that listens on both.
+  proto       String   @default("any")
+  /// Why this is expected. Required by the API for the same reason a mute
+  /// reason is: a suppression with no stated cause is indistinguishable from
+  /// a mistake six months later.
+  note        String?
+  createdById String?  @map("created_by_id")
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  organization Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  server       Server       @relation(fields: [serverId], references: [id], onDelete: Cascade)
+
+  @@unique([serverId, port, proto])
+  @@index([orgId, serverId])
+  @@map("server_expected_ports")
 }
 
 /// Resource gauges — ~24h of 1-minute samples, pruned by a job. Deliberately

@@ -10,7 +10,7 @@ const DEFAULTS = {
   snapshotRetentionDays: 7,
   metricRetentionHours: 24,
   findingRetentionDays: 90,
-  collectorIntervalMinutes: 5,
+  collectIntervalSeconds: 300,
   expectedPublicPorts: [],
 };
 
@@ -48,6 +48,7 @@ function PostureGeneralTab() {
   const [error, setError] = useState('');
   const [newPort, setNewPort] = useState('');
   const [newNote, setNewNote] = useState('');
+  const [newProto, setNewProto] = useState('tcp');
 
   const dirty = !loading && JSON.stringify(settings) !== JSON.stringify(saved);
   useUnsavedChanges(dirty);
@@ -84,17 +85,25 @@ function PostureGeneralTab() {
   const addPort = () => {
     const port = Number(newPort);
     if (!port || port < 1 || port > 65535) return;
-    if (settings.expectedPublicPorts.some((p) => p.port === port)) return;
+    // `proto` is required by the API — omitting it made every save of a newly
+    // added port fail validation. It is also part of the identity of an
+    // entry, so de-duping and removing key on the pair, not the port alone.
+    if (settings.expectedPublicPorts.some((p) => p.port === port && (p.proto || 'tcp') === newProto)) return;
     setSettings((s) => ({
       ...s,
-      expectedPublicPorts: [...s.expectedPublicPorts, { port, note: newNote.trim() || undefined }],
+      expectedPublicPorts: [...s.expectedPublicPorts, { port, proto: newProto, note: newNote.trim() || null }],
     }));
     setNewPort('');
     setNewNote('');
   };
 
-  const removePort = (port) => {
-    setSettings((s) => ({ ...s, expectedPublicPorts: s.expectedPublicPorts.filter((p) => p.port !== port) }));
+  const removePort = (port, proto) => {
+    setSettings((s) => ({
+      ...s,
+      expectedPublicPorts: s.expectedPublicPorts.filter(
+        (p) => !(p.port === port && (p.proto || 'tcp') === (proto || 'tcp'))
+      ),
+    }));
   };
 
   if (loading) {
@@ -146,9 +155,9 @@ function PostureGeneralTab() {
           />
           <NumberField
             label="Collector interval"
-            description="How often the collector reports, in minutes (floor 1)."
-            value={settings.collectorIntervalMinutes}
-            onChange={(v) => setSettings((s) => ({ ...s, collectorIntervalMinutes: v }))}
+            description="How often each host reports, in minutes."
+            value={Math.round((settings.collectIntervalSeconds ?? 300) / 60)}
+            onChange={(v) => setSettings((s) => ({ ...s, collectIntervalSeconds: Math.max(60, v * 60) }))}
             min={1}
             max={60}
           />
@@ -164,11 +173,13 @@ function PostureGeneralTab() {
           {settings.expectedPublicPorts.length > 0 && (
             <ul className="mb-3 divide-y divide-border overflow-hidden rounded-md border border-border">
               {settings.expectedPublicPorts.map((p) => (
-                <li key={p.port} className="flex items-center justify-between gap-3 px-3 py-2 text-sm">
-                  <span className="font-mono text-foreground">{p.port}</span>
+                <li key={`${p.port}/${p.proto || 'tcp'}`} className="flex items-center justify-between gap-3 px-3 py-2 text-sm">
+                  <span className="font-mono text-foreground">
+                    {(p.proto || 'tcp').toUpperCase()}/{p.port}
+                  </span>
                   <span className="min-w-0 flex-1 truncate text-xs text-muted-foreground">{p.note}</span>
                   <button
-                    onClick={() => removePort(p.port)}
+                    onClick={() => removePort(p.port, p.proto)}
                     className="shrink-0 rounded p-1 text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
                     aria-label={`Remove port ${p.port}`}
                   >
@@ -189,6 +200,15 @@ function PostureGeneralTab() {
               placeholder="Port"
               className="h-9 sm:w-24"
             />
+            <select
+              value={newProto}
+              onChange={(e) => setNewProto(e.target.value)}
+              className="h-9 rounded-md border border-input bg-background px-2 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-ring sm:w-24"
+              aria-label="Protocol"
+            >
+              <option value="tcp">TCP</option>
+              <option value="udp">UDP</option>
+            </select>
             <Input
               value={newNote}
               onChange={(e) => setNewNote(e.target.value)}

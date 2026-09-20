@@ -1,4 +1,4 @@
-import { Check, ExternalLink, Volume1, VolumeX } from 'lucide-react';
+import { Check, ExternalLink, ShieldCheck, Volume1, VolumeX } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import Modal from '@/components/shared/Modal';
 import { Button } from '@/components/ui/button';
@@ -33,7 +33,7 @@ const REMEDIATION = {
   SENSITIVE_PORT_EXPOSED:
     'A datastore reachable from any address is the finding most likely to end badly. Bind it to 127.0.0.1 and reach it over an SSH tunnel, or restrict the port at the firewall. For a container, publish as "127.0.0.1:<port>:<port>" rather than "<port>:<port>".',
   PORT_EXPOSED:
-    'If this is meant to be internal, bind it to 127.0.0.1 behind a reverse proxy. If it is genuinely meant to be public, add it to the expected-public list in Administration → Posture so it stops being reported.',
+    'If this is meant to be internal, bind it to 127.0.0.1 behind a reverse proxy. If it is genuinely meant to be public on this host, use "Mark expected" below — that records the reason, resolves this finding and stops it reopening, without silencing the same port on every other server.',
   DOCKER_FIREWALL_BYPASS:
     'Docker publishes this port with a DNAT rule in nat/PREROUTING, which traverses FORWARD — it never reaches the INPUT chain where ufw and firewalld put host rules. The port is reachable no matter what those rules say. Bind the publish to 127.0.0.1, or use a Docker-aware integration (ufw-docker, or firewalld’s docker zone).',
   FIREWALL_INACTIVE:
@@ -63,6 +63,10 @@ function FindingDetailModal({
   onMute,
   onUnmute,
   busy = false,
+  // Declaring a port expected is per server, so only the server tab offers it
+  // — from the fleet page the finding's server is not the page's subject.
+  canExpect = false,
+  onMarkExpected,
   // The server tab already IS the server, so it hides this jump.
   showServerLink = true,
 }) {
@@ -86,6 +90,11 @@ function FindingDetailModal({
       {canMute && finding.status === 'muted' && onUnmute && (
         <Button variant="outline" disabled={busy} onClick={() => onUnmute(finding)}>
           <Volume1 className="mr-2 h-4 w-4" /> Unmute
+        </Button>
+      )}
+      {canExpect && onMarkExpected && finding.port && !finding.resolvedAt && (
+        <Button variant="outline" disabled={busy} onClick={() => onMarkExpected(finding)}>
+          <ShieldCheck className="mr-2 h-4 w-4" /> Mark expected
         </Button>
       )}
       {canMute && finding.status === 'open' && onMute && (

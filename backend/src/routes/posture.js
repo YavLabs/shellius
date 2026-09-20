@@ -21,6 +21,8 @@ import audit from '../middleware/audit.js';
 import * as postureQueryService from '../services/postureQueryService.js';
 import * as postureSettingsService from '../services/postureSettingsService.js';
 import * as postureAlertService from '../services/postureAlertService.js';
+import * as postureExportService from '../services/postureExportService.js';
+import * as postureExpectedPortService from '../services/postureExpectedPortService.js';
 
 const router = express.Router();
 
@@ -199,6 +201,131 @@ router.get(
       req.query
     );
     res.json({ success: true, data });
+  })
+);
+
+// ---------------------------------------------------------------------------
+// Per-server expected-public ports — posture.expected_ports, audited
+// ---------------------------------------------------------------------------
+
+const expectedPortsSchema = Joi.object({
+  entries: Joi.array()
+    .items(
+      Joi.object({
+        port: Joi.number().integer().min(1).max(65535).required(),
+        proto: Joi.string().valid('tcp', 'udp', 'any').default('any'),
+        // Required for the same reason a mute reason is: a suppression with
+        // no stated cause is indistinguishable from a mistake later.
+        note: Joi.string().trim().min(1).max(500).required(),
+      })
+    )
+    .min(1)
+    .max(100)
+    .required(),
+});
+
+router.get(
+  '/servers/:serverId/expected-ports',
+  requirePermission('posture.read'),
+  asyncHandler(async (req, res) => {
+    const items = await postureExpectedPortService.listForServer(req.orgId, req.params.serverId, req.scope);
+    res.json({ success: true, data: { items } });
+  })
+);
+
+router.post(
+  '/servers/:serverId/expected-ports',
+  requirePermission('posture.expected_ports'),
+  audit('posture.expected_port.add', 'Server'),
+  validate(expectedPortsSchema),
+  asyncHandler(async (req, res) => {
+    const data = await postureExpectedPortService.addForServer(
+      req.orgId,
+      req.params.serverId,
+      req.body.entries,
+      { actorId: req.user.userId, scope: req.scope }
+    );
+    res.json({ success: true, data });
+  })
+);
+
+router.delete(
+  '/servers/:serverId/expected-ports/:entryId',
+  requirePermission('posture.expected_ports'),
+  audit('posture.expected_port.remove', 'Server'),
+  asyncHandler(async (req, res) => {
+    const data = await postureExpectedPortService.removeForServer(
+      req.orgId,
+      req.params.serverId,
+      req.params.entryId,
+      { scope: req.scope }
+    );
+    res.json({ success: true, data });
+  })
+);
+
+// ---------------------------------------------------------------------------
+// Export — posture.export, audited
+// ---------------------------------------------------------------------------
+
+router.get(
+  '/export/fields',
+  requirePermission('posture.export'),
+  asyncHandler(async (req, res) => {
+    res.json({
+      success: true,
+      data: {
+        findings: postureExportService.fieldCatalogue('findings'),
+        listeners: postureExportService.fieldCatalogue('listeners'),
+        formats: postureExportService.FORMATS,
+      },
+    });
+  })
+);
+
+const exportSchema = Joi.object({
+  dataset: Joi.string().valid('findings', 'listeners').required(),
+  format: Joi.string().valid(...postureExportService.FORMATS).default('csv'),
+  bundle: Joi.string().valid(...postureExportService.BUNDLES).default('single'),
+  // Empty / omitted means every field in the catalogue.
+  fields: Joi.array().items(Joi.string().max(64)).max(64).default([]),
+  filters: Joi.object({
+    serverId: Joi.string(),
+    serverIds: Joi.array().items(Joi.string()).max(2000),
+    status: Joi.string().valid('open', 'muted', 'resolved', 'all'),
+    severity: Joi.string().valid('CRITICAL', 'HIGH', 'MEDIUM', 'LOW', 'INFO'),
+    code: Joi.string().max(64),
+    environment: Joi.string().max(32),
+    customerId: Joi.string(),
+  }).default({}),
+});
+
+// POST, not GET: the field selection and a bulk server list do not belong in
+// a URL, and an export is a recorded action rather than a cacheable read.
+router.post(
+  '/export',
+  requirePermission('posture.export'),
+  audit('posture.export', 'Posture'),
+  validate(exportSchema),
+  asyncHandler(async (req, res) => {
+    const { dataset, format, bundle, fields, filters } = req.body;
+    const result = await postureExportService.buildExport({
+      orgId: req.orgId,
+      scope: req.scope,
+      dataset,
+      format,
+      bundle,
+      fields,
+      filters,
+    });
+    res.setHeader('Content-Type', result.contentType);
+    res.setHeader('Content-Disposition', `attachment; filename="${result.filename}"`);
+    // Read by the frontend so it can report what was actually exported —
+    // "0 rows" is a result worth showing, not a silent empty file.
+    res.setHeader('X-Export-Rows', String(result.rowCount));
+    res.setHeader('X-Export-Servers', String(result.serverCount));
+    res.setHeader('Access-Control-Expose-Headers', 'Content-Disposition, X-Export-Rows, X-Export-Servers');
+    res.send(result.buffer);
   })
 );
 

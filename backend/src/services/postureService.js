@@ -295,13 +295,26 @@ function reachabilityFor(listener, fwCtx) {
   return { reachability, bindClass: bc, bind, dockerBypass: false };
 }
 
+/**
+ * Is this port expected to be public?
+ *
+ * Three sources, most specific first. A per-server entry is checked before
+ * the org list so "8080 is expected on this demo box" never has to be
+ * expressed as "8080 is expected everywhere" — which is what the org list
+ * alone forced, and why a database host could be silenced by a decision
+ * someone made about a web server.
+ */
 function isExpectedPublic(port, proto, expectedPublicPorts) {
   for (const rule of expectedPublicPorts || []) {
     if (!rule) continue;
     if (Number(rule.port) !== port) continue;
     const ruleProto = rule.proto || 'any';
     if (ruleProto !== 'any' && ruleProto !== proto) continue;
-    return { matched: true, source: 'setting', label: rule.label || EXPECTED_PUBLIC_BUILTIN[port] || `port ${port}` };
+    return {
+      matched: true,
+      source: rule.scope === 'server' ? 'server' : 'setting',
+      label: rule.label || rule.note || EXPECTED_PUBLIC_BUILTIN[port] || `port ${port}`,
+    };
   }
   if (EXPECTED_PUBLIC_BUILTIN[port]) {
     return { matched: true, source: 'builtin', label: EXPECTED_PUBLIC_BUILTIN[port] };
@@ -342,7 +355,12 @@ function mkFinding(code, proto, port, ownerLabel, service, message, detail) {
 export function computeFindings(snapshot, settings = {}) {
   const firewall = snapshot?.firewall || { engine: 'unknown', active: false, defaultIncoming: 'unknown', rules: [] };
   const rawListeners = Array.isArray(snapshot?.listeners) ? snapshot.listeners : [];
-  const expectedPublicPorts = Array.isArray(settings?.expectedPublicPorts) ? settings.expectedPublicPorts : [];
+  // Per-server entries first so the most specific rule wins the match.
+  const serverExpected = Array.isArray(settings?.serverExpectedPorts) ? settings.serverExpectedPorts : [];
+  const expectedPublicPorts = [
+    ...serverExpected.map((r) => ({ ...r, scope: 'server' })),
+    ...(Array.isArray(settings?.expectedPublicPorts) ? settings.expectedPublicPorts : []),
+  ];
 
   const fwCtx = buildFirewallContext(firewall);
 
@@ -551,7 +569,13 @@ async function getSettings(orgId) {
  * `payload` is the Joi-validated posture snapshot from routes/hosts.js.
  */
 export async function ingest(orgId, serverId, payload) {
-  const settings = await getSettings(orgId);
+  const [settings, serverExpectedPorts] = await Promise.all([
+    getSettings(orgId),
+    prisma.serverExpectedPort.findMany({
+      where: { orgId, serverId },
+      select: { port: true, proto: true, note: true },
+    }),
+  ]);
   const collectedAt = payload.collectedAt instanceof Date ? payload.collectedAt : new Date(payload.collectedAt);
 
   const latest = await prisma.hostSnapshot.findFirst({
@@ -616,7 +640,7 @@ export async function ingest(orgId, serverId, payload) {
 
   const { listeners, findings } = computeFindings(
     { firewall: payload.firewall, listeners: payload.listeners },
-    settings,
+    { ...settings, serverExpectedPorts },
   );
 
   // The (org, server, code, proto, port) unique constraint has no "open vs
