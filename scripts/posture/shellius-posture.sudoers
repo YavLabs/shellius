@@ -1,0 +1,19 @@
+# Managed by Shellius bootstrap — DO NOT EDIT MANUALLY
+#
+# Grants 'shellius-posture' (the posture collector's unprivileged service
+# account — see shellius-posture.service) the EXACT read-only commands it
+# needs to see every user's listening sockets and the host firewall state.
+# NO blanket ALL, no docker group, no Docker socket access — see
+# docs/posture/posture-spec.md §1 decision 2 and §4.
+#
+# Every line below is a fixed, fully-qualified command; nothing here takes
+# attacker-influenced arguments from the collector script. Paths are
+# listed for both common locations (/usr/sbin vs /sbin, /usr/bin vs /bin)
+# since distros disagree on where these binaries live; only the ones that
+# exist on this host will ever match.
+shellius-posture ALL=(root) NOPASSWD: /usr/sbin/ss -H -tulpn, /sbin/ss -H -tulpn, /usr/bin/ss -H -tulpn, /bin/ss -H -tulpn
+shellius-posture ALL=(root) NOPASSWD: /usr/sbin/ufw status verbose, /sbin/ufw status verbose
+shellius-posture ALL=(root) NOPASSWD: /usr/bin/firewall-cmd --list-all, /bin/firewall-cmd --list-all
+shellius-posture ALL=(root) NOPASSWD: /usr/bin/systemctl show -p FragmentPath --value *, /bin/systemctl show -p FragmentPath --value *
+shellius-posture ALL=(root) NOPASSWD: /usr/sbin/iptables -t nat -S, /sbin/iptables -t nat -S
+shellius-posture ALL=(root) NOPASSWD: /usr/sbin/nft list table ip nat, /sbin/nft list table ip nat

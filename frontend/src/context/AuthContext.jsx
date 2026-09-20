@@ -68,6 +68,13 @@ export function AuthProvider({ children }) {
   // Permission check for components: can('servers.create').
   const can = useCallback((permission) => !!user?.permissions?.includes(permission), [user]);
 
+  // Customer scope (docs/rbac/customer-scope-spec.md): { kind: 'all' | 'customers',
+  // customerIds } from /auth/me. A missing scope (e.g. super_admin, or an org
+  // that hasn't set one) behaves as unrestricted. `isScoped` is the common
+  // case components actually branch on.
+  const scope = user?.scope || null;
+  const isScoped = scope?.kind === 'customers';
+
   // Store a token pair + hydrate user from a login/MFA response. Returns the
   // user, or the raw challenge object when MFA is required (no tokens yet).
   const applyAuthResult = useCallback((data) => {
@@ -174,6 +181,8 @@ export function AuthProvider({ children }) {
     error,
     isAuthenticated: !!user,
     can,
+    scope,
+    isScoped,
     login,
     loginWithTokens,
     completeMfa,

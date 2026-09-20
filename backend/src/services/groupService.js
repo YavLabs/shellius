@@ -1,6 +1,9 @@
 import prisma from '../config/db.js';
 import ApiError from '../utils/ApiError.js';
 import { cleanupPolicySubjects } from './policyService.js';
+import { customerScopeWhere } from '../lib/scope.js';
+import { log as auditLog } from './auditService.js';
+import { hasPermission } from './roleService.js';
 
 // Lean user DTO used everywhere a user relation is embedded in a response —
 // see docs/auth-hardening.md Revision 2 "Avatars".
@@ -23,10 +26,15 @@ export async function getGroup(orgId, groupId) {
         include: { user: { select: USER_DTO_SELECT }, addedBy: { select: USER_DTO_SELECT } },
         orderBy: { createdAt: 'asc' },
       },
+      // Customer scope (docs/rbac/customer-scope-spec.md) — additive with each
+      // member's own scope, only consulted for members whose accessScope is
+      // CUSTOMERS (lib/scope.js resolveScope).
+      customerScopes: { select: { customerId: true } },
     },
   });
   if (!group) throw new ApiError(404, 'Group not found');
-  return group;
+  const { customerScopes, ...rest } = group;
+  return { ...rest, customerIds: customerScopes.map((s) => s.customerId) };
 }
 
 export async function createGroup(orgId, { name, description }) {
@@ -141,4 +149,83 @@ export async function getUserGroups(orgId, userId) {
     orderBy: { createdAt: 'asc' },
   });
   return memberships.map((m) => m.group);
+}
+
+/**
+ * Set a group's customer scope: `accessScope` (`ALL`|`CUSTOMERS`) plus the
+ * exact set of `GroupCustomerScope` rows (docs/rbac/customer-scope-spec.md).
+ * Every member whose own `accessScope` is CUSTOMERS inherits this
+ * additively (lib/scope.js resolveScope):
+ *   - `accessScope: 'ALL'` is a deliberate widening path — every CUSTOMERS
+ *     member becomes effectively unscoped while in this group. It always
+ *     normalizes `customerIds` to empty (resolveScope never reads them for
+ *     an ALL group; they'd be dead weight, same as a user's ALL grant).
+ *   - `accessScope: 'CUSTOMERS'` behaves exactly as before.
+ * Same permission/validation rules as `userService.assignUserScope`:
+ *   - every customerId must exist in the caller's org (404 otherwise)
+ *   - a caller who is themselves scoped may only grant customers inside
+ *     their own scope
+ *   - the accessScope + customer rows are replaced transactionally
+ *
+ * @param {string} orgId
+ * @param {string} groupId
+ * @param {{ accessScope: 'ALL'|'CUSTOMERS', customerIds?: string[] }} data
+ * @param {{ userId: string }|null} actor
+ * @param {{ mode: 'all'|'customers', customerIds: string[] }|null} [callerScope] - req.scope
+ * @param {object} [meta] - { ipAddress, userAgent } for the audit entry
+ * @returns {Promise<object>} group with `customerIds`
+ */
+export async function assignGroupScope(orgId, groupId, data, actor, callerScope = null, meta = {}) {
+  if (actor && !hasPermission(actor.permissions, 'users.assign_scope')) {
+    throw new ApiError(403, "You don't have permission to assign customer scope", { code: 'PERMISSION_DENIED' });
+  }
+
+  const { accessScope } = data;
+  const group = await prisma.group.findFirst({ where: { id: groupId, orgId } });
+  if (!group) throw new ApiError(404, 'Group not found');
+
+  const ids = accessScope === 'CUSTOMERS' ? [...new Set(data.customerIds || [])] : [];
+  let found = [];
+  if (ids.length > 0) {
+    // Caller's own scope folded into the existence check — a distinct "exists
+    // but you may not grant it" reply would be a customer-id oracle for a
+    // scoped admin (docs/rbac/customer-scope-spec.md §2.3.2).
+    found = await prisma.customer.findMany({
+      where: { id: { in: ids }, orgId, AND: [customerScopeWhere(callerScope)] },
+      select: { id: true, name: true },
+    });
+    if (found.length !== ids.length) throw new ApiError(404, 'One or more customers not found');
+  }
+
+  const before = await prisma.groupCustomerScope.findMany({
+    where: { groupId },
+    include: { customer: { select: { id: true, name: true } } },
+  });
+
+  const [updated] = await prisma.$transaction([
+    prisma.group.update({ where: { id: groupId }, data: { accessScope } }),
+    prisma.groupCustomerScope.deleteMany({ where: { groupId } }),
+    ...(ids.length ? [prisma.groupCustomerScope.createMany({ data: ids.map((customerId) => ({ groupId, customerId })) })] : []),
+  ]);
+
+  if (actor) {
+    await auditLog({
+      orgId,
+      actorId: actor.userId,
+      action: 'group.scope.updated',
+      resourceType: 'Group',
+      resourceId: groupId,
+      metadata: {
+        // The accessScope transition is the headline of this audit entry —
+        // widening a whole group (CUSTOMERS -> ALL) is exactly the change
+        // someone will need to find later.
+        accessScope: { from: group.accessScope, to: accessScope },
+        before: before.map((b) => ({ id: b.customer.id, name: b.customer.name })),
+        after: found.map((c) => ({ id: c.id, name: c.name })),
+      },
+      ...meta,
+    });
+  }
+
+  return { ...updated, customerIds: ids };
 }

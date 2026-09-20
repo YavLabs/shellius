@@ -145,7 +145,7 @@ router.use(authenticate, tenant);
 router.get(
   '/my-access',
   asyncHandler(async (req, res) => {
-    const results = await policyService.getAccessibleServers(req.orgId, req.user.userId);
+    const results = await policyService.getAccessibleServers(req.orgId, req.user.userId, req.scope);
     res.json({ success: true, data: { accessibleServers: results } });
   })
 );
@@ -214,7 +214,7 @@ router.post(
   audit('policy.create', 'AccessPolicy'),
   validate(policyBodySchema),
   asyncHandler(async (req, res) => {
-    const policy = await policyService.create(req.orgId, req.body);
+    const policy = await policyService.create(req.orgId, req.body, req.scope);
     res.status(201).json({ success: true, data: { policy } });
   })
 );
@@ -242,7 +242,7 @@ router.put(
   audit('policy.update', 'AccessPolicy'),
   validate(policyUpdateSchema),
   asyncHandler(async (req, res) => {
-    const policy = await policyService.update(req.orgId, req.params.id, req.body);
+    const policy = await policyService.update(req.orgId, req.params.id, req.body, req.scope);
     res.json({ success: true, data: { policy } });
   })
 );

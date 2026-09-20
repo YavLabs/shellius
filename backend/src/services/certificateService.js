@@ -3,6 +3,7 @@ import ApiError from '../utils/ApiError.js';
 import logger from '../utils/logger.js';
 import * as caService from './caService.js';
 import * as policyService from './policyService.js';
+import { UNSCOPED, assertServerInScope, relationScopeWhere } from '../lib/scope.js';
 
 // ---------------------------------------------------------------------------
 // Internal helpers
@@ -52,6 +53,7 @@ const ALLOWED_EXTENSIONS = new Set([
  * @param {object}   [params.extensions]
  * @param {object}   [params.criticalOptions]
  * @param {string}   [params.issuedVia='web']
+ * @param {{mode: string, customerIds: string[]}} [params.scope=UNSCOPED]
  * @returns {Promise<{ certificate: object, signedCert: string }>}
  */
 export async function issue({
@@ -67,6 +69,7 @@ export async function issue({
   criticalOptions = {},
   issuedVia = 'web',
   actorId = null,
+  scope = UNSCOPED,
 }) {
   if (!orgId) throw new ApiError(400, 'orgId is required');
   // Direct issuance is a narrow, audited API (certificates.issue_direct). It
@@ -99,6 +102,9 @@ export async function issue({
 
   const server = await prisma.server.findFirst({ where: { id: serverId, orgId } });
   if (!server) throw new ApiError(404, 'Server not found in organization');
+  // Direct issuance mints access — an out-of-scope server must 404 exactly
+  // like a nonexistent one, never leak a 403 that confirms it exists.
+  assertServerInScope(scope, server);
   if (server.environment === 'prod') {
     throw new ApiError(403, 'Production certificates are only issued for an approved access request');
   }
@@ -223,15 +229,20 @@ export async function issue({
  * @param {string}  [params.status]    - ACTIVE | REVOKED | EXPIRED
  * @param {number}  [params.page=1]
  * @param {number}  [params.limit=25]
+ * @param {{mode: string, customerIds: string[]}} [params.scope=UNSCOPED]
  * @returns {Promise<{ items: object[], total: number, page: number, limit: number }>}
  */
-export async function list({ orgId, userId, serverId, status, page = 1, limit = 25 }) {
+export async function list({ orgId, userId, serverId, status, page = 1, limit = 25, scope = UNSCOPED }) {
   if (!orgId) throw new ApiError(400, 'orgId is required');
 
   page = parseInt(page, 10) || 1;
   limit = Math.min(parseInt(limit, 10) || 25, 100);
 
-  const where = { orgId };
+  // Certificate has no customerId column, so scope is applied through the
+  // issuedFor relation. A scoped user never sees certs issued without a
+  // server (relationScopeWhere excludes null relations) — those are HOST
+  // certs / ad-hoc issuance, not something a customer-scoped user requests.
+  const where = { orgId, ...relationScopeWhere(scope, 'issuedFor') };
   if (userId) where.issuedToId = userId;
   if (serverId) where.issuedForId = serverId;
   if (status) where.status = status;
@@ -258,14 +269,15 @@ export async function list({ orgId, userId, serverId, status, page = 1, limit = 
  *
  * @param {string} orgId
  * @param {string} certId
+ * @param {{mode: string, customerIds: string[]}} [scope=UNSCOPED]
  * @returns {Promise<object>}
  */
-export async function getById(orgId, certId) {
+export async function getById(orgId, certId, scope = UNSCOPED) {
   if (!orgId) throw new ApiError(400, 'orgId is required');
   if (!certId) throw new ApiError(400, 'certId is required');
 
   const cert = await prisma.certificate.findFirst({
-    where: { id: certId, orgId },
+    where: { id: certId, orgId, ...relationScopeWhere(scope, 'issuedFor') },
     include: {
       issuedTo: { select: { id: true, email: true, name: true, avatarUrl: true } },
       issuedFor: { select: { id: true, hostname: true, environment: true } },

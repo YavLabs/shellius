@@ -16,3 +16,8 @@ export const addGroupMember = (id, userId) =>
   api.post(`/groups/${id}/members`, { userId }).then((r) => r.data.data);
 export const removeGroupMember = (id, userId) =>
   api.delete(`/groups/${id}/members/${userId}`).then((r) => r.data.data);
+
+// Customer scope (docs/rbac/customer-scope-spec.md) — gated by users.assign_scope.
+/** PUT /api/groups/:id/scope { customerIds: string[] } */
+export const updateGroupScope = (id, data) =>
+  api.put(`/groups/${id}/scope`, data).then((r) => r.data.data?.group ?? r.data.data);

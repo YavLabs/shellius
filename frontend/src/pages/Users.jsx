@@ -22,6 +22,7 @@ import { Badge } from '@/components/ui/badge';
 import { roleTone, statusTone } from '@/lib/badgeTones';
 import { CardStatus } from '@/components/mobile/MobileCard';
 import UserCell from '@/components/shared/UserCell';
+import AccessScopeBadge from '@/components/shared/AccessScopeBadge';
 import Avatar from '@/components/ui/Avatar';
 import Modal from '@/components/shared/Modal';
 import ConfirmDialog from '@/components/shared/ConfirmDialog';
@@ -45,6 +46,7 @@ import {
   triggerPasswordReset,
   unlockUser,
   revokeUserSessions,
+  updateUserScope,
 } from '@/services/userService';
 import { listRoles } from '@/services/roleService';
 import { useAuth } from '@/context/AuthContext';
@@ -172,17 +174,39 @@ function Users() {
   }, [fetchUsers]);
 
   const openCreate = () => { setEditingUser(null); setFormOpen(true); };
-  const openEdit = (u) => { setEditingUser(u); setFormOpen(true); };
+  // The list row doesn't carry `customerIds` (only `accessScope`) — fetch
+  // the full user so the scope editor can prefill it, same as SSH key edit.
+  const openEdit = async (u) => {
+    setEditingUser(u);
+    setFormOpen(true);
+    if (can('users.assign_scope')) {
+      try {
+        const full = await getUser(u.id);
+        if (full) setEditingUser(full);
+      } catch {
+        /* keep row data */
+      }
+    }
+  };
 
   const handleSubmit = async (payload) => {
+    // Customer scope is a separate endpoint (PUT /users/:id/scope) —
+    // UserForm attaches it to `payload.scope` only when it changed.
+    const { scope, ...rest } = payload;
+    let saved;
     if (editingUser) {
-      await updateUser(editingUser.id, payload);
+      saved = await updateUser(editingUser.id, rest);
     } else {
-      await createUser(payload);
+      saved = await createUser(rest);
+    }
+    const targetId = saved?.id || editingUser?.id;
+    if (scope && targetId) {
+      await updateUserScope(targetId, scope);
     }
     setFormOpen(false);
     setEditingUser(null);
     fetchUsers();
+    return saved;
   };
 
   const openSsh = async (u) => {
@@ -322,15 +346,30 @@ function Users() {
           r.name || r.email
         ),
       },
-      render: (r) => <UserCell user={r} />,
+      render: (r) => (
+        <div className="flex min-w-0 items-center gap-1.5">
+          <UserCell user={r} />
+          <AccessScopeBadge accessScope={r.accessScope} />
+        </div>
+      ),
     },
     {
       key: 'role',
       label: 'Role',
       sortable: true,
       searchAccessor: (r) => r.roleInfo?.name || r.role || '',
-      // Phones: plain text, no chip.
-      mobile: { slot: 'meta', order: 1, render: (r) => r.roleInfo?.name || roleTone(r.role).label },
+      // Phones: plain text, no chip — the scope indicator rides along so it
+      // doesn't need its own meta slot (only 3 fit).
+      mobile: {
+        slot: 'meta',
+        order: 1,
+        render: (r) => (
+          <span className="inline-flex items-center gap-1">
+            {r.roleInfo?.name || roleTone(r.role).label}
+            <AccessScopeBadge accessScope={r.accessScope} className="ml-0.5" />
+          </span>
+        ),
+      },
       render: (r) => (
         <Badge tone={roleTone(r.role).tone}>{r.roleInfo?.name || roleTone(r.role).label}</Badge>
       ),

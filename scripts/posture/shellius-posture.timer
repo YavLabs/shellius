@@ -1,0 +1,19 @@
+# Shellius posture collector timer — managed by Shellius bootstrap, DO NOT
+# EDIT. Default interval 5 minutes (docs/posture/posture-spec.md §4);
+# bootstrap.js writes OnUnitActiveSec to match PostureSettings.collectorIntervalSeconds
+# when the host is (re)provisioned, floor 1 minute per the spec.
+[Unit]
+Description=Shellius host posture collector timer
+# Independent of shellius-heartbeat.timer and shellius-jit-reap.timer on
+# purpose — separate failure domain, see shellius-posture.service.
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=5min
+Unit=shellius-posture.service
+# Coalesce onto whichever host happens to reboot/idle at the same moment
+# rather than firing every collector fleet-wide in lockstep.
+RandomizedDelaySec=30
+
+[Install]
+WantedBy=timers.target

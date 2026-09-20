@@ -9,17 +9,26 @@ import * as authService from './authService.js';
 import { parseAvatarDataUrl } from '../utils/avatar.js';
 import { log as auditLog } from './auditService.js';
 import { assertCanActOnRole, getSystemRole, resolveRole, hasPermission } from './roleService.js';
+import { isUnscoped, customerScopeWhere } from '../lib/scope.js';
 
 const ROLE_BRIEF = { select: { id: true, key: true, name: true, isSystem: true, baseRole: true, permissions: true } };
 
 function strip(user) {
   if (!user) return user;
-  const { passwordHash, mfaTotpSecretEnc, mfaTotpPendingEnc, mfaBackupCodes, ssoSub, assignedRole, ...rest } = user;
+  const { passwordHash, mfaTotpSecretEnc, mfaTotpPendingEnc, mfaBackupCodes, ssoSub, assignedRole, customerScopes, groupMemberships, ...rest } = user;
   return {
     ...rest,
     ...(assignedRole !== undefined
       ? { roleInfo: assignedRole ? { id: assignedRole.id, key: assignedRole.key, name: assignedRole.name, isSystem: assignedRole.isSystem } : null }
       : {}),
+    // Customer scope (docs/rbac/customer-scope-spec.md) — only present when the
+    // caller asked for the relation (getUser). accessScope itself is a plain
+    // column and survives the ...rest spread on every call, including listUsers,
+    // so the UI can badge scoped users without a second query.
+    ...(customerScopes !== undefined ? { customerIds: customerScopes.map((s) => s.customerId) } : {}),
+    // Group membership — only present when the caller asked for the relation
+    // (getUser). The LIST shape is unchanged.
+    ...(groupMemberships !== undefined ? { groups: groupMemberships.map((m) => ({ id: m.group.id, name: m.group.name })) } : {}),
     mfaEnabled: !!(user.mfaTotpEnabled || user.mfaEmailEnabled || (user.mfaBackupCodes || []).length > 0),
   };
 }
@@ -61,6 +70,8 @@ export async function getUser(orgId, userId) {
       manager: { select: { id: true, name: true, email: true } },
       directReports: { select: { id: true, name: true, email: true, role: true, status: true } },
       assignedRole: ROLE_BRIEF,
+      customerScopes: { select: { customerId: true } },
+      groupMemberships: { include: { group: { select: { id: true, name: true } } }, orderBy: { createdAt: 'asc' } },
     },
   });
   if (!user) throw new ApiError(404, 'User not found');
@@ -97,8 +108,133 @@ async function activeSuperAdminCount(orgId, excludeUserId) {
   });
 }
 
-export async function createUser(orgId, data, actor) {
-  const { email, name, password, managerId, status } = data;
+/**
+ * Validate and normalize a customer-scope grant (`accessScope` +
+ * `customerIds`) against the caller's own permission and scope. Shared by
+ * `createUser` and `assignUserScope` so every path that can set scope
+ * enforces the exact same rules (docs/rbac/customer-scope-spec.md §2.3-2.4):
+ * every customerId must exist in the caller's org, and a caller who is
+ * themselves scoped may only grant customers within their own scope.
+ * `accessScope: 'ALL'` always normalizes to an empty set — those rows would
+ * be dead weight, resolveScope() never reads them.
+ *
+ * @param {string} orgId
+ * @param {{ permissions: Set<string> }|null} actor
+ * @param {{ mode: 'all'|'customers', customerIds: string[] }|null} callerScope - req.scope
+ * @param {'ALL'|'CUSTOMERS'} accessScope
+ * @param {string[]} [customerIds]
+ * @returns {Promise<string[]>} deduplicated, validated customer ids to store
+ */
+async function validateScopeGrant(orgId, actor, callerScope, accessScope, customerIds) {
+  if (actor && !hasPermission(actor.permissions, 'users.assign_scope')) {
+    throw new ApiError(403, "You don't have permission to assign customer scope", { code: 'PERMISSION_DENIED' });
+  }
+  const ids = accessScope === 'CUSTOMERS' ? [...new Set(customerIds || [])] : [];
+  if (ids.length > 0) {
+    // The caller's OWN scope is part of the existence check, not a separate
+    // check afterwards. Answering "that customer exists, but you may not grant
+    // it" would let a scoped admin enumerate every customer id in the org one
+    // guess at a time; out-of-scope and nonexistent must be indistinguishable
+    // (docs/rbac/customer-scope-spec.md §2.3.2).
+    const found = await prisma.customer.findMany({
+      where: { id: { in: ids }, orgId, AND: [customerScopeWhere(callerScope)] },
+      select: { id: true },
+    });
+    if (found.length !== ids.length) throw new ApiError(404, 'One or more customers not found');
+  }
+  return ids;
+}
+
+/**
+ * Validate a `groupIds` grant: every id must be a group in the caller's org
+ * (404 otherwise, never a silent drop — same posture as `validateScopeGrant`).
+ * Requires `groups.manage`, checked here rather than at the route so every
+ * path that can move group membership (create, update) enforces the same
+ * rule, mirroring how `users.assign_scope` is layered onto `createUser`/
+ * `assignUserScope`.
+ *
+ * @param {string} orgId
+ * @param {{ permissions: Set<string> }|null} actor
+ * @param {string[]} [groupIds]
+ * @returns {Promise<{ id: string, name: string }[]>} deduplicated, validated groups
+ */
+async function validateGroupIds(orgId, actor, groupIds) {
+  if (actor && !hasPermission(actor.permissions, 'groups.manage')) {
+    throw new ApiError(403, "You don't have permission to change group membership", { code: 'PERMISSION_DENIED' });
+  }
+  const ids = [...new Set(groupIds || [])];
+  if (ids.length === 0) return [];
+  const found = await prisma.group.findMany({ where: { id: { in: ids }, orgId }, select: { id: true, name: true } });
+  if (found.length !== ids.length) throw new ApiError(404, 'One or more groups not found');
+  return found;
+}
+
+/**
+ * Replace a user's group memberships with the exact set named by
+ * `groupIds`, transactionally, and audit the add/remove delta
+ * (`user.groups.updated`) — same shape as `assignUserScope`/
+ * `assignGroupScope`'s before/after audit entries.
+ *
+ * @param {string} orgId
+ * @param {string} userId - target
+ * @param {string[]} groupIds
+ * @param {{ userId: string, permissions: Set<string> }|null} actor
+ * @param {object} [meta] - { ipAddress, userAgent } for the audit entry
+ * @returns {Promise<{ id: string, name: string }[]>} the resulting group set
+ */
+async function applyGroupMembership(orgId, userId, groupIds, actor, meta = {}) {
+  const groups = await validateGroupIds(orgId, actor, groupIds);
+
+  const before = await prisma.groupMembership.findMany({
+    where: { userId, group: { orgId } },
+    select: { group: { select: { id: true, name: true } } },
+  });
+  const beforeGroups = before.map((m) => m.group);
+  const beforeIds = new Set(beforeGroups.map((g) => g.id));
+  const afterIds = new Set(groups.map((g) => g.id));
+
+  const added = groups.filter((g) => !beforeIds.has(g.id));
+  const removed = beforeGroups.filter((g) => !afterIds.has(g.id));
+
+  await prisma.$transaction([
+    prisma.groupMembership.deleteMany({ where: { userId, group: { orgId } } }),
+    ...(groups.length
+      ? [
+          prisma.groupMembership.createMany({
+            data: groups.map((g) => ({ groupId: g.id, userId, addedById: actor?.userId || null })),
+          }),
+        ]
+      : []),
+  ]);
+
+  if (actor && (added.length > 0 || removed.length > 0)) {
+    await auditLog({
+      orgId,
+      actorId: actor.userId,
+      action: 'user.groups.updated',
+      resourceType: 'User',
+      resourceId: userId,
+      metadata: {
+        added: added.map((g) => ({ id: g.id, name: g.name })),
+        removed: removed.map((g) => ({ id: g.id, name: g.name })),
+      },
+      ...meta,
+    });
+  }
+
+  return groups;
+}
+
+/**
+ * @param {string} orgId
+ * @param {object} data
+ * @param {object|null} actor
+ * @param {{ mode: 'all'|'customers', customerIds: string[] }|null} [callerScope] - req.scope;
+ *   only consulted when `data.accessScope` is set (customer scope at creation).
+ * @param {object} [meta] - { ipAddress, userAgent }; only used when `data.groupIds` is set.
+ */
+export async function createUser(orgId, data, actor, callerScope = null, meta = {}) {
+  const { email, name, password, managerId, status, accessScope, customerIds, groupIds } = data;
   // password is optional when the invite flow is used
   if (!email || !name) {
     throw new ApiError(400, 'email and name are required');
@@ -118,6 +254,24 @@ export async function createUser(orgId, data, actor) {
     if (!mgr) throw new ApiError(400, 'Manager not found in organization');
   }
 
+  // Customer scope at creation (docs/rbac/customer-scope-spec.md) — optional,
+  // same rules as PUT /:id/scope.
+  let scopeCustomerIds = [];
+  if (accessScope !== undefined) {
+    if (role.baseRole === 'super_admin' && accessScope === 'CUSTOMERS') {
+      throw new ApiError(400, 'Super admins are never scoped — they always see the whole organization');
+    }
+    scopeCustomerIds = await validateScopeGrant(orgId, actor, callerScope, accessScope, customerIds);
+  }
+
+  // Group membership at creation (docs/rbac/customer-scope-spec.md §2) —
+  // optional, requires groups.manage; validated up front so a bad id fails
+  // before the user is ever created (same posture as the scope grant above).
+  let groups = [];
+  if (groupIds !== undefined) {
+    groups = await validateGroupIds(orgId, actor, groupIds);
+  }
+
   const passwordHash = password ? await bcrypt.hash(password, config.bcryptRounds) : null;
   const userStatus = status || (password ? 'active' : 'invited');
 
@@ -132,14 +286,108 @@ export async function createUser(orgId, data, actor) {
         roleId: role.id,
         status: userStatus,
         managerId: managerId || null,
+        ...(accessScope !== undefined ? { accessScope } : {}),
       },
       include: { assignedRole: ROLE_BRIEF },
     });
-    return strip(user);
+    if (scopeCustomerIds.length > 0) {
+      await prisma.userCustomerScope.createMany({
+        data: scopeCustomerIds.map((customerId) => ({ userId: user.id, customerId })),
+      });
+    }
+    if (groups.length > 0) {
+      await prisma.groupMembership.createMany({
+        data: groups.map((g) => ({ groupId: g.id, userId: user.id, addedById: actor?.userId || null })),
+      });
+      if (actor) {
+        await auditLog({
+          orgId,
+          actorId: actor.userId,
+          action: 'user.groups.updated',
+          resourceType: 'User',
+          resourceId: user.id,
+          metadata: { added: groups.map((g) => ({ id: g.id, name: g.name })), removed: [] },
+          ...meta,
+        });
+      }
+    }
+    return accessScope !== undefined ? { ...strip(user), customerIds: scopeCustomerIds } : strip(user);
   } catch (err) {
     if (err.code === 'P2002') throw new ApiError(409, 'Email already exists in organization');
     throw err;
   }
+}
+
+/**
+ * Set a user's customer scope: `accessScope` plus the exact set of
+ * `UserCustomerScope` rows (docs/rbac/customer-scope-spec.md). Requires
+ * users.assign_scope (re-checked here via `validateScopeGrant` so direct
+ * callers stay honest, not just the route). Rules enforced here:
+ *   - every customerId must exist in the caller's org (404 otherwise)
+ *   - the target must be in the caller's org (404)
+ *   - a super_admin target can never be scoped (400) — they can edit their
+ *     own scope, so enforcing it would be theatre
+ *   - nobody may change their OWN scope (403), mirroring
+ *     roleService.canActOnRole's no-self-escalation rule
+ *   - a scoped caller may only grant customers inside their OWN scope
+ *   - the customer rows are replaced transactionally
+ *
+ * @param {string} orgId
+ * @param {string} userId - target
+ * @param {{ accessScope: 'ALL'|'CUSTOMERS', customerIds?: string[] }} data
+ * @param {{ userId: string, permissions: Set<string> }|null} actor
+ * @param {{ mode: 'all'|'customers', customerIds: string[] }|null} [callerScope] - req.scope
+ * @param {object} [meta] - { ipAddress, userAgent } for the audit entry
+ * @returns {Promise<object>} stripped user with `customerIds`
+ */
+export async function assignUserScope(orgId, userId, data, actor, callerScope = null, meta = {}) {
+  const { accessScope } = data;
+
+  if (actor && actor.userId === userId) {
+    throw new ApiError(403, 'You cannot change your own customer scope');
+  }
+
+  const target = await prisma.user.findFirst({ where: { id: userId, orgId } });
+  if (!target) throw new ApiError(404, 'User not found');
+  if (target.role === 'super_admin') {
+    throw new ApiError(400, 'Super admins are never scoped — they always see the whole organization');
+  }
+
+  const customerIds = await validateScopeGrant(orgId, actor, callerScope, accessScope, data.customerIds);
+
+  const before = await prisma.userCustomerScope.findMany({
+    where: { userId },
+    include: { customer: { select: { id: true, name: true } } },
+  });
+  const afterCustomers = customerIds.length
+    ? await prisma.customer.findMany({ where: { id: { in: customerIds }, orgId }, select: { id: true, name: true } })
+    : [];
+
+  const [updated] = await prisma.$transaction([
+    prisma.user.update({ where: { id: userId }, data: { accessScope }, include: { assignedRole: ROLE_BRIEF } }),
+    prisma.userCustomerScope.deleteMany({ where: { userId } }),
+    ...(customerIds.length
+      ? [prisma.userCustomerScope.createMany({ data: customerIds.map((customerId) => ({ userId, customerId })) })]
+      : []),
+  ]);
+
+  if (actor) {
+    await auditLog({
+      orgId,
+      actorId: actor.userId,
+      action: 'user.scope.updated',
+      resourceType: 'User',
+      resourceId: userId,
+      metadata: {
+        accessScope,
+        before: before.map((b) => ({ id: b.customer.id, name: b.customer.name })),
+        after: afterCustomers.map((c) => ({ id: c.id, name: c.name })),
+      },
+      ...meta,
+    });
+  }
+
+  return { ...strip(updated), customerIds };
 }
 
 async function wouldCreateCycle(orgId, userId, newManagerId) {
@@ -247,6 +495,14 @@ export async function updateUser(orgId, userId, data, actor, meta = {}) {
   // Trusted internal callers (actor === null, e.g. seed) may still set one.
   if (data.password && !actor) {
     updateData.passwordHash = await bcrypt.hash(data.password, config.bcryptRounds);
+  }
+
+  // Group membership (docs/rbac/customer-scope-spec.md §2) — optional,
+  // requires groups.manage (checked in applyGroupMembership, not the route),
+  // and is independent of the field updates above: it can be the only thing
+  // this call changes.
+  if (data.groupIds !== undefined) {
+    await applyGroupMembership(orgId, userId, data.groupIds, actor, meta);
   }
 
   if (Object.keys(updateData).length === 0) return strip(existing);
@@ -808,4 +1064,87 @@ export async function updatePreferences(userId, data) {
   });
 
   return merged;
+}
+
+// ---------------------------------------------------------------------------
+// Effective customer scope — explains WHY (for the UI), not just what
+// (docs/rbac/customer-scope-spec.md §2, groups accessScope decision).
+// ---------------------------------------------------------------------------
+
+/**
+ * Resolve and explain a user's effective customer scope: the same decision
+ * `lib/scope.js#resolveScope` makes for request-time enforcement, but with
+ * the "why" and every contributing source attached for the admin UI.
+ * `sources` is always populated (direct grant + every group with its own
+ * accessScope and customers), even when the top-level reason is `user_all`
+ * or `group_all` — a caller widened past their own CUSTOMERS grant, or past
+ * a specific group, should still be able to see what's "underneath" it.
+ *
+ * Priority mirrors resolveScope(): the user's own ALL wins outright, then
+ * any ALL group, then the union, which may be empty.
+ *
+ * @param {string} orgId
+ * @param {string} userId
+ * @returns {Promise<{
+ *   kind: 'all'|'customers',
+ *   customerIds: string[],
+ *   reason: 'user_all'|'group_all'|'union'|'empty',
+ *   sources: {
+ *     direct: { id: string, name: string }[],
+ *     groups: { id: string, name: string, accessScope: 'ALL'|'CUSTOMERS', customers: { id: string, name: string }[] }[],
+ *   },
+ * }>}
+ */
+export async function getEffectiveScope(orgId, userId) {
+  const user = await prisma.user.findFirst({ where: { id: userId, orgId } });
+  if (!user) throw new ApiError(404, 'User not found');
+
+  const [directRows, memberships] = await Promise.all([
+    prisma.userCustomerScope.findMany({
+      where: { userId },
+      include: { customer: { select: { id: true, name: true } } },
+      orderBy: { createdAt: 'asc' },
+    }),
+    prisma.groupMembership.findMany({
+      where: { userId, group: { orgId } },
+      include: {
+        group: {
+          include: { customerScopes: { include: { customer: { select: { id: true, name: true } } } } },
+        },
+      },
+      orderBy: { createdAt: 'asc' },
+    }),
+  ]);
+
+  const direct = directRows.map((r) => ({ id: r.customer.id, name: r.customer.name }));
+  const groups = memberships.map((m) => ({
+    id: m.group.id,
+    name: m.group.name,
+    accessScope: m.group.accessScope,
+    customers: m.group.customerScopes.map((s) => ({ id: s.customer.id, name: s.customer.name })),
+  }));
+  const sources = { direct, groups };
+
+  // super_admin is never scoped, same as resolveScope().
+  if (user.role === 'super_admin' || user.accessScope !== 'CUSTOMERS') {
+    return { kind: 'all', customerIds: [], reason: 'user_all', sources };
+  }
+
+  const allGroup = groups.find((g) => g.accessScope === 'ALL');
+  if (allGroup) {
+    return { kind: 'all', customerIds: [], reason: 'group_all', sources };
+  }
+
+  const idSet = new Set([
+    ...direct.map((c) => c.id),
+    ...groups.filter((g) => g.accessScope === 'CUSTOMERS').flatMap((g) => g.customers.map((c) => c.id)),
+  ]);
+  const customerIds = [...idSet];
+
+  return {
+    kind: 'customers',
+    customerIds,
+    reason: customerIds.length > 0 ? 'union' : 'empty',
+    sources,
+  };
 }

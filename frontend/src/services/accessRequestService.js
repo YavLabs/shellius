@@ -68,3 +68,25 @@ export const getAccessIntents = (serverIds) => {
     .get('/access-requests/intents', { params: { serverIds: ids.join(',') } })
     .then((r) => r.data?.data?.intents ?? {});
 };
+
+// ---------------------------------------------------------------------------
+// Break-glass — step-up-verified emergency access (access.break_glass).
+// Two-step: start() issues a challenge and grants nothing; verify() burns it
+// against the code and creates the APPROVED AccessRequest. The old one-shot
+// POST /access-requests/break-glass is retired (410) — never call it.
+// ---------------------------------------------------------------------------
+
+/**
+ * POST /api/access-requests/break-glass/start
+ * body { serverId, reason (>=20 chars), durationSeconds?, method?: 'totp'|'email' }
+ * → { challengeId, method, emailHint?, expiresIn }
+ */
+export const startBreakGlass = (body) =>
+  api.post('/access-requests/break-glass/start', body).then((r) => r.data?.data ?? r.data);
+
+/**
+ * POST /api/access-requests/break-glass/verify
+ * body { challengeId, code } → the created (APPROVED) AccessRequest
+ */
+export const verifyBreakGlass = (body) =>
+  api.post('/access-requests/break-glass/verify', body).then((r) => r.data?.data ?? r.data);

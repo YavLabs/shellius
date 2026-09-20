@@ -110,7 +110,8 @@ router.post(
     const result = await quickConnectService.createTicket(
       req.orgId,
       { id: req.user.userId, role: req.user.role, permissions: req.user.permissions },
-      req.body
+      req.body,
+      req.scope
     );
     res.status(201).json({ success: true, data: result });
   })

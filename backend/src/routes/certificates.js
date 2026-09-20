@@ -116,6 +116,7 @@ router.post(
       criticalOptions: req.body.criticalOptions,
       issuedVia: req.body.issuedVia,
       actorId: requestingUserId,
+      scope: req.scope,
     });
 
     res.status(201).json({ success: true, data: { certificate, signedCert } });
@@ -127,12 +128,15 @@ router.get(
   '/my-certs',
   asyncHandler(async (req, res) => {
     const { page, limit, status } = req.query;
+    // Own certs, but still customer-scoped — a scoped user shouldn't see a
+    // cert issued for a server that has since left (or never was in) scope.
     const result = await certificateService.list({
       orgId: req.orgId,
       userId: req.user.userId,
       status,
       page,
       limit,
+      scope: req.scope,
     });
     res.json({ success: true, data: result });
   })
@@ -151,6 +155,7 @@ router.get(
       status: req.query.status,
       page: req.query.page,
       limit: req.query.limit,
+      scope: req.scope,
     });
     res.json({ success: true, data: result });
   })
@@ -160,7 +165,7 @@ router.get(
 router.get(
   '/:id',
   asyncHandler(async (req, res) => {
-    const cert = await certificateService.getById(req.orgId, req.params.id);
+    const cert = await certificateService.getById(req.orgId, req.params.id, req.scope);
 
     const isOwner = cert.issuedToId === req.user.userId;
 

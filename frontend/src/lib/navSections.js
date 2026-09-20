@@ -1,4 +1,4 @@
-import { Bell, Building2, FileKey, KeyRound, KeySquare, LayoutDashboard, Lock, ScrollText, Server, Shield, SquareTerminal, Terminal } from 'lucide-react';
+import { Bell, Building2, FileKey, KeyRound, KeySquare, LayoutDashboard, Lock, Radar, ScrollText, Server, SquareTerminal, Terminal } from 'lucide-react';
 
 /**
  * The app's grouped navigation — the desktop sidebar and the phone "More"
@@ -10,6 +10,7 @@ export const NAV_SECTIONS = [
     items: [
       { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard, to: '/' },
       { id: 'terminals', label: 'Terminals', icon: SquareTerminal, to: '/terminals' },
+      { id: 'notifications', label: 'Notifications', icon: Bell, to: '/notifications' },
     ],
   },
   {
@@ -24,7 +25,6 @@ export const NAV_SECTIONS = [
     label: 'Access',
     items: [
       { id: 'access-requests', label: 'Access requests', icon: KeyRound, to: '/access-requests' },
-      { id: 'policies', label: 'Policies', icon: Shield, to: '/policies' },
       {
         id: 'certificates',
         label: 'Certificates',
@@ -40,11 +40,11 @@ export const NAV_SECTIONS = [
     ],
   },
   {
-    label: 'Audit',
+    label: 'Security & audit',
     items: [
+      { id: 'posture', label: 'Posture', icon: Radar, to: '/posture' },
       { id: 'sessions', label: 'Sessions', icon: Terminal, to: '/sessions' },
       { id: 'audit-log', label: 'Audit log', icon: ScrollText, to: '/audit-log' },
-      { id: 'notifications', label: 'Notifications', icon: Bell, to: '/notifications' },
     ],
   },
 ];

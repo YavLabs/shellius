@@ -1,17 +1,16 @@
-import crypto from 'crypto';
 import express from 'express';
 import Joi from 'joi';
-import jwt from 'jsonwebtoken';
 import asyncHandler from '../utils/asyncHandler.js';
 import ApiError from '../utils/ApiError.js';
 import authenticate from '../middleware/auth.js';
 import tenant from '../middleware/tenant.js';
 import { requirePermission, can } from '../middleware/rbac.js';
 import audit from '../middleware/audit.js';
-import config from '../config/index.js';
 import * as serverService from '../services/serverService.js';
 import * as healthCheckService from '../services/healthCheckService.js';
 import { provisionServer } from '../services/provisionService.js';
+import { resolveCredentialForActor } from '../services/keystoreService.js';
+import { signBootstrapToken, INSTALL_MODES } from './bootstrap.js';
 
 const router = express.Router();
 
@@ -86,6 +85,16 @@ const updateSchema = Joi.object({
   credentialId: Joi.string().allow(null),
 }).min(1);
 
+// POST /:id/provision body. Only `mode` is validated here (Joi, matching
+// bootstrap.js's own tokenSchema) — credentials/sudo fields keep their
+// existing manual validation below so this change doesn't touch that
+// behavior. `mode` defaults to 'full' when omitted (today's only behavior);
+// any OTHER value must be one of INSTALL_MODES or the request is rejected
+// outright — it never silently falls back to 'full'.
+const provisionSchema = Joi.object({
+  mode: Joi.string().valid(...INSTALL_MODES).default('full'),
+}).unknown(true);
+
 const bulkEnvSchema = Joi.object({
   serverIds: Joi.array().items(Joi.string()).min(1).required(),
   environment: Joi.string().valid(...ENVIRONMENTS).required(),
@@ -143,7 +152,7 @@ router.get(
   // connect; writes need their own permissions below.
   requirePermission('servers.view'),
   asyncHandler(async (req, res) => {
-    const result = await serverService.listServers(req.orgId, req.query);
+    const result = await serverService.listServers(req.orgId, req.query, req.scope);
     res.json({ success: true, data: result });
   })
 );
@@ -152,7 +161,7 @@ router.get(
   '/health/summary',
   requirePermission('servers.view'),
   asyncHandler(async (req, res) => {
-    const summary = await healthCheckService.getHealthSummary(req.orgId);
+    const summary = await healthCheckService.getHealthSummary(req.orgId, req.scope);
     res.json({ success: true, data: summary });
   })
 );
@@ -166,7 +175,8 @@ router.post(
     const result = await serverService.bulkUpdateEnvironment(
       req.orgId,
       req.body.serverIds,
-      req.body.environment
+      req.body.environment,
+      req.scope
     );
     res.json({ success: true, data: result });
   })
@@ -185,7 +195,7 @@ router.post(
         details: { missing: ['servers.change_environment'] },
       });
     }
-    const result = await serverService.bulkUpdate(req.orgId, req.body.serverIds, req.body.patch);
+    const result = await serverService.bulkUpdate(req.orgId, req.body.serverIds, req.body.patch, req.scope);
     res.json({ success: true, data: result });
   })
 );
@@ -194,7 +204,7 @@ router.get(
   '/:id',
   requirePermission('servers.view'),
   asyncHandler(async (req, res) => {
-    const server = await serverService.getServer(req.orgId, req.params.id);
+    const server = await serverService.getServer(req.orgId, req.params.id, req.scope);
     res.json({ success: true, data: { server } });
   })
 );
@@ -208,12 +218,13 @@ router.patch(
   audit('server.connection_ip', 'Server'),
   validate(Joi.object({ ipAddress: Joi.string().required() })),
   asyncHandler(async (req, res) => {
-    const current = await serverService.getServer(req.orgId, req.params.id);
+    const current = await serverService.getServer(req.orgId, req.params.id, req.scope);
     assertServerFieldPermissions(req, { ipAddress: req.body.ipAddress }, current);
     const server = await serverService.updateConnectionIp(
       req.orgId,
       req.params.id,
-      req.body.ipAddress
+      req.body.ipAddress,
+      req.scope
     );
     res.json({ success: true, data: { server } });
   })
@@ -227,7 +238,7 @@ router.post(
   asyncHandler(async (req, res) => {
     assertServerFieldPermissions(req, req.body);
     const { customerId, ...rest } = req.body;
-    const server = await serverService.createServer(req.orgId, customerId, rest);
+    const server = await serverService.createServer(req.orgId, customerId, rest, req.scope);
     res.status(201).json({ success: true, data: { server } });
   })
 );
@@ -238,9 +249,9 @@ router.put(
   audit('server.update', 'Server'),
   validate(updateSchema),
   asyncHandler(async (req, res) => {
-    const current = await serverService.getServer(req.orgId, req.params.id);
+    const current = await serverService.getServer(req.orgId, req.params.id, req.scope);
     assertServerFieldPermissions(req, req.body, current);
-    const server = await serverService.updateServer(req.orgId, req.params.id, req.body);
+    const server = await serverService.updateServer(req.orgId, req.params.id, req.body, req.scope);
     res.json({ success: true, data: { server } });
   })
 );
@@ -249,7 +260,7 @@ router.get(
   '/:id/delete-impact',
   requirePermission('servers.delete'),
   asyncHandler(async (req, res) => {
-    const impact = await serverService.getDeleteImpact(req.orgId, req.params.id);
+    const impact = await serverService.getDeleteImpact(req.orgId, req.params.id, req.scope);
     res.json({ success: true, data: impact });
   })
 );
@@ -259,7 +270,7 @@ router.delete(
   requirePermission('servers.delete'),
   audit('server.delete', 'Server'),
   asyncHandler(async (req, res) => {
-    await serverService.deleteServer(req.orgId, req.params.id, req.user.userId);
+    await serverService.deleteServer(req.orgId, req.params.id, req.user.userId, req.scope);
     res.json({ success: true, data: { success: true } });
   })
 );
@@ -271,7 +282,7 @@ router.post(
   requirePermission('servers.reset_host_key'),
   audit('server.host_key_reset', 'Server'),
   asyncHandler(async (req, res) => {
-    const server = await serverService.resetHostKey(req.orgId, req.params.id);
+    const server = await serverService.resetHostKey(req.orgId, req.params.id, req.scope);
     res.json({ success: true, data: { server } });
   })
 );
@@ -280,7 +291,7 @@ router.post(
   '/:id/health-check',
   requirePermission('servers.onboard'),
   asyncHandler(async (req, res) => {
-    const server = await healthCheckService.runHealthCheckForServer(req.orgId, req.params.id);
+    const server = await healthCheckService.runHealthCheckForServer(req.orgId, req.params.id, req.scope);
     if (!server) throw new ApiError(404, 'Server not found');
     res.json({ success: true, data: { server } });
   })
@@ -294,9 +305,29 @@ router.post(
   requirePermission('servers.onboard'),
   audit('server.provision', 'Server'),
   asyncHandler(async (req, res) => {
-    const { privateKey, passphrase, password, sshUser, sudoPassword } = req.body;
-    if (!privateKey && !password) throw new ApiError(400, 'Provide an SSH private key or a password');
-    if (!sshUser) throw new ApiError(400, 'sshUser is required');
+    const { error: modeError, value: modeValue } = provisionSchema.validate(req.body);
+    if (modeError) throw new ApiError(400, modeError.message);
+    const mode = modeValue.mode; // 'full' | 'posture' — rejected above if neither
+    const { privateKey, passphrase, password, sshUser, sudoPassword, credentialId } = req.body;
+    // Either a saved Keystore identity, or credentials typed into the form.
+    // With an identity, the username comes from it unless one is given, and
+    // its secret never reaches the browser.
+    if (!credentialId && !privateKey && !password) {
+      throw new ApiError(400, 'Provide a saved identity, an SSH private key, or a password');
+    }
+    if (!credentialId && !sshUser) throw new ApiError(400, 'sshUser is required');
+
+    // Resolved BEFORE the SSE headers go out, so a missing identity or a
+    // scope violation is a real 403/404 instead of an error event in a 200.
+    let identityAuth = null;
+    let identityName = null;
+    if (credentialId) {
+      const resolved = await resolveCredentialForActor(req.orgId, req.user, credentialId);
+      identityAuth = resolved.auth;
+      identityName = resolved.credential.name;
+    }
+    const effectiveUser = sshUser || identityAuth?.username;
+    if (!effectiveUser) throw new ApiError(400, 'sshUser is required');
 
     // Set SSE headers before any async work so the client starts receiving
     res.setHeader('Content-Type', 'text/event-stream');
@@ -309,13 +340,10 @@ router.post(
     };
 
     try {
-      // Generate a short-lived bootstrap token using the same signing approach
-      // as bootstrap.js — no separate service layer exists for this yet.
-      const bootstrapToken = jwt.sign(
-        { kind: 'bootstrap', serverId: req.params.id, orgId: req.orgId, jti: crypto.randomUUID() },
-        config.jwt.secret,
-        { expiresIn: 30 * 60 }
-      );
+      // Mint the bootstrap token via bootstrap.js's own signBootstrapToken so
+      // the `mode` claim it signs and the one verifyBootstrapToken later reads
+      // (GET /api/bootstrap/install.sh) can never drift apart.
+      const bootstrapToken = signBootstrapToken({ serverId: req.params.id, orgId: req.orgId, mode });
 
       // Resolve the backend URL the target host will reach to fetch install.sh.
       // In prod the TRAEFIK_HOST env var is always set; fall back to PUBLIC_API_URL,
@@ -336,15 +364,27 @@ router.post(
       const bootstrapUrl = `${backendUrl}/api/bootstrap/install.sh?token=${bootstrapToken}`;
 
       send('log', { message: `[shellius] Starting provisioning for server ${req.params.id}` });
+      send('log', {
+        message:
+          mode === 'posture'
+            ? '[shellius] Mode: posture collector only (CA trust / sshd / check-principals untouched)'
+            : '[shellius] Mode: full agent',
+      });
       send('log', { message: '[shellius] Bootstrap token generated' });
 
+      if (identityName) send('log', { message: `[shellius] Using saved identity "${identityName}"` });
+
       await provisionServer(req.orgId, req.params.id, {
-        privateKey: privateKey || undefined,
-        passphrase: passphrase || undefined,
-        password: password || undefined,
-        sshUser,
-        sudoPassword: sudoPassword || '',
+        privateKey: identityAuth?.privateKey || privateKey || undefined,
+        passphrase: identityAuth?.passphrase || passphrase || undefined,
+        password: identityAuth?.password || password || undefined,
+        sshUser: effectiveUser,
+        // A password identity doubles as the sudo password, as key deployment
+        // already does — otherwise `sudo -S` would have nothing to read.
+        sudoPassword: sudoPassword || identityAuth?.password || '',
+        scope: req.scope,
         bootstrapUrl,
+        mode,
         onOutput: (line) => send('log', { message: line }),
       });
 

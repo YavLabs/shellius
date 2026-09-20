@@ -29,7 +29,7 @@ export const triggerHealthCheck = (id) =>
 export const resetHostKey = (id) =>
   api.post(`/servers/${id}/host-key/reset`).then((r) => r.data?.data?.server ?? r.data?.data);
 
-export async function provisionServer(serverId, { privateKey, passphrase, password, sshUser, sudoPassword, onLog }) {
+export async function provisionServer(serverId, { privateKey, passphrase, password, sshUser, sudoPassword, credentialId, mode, onLog }) {
   return new Promise((resolve, reject) => {
     // This is a raw fetch (SSE stream), so it bypasses the axios interceptor —
     // attach the bearer token manually.
@@ -41,7 +41,7 @@ export async function provisionServer(serverId, { privateKey, passphrase, passwo
         ...(token ? { Authorization: `Bearer ${token}` } : {}),
       },
       credentials: 'include',
-      body: JSON.stringify({ privateKey, passphrase, password, sshUser, sudoPassword }),
+      body: JSON.stringify({ privateKey, passphrase, password, sshUser, sudoPassword, credentialId, mode }),
     }).then(async (response) => {
       if (!response.ok) {
         const data = await response.json().catch(() => ({}));

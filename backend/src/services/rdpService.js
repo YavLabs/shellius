@@ -27,6 +27,7 @@
 import net from 'net';
 import crypto from 'crypto';
 import jwt from 'jsonwebtoken';
+import { UNSCOPED, isUnscoped } from '../lib/scope.js';
 
 import { encrypt, decrypt } from '../utils/crypto.js';
 import prisma from '../config/db.js';
@@ -423,9 +424,14 @@ export function verifyGatewayToken(token) {
  * upgrade handler when the client actually connects.
  *
  * @param {string} accessRequestId
+ * @param {object} [scope] - caller's customer scope. Checked HERE, at
+ *   redemption, not only when the request was approved: scope can be narrowed
+ *   after an approval, and the SSH path already re-checks at redemption
+ *   (terminalService). Without this the RDP half of the same guarantee is
+ *   missing (docs/rbac/customer-scope-spec.md §4.2 #24).
  * @returns {Promise<{ server: object, gatewayToken: string }>}
  */
-export async function createConnectionForRequest(accessRequestId) {
+export async function createConnectionForRequest(accessRequestId, scope = UNSCOPED) {
   const accessRequest = await prisma.accessRequest.findUnique({
     where: { id: accessRequestId },
     include: {
@@ -435,6 +441,10 @@ export async function createConnectionForRequest(accessRequestId) {
   });
 
   if (!accessRequest) throw new ApiError(404, 'Access request not found');
+  // Out-of-scope target is indistinguishable from a missing request.
+  if (!isUnscoped(scope) && !scope.customerIds.includes(accessRequest.server?.customerId)) {
+    throw new ApiError(404, 'Access request not found');
+  }
   if (accessRequest.status !== 'APPROVED') {
     throw new ApiError(409, `Access request is not approved (status: ${accessRequest.status})`);
   }

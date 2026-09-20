@@ -1,7 +1,24 @@
+import { Prisma } from '@prisma/client';
 import prisma from '../config/db.js';
 import logger from '../utils/logger.js';
 import { isServerOnboarded } from './accessRequestService.js';
 import { TIERS, defaultPermissionsFor } from '../config/permissions.js';
+import { scopeSqlIds, customerScopeWhere } from '../lib/scope.js';
+
+/**
+ * SQL fragment restricting a raw-SQL server search to the caller's customer
+ * scope. `scopeSqlIds` returns null for an unscoped caller (fragment is a
+ * no-op) or the resolved customer id list otherwise. An empty list is a
+ * legitimate "nothing is visible" scope (lib/scope.js), which `IN ()` cannot
+ * express, so it is special-cased to a clause that always fails instead.
+ * Always tagged-template parameterized — never string interpolation.
+ */
+function serverScopeSql(scope) {
+  const ids = scopeSqlIds(scope);
+  if (ids === null) return Prisma.empty;
+  if (ids.length === 0) return Prisma.sql`AND false`;
+  return Prisma.sql`AND s.customer_id IN (${Prisma.join(ids)})`;
+}
 
 // ---------------------------------------------------------------------------
 // searchService — global command-palette search across the org.
@@ -81,7 +98,7 @@ export function rankAndLimit(items, limit) {
 
 const overfetchFor = (limit) => Math.min(Math.max(limit * 4, 10), 40);
 
-async function searchServers(orgId, q, limit) {
+async function searchServers(orgId, q, limit, scope) {
   const like = `%${q}%`;
   const rows = await prisma.$queryRaw`
     SELECT s.id, s.hostname, s.display_name AS "displayName", s.ip_address AS "ipAddress",
@@ -99,6 +116,7 @@ async function searchServers(orgId, q, limit) {
         s.description ILIKE ${like} OR
         s.labels::text ILIKE ${like}
       )
+      ${serverScopeSql(scope)}
     LIMIT ${overfetchFor(limit)}
   `;
 
@@ -126,10 +144,14 @@ async function searchServers(orgId, q, limit) {
   }));
 }
 
-async function searchCustomers(orgId, q, limit) {
+async function searchCustomers(orgId, q, limit, scope) {
   const rows = await prisma.customer.findMany({
     where: {
       orgId,
+      // ORM query (not raw SQL) — the Prisma `where` predicate is the
+      // equivalent of the scopeSqlIds fragment used on the raw-SQL sites
+      // below, and is auto-parameterized the same as everything else here.
+      ...customerScopeWhere(scope),
       OR: [
         { name: { contains: q, mode: 'insensitive' } },
         { slug: { contains: q, mode: 'insensitive' } },
@@ -244,7 +266,7 @@ async function searchPolicies(orgId, q, limit) {
     type: 'policies',
     title: p.name,
     subtitle: p.description || p.effect,
-    href: `/policies?highlight=${p.id}`,
+    href: `/admin/policies?highlight=${p.id}`,
     meta: { effect: p.effect, isActive: p.isActive },
     _score: bestScore([p.name, p.description], q),
   }));
@@ -265,7 +287,7 @@ const FETCHERS = {
 // its fetcher's WHERE clause exactly (same filters, no `take`/`LIMIT`).
 // ---------------------------------------------------------------------------
 
-async function countServers(orgId, q) {
+async function countServers(orgId, q, scope) {
   const like = `%${q}%`;
   const rows = await prisma.$queryRaw`
     SELECT COUNT(*)::int AS count
@@ -279,14 +301,16 @@ async function countServers(orgId, q) {
         s.description ILIKE ${like} OR
         s.labels::text ILIKE ${like}
       )
+      ${serverScopeSql(scope)}
   `;
   return rows[0]?.count ?? 0;
 }
 
-function countCustomers(orgId, q) {
+function countCustomers(orgId, q, scope) {
   return prisma.customer.count({
     where: {
       orgId,
+      ...customerScopeWhere(scope),
       OR: [
         { name: { contains: q, mode: 'insensitive' } },
         { slug: { contains: q, mode: 'insensitive' } },
@@ -357,13 +381,16 @@ const COUNTERS = {
 };
 
 /**
- * search({ orgId, permissions, q, limit }) — permission-gated, org-scoped
- * global search. Types the caller isn't allowed to see are omitted entirely (empty array,
- * count 0) rather than filtered post-hoc, so nothing gated ever touches the
- * network response. `results[type]` is truncated to `limit`; `counts[type]`
- * is the TOTAL number of matches for that type (so the UI can show "N more…").
+ * search({ orgId, permissions, q, limit, scope }) — permission-gated,
+ * org-scoped global search. Types the caller isn't allowed to see are
+ * omitted entirely (empty array, count 0) rather than filtered post-hoc, so
+ * nothing gated ever touches the network response. `results[type]` is
+ * truncated to `limit`; `counts[type]` is the TOTAL number of matches for
+ * that type (so the UI can show "N more…"). `scope` (customer scope, see
+ * lib/scope.js) is passed through to every fetcher/counter; only the
+ * `servers` and `customers` types read it — the rest ignore the extra arg.
  */
-export async function search({ orgId, permissions, q, limit = 5 }) {
+export async function search({ orgId, permissions, q, limit = 5, scope }) {
   const query = String(q || '').trim();
   const allowedTypes = getAllowedTypes(permissions);
 
@@ -381,11 +408,11 @@ export async function search({ orgId, permissions, q, limit = 5 }) {
   const settled = await Promise.all(
     allowedTypes.map(async (type) => {
       const [items, total] = await Promise.all([
-        FETCHERS[type](orgId, query, limit).catch((err) => {
+        FETCHERS[type](orgId, query, limit, scope).catch((err) => {
           logger.error('[searchService] fetch failed', { type, error: err.message });
           return [];
         }),
-        COUNTERS[type](orgId, query).catch((err) => {
+        COUNTERS[type](orgId, query, scope).catch((err) => {
           logger.error('[searchService] count failed', { type, error: err.message });
           return 0;
         }),

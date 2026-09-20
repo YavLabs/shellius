@@ -26,6 +26,21 @@ export function canAll(user, ...permissions) {
   return permissions.every((p) => can(user, p));
 }
 
+/**
+ * Customer scope (docs/rbac/customer-scope-spec.md). `user.scope` comes from
+ * /auth/me: `{ kind: 'all' | 'customers', customerIds: string[] }`. Client
+ * convenience only, e.g. to skip an out-of-scope option in a dropdown —
+ * every list/detail endpoint enforces the same scope server-side. No scope,
+ * or `kind: 'all'` (unscoped users, super admins), is unrestricted.
+ *
+ *   inScope(user, customer.id)
+ */
+export function inScope(user, customerId) {
+  const scope = user?.scope;
+  if (!scope || scope.kind !== 'customers') return true;
+  return (scope.customerIds || []).includes(customerId);
+}
+
 // Built-in role names by key (the base tier of any role). Custom roles carry
 // their own name in user.roleInfo.name.
 export const ROLE_LABELS = {

@@ -32,6 +32,7 @@ import { resolveCredentialAuth } from './keystoreService.js';
 import { log as auditLog } from './auditService.js';
 import * as policyService from './policyService.js';
 import { isVaultEnabled } from './orgService.js';
+import { UNSCOPED, customerScopeWhere } from '../lib/scope.js';
 
 // Who may use Quick Connect is the `quick_connect.use` permission (the old
 // settings.quickConnect.minRole was migrated onto the built-in roles by
@@ -452,7 +453,7 @@ export async function assertNotDeniedHost(orgId, userId, host, resolvedIps = [])
 // Save as server
 // ---------------------------------------------------------------------------
 
-export async function saveAsServer(orgId, actor, body) {
+export async function saveAsServer(orgId, actor, body, scope = UNSCOPED) {
   const {
     host, port, username, hostname, displayName, customerId, environment, description,
     hostKeyFingerprint, hostKeyAlgorithm, identity,
@@ -461,7 +462,12 @@ export async function saveAsServer(orgId, actor, body) {
   if (!isValidHost(host)) throw new ApiError(400, 'host must be a valid hostname, IPv4, or IPv6 address');
   await sshConnect.resolveTarget(host);
   if (!customerId) throw new ApiError(400, 'customerId is required');
-  const customer = await prisma.customer.findFirst({ where: { id: customerId, orgId } });
+  // Customer scope: saving a host under a customer the caller cannot see would
+  // both create an invisible server and, via the distinct "not found" reply,
+  // leak which customer ids exist org-wide (customer-scope-spec.md §4.2 #28).
+  const customer = await prisma.customer.findFirst({
+    where: { id: customerId, orgId, AND: [customerScopeWhere(scope)] },
+  });
   if (!customer) throw new ApiError(400, 'Customer not found in organization');
   if (!username || !USERNAME_RE.test(username)) throw new ApiError(400, 'username is required and must be valid');
   if (!identity || !identity.mode) throw new ApiError(400, 'identity is required');

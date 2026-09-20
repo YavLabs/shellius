@@ -67,6 +67,18 @@ import * as wsTicketService from './wsTicketService.js';
 import * as hub from './terminalHub.js';
 import GuacamoleLite from 'guacamole-lite';
 import { permissionsForUser } from './roleService.js';
+import { resolveScope, isUnscoped } from '../lib/scope.js';
+
+/**
+ * Scope check for the WebSocket paths. `assertServerInScope` throws an
+ * ApiError, which is the right shape for an HTTP route but not for a socket
+ * upgrade — here the caller closes the socket instead, so this returns a
+ * boolean.
+ */
+function inScopeServer(scope, server) {
+  if (isUnscoped(scope)) return true;
+  return !!server && scope.customerIds.includes(server.customerId);
+}
 
 const GUACD_HOST = process.env.GUACD_HOST || '127.0.0.1';
 const GUACD_PORT = parseInt(process.env.GUACD_PORT, 10) || 4822;
@@ -833,6 +845,11 @@ async function handleConnection(ws, req) {
   // DB-authoritative, matches middleware/auth.js
   const role = user.role;
   const permissions = new Set(permissionsForUser(user));
+  // Customer scope, resolved the same way middleware/auth.js does for HTTP —
+  // a WebSocket upgrade never passes through Express middleware, so redeeming
+  // a ticket has to re-derive it here. Scope may have been narrowed after the
+  // ticket was minted; this is the redemption-side check (spec §4.2 #24).
+  const scope = await resolveScope(user);
 
   // ── Reattach path — WS re-joins a live hub session ─────────────────────
   if (attachSessionId) {
@@ -955,7 +972,10 @@ async function handleConnection(ws, req) {
     where: { id: accessRequest.serverId, orgId },
     include: { credential: { include: { sshKey: true } } },
   });
-  if (!fullServer) {
+  // A server outside the caller's customer scope is indistinguishable from one
+  // that does not exist — same message, same close code, even though a valid
+  // access request names it.
+  if (!fullServer || !inScopeServer(scope, fullServer)) {
     safeClose(ws, 1008, 'Server not found');
     return;
   }

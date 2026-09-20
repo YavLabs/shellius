@@ -99,6 +99,11 @@ COPY --chown=app:app backend/scripts/reencrypt.mjs ./scripts/reencrypt.mjs
 # (populate tui-bin/ with scripts/build-tui-binaries.sh before building).
 COPY --chown=app:app scripts/install-tui.sh ./scripts/install-tui.sh
 COPY --chown=app:app tui-bin/ ./tui-bin/
+# Posture collector/wrapper/systemd-unit/sudoers source files, embedded
+# (base64) into the generated host bootstrap script. See
+# backend/src/routes/bootstrap.js's POSTURE_ASSET_PATHS and
+# docs/posture/posture-spec.md §4.
+COPY --chown=app:app scripts/posture/ ./scripts/posture/
 
 COPY --from=web /web/dist /usr/share/shellius/web
 COPY docker/nginx-allinone.conf /etc/nginx/nginx.conf

@@ -3,6 +3,7 @@ import ApiError from '../utils/ApiError.js';
 import logger from '../utils/logger.js';
 import { canBypassProdApproval } from './orgService.js';
 import { permissionsForUser } from './roleService.js';
+import { UNSCOPED, serverScopeWhere, customerScopeWhere } from '../lib/scope.js';
 
 // ---------------------------------------------------------------------------
 // Who is asking — permissions and the role keys ROLE subjects match on
@@ -416,6 +417,40 @@ export async function findApproverPolicy({ orgId, userId, serverId, requestedPri
 }
 
 /**
+ * Find the best-matching ALLOW + `isBreakGlass: true` policy for a user +
+ * server — this is what makes the flag mean something (see
+ * `accessRequestService.startBreakGlass`/`verifyBreakGlass`): break-glass may
+ * only ever target a server an active break-glass policy actually names for
+ * this user. Same deny-before-allow invariant as `evaluate()` — a matching
+ * DENY (break-glass or not) blocks break-glass too, whatever its priority.
+ *
+ * Unlike `evaluate()`, this never short-circuits on `access.bypass_policies`
+ * or the super_admin path — break-glass is a distinct, always-policy-gated
+ * escape hatch, not a convenience for callers who can already skip policies.
+ *
+ * @param {object} params
+ * @param {string} params.orgId
+ * @param {string} params.userId
+ * @param {string} params.serverId
+ * @returns {Promise<object|null>} the winning AccessPolicy row, or null
+ */
+export async function findBreakGlassPolicy({ orgId, userId, serverId }) {
+  const server = await prisma.server.findFirst({ where: { id: serverId, orgId } });
+  if (!server) return null;
+
+  const [userGroupIds, subject] = await Promise.all([resolveUserGroupIds(userId, orgId), loadSubject(userId, orgId)]);
+  const rawPolicies = await loadMatchingPolicies(orgId, userId, userGroupIds, subject.roleKeys);
+  const matching = filterPolicies(rawPolicies, server, serverId, undefined);
+
+  if (matching.some((p) => p.effect === 'DENY')) return null;
+
+  const candidates = matching
+    .filter((p) => p.effect === 'ALLOW' && p.isBreakGlass)
+    .sort((a, b) => a.priority - b.priority);
+  return candidates[0] || null;
+}
+
+/**
  * Return all servers the user can access (allowed=true OR requiresApproval=true),
  * enriched with policy evaluation results.
  *
@@ -424,14 +459,18 @@ export async function findApproverPolicy({ orgId, userId, serverId, requestedPri
  *
  * @param {string} orgId
  * @param {string} userId
+ * @param {{mode: string, customerIds: string[]}} [scope=UNSCOPED] - customer
+ *   scope of the caller (docs/rbac/customer-scope-spec.md). Narrowing the
+ *   candidate set here is both the security boundary and a real saving: this
+ *   function runs one evaluate() per server.
  * @returns {Promise<Array<{ server: object, evaluation: object }>>}
  */
-export async function getAccessibleServers(orgId, userId) {
+export async function getAccessibleServers(orgId, userId, scope = UNSCOPED) {
   if (!orgId) throw new ApiError(400, 'orgId is required');
   if (!userId) throw new ApiError(400, 'userId is required');
 
   const servers = await prisma.server.findMany({
-    where: { orgId, isActive: true },
+    where: { orgId, isActive: true, ...serverScopeWhere(scope) },
     include: { customer: { select: { id: true, name: true, slug: true } } },
   });
 
@@ -588,7 +627,7 @@ async function assertPolicyRefs(orgId, { subjects, approverRoles, approverUserId
  * @param {Array<{ subjectType: 'USER'|'GROUP', subjectId: string }>} [data.subjects]
  * @returns {Promise<object>}
  */
-export async function create(orgId, data) {
+export async function create(orgId, data, scope = UNSCOPED) {
   const {
     subjects = [],
     customerId,
@@ -618,9 +657,14 @@ export async function create(orgId, data) {
     throw new ApiError(400, 'maxSessionDuration must be a positive integer');
   }
 
-  // Verify customerId belongs to org if provided
+  // Verify customerId belongs to the org AND is within the caller's customer
+  // scope — policy management is an unscoped admin surface by default, but
+  // nothing in code guarantees that pairing, so don't let a scoped author
+  // target a customer they cannot see (customer-scope-spec.md §4.2 #31).
   if (customerId) {
-    const customer = await prisma.customer.findFirst({ where: { id: customerId, orgId } });
+    const customer = await prisma.customer.findFirst({
+      where: { id: customerId, orgId, AND: [customerScopeWhere(scope)] },
+    });
     if (!customer) throw new ApiError(400, 'Customer not found in organization');
   }
   await assertPolicyRefs(orgId, { subjects, approverRoles, approverUserIds, approverGroupId });
@@ -683,7 +727,7 @@ export async function create(orgId, data) {
  * @param {object} data
  * @returns {Promise<object>}
  */
-export async function update(orgId, id, data) {
+export async function update(orgId, id, data, scope = UNSCOPED) {
   const existing = await prisma.accessPolicy.findFirst({ where: { id, orgId } });
   if (!existing) throw new ApiError(404, 'Policy not found');
 
@@ -710,9 +754,11 @@ export async function update(orgId, id, data) {
     approverUserIds,
   } = data;
 
-  // Verify customerId belongs to org if changing it
+  // Same scope check as create().
   if (customerId !== undefined && customerId !== null) {
-    const customer = await prisma.customer.findFirst({ where: { id: customerId, orgId } });
+    const customer = await prisma.customer.findFirst({
+      where: { id: customerId, orgId, AND: [customerScopeWhere(scope)] },
+    });
     if (!customer) throw new ApiError(400, 'Customer not found in organization');
   }
   await assertPolicyRefs(orgId, { subjects, approverRoles, approverUserIds, approverGroupId });

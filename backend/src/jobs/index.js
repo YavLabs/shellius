@@ -20,6 +20,8 @@ import {
   registerQuickConnectHistoryPruneJob,
   startQuickConnectHistoryPruneWorker,
 } from './quickConnectHistoryPrune.js';
+import { registerPosturePruneJob, startPosturePruneWorker } from './posturePrune.js';
+import { registerPostureEscalateJob, startPostureEscalateWorker } from './postureEscalate.js';
 import { seedDefaultPolicies } from './seedDefaultPolicies.js';
 import {
   startServerOnboardingWorker,
@@ -53,6 +55,12 @@ export async function startAllJobs() {
 
   await registerQuickConnectHistoryPruneJob();
   startQuickConnectHistoryPruneWorker();
+
+  await registerPosturePruneJob();
+  startPosturePruneWorker();
+
+  await registerPostureEscalateJob();
+  startPostureEscalateWorker();
 
   // Bulk-import server onboarding (parallel) + ephemeral-credential TTL reaper.
   startServerOnboardingWorker();

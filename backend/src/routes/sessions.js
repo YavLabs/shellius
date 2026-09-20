@@ -59,6 +59,8 @@ router.get(
       status: req.query.status,
       page: req.query.page,
       limit: req.query.limit,
+      scope: req.scope,
+      callerId: req.user.userId,
     });
     res.json({ success: true, data: result });
   })
@@ -72,7 +74,7 @@ router.get(
   '/active',
   requirePermission('sessions.view_all'),
   asyncHandler(async (req, res) => {
-    const sessions = await sessionService.listActive(req.orgId);
+    const sessions = await sessionService.listActive(req.orgId, req.scope, req.user.userId);
     // Match the shape of GET /api/sessions so the frontend can treat
     // both responses identically (`data.items`).
     res.json({
@@ -95,7 +97,7 @@ router.get(
   '/:id',
   requirePermission('sessions.view_all'),
   asyncHandler(async (req, res) => {
-    const session = await sessionService.getById(req.orgId, req.params.id);
+    const session = await sessionService.getById(req.orgId, req.params.id, req.scope, req.user.userId);
     res.json({ success: true, data: { session } });
   })
 );
@@ -109,7 +111,7 @@ router.get(
   requirePermission('sessions.view_recordings'),
   audit('session.recording.download', 'Session'),
   asyncHandler(async (req, res) => {
-    const session = await sessionService.getById(req.orgId, req.params.id);
+    const session = await sessionService.getById(req.orgId, req.params.id, req.scope, req.user.userId);
 
     const filename = `session-${session.id}.cast`;
     res.set('Content-Type', 'application/octet-stream');

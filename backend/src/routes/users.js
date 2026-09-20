@@ -48,6 +48,11 @@ const passwordChangeSchema = Joi.object({
 
 // Password is now optional on create — when omitted the user is created with
 // status 'invited' and receives an invite email with a one-time link.
+// accessScope/customerIds are optional (docs/rbac/customer-scope-spec.md) —
+// userService.createUser validates them the same way as PUT /:id/scope, and
+// requires users.assign_scope when set (checked there, not here, since it's
+// a second permission layered on top of users.invite). groupIds is the same
+// shape of optional-plus-service-gated field, requiring groups.manage.
 const createSchema = Joi.object({
   email: Joi.string().email({ tlds: { allow: false } }).required(),
   name: Joi.string().min(1).max(200).required(),
@@ -57,10 +62,21 @@ const createSchema = Joi.object({
   role: Joi.string().max(100),
   managerId: Joi.string().allow(null),
   sendInvite: Joi.boolean().default(true),
+  accessScope: Joi.string().valid('ALL', 'CUSTOMERS'),
+  customerIds: Joi.array().items(Joi.string()).default([]),
+  groupIds: Joi.array().items(Joi.string()),
+});
+
+const scopeSchema = Joi.object({
+  accessScope: Joi.string().valid('ALL', 'CUSTOMERS').required(),
+  customerIds: Joi.array().items(Joi.string()).default([]),
 });
 
 // No password (use a reset link or /me/password) and no avatarUrl (use
 // /me/avatar, which validates the image) — see docs/rbac/rbac-audit.md F-01/F-08.
+// groupIds (docs/rbac/customer-scope-spec.md §2) — optional, service-gated on
+// groups.manage; self-service can never set it (userService.updateUser only
+// allows 'name' for isSelf).
 const updateSchema = Joi.object({
   email: Joi.string().email({ tlds: { allow: false } }),
   name: Joi.string().min(1).max(200),
@@ -68,6 +84,7 @@ const updateSchema = Joi.object({
   role: Joi.string().max(100),
   status: Joi.string().valid(...STATUSES),
   managerId: Joi.string().allow(null),
+  groupIds: Joi.array().items(Joi.string()),
 }).min(1);
 
 const sshKeySchema = Joi.object({
@@ -335,7 +352,10 @@ router.post(
       ? { ...userData, password: null, status: 'invited' }
       : { ...userData, status: 'active' };
 
-    const user = await userService.createUser(req.orgId, createData, actorFromReq(req));
+    const user = await userService.createUser(req.orgId, createData, actorFromReq(req), req.scope, {
+      ipAddress: req.ip,
+      userAgent: req.headers['user-agent'],
+    });
 
     await auditLog({
       orgId: req.orgId,
@@ -393,6 +413,39 @@ router.put(
       userAgent: req.headers['user-agent'],
     });
     res.json({ success: true, data: { user } });
+  })
+);
+
+// ---------------------------------------------------------------------------
+// PUT /:id/scope — set accessScope + the UserCustomerScope rows
+// (docs/rbac/customer-scope-spec.md). All the interesting rules (self,
+// super_admin, out-of-scope grants, org membership) live in the service.
+// ---------------------------------------------------------------------------
+
+router.put(
+  '/:id/scope',
+  requirePermission('users.assign_scope'),
+  validate(scopeSchema),
+  asyncHandler(async (req, res) => {
+    const user = await userService.assignUserScope(req.orgId, req.params.id, req.body, actorFromReq(req), req.scope, {
+      ipAddress: req.ip,
+      userAgent: req.headers['user-agent'],
+    });
+    res.json({ success: true, data: { user } });
+  })
+);
+
+// ---------------------------------------------------------------------------
+// GET /:id/effective-scope — explains WHY, for the "effective access" UI
+// (docs/rbac/customer-scope-spec.md §7 phase 4, §2 groups decision).
+// ---------------------------------------------------------------------------
+
+router.get(
+  '/:id/effective-scope',
+  requirePermission('users.view'),
+  asyncHandler(async (req, res) => {
+    const data = await userService.getEffectiveScope(req.orgId, req.params.id);
+    res.json({ success: true, data });
   })
 );
 

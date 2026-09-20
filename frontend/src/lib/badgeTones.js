@@ -194,3 +194,59 @@ export function certificateStatusTone(status) {
   if (key === 'expired') return { tone: 'neutral', label: 'Expired' };
   return { tone: 'neutral', label: status || 'Unknown' };
 }
+
+// ---------------------------------------------------------------------------
+// Posture — finding severity
+// ---------------------------------------------------------------------------
+// No new colour vocabulary: severity is expressed with the same five tones,
+// using `variant` (solid vs outline, an existing Badge prop) to separate the
+// two severities that would otherwise share a tone. Ordered worst -> best:
+//   CRITICAL  danger  solid    — the DOCKER_FIREWALL_BYPASS-class findings
+//   HIGH      danger  outline  — reachable / no usable firewall
+//   MEDIUM    warning solid    — exposed only by a firewall rule
+//   LOW       warning outline  — stale rule / unattributed / LAN-only
+//   INFO      info    outline  — expected-public, informational
+const SEVERITY_MAP = {
+  critical: { tone: 'danger', variant: 'solid', label: 'Critical' },
+  high: { tone: 'danger', variant: 'outline', label: 'High' },
+  medium: { tone: 'warning', variant: 'solid', label: 'Medium' },
+  low: { tone: 'warning', variant: 'outline', label: 'Low' },
+  info: { tone: 'info', variant: 'outline', label: 'Info' },
+};
+
+export function severityTone(severity) {
+  const key = (severity || '').toLowerCase();
+  return SEVERITY_MAP[key] || { tone: 'neutral', variant: 'solid', label: severity || 'Unknown' };
+}
+
+/** Severities worst -> best, for filter dropdowns and sort order. */
+export const SEVERITY_ORDER = ['critical', 'high', 'medium', 'low', 'info'];
+
+// ---------------------------------------------------------------------------
+// Posture — finding status (open / muted / resolved)
+// ---------------------------------------------------------------------------
+const FINDING_STATUS_MAP = {
+  open: { tone: 'warning', label: 'Open' },
+  muted: { tone: 'neutral', label: 'Muted' },
+  resolved: { tone: 'success', label: 'Resolved' },
+};
+
+export function findingStatusTone(status) {
+  const key = (status || '').toLowerCase();
+  return FINDING_STATUS_MAP[key] || { tone: 'neutral', label: status || 'Unknown' };
+}
+
+// ---------------------------------------------------------------------------
+// Posture — reachability (host listeners)
+// ---------------------------------------------------------------------------
+const REACHABILITY_MAP = {
+  internet: { tone: 'danger', label: 'Internet' },
+  lan: { tone: 'warning', label: 'LAN' },
+  firewalled: { tone: 'success', label: 'Firewalled' },
+  loopback: { tone: 'neutral', label: 'Loopback' },
+};
+
+export function reachabilityTone(reachability) {
+  const key = (reachability || '').toLowerCase();
+  return REACHABILITY_MAP[key] || { tone: 'neutral', label: reachability || 'Unknown' };
+}

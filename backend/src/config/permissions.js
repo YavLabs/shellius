@@ -38,6 +38,7 @@ export const PERMISSION_GROUPS = [
   { key: 'vault', label: 'Personal vault' },
   { key: 'users', label: 'Users' },
   { key: 'roles', label: 'Roles' },
+  { key: 'posture', label: 'Exposure posture' },
   { key: 'settings', label: 'Organization & settings' },
 ];
 
@@ -234,12 +235,13 @@ export const PERMISSIONS = [
     key: 'access.break_glass',
     group: 'access',
     label: 'Break-glass access',
-    description: 'Self-approve up to 1 hour of emergency access to any server. Always audited as high severity and all admins are notified.',
+    description:
+      "Self-approve emergency access to a server a break-glass policy names for you, up to that policy's max duration, after step-up verification (authenticator app or emailed one-time code). Always audited as high severity and all admins are notified.",
     sensitive: true,
     defaults: ADM,
     current: ADM,
-    endpoints: ['POST /api/access-requests/break-glass'],
-    findings: ['F-09', 'G5'],
+    endpoints: ['POST /api/access-requests/break-glass/start', 'POST /api/access-requests/break-glass/verify'],
+    findings: ['F-09', 'G5', 'G7'],
   },
   {
     key: 'access_requests.view_all',
@@ -542,7 +544,7 @@ export const PERMISSIONS = [
     description: 'See the user directory.',
     defaults: ADM,
     current: ADM,
-    endpoints: ['GET /api/users', 'GET /api/users/:id', 'GET /api/users/:id/reports'],
+    endpoints: ['GET /api/users', 'GET /api/users/:id', 'GET /api/users/:id/reports', 'GET /api/users/:id/effective-scope'],
   },
   {
     key: 'users.view_reports',
@@ -638,6 +640,55 @@ export const PERMISSIONS = [
     current: [],
     endpoints: ['GET /api/users/:id/identities', 'DELETE /api/users/:id/identities/:identityId'],
     since: 3,
+  },
+  {
+    key: 'users.assign_scope',
+    group: 'users',
+    label: 'Assign customer scope',
+    description:
+      'Restrict a user or group to a set of customers (docs/rbac/customer-scope-spec.md). Super admins can never be scoped. You can only grant customers within your own scope.',
+    sensitive: true,
+    defaults: ADM,
+    current: [],
+    endpoints: ['PUT /api/users/:id/scope', 'PUT /api/groups/:id/scope'],
+    since: 4,
+  },
+
+  // ------------------------------------------------------------------ posture
+  {
+    key: 'posture.read',
+    group: 'posture',
+    label: 'View exposure posture',
+    description:
+      'See what a host exposes: listening ports and their owners, firewall state, running services, resource gauges, and open exposure findings (docs/posture/posture-spec.md).',
+    defaults: M,
+    current: [],
+    endpoints: ['GET /api/posture/findings', 'GET /api/posture/servers/:id'],
+    since: 5,
+  },
+  {
+    key: 'posture.mute',
+    group: 'posture',
+    label: 'Mute & acknowledge findings',
+    description:
+      'Mute an exposure finding with a reason and an expiry, or acknowledge it to stop escalation without resolving it. A muted finding notifies nobody.',
+    sensitive: true,
+    defaults: MGR,
+    current: [],
+    endpoints: ['POST /api/posture/findings/:id/mute', 'POST /api/posture/findings/:id/acknowledge'],
+    since: 5,
+  },
+  {
+    key: 'posture.settings',
+    group: 'posture',
+    label: 'Manage posture settings',
+    description:
+      'Turn posture collection on or off, set the collector interval and retention, maintain the expected-public port list, and edit alert routing rules.',
+    sensitive: true,
+    defaults: ADM,
+    current: [],
+    endpoints: ['GET/PUT /api/posture/settings', 'CRUD /api/posture/alert-rules'],
+    since: 5,
   },
 
   // -------------------------------------------------------------------- roles

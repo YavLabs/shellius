@@ -7,6 +7,7 @@ import tenant from '../middleware/tenant.js';
 import { requirePermission } from '../middleware/rbac.js';
 import audit from '../middleware/audit.js';
 import * as groupService from '../services/groupService.js';
+import { actorFromReq } from '../services/roleService.js';
 
 const router = express.Router();
 
@@ -29,6 +30,11 @@ const updateSchema = Joi.object({
 
 const memberSchema = Joi.object({
   userId: Joi.string().required(),
+});
+
+const scopeSchema = Joi.object({
+  accessScope: Joi.string().valid('ALL', 'CUSTOMERS').required(),
+  customerIds: Joi.array().items(Joi.string()).default([]),
 });
 
 router.use(authenticate, tenant);
@@ -89,6 +95,31 @@ router.delete(
   asyncHandler(async (req, res) => {
     await groupService.deleteGroup(req.orgId, req.params.id);
     res.json({ success: true, data: { success: true } });
+  })
+);
+
+// ---------------------------------------------------------------------------
+// PUT /:id/scope — set accessScope + the GroupCustomerScope rows
+// (docs/rbac/customer-scope-spec.md). ALL is a deliberate widening path:
+// every member whose own accessScope is CUSTOMERS becomes unscoped while in
+// this group. CUSTOMERS is additive with each member's own scope, same as
+// before.
+// ---------------------------------------------------------------------------
+
+router.put(
+  '/:id/scope',
+  requirePermission('users.assign_scope'),
+  validate(scopeSchema),
+  asyncHandler(async (req, res) => {
+    const group = await groupService.assignGroupScope(
+      req.orgId,
+      req.params.id,
+      req.body,
+      actorFromReq(req),
+      req.scope,
+      { ipAddress: req.ip, userAgent: req.headers['user-agent'] }
+    );
+    res.json({ success: true, data: { group } });
   })
 );
 

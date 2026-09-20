@@ -44,6 +44,7 @@ import searchRouter from './routes/search.js';
 import terminalRouter from './routes/terminal.js';
 import rolesRouter from './routes/roles.js';
 import vaultRouter from './routes/vault.js';
+import postureRouter from './routes/posture.js';
 import errorHandler from './middleware/errorHandler.js';
 import { startAllJobs } from './jobs/index.js';
 
@@ -68,6 +69,12 @@ const app = express();
 // breaks the popup → opener handoff and loads the app inside the popup).
 app.use(helmet({ crossOriginOpenerPolicy: { policy: 'same-origin-allow-popups' } }));
 app.use(cors({ origin: config.corsOrigin, credentials: true }));
+// Every route keeps express's 100kb default. The ONE endpoint that needs more
+// is the posture snapshot (POST /api/hosts/posture: up to 500 listeners + 200
+// firewall rules, hard-capped at 256KB by the route itself), and it mounts its
+// own larger parser locally — see routes/hosts.js. Raising the limit globally
+// would widen the request-body attack surface of every other endpoint to buy
+// headroom that only one of them needs.
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
@@ -100,6 +107,7 @@ app.use('/api/sessions', sessionsRouter);
 app.use('/api/audit', auditRouter);
 app.use('/api/bootstrap', bootstrapRouter);
 app.use('/api/hosts', hostsRouter);
+app.use('/api/posture', postureRouter);
 app.use('/api/org', orgRouter);
 app.use('/api/settings/smtp', smtpRouter);
 app.use('/api/settings/email', emailProvidersRouter);

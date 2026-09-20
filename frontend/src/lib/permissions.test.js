@@ -36,7 +36,8 @@ describe('route access', () => {
     expect(canAccessRoute(custom, '/admin/roles/xyz')).toBe(true);
     expect(canAccessRoute(custom, '/admin/email?connected=1')).toBe(true);
     expect(canAccessRoute(custom, '/admin/sso')).toBe(false); // each section checks its own
-    expect(canAccessRoute(custom, '/policies?action=new')).toBe(false);
+    // Policies moved into Administration; the section carries its own gate.
+    expect(canAccessRoute(custom, '/admin/policies?action=new')).toBe(false);
   });
 
   it('nav, quick actions and shortcuts follow the same rules', () => {
