@@ -194,6 +194,12 @@ function DataTable({
   mobile,
   activeFilterCount,
   onResetFilters,
+
+  // Hide the search box entirely — for server-paginated lists whose API has
+  // no free-text search param, where an unwired search box would silently
+  // do nothing (Posture's findings inbox: severity/status/customer/
+  // environment filters only).
+  showSearch = true,
 }) {
   const isMobile = useIsMobile();
 
@@ -470,7 +476,7 @@ function DataTable({
         onSelectionChange={onSelectionChange}
         bulkActions={bulkActions}
         onRowClick={onRowClick}
-        options={mobile}
+        options={showSearch ? mobile : { ...mobile, showSearch: false }}
       />
     );
   }
@@ -486,17 +492,19 @@ function DataTable({
       {/* Toolbar: filters slot + search */}
       <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:flex-wrap">
         {filters && <div className="flex flex-wrap items-center gap-2">{filters}</div>}
-        <div className="relative min-w-0 flex-1 max-w-sm">
-          <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-          <Input
-            value={searchRaw}
-            onChange={(e) => setSearchRaw(e.target.value)}
-            placeholder={searchPlaceholder}
-            aria-label={searchPlaceholder}
-            className="pl-9 h-9"
-            type="search"
-          />
-        </div>
+        {showSearch && (
+          <div className="relative min-w-0 flex-1 max-w-sm">
+            <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+            <Input
+              value={searchRaw}
+              onChange={(e) => setSearchRaw(e.target.value)}
+              placeholder={searchPlaceholder}
+              aria-label={searchPlaceholder}
+              className="pl-9 h-9"
+              type="search"
+            />
+          </div>
+        )}
       </div>
 
       {/* Bulk actions bar */}

@@ -3,6 +3,7 @@ import prisma from '../config/db.js';
 import ApiError from '../utils/ApiError.js';
 import { encrypt } from '../utils/crypto.js';
 import * as terminalService from './terminalService.js';
+import { serverScopeWhere, assertCustomerInScope } from '../lib/scope.js';
 
 const RDP_SENSITIVE_FIELDS = ['rdpPasswordEncrypted', 'rdpPasswordIv', 'rdpPasswordTag'];
 
@@ -107,12 +108,19 @@ export async function listServers(orgId, {
   cloudProvider,
   search,
   isActive,
-} = {}) {
+} = {}, scope) {
   page = parseInt(page, 10) || 1;
   pageSize = Math.min(parseInt(pageSize, 10) || 25, 100);
 
   const where = { orgId };
   if (customerId) where.customerId = customerId;
+  // Scope narrows further, as an AND rather than merged onto `customerId`
+  // directly — a scoped caller who passes a specific (out-of-scope)
+  // customerId must still see nothing, not have the scope filter clobbered
+  // by their own query param. serverScopeWhere is a no-op ({}) for unscoped
+  // callers, so today's behaviour is unchanged.
+  const scopeFilter = serverScopeWhere(scope);
+  if (scopeFilter.customerId) where.AND = [scopeFilter];
   if (environment) where.environment = environment;
   if (healthStatus) where.healthStatus = healthStatus;
   if (cloudProvider) where.cloudProvider = cloudProvider;
@@ -139,17 +147,20 @@ export async function listServers(orgId, {
   return { items: items.map(stripRdpSecrets), total, page, pageSize };
 }
 
-export async function getServer(orgId, serverId) {
+export async function getServer(orgId, serverId, scope) {
   const server = await prisma.server.findFirst({
-    where: { id: serverId, orgId },
+    where: { id: serverId, orgId, ...serverScopeWhere(scope) },
     include: SERVER_INCLUDE,
   });
   if (!server) throw new ApiError(404, 'Server not found');
   return stripRdpSecrets(server);
 }
 
-export async function createServer(orgId, customerId, data = {}) {
+export async function createServer(orgId, customerId, data = {}, scope) {
   if (!customerId) throw new ApiError(400, 'customerId is required');
+  // Creating under an out-of-scope customer must fail exactly like the
+  // customer doesn't exist — same 404 a scoped read would give.
+  assertCustomerInScope(scope, customerId);
   const customer = await prisma.customer.findFirst({ where: { id: customerId, orgId } });
   if (!customer) throw new ApiError(400, 'Customer not found in organization');
 
@@ -191,8 +202,8 @@ export async function createServer(orgId, customerId, data = {}) {
   return stripRdpSecrets(server);
 }
 
-export async function updateServer(orgId, serverId, data = {}) {
-  const existing = await prisma.server.findFirst({ where: { id: serverId, orgId } });
+export async function updateServer(orgId, serverId, data = {}, scope) {
+  const existing = await prisma.server.findFirst({ where: { id: serverId, orgId, ...serverScopeWhere(scope) } });
   if (!existing) throw new ApiError(404, 'Server not found');
 
   const updateData = {};
@@ -240,8 +251,8 @@ export async function updateServer(orgId, serverId, data = {}) {
  * Clear a server's pinned SSH host key (TOFU reset). Admin-only at the route
  * level; audited. The next ssh2 connect will re-pin on first contact.
  */
-export async function resetHostKey(orgId, serverId) {
-  const existing = await prisma.server.findFirst({ where: { id: serverId, orgId } });
+export async function resetHostKey(orgId, serverId, scope) {
+  const existing = await prisma.server.findFirst({ where: { id: serverId, orgId, ...serverScopeWhere(scope) } });
   if (!existing) throw new ApiError(404, 'Server not found');
   const server = await prisma.server.update({
     where: { id: serverId },
@@ -252,8 +263,8 @@ export async function resetHostKey(orgId, serverId) {
 }
 
 /** Dependents removed when this server is deleted (for the confirm dialog). */
-export async function getDeleteImpact(orgId, serverId) {
-  const server = await prisma.server.findFirst({ where: { id: serverId, orgId } });
+export async function getDeleteImpact(orgId, serverId, scope) {
+  const server = await prisma.server.findFirst({ where: { id: serverId, orgId, ...serverScopeWhere(scope) } });
   if (!server) throw new ApiError(404, 'Server not found');
   const [activeSessions, totalSessions, pendingRequests, certificates] = await Promise.all([
     prisma.session.count({ where: { orgId, serverId, status: 'ACTIVE' } }),
@@ -277,22 +288,22 @@ export async function getDeleteImpact(orgId, serverId) {
  * removes already-terminated rows), then deletes — which cascades AccessRequest
  * + Session rows and SetNulls issued certificates.
  */
-export async function deleteServer(orgId, serverId, callerId = null) {
-  const existing = await prisma.server.findFirst({ where: { id: serverId, orgId } });
+export async function deleteServer(orgId, serverId, callerId = null, scope) {
+  const existing = await prisma.server.findFirst({ where: { id: serverId, orgId, ...serverScopeWhere(scope) } });
   if (!existing) throw new ApiError(404, 'Server not found');
   await terminalService.terminateActiveSessionsFor(orgId, { serverId }, callerId);
   await prisma.server.delete({ where: { id: serverId } });
   return { success: true };
 }
 
-export async function bulkUpdateEnvironment(orgId, serverIds, environment) {
-  return bulkUpdate(orgId, serverIds, { environment });
+export async function bulkUpdateEnvironment(orgId, serverIds, environment, scope) {
+  return bulkUpdate(orgId, serverIds, { environment }, scope);
 }
 
 // Fields that can be changed in bulk. customerId is validated below.
 const BULK_FIELDS = ['environment', 'protocol', 'osType', 'osVersion', 'sshUser', 'isActive', 'customerId'];
 
-export async function bulkUpdate(orgId, serverIds, patch = {}) {
+export async function bulkUpdate(orgId, serverIds, patch = {}, scope) {
   if (!Array.isArray(serverIds) || serverIds.length === 0) {
     throw new ApiError(400, 'serverIds must be a non-empty array');
   }
@@ -303,13 +314,19 @@ export async function bulkUpdate(orgId, serverIds, patch = {}) {
   if (Object.keys(data).length === 0) {
     throw new ApiError(400, 'No updatable fields provided');
   }
-  // If reassigning the customer, ensure it belongs to this org.
+  // If reassigning the customer, ensure it belongs to this org AND, for a
+  // scoped caller, that the destination is a customer they can see — scope
+  // must guard both where servers land and where they start.
   if (data.customerId) {
+    assertCustomerInScope(scope, data.customerId);
     const customer = await prisma.customer.findFirst({ where: { id: data.customerId, orgId } });
     if (!customer) throw new ApiError(400, 'Customer not found in organization');
   }
+  // Scope the `where` too, not just validate the target: out-of-scope ids in
+  // `serverIds` must be silently skipped (updateMany just won't match them),
+  // so `updated` only ever counts rows the caller could actually see.
   const result = await prisma.server.updateMany({
-    where: { id: { in: serverIds }, orgId },
+    where: { id: { in: serverIds }, orgId, ...serverScopeWhere(scope) },
     data,
   });
   return { updated: result.count };
@@ -320,8 +337,8 @@ export async function bulkUpdate(orgId, serverIds, patch = {}) {
  * Available to anyone who can connect (members included) so a changed cloud IP
  * doesn't block access; only allowed when the server is flagged dynamicIp.
  */
-export async function updateConnectionIp(orgId, serverId, ipAddress) {
-  const server = await prisma.server.findFirst({ where: { id: serverId, orgId } });
+export async function updateConnectionIp(orgId, serverId, ipAddress, scope) {
+  const server = await prisma.server.findFirst({ where: { id: serverId, orgId, ...serverScopeWhere(scope) } });
   if (!server) throw new ApiError(404, 'Server not found');
   if (!server.dynamicIp) {
     throw new ApiError(400, 'This server does not have a changeable IP');
@@ -337,16 +354,16 @@ export async function updateConnectionIp(orgId, serverId, ipAddress) {
   return stripRdpSecrets(updated);
 }
 
-export async function getServersByLabel(orgId, labels) {
+export async function getServersByLabel(orgId, labels, scope) {
   const labelArray = Array.isArray(labels) ? labels : [labels];
   try {
     return await prisma.server.findMany({
-      where: { orgId, labels: { array_contains: labelArray } },
+      where: { orgId, labels: { array_contains: labelArray }, ...serverScopeWhere(scope) },
       include: SERVER_INCLUDE,
     });
   } catch {
     const all = await prisma.server.findMany({
-      where: { orgId },
+      where: { orgId, ...serverScopeWhere(scope) },
       include: SERVER_INCLUDE,
     });
     return all.filter((s) => {

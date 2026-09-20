@@ -19,6 +19,7 @@ import { Cable,
   Command as CommandIcon,
   Keyboard,
   Lock,
+  Radar,
 } from 'lucide-react';
 import { can, canAny } from '@/lib/permissions';
 import { ADMIN_PERMISSIONS, ADMIN_SECTIONS, canSeeSection, sectionKeyFromPath, sectionPath } from '@/lib/adminSections';
@@ -83,7 +84,7 @@ export const QUICK_ACTIONS = [
     group: 'Create',
     icon: Shield,
     perm: 'policies.manage',
-    href: '/policies?action=new',
+    href: '/admin/policies?action=new',
     shortcutHint: 'c p',
   },
   {
@@ -163,8 +164,8 @@ export const QUICK_ACTIONS = [
 export const ROUTE_ACCESS = {
   '/customers': { anyOf: ['customers.view'] },
   '/servers': { anyOf: ['servers.view'] },
-  '/policies': { anyOf: ['policies.view'] },
   '/certificates': { anyOf: ['certificates.view_all'] },
+  '/posture': { anyOf: ['posture.read'] },
   '/keystore': { anyOf: ['keystore.view', 'vault.use'] },
   '/my-hosts': { anyOf: ['vault.hosts'] },
   '/sessions': { anyOf: ['sessions.view_all'] },
@@ -200,8 +201,9 @@ export const NAV_ITEMS = [
   { id: 'customers', label: 'Customers', icon: Building2, to: '/customers' },
   { id: 'servers', label: 'Servers', icon: Server, to: '/servers' },
   { id: 'access-requests', label: 'Access requests', icon: KeyRound, to: '/access-requests' },
-  { id: 'policies', label: 'Policies', icon: Shield, to: '/policies' },
+  { id: 'policies', label: 'Policies', icon: Shield, to: '/admin/policies' },
   { id: 'certificates', label: 'Certificates', icon: FileKey, to: '/certificates' },
+  { id: 'posture', label: 'Posture', icon: Radar, to: '/posture' },
   { id: 'keystore', label: 'Keystore', icon: KeySquare, to: '/keystore' },
   { id: 'my-hosts', label: 'My hosts', icon: Lock, to: '/my-hosts' },
   { id: 'connections', label: 'Recent connections', icon: Cable, to: '/connections' },
@@ -264,7 +266,7 @@ export const NAV_SEQUENCES = [
   { keys: ['g', 'a'], label: 'Go to access requests', to: '/access-requests' },
   { keys: ['g', 'k'], label: 'Go to keystore', to: '/keystore' },
   { keys: ['g', 'h'], label: 'Go to my hosts', to: '/my-hosts' },
-  { keys: ['g', 'p'], label: 'Go to policies', to: '/policies' },
+  { keys: ['g', 'p'], label: 'Go to policies', to: '/admin/policies' },
   { keys: ['g', 'e'], label: 'Go to certificates', to: '/certificates' },
   { keys: ['g', 'i'], label: 'Go to sessions', to: '/sessions' },
   { keys: ['g', 'l'], label: 'Go to audit log', to: '/audit-log' },
@@ -280,7 +282,7 @@ export const CREATE_SEQUENCES = [
   { keys: ['c', 'i'], label: 'New identity', to: '/keystore?tab=identities&action=new', perm: 'keystore.manage' },
   { keys: ['c', 'k'], label: 'Generate SSH key', to: '/keystore?tab=keys&action=generate', perm: 'keystore.manage' },
   { keys: ['c', 'u'], label: 'Invite user', to: '/admin/users?action=invite', perm: 'users.invite' },
-  { keys: ['c', 'p'], label: 'New policy', to: '/policies?action=new', perm: 'policies.manage' },
+  { keys: ['c', 'p'], label: 'New policy', to: '/admin/policies?action=new', perm: 'policies.manage' },
   { keys: ['c', 'r'], label: 'New access request', to: '/access-requests?action=new', perm: 'access.request' },
   { keys: ['c', 'h'], label: 'Add host to My hosts', to: '/my-hosts?action=new', perm: 'vault.hosts' },
 ];

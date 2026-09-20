@@ -1,5 +1,6 @@
 import prisma from '../config/db.js';
 import ApiError from '../utils/ApiError.js';
+import { customerScopeWhere, isUnscoped } from '../lib/scope.js';
 
 const SLUG_RE = /^[a-z0-9-]{3,30}$/;
 
@@ -14,11 +15,11 @@ function slugify(name) {
     .slice(0, 30);
 }
 
-export async function listCustomers(orgId, { page = 1, pageSize = 25, search, isActive } = {}) {
+export async function listCustomers(orgId, { page = 1, pageSize = 25, search, isActive } = {}, scope) {
   page = parseInt(page, 10) || 1;
   pageSize = Math.min(parseInt(pageSize, 10) || 25, 100);
 
-  const where = { orgId };
+  const where = { orgId, ...customerScopeWhere(scope) };
   if (search) {
     where.OR = [
       { name: { contains: search, mode: 'insensitive' } },
@@ -43,16 +44,24 @@ export async function listCustomers(orgId, { page = 1, pageSize = 25, search, is
   return { items, total, page, pageSize };
 }
 
-export async function getCustomer(orgId, customerId) {
+export async function getCustomer(orgId, customerId, scope) {
   const customer = await prisma.customer.findFirst({
-    where: { id: customerId, orgId },
+    where: { id: customerId, orgId, AND: [customerScopeWhere(scope)] },
     include: { _count: { select: { servers: true } } },
   });
   if (!customer) throw new ApiError(404, 'Customer not found');
   return customer;
 }
 
-export async function createCustomer(orgId, { name, slug, description, metadata } = {}) {
+/**
+ * @param {string} orgId
+ * @param {{ name, slug, description, metadata }} input
+ * @param {{mode,customerIds}} [scope] - the creator's effective scope
+ * @param {string} [creatorId] - when the creator is scoped, they're added to
+ *   the new customer's UserCustomerScope below, so creating a customer they
+ *   then can't see isn't a trap (spec §4.2 #30).
+ */
+export async function createCustomer(orgId, { name, slug, description, metadata } = {}, scope, creatorId) {
   if (!name) throw new ApiError(400, 'name is required');
 
   let finalSlug = slug ? String(slug).toLowerCase().trim() : slugify(name);
@@ -74,6 +83,15 @@ export async function createCustomer(orgId, { name, slug, description, metadata 
       },
       include: { _count: { select: { servers: true } } },
     });
+    // A scoped user who creates a customer would otherwise immediately lose
+    // sight of it — nothing else grants them a UserCustomerScope row for a
+    // customer that didn't exist a moment ago. Add them explicitly rather
+    // than widening their scope to ALL or refusing the create (spec §4.2 #30).
+    if (!isUnscoped(scope) && creatorId) {
+      await prisma.userCustomerScope.create({
+        data: { userId: creatorId, customerId: customer.id },
+      });
+    }
     return customer;
   } catch (err) {
     if (err.code === 'P2002') throw new ApiError(409, 'Customer slug already exists');
@@ -81,8 +99,8 @@ export async function createCustomer(orgId, { name, slug, description, metadata 
   }
 }
 
-export async function updateCustomer(orgId, customerId, { name, description, metadata, isActive } = {}) {
-  const existing = await prisma.customer.findFirst({ where: { id: customerId, orgId } });
+export async function updateCustomer(orgId, customerId, { name, description, metadata, isActive } = {}, scope) {
+  const existing = await prisma.customer.findFirst({ where: { id: customerId, orgId, AND: [customerScopeWhere(scope)] } });
   if (!existing) throw new ApiError(404, 'Customer not found');
 
   const data = {};
@@ -100,8 +118,8 @@ export async function updateCustomer(orgId, customerId, { name, description, met
 }
 
 /** Dependents that must be handled before a customer can be deleted. */
-export async function getDeleteImpact(orgId, customerId) {
-  const existing = await prisma.customer.findFirst({ where: { id: customerId, orgId } });
+export async function getDeleteImpact(orgId, customerId, scope) {
+  const existing = await prisma.customer.findFirst({ where: { id: customerId, orgId, AND: [customerScopeWhere(scope)] } });
   if (!existing) throw new ApiError(404, 'Customer not found');
   const [servers, policies] = await Promise.all([
     prisma.server.findMany({
@@ -127,9 +145,9 @@ export async function getDeleteImpact(orgId, customerId) {
  * options.servers: 'reassign' (→ targetCustomerId) | 'delete' (cascade)
  * options.policies: 'orgwide' (default, SetNull) | 'delete'
  */
-export async function deleteCustomer(orgId, customerId, options = {}) {
+export async function deleteCustomer(orgId, customerId, options = {}, scope) {
   const existing = await prisma.customer.findFirst({
-    where: { id: customerId, orgId },
+    where: { id: customerId, orgId, AND: [customerScopeWhere(scope)] },
     include: { _count: { select: { servers: true } } },
   });
   if (!existing) throw new ApiError(404, 'Customer not found');
@@ -141,7 +159,9 @@ export async function deleteCustomer(orgId, customerId, options = {}) {
       if (!target || target === customerId) {
         throw new ApiError(400, 'A different target customer is required to reassign servers');
       }
-      const targetCustomer = await prisma.customer.findFirst({ where: { id: target, orgId } });
+      const targetCustomer = await prisma.customer.findFirst({
+        where: { id: target, orgId, AND: [customerScopeWhere(scope)] },
+      });
       if (!targetCustomer) throw new ApiError(400, 'Target customer not found');
       await prisma.server.updateMany({ where: { customerId, orgId }, data: { customerId: target } });
     } else if (strategy !== 'delete') {
@@ -158,7 +178,9 @@ export async function deleteCustomer(orgId, customerId, options = {}) {
     if (!target || target === customerId) {
       throw new ApiError(400, 'A different target customer is required to reassign policies');
     }
-    const targetCustomer = await prisma.customer.findFirst({ where: { id: target, orgId } });
+    const targetCustomer = await prisma.customer.findFirst({
+      where: { id: target, orgId, AND: [customerScopeWhere(scope)] },
+    });
     if (!targetCustomer) throw new ApiError(400, 'Target customer not found for policies');
     await prisma.accessPolicy.updateMany({ where: { orgId, customerId }, data: { customerId: target } });
   } else {
@@ -172,8 +194,8 @@ export async function deleteCustomer(orgId, customerId, options = {}) {
   return { success: true };
 }
 
-export async function getCustomerStats(orgId, customerId) {
-  const existing = await prisma.customer.findFirst({ where: { id: customerId, orgId } });
+export async function getCustomerStats(orgId, customerId, scope) {
+  const existing = await prisma.customer.findFirst({ where: { id: customerId, orgId, AND: [customerScopeWhere(scope)] } });
   if (!existing) throw new ApiError(404, 'Customer not found');
 
   const [envGroups, healthGroups, total] = await Promise.all([

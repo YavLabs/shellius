@@ -88,7 +88,7 @@ function ServerForm({ server, customerId: initialCustomerId, onSubmit, onCancel 
   const [rdpPassword, setRdpPassword] = useState('');
 
   // ── SSH Authentication (certificate vs stored identity) ──────────────────
-  const { can } = useAuth();
+  const { can, isScoped } = useAuth();
   // Field-level permissions (the API enforces the same, docs/rbac F-05):
   // binding identities / RDP passwords, and moving a server between
   // environments, are separate from ordinary edits.
@@ -531,7 +531,14 @@ function ServerForm({ server, customerId: initialCustomerId, onSubmit, onCancel 
               placeholder="Select customer..."
               clearable={false}
               disabled={!!initialCustomerId && !isEdit}
+              emptyMessage={isScoped ? 'No customers in your assigned scope' : 'No matches'}
             />
+            {isScoped && customers.length === 0 && (
+              <p className="mt-1 text-[11px] text-muted-foreground">
+                Your access is limited to specific customers, and none are assigned yet — ask an
+                admin to expand your scope.
+              </p>
+            )}
           </div>
           <div>
             <label className={labelCls}>Environment</label>

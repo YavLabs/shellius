@@ -31,6 +31,7 @@ import {
 import Users from '@/pages/Users';
 import Roles from '@/pages/Roles';
 import Groups from '@/pages/Groups';
+import Policies from '@/pages/Policies';
 import GroupDetail from '@/pages/GroupDetail';
 import SsoTab from '@/components/settings/SsoTab';
 import MfaTab from '@/components/settings/MfaTab';
@@ -38,6 +39,7 @@ import AccessSettings from '@/components/settings/AccessSettings';
 import OrganizationTab from '@/components/settings/OrganizationTab';
 import CaTab from '@/components/settings/CaTab';
 import QuickConnectSettings from '@/components/settings/QuickConnectSettings';
+import PostureSettings from '@/components/settings/PostureSettings';
 import EmailTab from '@/components/settings/email/EmailTab';
 import StorageTab from '@/components/settings/StorageTab';
 
@@ -50,12 +52,14 @@ const SECTION_VIEWS = {
   users: { card: true, render: () => <Users /> },
   roles: { card: true, render: () => <Roles /> },
   groups: { card: true, render: (id) => (id ? <GroupDetail /> : <Groups />) },
+  policies: { card: true, render: () => <Policies /> },
   sso: { render: () => <SsoTab /> },
   mfa: { render: () => <MfaTab /> },
   access: { render: () => <AccessSettings /> },
   organization: { render: () => <OrganizationTab /> },
   ca: { render: () => <CaTab /> },
   'quick-connect': { render: () => <QuickConnectSettings /> },
+  posture: { render: () => <PostureSettings /> },
   email: { render: () => <EmailTab /> },
   storage: { render: () => <StorageTab /> },
 };

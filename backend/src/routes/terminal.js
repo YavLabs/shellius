@@ -99,7 +99,7 @@ router.get(
   asyncHandler(async (req, res) => {
     const days = parseInt(req.query.days, 10) || 7;
     const limit = parseInt(req.query.limit, 10) || 8;
-    const items = await sessionService.listRecentServersForUser(req.orgId, req.user.userId, { days, limit });
+    const items = await sessionService.listRecentServersForUser(req.orgId, req.user.userId, { days, limit }, req.scope);
     res.json({ success: true, data: { items } });
   })
 );

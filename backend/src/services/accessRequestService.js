@@ -15,10 +15,14 @@ import * as notificationService from './notificationService.js';
 import * as rdpService from './rdpService.js';
 import * as mailer from './mailer.js';
 import * as inviteService from './inviteService.js';
+import * as mfaService from './mfaService.js';
+import redis from '../config/redis.js';
+import { encrypt, decrypt } from '../utils/crypto.js';
 import { renderTemplate } from '../email/index.js';
 import { TIERS } from '../config/permissions.js';
 import { canBypassProdApproval, isProdBypassEnabled } from './orgService.js';
 import { usersWithPermission } from './roleService.js';
+import { UNSCOPED, isUnscoped, assertServerInScope, serverScopeWhere, relationScopeWhere } from '../lib/scope.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -232,6 +236,7 @@ export async function submit({
   protocol = 'SSH',
   callerRole,
   callerPermissions,
+  scope = UNSCOPED,
 }) {
   if (!orgId) throw new ApiError(400, 'orgId is required');
   if (!requesterId) throw new ApiError(400, 'requesterId is required');
@@ -247,6 +252,9 @@ export async function submit({
     include: { credential: true },
   });
   if (!server) throw new ApiError(404, 'Server not found');
+  // Out-of-scope reads 404 just like a nonexistent server — never let a
+  // customer-scoped requester open a request against a server they can't see.
+  assertServerInScope(scope, server);
   if (!isServerOnboarded(server)) {
     throw new ApiError(400, 'This server has not been onboarded yet, so access cannot be requested.');
   }
@@ -918,7 +926,7 @@ export async function generateSshCredentials({
  * @param {string} params.callerId
  * @returns {Promise<{ filename: string, content: string, expiresAt: Date }>}
  */
-export async function generateRdpFile({ requestId, callerId }) {
+export async function generateRdpFile({ requestId, callerId, scope = UNSCOPED }) {
   if (!requestId) throw new ApiError(400, 'requestId is required');
   if (!callerId) throw new ApiError(400, 'callerId is required');
 
@@ -941,7 +949,7 @@ export async function generateRdpFile({ requestId, callerId }) {
   }
 
   // Issue gateway token for Guacamole / Shellius-aware tooling
-  const { server, gatewayToken } = await rdpService.createConnectionForRequest(requestId);
+  const { server, gatewayToken } = await rdpService.createConnectionForRequest(requestId, scope);
 
   const rdpPort = server.port ?? 3389;
   const publicGatewayHost = process.env.PUBLIC_GATEWAY_HOST || 'localhost';
@@ -1175,7 +1183,7 @@ export async function getActiveByServerForUser(orgId, userId, serverId) {
  * @param {number}  [params.limit=25]
  * @returns {Promise<{ items: object[], total: number, page: number, limit: number }>}
  */
-export async function list({ orgId, userId, permissions, tab = 'mine', status, page = 1, limit = 25 }) {
+export async function list({ orgId, userId, permissions, tab = 'mine', status, page = 1, limit = 25, scope = UNSCOPED }) {
   if (!orgId) throw new ApiError(400, 'orgId is required');
   if (!userId) throw new ApiError(400, 'userId is required');
 
@@ -1187,7 +1195,12 @@ export async function list({ orgId, userId, permissions, tab = 'mine', status, p
     if (!has(permissions, 'access_requests.view_all')) {
       throw new ApiError(403, "You don't have permission to view all access requests");
     }
-    where = { orgId };
+    // Only tab=all is customer-scoped. 'mine' is the caller's own requests
+    // (submit() already rejects out-of-scope servers, so nothing to filter),
+    // and 'to-review' deliberately stays unscoped — an approver named by
+    // policy may legitimately sit outside the server's customer (spec §4.3,
+    // open question 3).
+    where = { orgId, ...relationScopeWhere(scope, 'server') };
   } else if (tab === 'to-review') {
     // Surface requests where the user is the primary reviewer OR a member of
     // the resolved approver set.
@@ -1231,9 +1244,10 @@ export async function list({ orgId, userId, permissions, tab = 'mine', status, p
  * @param {string} params.requestId
  * @param {string} params.callerId
  * @param {Set<string>} params.callerPermissions
+ * @param {{mode: string, customerIds: string[]}} [params.scope=UNSCOPED]
  * @returns {Promise<object>}
  */
-export async function getById({ requestId, orgId, callerId, callerPermissions }) {
+export async function getById({ requestId, orgId, callerId, callerPermissions, scope = UNSCOPED }) {
   if (!requestId) throw new ApiError(400, 'requestId is required');
   if (!orgId) throw new ApiError(400, 'orgId is required');
   if (!callerId) throw new ApiError(400, 'callerId is required');
@@ -1246,13 +1260,24 @@ export async function getById({ requestId, orgId, callerId, callerPermissions })
 
   if (!accessRequest) throw new ApiError(404, 'Access request not found');
 
+  const isRequester = accessRequest.requesterId === callerId;
   const isApprover =
     accessRequest.reviewerId === callerId || accessRequest.approvers.some((a) => a.userId === callerId);
-  const canView =
-    has(callerPermissions, 'access_requests.view_all') || accessRequest.requesterId === callerId || isApprover;
+  const isViaViewAll = has(callerPermissions, 'access_requests.view_all');
+  const canView = isViaViewAll || isRequester || isApprover;
 
   if (!canView) {
     throw new ApiError(403, 'You do not have permission to view this access request');
+  }
+
+  // Customer scope applies ONLY to the access_requests.view_all path — the
+  // requester's own request was already validated against their scope at
+  // submit() time, and a named approver may legitimately sit outside the
+  // customer (spec §4.3, open question 3: being named an approver is an
+  // explicit grant that outranks scope). Scoping those reads would silently
+  // strand an approval the requester is waiting on.
+  if (isViaViewAll && !isRequester && !isApprover) {
+    assertServerInScope(scope, accessRequest.server);
   }
 
   // Tell the client what this caller may do with it, so the UI never offers
@@ -1485,6 +1510,8 @@ export default {
   markPendingExpired,
   notifyExpiringAccess,
   createBreakGlass,
+  startBreakGlass,
+  verifyBreakGlass,
   getAccessIntent,
   getAccessIntentsBulk,
 };
@@ -1516,9 +1543,10 @@ export default {
  * @param {string} params.userId
  * @param {Set<string>} params.permissions
  * @param {string} params.serverId
+ * @param {{mode: string, customerIds: string[]}} [params.scope=UNSCOPED]
  * @returns {Promise<object>}
  */
-export async function getAccessIntent({ orgId, userId, permissions, serverId }) {
+export async function getAccessIntent({ orgId, userId, permissions, serverId, scope = UNSCOPED }) {
   const server = await prisma.server.findFirst({
     where: { id: serverId, orgId },
     select: {
@@ -1526,9 +1554,13 @@ export async function getAccessIntent({ orgId, userId, permissions, serverId }) 
       sshUser: true,
       environment: true,
       protocol: true,
+      customerId: true,
     },
   });
   if (!server) throw new ApiError(404, 'Server not found');
+  // Confirms a serverId exists (spec §4.1 #11) — out-of-scope must 404 just
+  // like a nonexistent server.
+  assertServerInScope(scope, server);
 
   const user = await prisma.user.findFirst({
     where: { id: userId, orgId },
@@ -1623,9 +1655,10 @@ export async function getAccessIntent({ orgId, userId, permissions, serverId }) 
  * @param {string} params.orgId
  * @param {string} params.userId
  * @param {string[]} params.serverIds - already deduped/capped by the caller (route enforces max 50)
+ * @param {{mode: string, customerIds: string[]}} [params.scope=UNSCOPED]
  * @returns {Promise<Record<string, {hasActiveAccess:boolean, activeRequestId:string|null, hasPendingRequest:boolean, pendingRequestId:string|null, expiresAt:string|null}>>}
  */
-export async function getAccessIntentsBulk({ orgId, userId, serverIds }) {
+export async function getAccessIntentsBulk({ orgId, userId, serverIds, scope = UNSCOPED }) {
   const ids = [...new Set(serverIds)].filter(Boolean);
   const intents = {};
   for (const id of ids) {
@@ -1638,6 +1671,19 @@ export async function getAccessIntentsBulk({ orgId, userId, serverIds }) {
     };
   }
   if (ids.length === 0) return intents;
+
+  // Reject the whole batch if it names a server outside the caller's scope,
+  // matching the single-server /intent endpoint (assertServerInScope) —
+  // silently dropping the id instead would make a scope violation invisible
+  // rather than a 404.
+  if (!isUnscoped(scope)) {
+    const inScopeCount = await prisma.server.count({
+      where: { orgId, id: { in: ids }, ...serverScopeWhere(scope) },
+    });
+    if (inScopeCount !== ids.length) {
+      throw new ApiError(404, 'Server not found');
+    }
+  }
 
   const [activeArs, pendingArs] = await Promise.all([
     prisma.accessRequest.findMany({
@@ -1683,53 +1729,354 @@ export async function getAccessIntentsBulk({ orgId, userId, serverIds }) {
 }
 
 // ---------------------------------------------------------------------------
-// createBreakGlass — admin-only emergency access bypass
+// Break-glass — step-up-verified emergency access (start/verify)
 // ---------------------------------------------------------------------------
+//
+// Two-step flow (docs/rbac/access-policies.md §1.3 "Break-glass Production"):
+//   1. startBreakGlass  — validate the request, resolve a matching
+//      `isBreakGlass: true` ALLOW policy (this is what makes the flag mean
+//      something — see policyService.findBreakGlassPolicy), and issue a
+//      short-lived Redis challenge that requires a second factor: the user's
+//      enrolled MFA (TOTP or email OTP) when they have one, otherwise a
+//      break-glass code emailed on the spot. Reuses mfaService end to end
+//      (availableMethods/sendEmailOtp/verifyFactor) rather than a parallel
+//      code path.
+//   2. verifyBreakGlass — burn the challenge against the code, re-check
+//      every invariant that could have changed since start() (policy still
+//      matches, prod-bypass switch still on, no other break-glass session
+//      already active on this server), then create the pre-approved
+//      AccessRequest exactly as the old single-step endpoint did.
+//
+// The legacy single-step endpoint (`createBreakGlass`, below) now always
+// refuses — nothing can grant break-glass access without passing through
+// verify().
+
+const BREAK_GLASS_CHALLENGE_TTL_SEC = 5 * 60;
+const BREAK_GLASS_MAX_ATTEMPTS = 5;
+const BREAK_GLASS_REDIS_PREFIX = 'breakglass:challenge:';
+const BREAK_GLASS_ATTEMPTS_PREFIX = 'breakglass:attempts:';
+
+function maskEmail(email) {
+  const [u, d] = String(email || '').split('@');
+  if (!d) return email;
+  return `${u.slice(0, 2)}***@${d}`;
+}
+
+async function burnBreakGlassChallenge(challengeId) {
+  await Promise.all([
+    redis.del(BREAK_GLASS_REDIS_PREFIX + challengeId),
+    redis.del(BREAK_GLASS_ATTEMPTS_PREFIX + challengeId),
+  ]);
+}
+
+/** Prod-bypass switch check, shared by start() and verify() (re-checked at
+ * both points since the org setting can change between the two calls). */
+async function assertBreakGlassProdAllowed(orgId, server) {
+  if (server.environment === 'prod' && !(await isProdBypassEnabled(orgId))) {
+    throw new ApiError(403, 'Your organization requires approval for all production access, including break-glass', {
+      code: 'BREAK_GLASS_PROD_BYPASS_DISABLED',
+    });
+  }
+}
+
+/** No two overlapping break-glass sessions on the same server — re-checked
+ * at both start() (fast UX signal) and verify() (the authoritative check,
+ * right before granting). */
+async function assertNoActiveBreakGlass(orgId, serverId) {
+  const active = await prisma.accessRequest.findFirst({
+    where: { orgId, serverId, breakGlass: true, status: 'APPROVED', expiresAt: { gt: new Date() } },
+    select: { id: true, expiresAt: true },
+  });
+  if (active) {
+    throw new ApiError(
+      409,
+      `Break-glass access to this server is already active until ${active.expiresAt.toISOString()}.`,
+      { code: 'BREAK_GLASS_ALREADY_ACTIVE' }
+    );
+  }
+}
 
 /**
- * Create a pre-approved AccessRequest flagged breakGlass: self-approved
- * emergency access to any server in the org (access.break_glass). Every
- * invocation writes a high-severity audit event and notifies everyone who
- * can revoke access (access_requests.revoke_any). When the org has turned
- * the prod-approval bypass off, break-glass can't reach prod either (G5).
+ * Step 1 — validate the request and issue a step-up verification challenge.
+ * Does NOT grant anything: no AccessRequest exists until verifyBreakGlass()
+ * succeeds.
  *
  * @param {object} params
  * @param {string} params.orgId
  * @param {string} params.invokerId
  * @param {Set<string>} params.invokerPermissions - must include access.break_glass
  * @param {string} params.serverId
- * @param {string} params.reason             - mandatory, min 20 chars
- * @param {number} params.durationSeconds    - clamped to [300, 3600]
- * @returns {Promise<object>}                - the created AccessRequest
+ * @param {string} params.reason                  - mandatory, min 20 chars
+ * @param {number} [params.durationSeconds]        - clamped to [300, matched policy's maxSessionDuration]
+ * @param {'totp'|'email'} [params.method]         - which enrolled factor to use; required when the user has more than one
+ * @param {{mode: string, customerIds: string[]}} [params.scope=UNSCOPED]
+ * @param {string} [params.ip]
+ * @param {string} [params.userAgent]
+ * @returns {Promise<{ challengeId: string, method: 'totp'|'email', emailHint?: string, expiresIn: number }>}
  */
-export async function createBreakGlass({
+export async function startBreakGlass({
   orgId,
   invokerId,
   invokerPermissions,
   serverId,
   reason,
-  durationSeconds = 3600,
+  durationSeconds,
+  method,
+  scope = UNSCOPED,
+  ip,
+  userAgent,
 }) {
   if (!has(invokerPermissions, 'access.break_glass')) {
     throw new ApiError(403, "You don't have permission to use break-glass access");
   }
-  if (!reason || reason.trim().length < 20) {
+  const trimmedReason = String(reason || '').trim();
+  if (trimmedReason.length < 20) {
     throw new ApiError(400, 'reason must be at least 20 characters');
   }
-  const ttl = Math.max(300, Math.min(Number(durationSeconds) || 3600, 3600));
 
   const server = await prisma.server.findFirst({ where: { id: serverId, orgId } });
   if (!server) throw new ApiError(404, 'Server not found');
-  if (server.environment === 'prod' && !(await isProdBypassEnabled(orgId))) {
-    throw new ApiError(403, 'Your organization requires approval for all production access, including break-glass');
+  // A scoped caller must not be able to use break-glass to reach a server
+  // outside their own visibility limit.
+  assertServerInScope(scope, server);
+  await assertBreakGlassProdAllowed(orgId, server);
+
+  // The one rule that makes AccessPolicy.isBreakGlass mean something: break-
+  // glass may only target a server an active isBreakGlass ALLOW policy names
+  // for THIS user (deny-before-allow still applies — see policyService).
+  const policy = await policyService.findBreakGlassPolicy({ orgId, userId: invokerId, serverId });
+  if (!policy) {
+    throw new ApiError(403, 'No break-glass policy authorizes emergency access to this server for you.', {
+      code: 'BREAK_GLASS_NOT_AUTHORIZED',
+    });
   }
 
-  const invoker = await prisma.user.findFirst({
-    where: { id: invokerId, orgId },
-    select: { id: true, name: true, email: true, role: true },
-  });
+  await assertNoActiveBreakGlass(orgId, serverId);
+
+  const invoker = await prisma.user.findFirst({ where: { id: invokerId, orgId } });
   if (!invoker) throw new ApiError(404, 'Invoker not found');
 
+  // Only TOTP/email are offered here — backup codes are a break-glass path
+  // for MFA *itself*, not a fit for a second, separate emergency-access flow.
+  const enrolled = mfaService.availableMethods(invoker).filter((m) => m !== 'backup');
+  const available = enrolled.length > 0 ? enrolled : ['email'];
+
+  let chosen = method;
+  if (chosen) {
+    if (!available.includes(chosen)) {
+      throw new ApiError(400, "That verification method isn't available for your account.", {
+        code: 'BREAK_GLASS_METHOD_UNAVAILABLE',
+      });
+    }
+  } else {
+    chosen = available[0];
+  }
+
+  const challengeId = crypto.randomBytes(32).toString('base64url');
+  const ttlSeconds = Math.max(300, Math.min(Number(durationSeconds) || policy.maxSessionDuration, policy.maxSessionDuration));
+
+  // Email delivery must fail CLOSED — if the code can't be sent, no challenge
+  // is persisted and nothing is granted. sendEmailOtp throws (503,
+  // EMAIL_NOT_DELIVERED) when there's no working mail transport; that
+  // propagates to the caller as-is. Reusing the challengeId as the mfaService
+  // rate-limit key also caps resend attempts per break-glass challenge, same
+  // as a login MFA challenge.
+  if (chosen === 'email') {
+    await mfaService.sendEmailOtp(invoker, challengeId);
+  }
+
+  const payload = {
+    userId: invokerId,
+    orgId,
+    serverId,
+    serverHostname: server.hostname,
+    environment: server.environment,
+    reason: trimmedReason,
+    ttlSeconds,
+    method: chosen,
+    policyId: policy.id,
+    policyName: policy.name,
+    maxSessionDuration: policy.maxSessionDuration,
+    ip: ip || null,
+    userAgent: userAgent || null,
+    createdAt: Date.now(),
+  };
+  await redis.set(
+    BREAK_GLASS_REDIS_PREFIX + challengeId,
+    encrypt(JSON.stringify(payload)),
+    'EX',
+    BREAK_GLASS_CHALLENGE_TTL_SEC
+  );
+
+  await writeAudit(orgId, invokerId, 'access_request.break_glass.started', null, {
+    serverId,
+    serverHostname: server.hostname,
+    environment: server.environment,
+    reason: trimmedReason,
+    policyId: policy.id,
+    policyName: policy.name,
+    method: chosen,
+    durationSeconds: ttlSeconds,
+    ip,
+    userAgent,
+    severity: 'HIGH',
+  });
+
+  return {
+    challengeId,
+    method: chosen,
+    ...(chosen === 'email' ? { emailHint: maskEmail(invoker.email) } : {}),
+    expiresIn: BREAK_GLASS_CHALLENGE_TTL_SEC,
+  };
+}
+
+/**
+ * Step 2 — verify the second factor and, on success, create the pre-approved
+ * break-glass AccessRequest. Single-use: the challenge is burned on success
+ * (so it can't be replayed) and after BREAK_GLASS_MAX_ATTEMPTS wrong codes.
+ *
+ * @param {object} params
+ * @param {string} params.orgId
+ * @param {string} params.invokerId
+ * @param {Set<string>} params.invokerPermissions - must include access.break_glass
+ * @param {string} params.challengeId
+ * @param {string} params.code
+ * @param {string} [params.ip]
+ * @param {string} [params.userAgent]
+ * @returns {Promise<object>} the created AccessRequest
+ */
+export async function verifyBreakGlass({ orgId, invokerId, invokerPermissions, challengeId, code, ip, userAgent }) {
+  if (!has(invokerPermissions, 'access.break_glass')) {
+    throw new ApiError(403, "You don't have permission to use break-glass access");
+  }
+  if (!challengeId || typeof challengeId !== 'string') {
+    throw new ApiError(401, 'This break-glass verification has expired — start again.', {
+      code: 'BREAK_GLASS_CHALLENGE_EXPIRED',
+    });
+  }
+
+  const challengeKey = BREAK_GLASS_REDIS_PREFIX + challengeId;
+  const attemptsKey = BREAK_GLASS_ATTEMPTS_PREFIX + challengeId;
+
+  const expiredError = () =>
+    new ApiError(401, 'This break-glass verification has expired — start again.', {
+      code: 'BREAK_GLASS_CHALLENGE_EXPIRED',
+    });
+  const tooManyAttemptsError = () =>
+    new ApiError(429, 'Too many attempts — start again.', { code: 'BREAK_GLASS_TOO_MANY_ATTEMPTS' });
+
+  const existingAttempts = Number((await redis.get(attemptsKey)) || 0);
+  if (existingAttempts >= BREAK_GLASS_MAX_ATTEMPTS) {
+    await burnBreakGlassChallenge(challengeId);
+    throw tooManyAttemptsError();
+  }
+
+  const raw = await redis.get(challengeKey);
+  if (!raw) throw expiredError();
+
+  let payload;
+  try {
+    payload = JSON.parse(decrypt(raw));
+  } catch (err) {
+    logger.error('accessRequestService.verifyBreakGlass: failed to decode challenge', { error: err.message });
+    await burnBreakGlassChallenge(challengeId);
+    throw expiredError();
+  }
+
+  // The challenge is bound to the user/org that started it — never usable
+  // by, or on behalf of, anyone else, whatever the response would otherwise
+  // reveal.
+  if (payload.userId !== invokerId || payload.orgId !== orgId) {
+    throw expiredError();
+  }
+
+  const invoker = await prisma.user.findFirst({ where: { id: invokerId, orgId, status: 'active' } });
+  if (!invoker) {
+    await burnBreakGlassChallenge(challengeId);
+    throw expiredError();
+  }
+
+  const server = await prisma.server.findFirst({ where: { id: payload.serverId, orgId } });
+  if (!server) {
+    await burnBreakGlassChallenge(challengeId);
+    throw new ApiError(404, 'Server not found');
+  }
+
+  const failVerify = async (failureReason, err) => {
+    await writeAudit(orgId, invokerId, 'access_request.break_glass.verify_failed', null, {
+      serverId: payload.serverId,
+      serverHostname: server.hostname,
+      environment: server.environment,
+      method: payload.method,
+      failureReason,
+      ip,
+      userAgent,
+      severity: 'HIGH',
+    });
+    throw err;
+  };
+
+  // Re-check every invariant that could have changed since start(): the org
+  // may have turned prod-bypass off, the policy may have been edited/
+  // disabled, or another break-glass session may have been granted for this
+  // server in the meantime. This is the authoritative check — start()'s
+  // checks are only an early UX signal.
+  try {
+    await assertBreakGlassProdAllowed(orgId, server);
+  } catch (err) {
+    await burnBreakGlassChallenge(challengeId);
+    return failVerify('org_prod_bypass_disabled', err);
+  }
+
+  const policy = await policyService.findBreakGlassPolicy({ orgId, userId: invokerId, serverId: payload.serverId });
+  if (!policy) {
+    await burnBreakGlassChallenge(challengeId);
+    return failVerify(
+      'policy_no_longer_matches',
+      new ApiError(403, 'Break-glass authorization for this server is no longer valid — start again.', {
+        code: 'BREAK_GLASS_NOT_AUTHORIZED',
+      })
+    );
+  }
+
+  try {
+    await assertNoActiveBreakGlass(orgId, payload.serverId);
+  } catch (err) {
+    await burnBreakGlassChallenge(challengeId);
+    return failVerify('already_active', err);
+  }
+
+  const ok = await mfaService.verifyFactor(invoker, payload.method, code);
+  if (!ok) {
+    const count = await redis.incr(attemptsKey);
+    if (count === 1) await redis.expire(attemptsKey, BREAK_GLASS_CHALLENGE_TTL_SEC);
+    const burned = count >= BREAK_GLASS_MAX_ATTEMPTS;
+    const attemptsRemaining = Math.max(0, BREAK_GLASS_MAX_ATTEMPTS - count);
+
+    await writeAudit(orgId, invokerId, 'access_request.break_glass.verify_failed', null, {
+      serverId: payload.serverId,
+      serverHostname: server.hostname,
+      environment: server.environment,
+      method: payload.method,
+      failureReason: 'invalid_code',
+      attemptsRemaining,
+      burned,
+      ip,
+      userAgent,
+      severity: 'HIGH',
+    });
+
+    if (burned) {
+      await burnBreakGlassChallenge(challengeId);
+      throw tooManyAttemptsError();
+    }
+    throw new ApiError(401, 'Invalid verification code', { code: 'BREAK_GLASS_INVALID_CODE', details: { attemptsRemaining } });
+  }
+
+  // Success — burn the challenge immediately so it can never be replayed.
+  await burnBreakGlassChallenge(challengeId);
+
+  const ttl = Math.max(300, Math.min(payload.ttlSeconds, policy.maxSessionDuration));
   const now = new Date();
   const expiresAt = new Date(now.getTime() + ttl * 1000);
   const principal = server.sshUser || 'root';
@@ -1738,11 +2085,11 @@ export async function createBreakGlass({
     data: {
       orgId,
       requesterId: invokerId,
-      reviewerId: invokerId, // self-approved
-      serverId,
+      reviewerId: invokerId, // self-approved, gated on step-up verification above
+      serverId: payload.serverId,
       protocol: 'SSH',
       requestedPrincipal: principal,
-      reason: reason.trim(),
+      reason: payload.reason,
       requestedDuration: ttl,
       approvedDuration: ttl,
       status: 'APPROVED',
@@ -1753,46 +2100,67 @@ export async function createBreakGlass({
     include: REQUEST_INCLUDE,
   });
 
-  // Audit — distinct, high-severity event.
-  await writeAudit(orgId, invokerId, 'access_request.break_glass', ar.id, {
-    serverId,
+  await writeAudit(orgId, invokerId, 'access_request.break_glass.granted', ar.id, {
+    serverId: payload.serverId,
     serverHostname: server.hostname,
     environment: server.environment,
-    reason: reason.trim(),
+    reason: payload.reason,
     durationSeconds: ttl,
     expiresAt: expiresAt.toISOString(),
+    policyId: policy.id,
+    policyName: policy.name,
+    method: payload.method,
+    ip,
+    userAgent,
     severity: 'HIGH',
   });
 
-  // Fan out a notification to everyone who can revoke it.
   try {
     const admins = await usersWithPermission(orgId, 'access_requests.revoke_any');
+    const methodLabel = payload.method === 'totp' ? 'an authenticator app code' : 'an emailed one-time code';
     for (const admin of admins) {
       await notificationService.create({
         orgId,
         userId: admin.id,
         type: 'BREAK_GLASS_INVOKED',
         title: `[Break-glass] access invoked on ${server.hostname}`,
-        body: `${invoker.name} invoked break-glass access to ${server.hostname} (${server.environment}). Reason: ${reason.trim().slice(0, 160)}`,
+        body: `${invoker.name} invoked break-glass access to ${server.hostname} (${server.environment}), verified with ${methodLabel}. Reason: ${payload.reason.slice(0, 160)}`,
         metadata: {
           accessRequestId: ar.id,
           invokerId,
-          serverId,
+          serverId: payload.serverId,
           expiresAt: expiresAt.toISOString(),
+          method: payload.method,
         },
       });
     }
-    logger.info('accessRequestService.createBreakGlass: fanned out notifications', {
+    logger.info('accessRequestService.verifyBreakGlass: fanned out notifications', {
       accessRequestId: ar.id,
       adminCount: admins.length,
     });
   } catch (err) {
     // Non-fatal — access still works, but flag it.
-    logger.error('accessRequestService.createBreakGlass: notification fanout failed', {
+    logger.error('accessRequestService.verifyBreakGlass: notification fanout failed', {
       accessRequestId: ar.id,
       error: err.message,
     });
   }
 
   return ar;
+}
+
+// ---------------------------------------------------------------------------
+// createBreakGlass — RETIRED. Kept only so a stray caller gets a loud,
+// actionable error instead of silently bypassing step-up verification.
+// Use startBreakGlass()/verifyBreakGlass() (POST .../break-glass/start then
+// .../break-glass/verify) instead.
+// ---------------------------------------------------------------------------
+
+export async function createBreakGlass() {
+  throw new ApiError(
+    410,
+    'This endpoint has been retired. Use POST /api/access-requests/break-glass/start followed by ' +
+      'POST /api/access-requests/break-glass/verify — break-glass now requires step-up verification.',
+    { code: 'BREAK_GLASS_ENDPOINT_RETIRED' }
+  );
 }

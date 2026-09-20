@@ -14,6 +14,14 @@ enum OrgRole {
   member
 }
 
+/// How much of the org a user can see. ALL = today's behaviour (the whole
+/// org); CUSTOMERS = only the customers resolved from UserCustomerScope +
+/// the user's groups' GroupCustomerScope. See docs/rbac/customer-scope-spec.md.
+enum AccessScope {
+  ALL
+  CUSTOMERS
+}
+
 enum UserStatus {
   active
   invited
@@ -40,99 +48,109 @@ model Organization {
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
 
-  users           User[]
-  customers       Customer[]
-  servers         Server[]
-  auditLogs       AuditLog[]
-  groups          Group[]
-  ssoConfigs      SsoConfig[]
-  smtpConfig      SmtpConfig?
-  emailProviders  EmailProvider[]
-  deviceAuthRequests DeviceAuthRequest[]
-  caKeyPairs      CaKeyPair[]
-  certificates    Certificate[]
-  policies        AccessPolicy[]
-  accessRequests  AccessRequest[]
-  notifications   Notification[]
-  sessions        Session[]
-  sshKeys         SshKey[]
-  credentials     Credential[]
-  personalHosts   PersonalHost[]
-  keyDeployments  KeyDeployment[]
-  roles           Role[]
-  selfServiceRegistrationEnabled Boolean @default(false) @map("self_service_registration_enabled")
+  users                          User[]
+  customers                      Customer[]
+  servers                        Server[]
+  auditLogs                      AuditLog[]
+  groups                         Group[]
+  ssoConfigs                     SsoConfig[]
+  smtpConfig                     SmtpConfig?
+  emailProviders                 EmailProvider[]
+  deviceAuthRequests             DeviceAuthRequest[]
+  caKeyPairs                     CaKeyPair[]
+  certificates                   Certificate[]
+  policies                       AccessPolicy[]
+  accessRequests                 AccessRequest[]
+  notifications                  Notification[]
+  sessions                       Session[]
+  sshKeys                        SshKey[]
+  credentials                    Credential[]
+  personalHosts                  PersonalHost[]
+  keyDeployments                 KeyDeployment[]
+  roles                          Role[]
+  selfServiceRegistrationEnabled Boolean             @default(false) @map("self_service_registration_enabled")
+
+  postureSnapshots  HostSnapshot[]
+  postureListeners  HostListener[]
+  postureFindings   ExposureFinding[]
+  metricSamples     HostMetricSample[]
+  postureAlertRules PostureAlertRule[]
+  postureSettings   PostureSettings?
 
   @@map("organizations")
 }
 
 model User {
-  id            String     @id @default(cuid())
-  orgId         String     @map("org_id")
-  email         String
-  passwordHash  String?    @map("password_hash")
-  name          String
+  id                String      @id @default(cuid())
+  orgId             String      @map("org_id")
+  email             String
+  passwordHash      String?     @map("password_hash")
+  name              String
   // Base tier of the user's role, kept in sync with assignedRole.baseRole.
   // Policies (ROLE subjects, approverRoles) and the CLI still read it; all
   // permission checks use assignedRole.permissions.
-  role          OrgRole    @default(member)
-  roleId        String?    @map("role_id")
-  status        UserStatus @default(active)
-  managerId     String?    @map("manager_id")
-  sshPublicKey  String?    @map("ssh_public_key") @db.Text
-  ssoProvider         String?    @map("sso_provider")
-  ssoSub              String?    @map("sso_sub")
-  avatarUrl           String?    @map("avatar_url")
-  preferences         Json       @default("{}") @map("preferences")
-  lastLoginAt         DateTime?  @map("last_login_at")
-  passwordChangedAt   DateTime?  @map("password_changed_at")
-  deletedAt           DateTime?  @map("deleted_at")
-  jitUid              Int?       @map("jit_uid")
-  createdAt           DateTime   @default(now()) @map("created_at")
-  updatedAt           DateTime   @updatedAt @map("updated_at")
+  role              OrgRole     @default(member)
+  roleId            String?     @map("role_id")
+  status            UserStatus  @default(active)
+  // Visibility scope. super_admin ignores this (they can edit their own).
+  accessScope       AccessScope @default(ALL) @map("access_scope")
+  managerId         String?     @map("manager_id")
+  sshPublicKey      String?     @map("ssh_public_key") @db.Text
+  ssoProvider       String?     @map("sso_provider")
+  ssoSub            String?     @map("sso_sub")
+  avatarUrl         String?     @map("avatar_url")
+  preferences       Json        @default("{}") @map("preferences")
+  lastLoginAt       DateTime?   @map("last_login_at")
+  passwordChangedAt DateTime?   @map("password_changed_at")
+  deletedAt         DateTime?   @map("deleted_at")
+  jitUid            Int?        @map("jit_uid")
+  createdAt         DateTime    @default(now()) @map("created_at")
+  updatedAt         DateTime    @updatedAt @map("updated_at")
 
-  organization  Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
-  assignedRole  Role?        @relation(fields: [roleId], references: [id], onDelete: Restrict)
-  manager       User?        @relation("ManagerReports", fields: [managerId], references: [id], onDelete: SetNull)
-  directReports User[]       @relation("ManagerReports")
-  refreshTokens RefreshToken[]
-  userTokens    UserToken[]
-  identities    UserIdentity[]
-  auditLogs     AuditLog[]
-  groupMemberships GroupMembership[] @relation("GroupMemberships")
-  groupsAddedBy    GroupMembership[] @relation("GroupsAdded")
-  deviceAuthRequests DeviceAuthRequest[]
-  certificatesIssued  Certificate[] @relation("CertificatesIssuedTo")
-  certificatesRevoked Certificate[] @relation("CertificatesRevokedBy")
+  organization        Organization        @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  assignedRole        Role?               @relation(fields: [roleId], references: [id], onDelete: Restrict)
+  manager             User?               @relation("ManagerReports", fields: [managerId], references: [id], onDelete: SetNull)
+  directReports       User[]              @relation("ManagerReports")
+  refreshTokens       RefreshToken[]
+  userTokens          UserToken[]
+  identities          UserIdentity[]
+  auditLogs           AuditLog[]
+  groupMemberships    GroupMembership[]   @relation("GroupMemberships")
+  customerScopes      UserCustomerScope[]
+  groupsAddedBy       GroupMembership[]   @relation("GroupsAdded")
+  deviceAuthRequests  DeviceAuthRequest[]
+  certificatesIssued  Certificate[]       @relation("CertificatesIssuedTo")
+  certificatesRevoked Certificate[]       @relation("CertificatesRevokedBy")
   // MFA (per-user). Disabled by default; enrollment is self-service.
-  mfaTotpSecretEnc String?   @map("mfa_totp_secret_enc") @db.Text // AES-256-GCM TOTP secret
-  mfaTotpEnabled   Boolean   @default(false) @map("mfa_totp_enabled")
-  mfaEmailEnabled  Boolean   @default(false) @map("mfa_email_enabled")
-  mfaBackupCodes   String[]  @default([]) @map("mfa_backup_codes") // sha256 hashes
-  mfaEnrolledAt    DateTime? @map("mfa_enrolled_at")
+  mfaTotpSecretEnc    String?             @map("mfa_totp_secret_enc") @db.Text // AES-256-GCM TOTP secret
+  mfaTotpEnabled      Boolean             @default(false) @map("mfa_totp_enabled")
+  mfaEmailEnabled     Boolean             @default(false) @map("mfa_email_enabled")
+  mfaBackupCodes      String[]            @default([]) @map("mfa_backup_codes") // sha256 hashes
+  mfaEnrolledAt       DateTime?           @map("mfa_enrolled_at")
   // Which factor sign-in asks for first when several are enrolled
   // ('totp' | 'email'); null = authenticator first. Ignored when that
   // factor isn't enabled.
-  mfaPreferredMethod String? @map("mfa_preferred_method")
+  mfaPreferredMethod  String?             @map("mfa_preferred_method")
   // Unconfirmed TOTP secret during (re-)enrollment. Promoted to
   // mfaTotpSecretEnc only after the user proves possession, so starting a
   // re-enroll never invalidates a working authenticator.
-  mfaTotpPendingEnc String?  @map("mfa_totp_pending_enc") @db.Text
+  mfaTotpPendingEnc   String?             @map("mfa_totp_pending_enc") @db.Text
   // Brute-force protection: per-account lockout.
-  failedLoginCount  Int       @default(0) @map("failed_login_count")
-  lastFailedLoginAt DateTime? @map("last_failed_login_at")
-  lockedUntil       DateTime? @map("locked_until")
+  failedLoginCount    Int                 @default(0) @map("failed_login_count")
+  lastFailedLoginAt   DateTime?           @map("last_failed_login_at")
+  lockedUntil         DateTime?           @map("locked_until")
   // Access tokens issued (iat) before this instant are rejected. Bumped on
   // password change/reset, role change, suspension and "sign out everywhere".
-  sessionsValidFrom DateTime? @map("sessions_valid_from")
+  sessionsValidFrom   DateTime?           @map("sessions_valid_from")
 
-  accessRequestsRequested AccessRequest[] @relation("AccessRequestsRequested")
-  accessRequestsToReview  AccessRequest[] @relation("AccessRequestsToReview")
+  accessRequestsRequested AccessRequest[]         @relation("AccessRequestsRequested")
+  accessRequestsToReview  AccessRequest[]         @relation("AccessRequestsToReview")
   accessRequestApprovals  AccessRequestApprover[]
   notifications           Notification[]
   sessions                Session[]
   // Personal vault (docs/personal-vault.md) — private to this user.
-  personalSshKeys         SshKey[]       @relation("PersonalSshKeys")
-  personalCredentials     Credential[]   @relation("PersonalCredentials")
+  personalSshKeys         SshKey[]                @relation("PersonalSshKeys")
+  personalCredentials     Credential[]            @relation("PersonalCredentials")
   personalHosts           PersonalHost[]
 
   @@unique([orgId, email])
@@ -180,9 +198,11 @@ model Customer {
   createdAt   DateTime @default(now()) @map("created_at")
   updatedAt   DateTime @updatedAt @map("updated_at")
 
-  organization Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  organization Organization         @relation(fields: [orgId], references: [id], onDelete: Cascade)
   servers      Server[]
   policies     AccessPolicy[]
+  userScopes   UserCustomerScope[]
+  groupScopes  GroupCustomerScope[]
 
   @@unique([orgId, slug])
   @@index([orgId])
@@ -215,71 +235,75 @@ enum HealthStatus {
 }
 
 model Server {
-  id              String         @id @default(cuid())
-  orgId           String         @map("org_id")
-  customerId      String         @map("customer_id")
-  hostname        String
-  displayName     String?        @map("display_name")
-  description     String?
-  ipAddress       String         @map("ip_address")
-  dynamicIp       Boolean        @default(false) @map("dynamic_ip") // public IP can change (no static IP)
-  port            Int            @default(22)
-  protocol        ServerProtocol @default(ssh)
-  environment     Environment    @default(dev)
-  labels          Json           @default("[]")
-  osType          String?        @map("os_type")
-  osVersion       String?        @map("os_version")
-  cloudProvider   String?        @map("cloud_provider")
-  cloudInstanceId String?        @unique @map("cloud_instance_id")
-  cloudRegion     String?        @map("cloud_region")
-  cloudAccountId  String?        @map("cloud_account_id")
-  agentId         String?        @unique @map("agent_id")
-  agentVersion    String?        @map("agent_version")
-  agentLastSeen   DateTime?      @map("agent_last_seen")
+  id                   String         @id @default(cuid())
+  orgId                String         @map("org_id")
+  customerId           String         @map("customer_id")
+  hostname             String
+  displayName          String?        @map("display_name")
+  description          String?
+  ipAddress            String         @map("ip_address")
+  dynamicIp            Boolean        @default(false) @map("dynamic_ip") // public IP can change (no static IP)
+  port                 Int            @default(22)
+  protocol             ServerProtocol @default(ssh)
+  environment          Environment    @default(dev)
+  labels               Json           @default("[]")
+  osType               String?        @map("os_type")
+  osVersion            String?        @map("os_version")
+  cloudProvider        String?        @map("cloud_provider")
+  cloudInstanceId      String?        @unique @map("cloud_instance_id")
+  cloudRegion          String?        @map("cloud_region")
+  cloudAccountId       String?        @map("cloud_account_id")
+  agentId              String?        @unique @map("agent_id")
+  agentVersion         String?        @map("agent_version")
+  agentLastSeen        DateTime?      @map("agent_last_seen")
   // Per-host agent credential (check-principals + heartbeat). Only the
   // SHA-256 hash is stored; the token is written to the host at bootstrap.
   // Replaces the single global AGENT_SHARED_SECRET, and lets
   // /api/certificates/verify bind a certificate to the host asking.
-  agentTokenHash     String?   @unique @map("agent_token_hash")
-  agentTokenIssuedAt DateTime? @map("agent_token_issued_at")
-  agentTokenLastUsedAt DateTime? @map("agent_token_last_used_at")
-  healthStatus    HealthStatus   @default(unknown) @map("health_status")
-  lastHealthCheck DateTime?      @map("last_health_check")
-  healthMessage   String?        @map("health_message")
-  sshUser                String         @default("root") @map("ssh_user")
-  sshKeyPath             String?        @map("ssh_key_path")
-  rdpUsername            String?        @map("rdp_username")
-  rdpPasswordEncrypted   String?        @map("rdp_password_encrypted")
-  rdpPasswordIv          String?        @map("rdp_password_iv")
-  rdpPasswordTag         String?        @map("rdp_password_tag")
+  agentTokenHash       String?        @unique @map("agent_token_hash")
+  agentTokenIssuedAt   DateTime?      @map("agent_token_issued_at")
+  agentTokenLastUsedAt DateTime?      @map("agent_token_last_used_at")
+  healthStatus         HealthStatus   @default(unknown) @map("health_status")
+  lastHealthCheck      DateTime?      @map("last_health_check")
+  healthMessage        String?        @map("health_message")
+  sshUser              String         @default("root") @map("ssh_user")
+  sshKeyPath           String?        @map("ssh_key_path")
+  rdpUsername          String?        @map("rdp_username")
+  rdpPasswordEncrypted String?        @map("rdp_password_encrypted")
+  rdpPasswordIv        String?        @map("rdp_password_iv")
+  rdpPasswordTag       String?        @map("rdp_password_tag")
   // How Shellius authenticates to this host. certificate = short-lived cert
   // signed by the org CA (host must be bootstrapped). credential = a stored
   // Keystore identity (password and/or private key) — no bootstrap needed.
-  authMode               ServerAuthMode @default(certificate) @map("auth_mode")
-  credentialId           String?        @map("credential_id")
+  authMode             ServerAuthMode @default(certificate) @map("auth_mode")
+  credentialId         String?        @map("credential_id")
   // Pinned SSH host key (TOFU on first ssh2 connect; mismatch = refuse).
-  hostKeyFingerprint     String?        @map("host_key_fingerprint") // SHA256:...
-  hostKeyAlgorithm       String?        @map("host_key_algorithm")
-  hostKeyPinnedAt        DateTime?      @map("host_key_pinned_at")
-  isActive               Boolean        @default(true) @map("is_active")
+  hostKeyFingerprint   String?        @map("host_key_fingerprint") // SHA256:...
+  hostKeyAlgorithm     String?        @map("host_key_algorithm")
+  hostKeyPinnedAt      DateTime?      @map("host_key_pinned_at")
+  isActive             Boolean        @default(true) @map("is_active")
   // Onboarding / provisioning state. provisionStatus tracks where the server
   // is in the bootstrap lifecycle so the UI can show progress and bulk-import
   // can detect already-onboarded hosts for idempotent re-onboarding.
   // Values: pending | provisioning | provisioned | failed
-  provisionStatus        String         @default("pending") @map("provision_status")
-  provisionError         String?        @map("provision_error")
-  provisionedAt          DateTime?      @map("provisioned_at")
-  lastProvisionAt        DateTime?      @map("last_provision_at")
-  createdAt       DateTime       @default(now()) @map("created_at")
-  updatedAt       DateTime       @updatedAt @map("updated_at")
+  provisionStatus      String         @default("pending") @map("provision_status")
+  provisionError       String?        @map("provision_error")
+  provisionedAt        DateTime?      @map("provisioned_at")
+  lastProvisionAt      DateTime?      @map("last_provision_at")
+  createdAt            DateTime       @default(now()) @map("created_at")
+  updatedAt            DateTime       @updatedAt @map("updated_at")
 
-  organization   Organization    @relation(fields: [orgId], references: [id], onDelete: Cascade)
-  customer       Customer        @relation(fields: [customerId], references: [id], onDelete: Cascade)
-  credential     Credential?     @relation(fields: [credentialId], references: [id], onDelete: SetNull)
-  keyDeployments KeyDeployment[]
-  certificates   Certificate[]
-  accessRequests AccessRequest[]
-  sessions       Session[]
+  organization     Organization       @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  customer         Customer           @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  credential       Credential?        @relation(fields: [credentialId], references: [id], onDelete: SetNull)
+  keyDeployments   KeyDeployment[]
+  certificates     Certificate[]
+  accessRequests   AccessRequest[]
+  sessions         Session[]
+  postureSnapshots HostSnapshot[]
+  postureListeners HostListener[]
+  postureFindings  ExposureFinding[]
+  metricSamples    HostMetricSample[]
 
   @@index([orgId, customerId])
   @@index([orgId, environment])
@@ -291,14 +315,14 @@ model Server {
 }
 
 model RefreshToken {
-  id         String   @id @default(cuid())
-  userId     String   @map("user_id")
-  tokenHash  String   @unique @map("token_hash")
-  clientType String   @default("web") @map("client_type")
-  ipAddress  String?  @map("ip_address")
-  userAgent  String?  @map("user_agent")
-  expiresAt  DateTime @map("expires_at")
-  createdAt  DateTime @default(now()) @map("created_at")
+  id               String    @id @default(cuid())
+  userId           String    @map("user_id")
+  tokenHash        String    @unique @map("token_hash")
+  clientType       String    @default("web") @map("client_type")
+  ipAddress        String?   @map("ip_address")
+  userAgent        String?   @map("user_agent")
+  expiresAt        DateTime  @map("expires_at")
+  createdAt        DateTime  @default(now()) @map("created_at")
   // Rotation family: every refresh token minted from one sign-in shares a
   // familyId. Reuse of a rotated token revokes the whole family only.
   familyId         String?   @map("family_id")
@@ -340,11 +364,19 @@ model Group {
   orgId       String   @map("org_id")
   name        String
   description String?
+  // How much of the org every CUSTOMERS-scoped member sees while in this
+  // group. Default CUSTOMERS (NOT User's ALL default) so an existing group
+  // contributes nothing until someone deliberately widens it — additive,
+  // empty = no-op. ALL is a deliberate widening path: a CUSTOMERS member of
+  // an ALL group becomes effectively unscoped (lib/scope.js resolveScope).
+  // See docs/rbac/customer-scope-spec.md.
+  accessScope AccessScope @default(CUSTOMERS) @map("access_scope")
   createdAt   DateTime @default(now()) @map("created_at")
   updatedAt   DateTime @updatedAt @map("updated_at")
 
-  organization Organization      @relation(fields: [orgId], references: [id], onDelete: Cascade)
-  memberships  GroupMembership[]
+  organization   Organization         @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  memberships    GroupMembership[]
+  customerScopes GroupCustomerScope[]
 
   @@unique([orgId, name])
   @@index([orgId])
@@ -365,6 +397,41 @@ model GroupMembership {
   @@unique([groupId, userId])
   @@index([userId])
   @@map("group_memberships")
+}
+
+/// Customers a user may see when User.accessScope = CUSTOMERS. Additive with
+/// the scopes of any group they belong to.
+model UserCustomerScope {
+  id         String   @id @default(cuid())
+  userId     String   @map("user_id")
+  customerId String   @map("customer_id")
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  user     User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  customer Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, customerId])
+  @@index([userId])
+  @@index([customerId])
+  @@map("user_customer_scopes")
+}
+
+/// Customers every member of a group may see. Only consulted for users whose
+/// accessScope is CUSTOMERS — joining a scoped group never narrows an
+/// unscoped user.
+model GroupCustomerScope {
+  id         String   @id @default(cuid())
+  groupId    String   @map("group_id")
+  customerId String   @map("customer_id")
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  group    Group    @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  customer Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+
+  @@unique([groupId, customerId])
+  @@index([groupId])
+  @@index([customerId])
+  @@map("group_customer_scopes")
 }
 
 /// One SSO identity provider for an org. An org may enable several at once
@@ -415,8 +482,8 @@ model UserIdentity {
   orgId       String    @map("org_id")
   userId      String    @map("user_id")
   ssoConfigId String    @map("sso_config_id")
-  provider    String    // oidc | github (denormalised from SsoConfig)
-  subject     String    // OIDC sub / GitHub numeric user id
+  provider    String // oidc | github (denormalised from SsoConfig)
+  subject     String // OIDC sub / GitHub numeric user id
   email       String?
   lastLoginAt DateTime? @map("last_login_at")
   createdAt   DateTime  @default(now()) @map("created_at")
@@ -468,8 +535,8 @@ model CaKeyPair {
   orgId               String    @map("org_id")
   name                String
   algorithm           String    @default("Ed25519")
-  publicKey           String    @db.Text @map("public_key")
-  encryptedPrivateKey String    @db.Text @map("encrypted_private_key")
+  publicKey           String    @map("public_key") @db.Text
+  encryptedPrivateKey String    @map("encrypted_private_key") @db.Text
   encryptionIv        String    @map("encryption_iv")
   encryptionTag       String    @map("encryption_tag")
   fingerprint         String    @unique
@@ -493,8 +560,8 @@ model Certificate {
   type            CertType
   keyId           String     @map("key_id")
   principals      String[]
-  publicKey       String     @db.Text @map("public_key")
-  signedCert      String     @db.Text @map("signed_cert")
+  publicKey       String     @map("public_key") @db.Text
+  signedCert      String     @map("signed_cert") @db.Text
   validAfter      DateTime   @map("valid_after")
   validBefore     DateTime   @map("valid_before")
   extensions      Json?
@@ -544,6 +611,7 @@ enum NotificationType {
   ACCESS_REQUEST_EXPIRED
   ACCESS_REQUEST_REVOKED
   BREAK_GLASS_INVOKED
+  POSTURE_FINDING
 }
 
 enum PolicyEffect {
@@ -558,35 +626,35 @@ enum SubjectType {
 }
 
 model AccessPolicy {
-  id                  String       @id @default(cuid())
-  orgId               String       @map("org_id")
-  customerId          String?      @map("customer_id")
-  name                String
-  description         String?
-  effect              PolicyEffect
-  targetEnvironments  String[]     @map("target_environments")
-  targetLabels        Json         @default("{}") @map("target_labels")
-  targetServerIds     String[]     @map("target_server_ids")
-  allowedPrincipals   String[]     @map("allowed_principals")
-  maxSessionDuration  Int          @map("max_session_duration")
-  requireApproval     Boolean      @default(false) @map("require_approval")
-  autoApprove         Boolean      @default(false) @map("auto_approve")
-  isActive            Boolean      @default(true) @map("is_active")
-  priority            Int          @default(100)
-  osProvisioning      Json         @default("{}") @map("os_provisioning")
-  allowKeyDownload    Boolean      @default(false) @map("allow_key_download")
-  isBreakGlass        Boolean      @default(false) @map("is_break_glass")
+  id                 String       @id @default(cuid())
+  orgId              String       @map("org_id")
+  customerId         String?      @map("customer_id")
+  name               String
+  description        String?
+  effect             PolicyEffect
+  targetEnvironments String[]     @map("target_environments")
+  targetLabels       Json         @default("{}") @map("target_labels")
+  targetServerIds    String[]     @map("target_server_ids")
+  allowedPrincipals  String[]     @map("allowed_principals")
+  maxSessionDuration Int          @map("max_session_duration")
+  requireApproval    Boolean      @default(false) @map("require_approval")
+  autoApprove        Boolean      @default(false) @map("auto_approve")
+  isActive           Boolean      @default(true) @map("is_active")
+  priority           Int          @default(100)
+  osProvisioning     Json         @default("{}") @map("os_provisioning")
+  allowKeyDownload   Boolean      @default(false) @map("allow_key_download")
+  isBreakGlass       Boolean      @default(false) @map("is_break_glass")
   // Approver routing: when a request matched by this policy needs approval,
   // these define WHO may approve. Empty across all three = fall back to the
   // requester's manager (legacy behaviour). Any one resolved approver can act.
-  approverGroupId     String?      @map("approver_group_id")
-  approverRoles       String[]     @default([]) @map("approver_roles")     // OrgRole values
-  approverUserIds     String[]     @default([]) @map("approver_user_ids")
-  createdAt           DateTime     @default(now()) @map("created_at")
-  updatedAt           DateTime     @updatedAt @map("updated_at")
+  approverGroupId    String?      @map("approver_group_id")
+  approverRoles      String[]     @default([]) @map("approver_roles") // OrgRole values
+  approverUserIds    String[]     @default([]) @map("approver_user_ids")
+  createdAt          DateTime     @default(now()) @map("created_at")
+  updatedAt          DateTime     @updatedAt @map("updated_at")
 
-  organization Organization   @relation(fields: [orgId], references: [id], onDelete: Cascade)
-  customer     Customer?      @relation(fields: [customerId], references: [id], onDelete: SetNull)
+  organization Organization    @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  customer     Customer?       @relation(fields: [customerId], references: [id], onDelete: SetNull)
   subjects     PolicySubject[]
 
   @@index([orgId, isActive])
@@ -610,33 +678,33 @@ model PolicySubject {
 }
 
 model AccessRequest {
-  id                  String              @id @default(cuid())
-  orgId               String              @map("org_id")
-  requesterId         String              @map("requester_id")
-  reviewerId          String?             @map("reviewer_id")
-  serverId            String              @map("server_id")
-  status              AccessRequestStatus @default(PENDING) @map("status")
-  reason              String
-  requestedPrincipal  String              @map("requested_principal")
-  requestedDuration   Int                 @map("requested_duration")
-  protocol            Protocol            @default(SSH)
-  approvedDuration    Int?                @map("approved_duration")
-  approvedAt          DateTime?           @map("approved_at")
-  deniedAt            DateTime?           @map("denied_at")
-  deniedReason        String?             @map("denied_reason")
-  expiresAt           DateTime?           @map("expires_at")
-  revokedAt           DateTime?           @map("revoked_at")
-  revokedReason       String?             @map("revoked_reason")
-  certificateId       String?             @map("certificate_id")
-  breakGlass          Boolean             @default(false) @map("break_glass")
-  createdAt           DateTime            @default(now()) @map("created_at")
-  updatedAt           DateTime            @updatedAt @map("updated_at")
+  id                 String              @id @default(cuid())
+  orgId              String              @map("org_id")
+  requesterId        String              @map("requester_id")
+  reviewerId         String?             @map("reviewer_id")
+  serverId           String              @map("server_id")
+  status             AccessRequestStatus @default(PENDING) @map("status")
+  reason             String
+  requestedPrincipal String              @map("requested_principal")
+  requestedDuration  Int                 @map("requested_duration")
+  protocol           Protocol            @default(SSH)
+  approvedDuration   Int?                @map("approved_duration")
+  approvedAt         DateTime?           @map("approved_at")
+  deniedAt           DateTime?           @map("denied_at")
+  deniedReason       String?             @map("denied_reason")
+  expiresAt          DateTime?           @map("expires_at")
+  revokedAt          DateTime?           @map("revoked_at")
+  revokedReason      String?             @map("revoked_reason")
+  certificateId      String?             @map("certificate_id")
+  breakGlass         Boolean             @default(false) @map("break_glass")
+  createdAt          DateTime            @default(now()) @map("created_at")
+  updatedAt          DateTime            @updatedAt @map("updated_at")
 
-  organization Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
-  requester    User         @relation("AccessRequestsRequested", fields: [requesterId], references: [id], onDelete: Cascade)
-  reviewer     User?        @relation("AccessRequestsToReview", fields: [reviewerId], references: [id], onDelete: SetNull)
-  server       Server       @relation(fields: [serverId], references: [id], onDelete: Cascade)
-  certificate  Certificate? @relation(fields: [certificateId], references: [id], onDelete: SetNull)
+  organization Organization            @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  requester    User                    @relation("AccessRequestsRequested", fields: [requesterId], references: [id], onDelete: Cascade)
+  reviewer     User?                   @relation("AccessRequestsToReview", fields: [reviewerId], references: [id], onDelete: SetNull)
+  server       Server                  @relation(fields: [serverId], references: [id], onDelete: Cascade)
+  certificate  Certificate?            @relation(fields: [certificateId], references: [id], onDelete: SetNull)
   sessions     Session[]
   approvers    AccessRequestApprover[]
 
@@ -677,34 +745,34 @@ enum SessionStatus {
 }
 
 model Session {
-  id               String        @id @default(cuid())
-  orgId            String        @map("org_id")
-  userId           String        @map("user_id")
+  id              String        @id @default(cuid())
+  orgId           String        @map("org_id")
+  userId          String        @map("user_id")
   // Null for Quick Connect sessions to hosts that are not saved servers.
-  serverId         String?       @map("server_id")
-  certificateId    String?       @map("certificate_id")
-  accessRequestId  String?       @map("access_request_id")
-  sessionType      SessionType   @map("session_type")
+  serverId        String?       @map("server_id")
+  certificateId   String?       @map("certificate_id")
+  accessRequestId String?       @map("access_request_id")
+  sessionType     SessionType   @map("session_type")
   // certificate | credential | quick_connect
-  authMethod       String        @default("certificate") @map("auth_method")
-  targetHost       String?       @map("target_host")
-  targetPort       Int?          @map("target_port")
-  targetUser       String?       @map("target_user")
-  status           SessionStatus @default(ACTIVE)
-  clientIp         String?       @map("client_ip")
-  userAgent        String?       @map("user_agent")
-  startedAt        DateTime      @default(now()) @map("started_at")
-  endedAt          DateTime?     @map("ended_at")
-  durationSeconds  Int?          @map("duration_seconds")
-  recordingPath    String?       @map("recording_path")
-  recordingKey     String?       @map("recording_key")
-  metadata         Json?
+  authMethod      String        @default("certificate") @map("auth_method")
+  targetHost      String?       @map("target_host")
+  targetPort      Int?          @map("target_port")
+  targetUser      String?       @map("target_user")
+  status          SessionStatus @default(ACTIVE)
+  clientIp        String?       @map("client_ip")
+  userAgent       String?       @map("user_agent")
+  startedAt       DateTime      @default(now()) @map("started_at")
+  endedAt         DateTime?     @map("ended_at")
+  durationSeconds Int?          @map("duration_seconds")
+  recordingPath   String?       @map("recording_path")
+  recordingKey    String?       @map("recording_key")
+  metadata        Json?
 
-  organization   Organization  @relation(fields: [orgId], references: [id], onDelete: Cascade)
-  user           User          @relation(fields: [userId], references: [id], onDelete: Cascade)
-  server         Server?       @relation(fields: [serverId], references: [id], onDelete: Cascade)
-  certificate    Certificate?  @relation(fields: [certificateId], references: [id], onDelete: SetNull)
-  accessRequest  AccessRequest? @relation(fields: [accessRequestId], references: [id], onDelete: SetNull)
+  organization  Organization   @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  user          User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  server        Server?        @relation(fields: [serverId], references: [id], onDelete: Cascade)
+  certificate   Certificate?   @relation(fields: [certificateId], references: [id], onDelete: SetNull)
+  accessRequest AccessRequest? @relation(fields: [accessRequestId], references: [id], onDelete: SetNull)
 
   @@index([orgId, status])
   @@index([userId])
@@ -735,16 +803,16 @@ model Notification {
 }
 
 model UserToken {
-  id        String    @id @default(cuid())
-  userId    String    @map("user_id")
-  type      String
-  tokenHash String    @unique @map("token_hash")
+  id         String    @id @default(cuid())
+  userId     String    @map("user_id")
+  type       String
+  tokenHash  String    @unique @map("token_hash")
   // Optional binding to a domain object (e.g. the AccessRequest an approval
   // token is for). Null for plain invite / password-reset tokens.
-  resourceId String?  @map("resource_id")
-  expiresAt DateTime  @map("expires_at")
-  usedAt    DateTime? @map("used_at")
-  createdAt DateTime  @default(now()) @map("created_at")
+  resourceId String?   @map("resource_id")
+  expiresAt  DateTime  @map("expires_at")
+  usedAt     DateTime? @map("used_at")
+  createdAt  DateTime  @default(now()) @map("created_at")
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
@@ -832,7 +900,7 @@ model ImportJob {
   // uploaded | preview_ready | committing | onboarding | completed | failed
   status    String   @default("preview_ready")
   source    String   @default("csv") // csv | json | zip
-  summary   Json     @default("{}")  // per-entity create/update/skip/conflict/error counts
+  summary   Json     @default("{}") // per-entity create/update/skip/conflict/error counts
   error     String?
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
@@ -849,7 +917,7 @@ model ImportJob {
 model ImportRow {
   id             String  @id @default(cuid())
   jobId          String  @map("job_id")
-  entity         String  // customer | server | user | group | policy | membership
+  entity         String // customer | server | user | group | policy | membership
   rowIndex       Int     @map("row_index")
   raw            Json
   resolved       Json    @default("{}")
@@ -901,9 +969,9 @@ model StorageConfig {
   id                 String   @id @default(cuid())
   scope              String   @unique @default("global")
   provider           String   @default("minio") // minio | s3 | azure
-  endpoint           String?  // full URL or bare host (minio/custom s3); blank = AWS regional / Azure default
-  region             String?  // s3 region
-  bucket             String?  // bucket name (s3/minio) or container name (azure)
+  endpoint           String? // full URL or bare host (minio/custom s3); blank = AWS regional / Azure default
+  region             String? // s3 region
+  bucket             String? // bucket name (s3/minio) or container name (azure)
   accessKey          String?  @map("access_key") // access key id (s3/minio) or account name (azure) — not secret
   secretKeyEncrypted String?  @map("secret_key_encrypted") @db.Text // AES-256-GCM
   useSsl             Boolean  @default(false) @map("use_ssl")
@@ -915,7 +983,6 @@ model StorageConfig {
   @@map("storage_configs")
 }
 
-
 // ---------------------------------------------------------------------------
 // Keystore — stored SSH keys and reusable identities for hosts that are NOT
 // bootstrapped with the Shellius CA. Documented, admin-sanctioned exception to
@@ -926,31 +993,31 @@ model StorageConfig {
 
 /// A stored SSH key pair (generated by Shellius or imported).
 model SshKey {
-  id                  String   @id @default(cuid())
-  orgId               String   @map("org_id")
+  id                  String    @id @default(cuid())
+  orgId               String    @map("org_id")
   name                String
   description         String?
-  keyType             String   @map("key_type") // ed25519 | rsa | ecdsa
+  keyType             String    @map("key_type") // ed25519 | rsa | ecdsa
   bits                Int?
-  publicKey           String   @map("public_key") @db.Text // OpenSSH one-line format
-  privateKeyEncrypted String   @map("private_key_encrypted") @db.Text
-  passphraseEncrypted String?  @map("passphrase_encrypted") @db.Text
-  fingerprint         String   // SHA256:...
+  publicKey           String    @map("public_key") @db.Text // OpenSSH one-line format
+  privateKeyEncrypted String    @map("private_key_encrypted") @db.Text
+  passphraseEncrypted String?   @map("passphrase_encrypted") @db.Text
+  fingerprint         String // SHA256:...
   comment             String?
-  source              String   @default("generated") // generated | imported
+  source              String    @default("generated") // generated | imported
   // Format the key was imported from (normalised to OpenSSH on import):
   // openssh | pkcs1 | pkcs8 | sec1 | ppk2 | ppk3
-  originalFormat      String?  @map("original_format")
+  originalFormat      String?   @map("original_format")
   // Optional OpenSSH user certificate (…-cert-v01@openssh.com) paired with
   // this key. When present, connections authenticate with the certificate.
-  certificate         String?  @db.Text
-  createdById         String?  @map("created_by_id")
+  certificate         String?   @db.Text
+  createdById         String?   @map("created_by_id")
   // null = organization Keystore; set = personal vault of that user (only
   // they can see or use it — docs/personal-vault.md).
-  ownerId             String?  @map("owner_id")
+  ownerId             String?   @map("owner_id")
   lastExportedAt      DateTime? @map("last_exported_at")
-  createdAt           DateTime @default(now()) @map("created_at")
-  updatedAt           DateTime @updatedAt @map("updated_at")
+  createdAt           DateTime  @default(now()) @map("created_at")
+  updatedAt           DateTime  @updatedAt @map("updated_at")
 
   organization Organization    @relation(fields: [orgId], references: [id], onDelete: Cascade)
   owner        User?           @relation("PersonalSshKeys", fields: [ownerId], references: [id], onDelete: Cascade)
@@ -1067,24 +1134,194 @@ model PersonalHost {
 /// Never stores secrets: only the target and how it was authenticated. Rows
 /// older than 7 days are pruned; one row per (user, host, port, username).
 model QuickConnectHistory {
-  id              String    @id @default(cuid())
-  orgId           String    @map("org_id")
-  userId          String    @map("user_id")
+  id              String   @id @default(cuid())
+  orgId           String   @map("org_id")
+  userId          String   @map("user_id")
   host            String
-  port            Int       @default(22)
+  port            Int      @default(22)
   username        String
-  authType        String    @map("auth_type") // password | key | credential
-  credentialId    String?   @map("credential_id") // identity used, for one-click reconnect
-  serverId        String?   @map("server_id") // set when the target matches / was saved as a server
-  lastSessionId   String?   @map("last_session_id")
-  lastStatus      String    @default("connected") @map("last_status") // connected | failed
-  lastError       String?   @map("last_error")
-  connectCount    Int       @default(1) @map("connect_count")
-  lastConnectedAt DateTime  @default(now()) @map("last_connected_at")
-  createdAt       DateTime  @default(now()) @map("created_at")
+  authType        String   @map("auth_type") // password | key | credential
+  credentialId    String?  @map("credential_id") // identity used, for one-click reconnect
+  serverId        String?  @map("server_id") // set when the target matches / was saved as a server
+  lastSessionId   String?  @map("last_session_id")
+  lastStatus      String   @default("connected") @map("last_status") // connected | failed
+  lastError       String?  @map("last_error")
+  connectCount    Int      @default(1) @map("connect_count")
+  lastConnectedAt DateTime @default(now()) @map("last_connected_at")
+  createdAt       DateTime @default(now()) @map("created_at")
 
   @@unique([userId, host, port, username])
   @@index([orgId, userId, lastConnectedAt])
   @@index([lastConnectedAt])
   @@map("quick_connect_history")
+}
+
+// ---------------------------------------------------------------------------
+// Posture (docs/posture/posture-spec.md)
+//
+// Exposure posture, not monitoring: what a host exposes, to whom, and whether
+// anyone knows why. Findings are long-lived objects that open and close —
+// NOT an event per scan — which is what makes "open for 14 days" answerable
+// without a time-series store.
+// ---------------------------------------------------------------------------
+
+/// One collector run for one host. `raw` keeps the full payload for drift
+/// review and is pruned on the org's retention schedule.
+model HostSnapshot {
+  id             String   @id @default(cuid())
+  orgId          String   @map("org_id")
+  serverId       String   @map("server_id")
+  collectedAt    DateTime @map("collected_at")
+  receivedAt     DateTime @default(now()) @map("received_at")
+  agentVersion   String?  @map("agent_version")
+  // A collector that ran but could not see everything (no container runtime
+  // access, unknown firewall engine) is degraded, NOT clean — the difference
+  // decides whether a "no findings" report means anything.
+  collectorOk    Boolean  @default(true) @map("collector_ok")
+  degradedReason String?  @map("degraded_reason")
+  firewall       Json     @default("{}")
+  raw            Json     @default("{}")
+
+  organization Organization   @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  server       Server         @relation(fields: [serverId], references: [id], onDelete: Cascade)
+  listeners    HostListener[]
+
+  @@index([orgId, serverId, collectedAt])
+  @@index([orgId, receivedAt])
+  @@map("host_snapshots")
+}
+
+/// A listening socket at a point in time, with the owner resolved from /proc
+/// and the reachability verdict for it.
+model HostListener {
+  id            String  @id @default(cuid())
+  orgId         String  @map("org_id")
+  serverId      String  @map("server_id")
+  snapshotId    String  @map("snapshot_id")
+  proto         String
+  bind          String
+  port          Int
+  containerPort Int?    @map("container_port")
+  bindClass     String  @map("bind_class") // wildcard | loopback | private | specific
+  reachability  String // INTERNET | FIREWALLED | LAN | LOOPBACK | UNKNOWN
+  service       String?
+  ownerKind     String  @map("owner_kind") // docker | podman | pm2 | systemd | process | unknown
+  ownerName     String  @map("owner_name")
+  ownerDetail   String? @map("owner_detail") // image / exec path
+  ownerRef      String? @map("owner_ref") // container id / pm2 id / unit name
+  ownerUser     String? @map("owner_user") // owning unix user — "whose is it" on a shared box
+  sourcePath    String? @map("source_path") // compose file / unit file / cwd — what you edit to change it
+  pid           Int?
+
+  organization Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  server       Server       @relation(fields: [serverId], references: [id], onDelete: Cascade)
+  snapshot     HostSnapshot @relation(fields: [snapshotId], references: [id], onDelete: Cascade)
+
+  @@index([orgId, serverId])
+  @@index([orgId, reachability])
+  @@index([snapshotId])
+  @@map("host_listeners")
+}
+
+/// An open exposure problem. Unique per (server, code, proto, port) so a
+/// finding that persists across scans stays ONE row with a first-seen date.
+model ExposureFinding {
+  id               String    @id @default(cuid())
+  orgId            String    @map("org_id")
+  serverId         String    @map("server_id")
+  code             String
+  severity         String
+  proto            String?
+  port             Int?
+  service          String?
+  ownerLabel       String?   @map("owner_label")
+  message          String
+  detail           Json      @default("{}")
+  firstSeenAt      DateTime  @map("first_seen_at")
+  lastSeenAt       DateTime  @map("last_seen_at")
+  resolvedAt       DateTime? @map("resolved_at")
+  mutedUntil       DateTime? @map("muted_until")
+  mutedReason      String?   @map("muted_reason")
+  mutedById        String?   @map("muted_by_id")
+  acknowledgedAt   DateTime? @map("acknowledged_at")
+  acknowledgedById String?   @map("acknowledged_by_id")
+
+  organization Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  server       Server       @relation(fields: [serverId], references: [id], onDelete: Cascade)
+
+  @@unique([orgId, serverId, code, proto, port])
+  @@index([orgId, severity, resolvedAt])
+  @@index([orgId, serverId])
+  @@map("exposure_findings")
+}
+
+/// Resource gauges — ~24h of 1-minute samples, pruned by a job. Deliberately
+/// not a TSDB: if someone wants 90-day graphs, that is the signal to deploy
+/// Prometheus, not to raise this retention.
+model HostMetricSample {
+  id       String   @id @default(cuid())
+  orgId    String   @map("org_id")
+  serverId String   @map("server_id")
+  at       DateTime
+  cpuPct   Float?   @map("cpu_pct")
+  memPct   Float?   @map("mem_pct")
+  diskPct  Float?   @map("disk_pct")
+  load1    Float?   @map("load_1")
+
+  organization Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  server       Server       @relation(fields: [serverId], references: [id], onDelete: Cascade)
+
+  @@index([orgId, serverId, at])
+  @@map("host_metric_samples")
+}
+
+/// Who gets told about a finding. Routing mirrors access-policy approver
+/// routing (roles + group + explicit users) so there is one mental model for
+/// "who gets told" across the product.
+model PostureAlertRule {
+  id                 String   @id @default(cuid())
+  orgId              String   @map("org_id")
+  name               String
+  isActive           Boolean  @default(true) @map("is_active")
+  severities         String[] @default([])
+  codes              String[] @default([])
+  customerIds        String[] @default([]) @map("customer_ids")
+  environments       String[] @default([])
+  recipientRoles     String[] @default([]) @map("recipient_roles")
+  recipientGroupId   String?  @map("recipient_group_id")
+  recipientUserIds   String[] @default([]) @map("recipient_user_ids")
+  channels           String[] @default(["inapp"])
+  mode               String   @default("immediate") // immediate | digest
+  notifyOnResolve    Boolean  @default(false) @map("notify_on_resolve")
+  throttleMinutes    Int      @default(0) @map("throttle_minutes")
+  escalateAfterHours Int?     @map("escalate_after_hours")
+  escalateToGroupId  String?  @map("escalate_to_group_id")
+  createdAt          DateTime @default(now()) @map("created_at")
+  updatedAt          DateTime @updatedAt @map("updated_at")
+
+  organization Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+
+  @@unique([orgId, name])
+  @@index([orgId, isActive])
+  @@map("posture_alert_rules")
+}
+
+/// Per-org posture configuration: retention, collector cadence, and the
+/// expected-public port list that keeps a deliberate 80/443 from being
+/// reported as an incident.
+model PostureSettings {
+  id                     String   @id @default(cuid())
+  orgId                  String   @unique @map("org_id")
+  enabled                Boolean  @default(false)
+  collectIntervalSeconds Int      @default(300) @map("collect_interval_seconds")
+  snapshotRetentionDays  Int      @default(7) @map("snapshot_retention_days")
+  metricRetentionHours   Int      @default(24) @map("metric_retention_hours")
+  findingRetentionDays   Int      @default(90) @map("finding_retention_days")
+  expectedPublicPorts    Json     @default("[]") @map("expected_public_ports")
+  createdAt              DateTime @default(now()) @map("created_at")
+  updatedAt              DateTime @updatedAt @map("updated_at")
+
+  organization Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+
+  @@map("posture_settings")
 }

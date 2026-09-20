@@ -5,6 +5,7 @@ import { WebLinksAddon } from '@xterm/addon-web-links';
 import { Loader2, X } from 'lucide-react';
 import { useAuth } from '@/context/AuthContext';
 import { requestWsTicket } from '@/services/terminalService';
+import { attachTouchScroll } from '@/lib/terminalTouchScroll';
 import '@xterm/xterm/css/xterm.css';
 
 // Global shortcuts the terminal workspace needs even while a pane has
@@ -181,6 +182,7 @@ const TerminalView = forwardRef(function TerminalView(
     emitState('connecting');
 
     let cleanupResize = () => {};
+    let detachTouchScroll = () => {};
     let retryTimer = null;
     let attempt = 0;
     let onlineListener = null;
@@ -203,6 +205,9 @@ const TerminalView = forwardRef(function TerminalView(
 
     if (containerRef.current) {
       term.open(containerRef.current);
+      // xterm's text layer isn't inside its own scroller, so a finger drag has
+      // nothing to pan on a phone — wire scrollback to touch ourselves.
+      detachTouchScroll = attachTouchScroll(term, containerRef.current);
     }
 
     // Keystrokes go to whichever socket is current (it changes on re-attach).
@@ -342,6 +347,7 @@ const TerminalView = forwardRef(function TerminalView(
     cleanupResize = () => {
       fontsCancelled = true;
       resizeObserverRef.current?.disconnect();
+      detachTouchScroll();
     };
 
     function openWs(url, { reattach }) {

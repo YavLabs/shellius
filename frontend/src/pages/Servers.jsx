@@ -26,6 +26,8 @@ import HealthStatusDot, { HEALTH_COLORS, HEALTH_LABELS } from '@/components/shar
 import { envAccent } from '@/lib/mobileCard';
 import ServerForm from '@/components/servers/ServerForm';
 import BootstrapModal from '@/components/servers/BootstrapModal';
+import BootstrapWizard from '@/components/servers/BootstrapWizard';
+import ProvisionModal from '@/components/servers/ProvisionModal';
 import UninstallHostModal from '@/components/servers/UninstallHostModal';
 import QuickConnectButton from '@/components/servers/QuickConnectButton';
 import QuickConnectHeaderButton from '@/components/quickConnect/QuickConnectButton';
@@ -51,7 +53,7 @@ const HEALTH_STATUSES = ['healthy', 'unhealthy', 'unknown', 'maintenance'];
 
 function Servers() {
   const navigate = useNavigate();
-  const { user } = useAuth();
+  const { user, isScoped } = useAuth();
   // Each action follows its own permission (same keys the API checks).
   const canCreate = can(user, 'servers.create');
   const canEdit = can(user, 'servers.update');
@@ -83,6 +85,14 @@ function Servers() {
   const [confirm, setConfirm] = useState(null);
   const [deleteTarget, setDeleteTarget] = useState(null);
   const [bootstrapServer, setBootstrapServer] = useState(null);
+  // The install wizard (method + scope). Bootstrap host from the row menu
+  // opens it; on finish it hands off to BootstrapModal (manual) or
+  // ProvisionModal (automatic) — the same two modals as before, so the list
+  // and the detail page can never drift into offering different installs.
+  const [wizardServer, setWizardServer] = useState(null);
+  const [provisionServerTarget, setProvisionServerTarget] = useState(null);
+  const [installScope, setInstallScope] = useState('full');
+  const [bootstrapScope, setBootstrapScope] = useState('full');
   const [uninstallServer, setUninstallServer] = useState(null);
   const [deployWizardOpen, setDeployWizardOpen] = useState(false);
   const [newServerCustomerId, setNewServerCustomerId] = useState('');
@@ -249,6 +259,7 @@ function Servers() {
         placeholder="All customers"
         searchable={true}
         clearable={false}
+        emptyMessage={isScoped ? 'No customers in your assigned scope' : 'No matches'}
       />
     </>
   );
@@ -352,7 +363,7 @@ function Servers() {
                 {r.authMode === 'credential' && (
                   <KeyRound
                     className="h-3 w-3 shrink-0 text-amber-600 dark:text-amber-400"
-                    title={`Stored identity${r.credential?.name ? `: ${r.credential.name}` : ''} (no bootstrap)`}
+                    title={`Stored identity${r.credential?.name ? `: ${r.credential.name}` : ''}`}
                   />
                 )}
               </span>
@@ -493,7 +504,7 @@ function Servers() {
               {
                 label: 'Bootstrap host',
                 icon: Download,
-                onClick: (r) => setBootstrapServer(r),
+                onClick: (r) => setWizardServer(r),
               },
               {
                 label: 'Uninstall agent',
@@ -557,7 +568,11 @@ function Servers() {
         columns={columns}
         data={servers}
         loading={loading}
-        emptyMessage="No servers found"
+        emptyMessage={
+          isScoped
+            ? 'No servers in your assigned customers. Ask an admin to expand your access scope.'
+            : 'No servers found'
+        }
         searchPlaceholder="Search name, hostname or IP..."
         onSearchChange={handleSearchChange}
         filters={filterSlot}
@@ -599,11 +614,40 @@ function Servers() {
         />
       </Modal>
 
+      <BootstrapWizard
+        open={!!wizardServer}
+        server={wizardServer}
+        onClose={() => setWizardServer(null)}
+        onStart={({ method, scope }) => {
+          const target = wizardServer;
+          setWizardServer(null);
+          setInstallScope(scope);
+          if (method === 'manual') {
+            setBootstrapScope(scope);
+            setBootstrapServer(target);
+          } else {
+            setProvisionServerTarget(target);
+          }
+        }}
+      />
+
       <BootstrapModal
         open={!!bootstrapServer}
+        mode={bootstrapScope}
         server={bootstrapServer}
         onClose={() => setBootstrapServer(null)}
       />
+
+      {provisionServerTarget && (
+        <ProvisionModal
+          server={provisionServerTarget}
+          installMode={installScope}
+          onClose={() => {
+            setProvisionServerTarget(null);
+            fetch();
+          }}
+        />
+      )}
 
       <UninstallHostModal
         open={!!uninstallServer}

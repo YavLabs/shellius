@@ -43,6 +43,7 @@ import * as caService from './caService.js';
 import { resolveCredentialAuth, toKeyDeploymentDTO } from './keystoreService.js';
 import { log as auditLog } from './auditService.js';
 import { createQueue } from '../config/queue.js';
+import { UNSCOPED, assertServerInScope, relationScopeWhere } from '../lib/scope.js';
 
 const QUEUE_NAME = 'key-deployments';
 export const deploymentQueue = createQueue(QUEUE_NAME);
@@ -149,12 +150,14 @@ async function loadBatchMeta(batchId) {
  * @param {boolean} [params.useSudo=false]
  * @param {{oldSshKeyId:string, updateCredentials?:boolean}} [params.rotate]
  * @param {string} actorId
+ * @param {{mode: string, customerIds: string[]}} [scope=UNSCOPED]
  * @returns {Promise<{ batchId: string, deployments: object[] }>}
  */
 export async function createBatch(
   orgId,
   { sshKeyId, serverIds, action, targetUser, auth, useSudo = false, rotate },
-  actorId
+  actorId,
+  scope = UNSCOPED
 ) {
   if (!ACTIONS.includes(action)) throw new ApiError(400, `action must be one of: ${ACTIONS.join(', ')}`);
   if (!Array.isArray(serverIds) || serverIds.length === 0) {
@@ -195,6 +198,9 @@ export async function createBatch(
   if (missing.length) {
     throw new ApiError(400, `Servers not found in this organization: ${missing.join(', ')}`);
   }
+  // Every target server must be in scope — key deployment reaches any server
+  // named by id, so this is a write path that needs the same guard as a read.
+  for (const server of servers) assertServerInScope(scope, server);
 
   const batchId = crypto.randomUUID();
 
@@ -264,8 +270,8 @@ export async function createBatch(
 // list / batches / retry
 // ---------------------------------------------------------------------------
 
-export async function listDeployments(orgId, { batchId, sshKeyId, serverId, page = 1, pageSize = 25 } = {}) {
-  const where = { orgId };
+export async function listDeployments(orgId, { batchId, sshKeyId, serverId, page = 1, pageSize = 25 } = {}, scope = UNSCOPED) {
+  const where = { orgId, ...relationScopeWhere(scope, 'server') };
   if (batchId) where.batchId = batchId;
   if (sshKeyId) where.sshKeyId = sshKeyId;
   if (serverId) where.serverId = serverId;
@@ -304,11 +310,15 @@ async function loadUsersById(orgId, ids) {
   return new Map(rows.map((r) => [r.id, { id: r.id, name: r.name, email: r.email, avatarUrl: r.avatarUrl }]));
 }
 
-export async function listBatches(orgId, { limit = 20 } = {}) {
+export async function listBatches(orgId, { limit = 20 } = {}, scope = UNSCOPED) {
   const lim = Math.min(100, Math.max(1, parseInt(limit, 10) || 20));
+  // groupBy accepts relation filters the same as findMany, so a batch that
+  // touches only out-of-scope servers never surfaces here. A batch spanning
+  // both in- and out-of-scope servers still appears, but its row list below
+  // is filtered the same way, so a scoped viewer only sees the rows they may.
   const batches = await prisma.keyDeployment.groupBy({
     by: ['batchId'],
-    where: { orgId },
+    where: { orgId, ...relationScopeWhere(scope, 'server') },
     _max: { createdAt: true },
     orderBy: { _max: { createdAt: 'desc' } },
     take: lim,
@@ -317,7 +327,7 @@ export async function listBatches(orgId, { limit = 20 } = {}) {
   const results = [];
   for (const b of batches) {
     const rows = await prisma.keyDeployment.findMany({
-      where: { orgId, batchId: b.batchId },
+      where: { orgId, batchId: b.batchId, ...relationScopeWhere(scope, 'server') },
       include: { sshKey: { select: { id: true, name: true } } },
       orderBy: { createdAt: 'asc' },
     });
@@ -338,9 +348,15 @@ export async function listBatches(orgId, { limit = 20 } = {}) {
   return { batches: results };
 }
 
-export async function retryDeployment(orgId, id, actorId) {
-  const row = await prisma.keyDeployment.findFirst({ where: { id, orgId } });
+export async function retryDeployment(orgId, id, actorId, scope = UNSCOPED) {
+  const row = await prisma.keyDeployment.findFirst({
+    where: { id, orgId },
+    include: { server: { select: { id: true, customerId: true } } },
+  });
   if (!row) throw new ApiError(404, 'Deployment not found');
+  // Retrying re-runs the deploy script against the target server — guard it
+  // exactly like createBatch, not just the read.
+  assertServerInScope(scope, row.server);
   if (row.status === 'running') throw new ApiError(409, 'Deployment is already running');
 
   const updated = await prisma.keyDeployment.update({

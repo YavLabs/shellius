@@ -1,6 +1,7 @@
 import net from 'net';
 import prisma from '../config/db.js';
 import logger from '../utils/logger.js';
+import { serverScopeWhere } from '../lib/scope.js';
 
 const CONCURRENCY = 10;
 const TIMEOUT_MS = 10000;
@@ -112,10 +113,12 @@ export async function checkCustomerServers(customerId) {
   return { total: servers.length };
 }
 
-export async function getHealthSummary(orgId) {
+export async function getHealthSummary(orgId, scope) {
   const groups = await prisma.server.groupBy({
     by: ['healthStatus'],
-    where: { orgId },
+    // Aggregates are an easy place for a leak to slip through unnoticed
+    // (spec §6.3) — scope this exactly like a list, not just row reads.
+    where: { orgId, ...serverScopeWhere(scope) },
     _count: { _all: true },
   });
   const summary = { healthy: 0, unhealthy: 0, unknown: 0, maintenance: 0, total: 0 };
@@ -126,8 +129,8 @@ export async function getHealthSummary(orgId) {
   return summary;
 }
 
-export async function runHealthCheckForServer(orgId, serverId) {
-  const server = await prisma.server.findFirst({ where: { id: serverId, orgId } });
+export async function runHealthCheckForServer(orgId, serverId, scope) {
+  const server = await prisma.server.findFirst({ where: { id: serverId, orgId, ...serverScopeWhere(scope) } });
   if (!server) return null;
   const result = await checkServer(server);
   await applyResultAndAudit(server, result);

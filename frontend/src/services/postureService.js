@@ -1,0 +1,68 @@
+import api from './api';
+
+/**
+ * Posture — exposure findings, per-server snapshots and org settings/alert
+ * rules. Matches the contract in docs/posture/posture-spec.md §8; the
+ * backend is built against the same contract.
+ */
+
+// ---------------------------------------------------------------------------
+// Fleet summary + findings inbox
+// ---------------------------------------------------------------------------
+
+export const getPostureSummary = () =>
+  api.get('/posture/summary').then((r) => r.data?.data ?? r.data);
+
+export const listFindings = (params) =>
+  api.get('/posture/findings', { params }).then((r) => r.data?.data ?? r.data);
+
+export const getServerPosture = (serverId) =>
+  api.get(`/posture/servers/${serverId}`).then((r) => r.data?.data ?? r.data);
+
+// ---------------------------------------------------------------------------
+// Finding actions
+// ---------------------------------------------------------------------------
+
+/** `{ days?, until?, reason }` — one of days/until is required by the API. */
+export const muteFinding = (id, body) =>
+  api.post(`/posture/findings/${id}/mute`, body).then((r) => r.data?.data ?? r.data);
+
+export const unmuteFinding = (id) =>
+  api.post(`/posture/findings/${id}/unmute`).then((r) => r.data?.data ?? r.data);
+
+export const acknowledgeFinding = (id) =>
+  api.post(`/posture/findings/${id}/acknowledge`).then((r) => r.data?.data ?? r.data);
+
+// ---------------------------------------------------------------------------
+// Settings
+// ---------------------------------------------------------------------------
+
+export const getPostureSettings = () =>
+  api.get('/posture/settings').then((r) => r.data?.data ?? r.data);
+
+export const updatePostureSettings = (body) =>
+  api.put('/posture/settings', body).then((r) => r.data?.data ?? r.data);
+
+// ---------------------------------------------------------------------------
+// Alert rules
+// ---------------------------------------------------------------------------
+
+export const listAlertRules = () =>
+  api.get('/posture/alert-rules').then((r) => r.data?.data?.rules ?? r.data?.data ?? r.data);
+
+export const createAlertRule = (body) =>
+  api.post('/posture/alert-rules', body).then((r) => r.data?.data ?? r.data);
+
+export const updateAlertRule = (id, body) =>
+  api.put(`/posture/alert-rules/${id}`, body).then((r) => r.data?.data ?? r.data);
+
+export const deleteAlertRule = (id) =>
+  api.delete(`/posture/alert-rules/${id}`).then((r) => r.data?.data ?? r.data);
+
+/**
+ * Collector coverage: which servers report, which are stale, which never
+ * installed the collector. Powers the actionable list behind the Posture
+ * page's "reporting X of Y" tile.
+ */
+export const getPostureServers = (params = {}) =>
+  api.get('/posture/servers', { params }).then((r) => r.data?.data ?? r.data);

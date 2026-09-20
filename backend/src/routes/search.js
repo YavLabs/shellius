@@ -38,6 +38,7 @@ router.get(
       permissions: req.user.permissions,
       q,
       limit,
+      scope: req.scope,
     });
     res.json({ success: true, data: { results, counts } });
   }),

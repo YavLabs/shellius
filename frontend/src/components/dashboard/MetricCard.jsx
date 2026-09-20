@@ -7,6 +7,9 @@ const ACCENTS = {
   emerald: { bg: 'bg-emerald-500/10', text: 'text-emerald-600 dark:text-emerald-400', ring: 'group-hover:border-emerald-500/40' },
   amber: { bg: 'bg-amber-500/10', text: 'text-amber-600 dark:text-amber-400', ring: 'group-hover:border-amber-500/40' },
   violet: { bg: 'bg-violet-500/10', text: 'text-violet-600 dark:text-violet-400', ring: 'group-hover:border-violet-500/40' },
+  // Same rose hue as the "danger" tone elsewhere (Badge, MobileCard accents) —
+  // used for critical-count tiles (e.g. Posture) rather than a new colour.
+  rose: { bg: 'bg-rose-500/10', text: 'text-rose-600 dark:text-rose-400', ring: 'group-hover:border-rose-500/40' },
 };
 
 /**

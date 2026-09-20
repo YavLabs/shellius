@@ -39,11 +39,12 @@ function CopyButton({ text }) {
   );
 }
 
-function BootstrapModal({ open, server, onClose }) {
+function BootstrapModal({ open, server, mode = 'full', onClose }) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [data, setData] = useState(null);
   const [tab, setTab] = useState('linux');
+  const isPosture = mode === 'posture';
 
   useEffect(() => {
     if (!open || !server?.id) return;
@@ -51,7 +52,7 @@ function BootstrapModal({ open, server, onClose }) {
     setError('');
     setData(null);
     setTab(detectOsTab(server.osType));
-    createBootstrapToken(server.id)
+    createBootstrapToken(server.id, mode)
       .then((d) => setData(d))
       .catch((err) =>
         setError(
@@ -61,28 +62,43 @@ function BootstrapModal({ open, server, onClose }) {
         )
       )
       .finally(() => setLoading(false));
-  }, [open, server?.id, server?.osType]);
+  }, [open, server?.id, server?.osType, mode]);
 
   const command = data?.commands?.[tab] || '';
   const ttlMin = data ? Math.round(data.expiresInSeconds / 60) : 0;
 
   return (
-    <Modal open={open} onClose={onClose} title="Bootstrap target host" size="lg">
+    <Modal open={open} onClose={onClose} title={isPosture ? 'Install posture collector' : 'Bootstrap target host'} size="lg">
       <div className="space-y-4 p-5 max-md:p-0">
         <div className="rounded-md border border-amber-500/30 bg-amber-500/10 p-3 text-xs text-amber-700 dark:text-amber-300">
           <div className="flex items-start gap-2">
             <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
-            <div>
-              <p className="font-medium">Before anyone can connect via Shellius:</p>
-              <p className="mt-0.5">
-                The target host must trust the Shellius CA and run the
-                <code className="mx-1 rounded bg-amber-500/20 px-1">check-principals</code>
-                agent. Run the command below <strong>once</strong> on{' '}
-                <strong>{server?.hostname || 'the target server'}</strong> as an
-                administrator. It installs the CA public key, the agent secret, the
-                check-principals script, and updates sshd.
-              </p>
-            </div>
+            {isPosture ? (
+              <div>
+                <p className="font-medium">Posture-only install — SSH access is untouched:</p>
+                <p className="mt-0.5">
+                  This host connects with a stored identity, not a Shellius certificate.
+                  Run the command below <strong>once</strong> on{' '}
+                  <strong>{server?.hostname || 'the target server'}</strong> as an
+                  administrator. It installs only the posture collector, its timer and
+                  its own sudoers drop-in — it never touches sshd config, CA trust,
+                  check-principals or JIT, and changes nothing about how SSH
+                  authentication works on this host.
+                </p>
+              </div>
+            ) : (
+              <div>
+                <p className="font-medium">Before anyone can connect via Shellius:</p>
+                <p className="mt-0.5">
+                  The target host must trust the Shellius CA and run the
+                  <code className="mx-1 rounded bg-amber-500/20 px-1">check-principals</code>
+                  agent. Run the command below <strong>once</strong> on{' '}
+                  <strong>{server?.hostname || 'the target server'}</strong> as an
+                  administrator. It installs the CA public key, the agent secret, the
+                  check-principals script, and updates sshd.
+                </p>
+              </div>
+            )}
           </div>
         </div>
 
@@ -146,24 +162,45 @@ function BootstrapModal({ open, server, onClose }) {
 
         <div className="rounded-md border border-border bg-muted/30 p-3 text-xs text-muted-foreground">
           <p className="font-medium text-foreground">What the script does</p>
-          <ul className="mt-1 list-disc space-y-0.5 pl-4">
-            <li>
-              Writes the Shellius CA public key to{' '}
-              <code>/etc/ssh/shellius_ca.pub</code> (or{' '}
-              <code>%ProgramData%\ssh\shellius_ca.pub</code> on Windows).
-            </li>
-            <li>
-              Stores the agent shared secret at{' '}
-              <code>/etc/shellius/agent-token</code> (root-only) so
-              check-principals can call the Shellius API.
-            </li>
-            <li>
-              Installs <code>shellius-check-principals</code> and wires it into{' '}
-              <code>sshd_config</code> via{' '}
-              <code>AuthorizedPrincipalsCommand</code>, then reloads sshd.
-            </li>
-            <li>Idempotent — safe to re-run. No static authorized_keys are added.</li>
-          </ul>
+          {isPosture ? (
+            <ul className="mt-1 list-disc space-y-0.5 pl-4">
+              <li>
+                Installs the posture collector, its systemd unit and timer, and its own
+                sudoers drop-in (least-privilege, scoped to the collector's commands only).
+              </li>
+              <li>
+                Stores the agent token at <code>/etc/shellius/agent-token</code>{' '}
+                (root-only) so the collector can report snapshots to the Shellius API.
+              </li>
+              <li>
+                Does not write the CA public key, does not touch{' '}
+                <code>sshd_config</code>, and does not install{' '}
+                <code>shellius-check-principals</code> — how this host authenticates
+                SSH connections is unchanged.
+              </li>
+              <li>Idempotent — safe to re-run. No static authorized_keys are added.</li>
+              <li>Linux / systemd hosts only (v1) — the Windows command is a no-op.</li>
+            </ul>
+          ) : (
+            <ul className="mt-1 list-disc space-y-0.5 pl-4">
+              <li>
+                Writes the Shellius CA public key to{' '}
+                <code>/etc/ssh/shellius_ca.pub</code> (or{' '}
+                <code>%ProgramData%\ssh\shellius_ca.pub</code> on Windows).
+              </li>
+              <li>
+                Stores the agent shared secret at{' '}
+                <code>/etc/shellius/agent-token</code> (root-only) so
+                check-principals can call the Shellius API.
+              </li>
+              <li>
+                Installs <code>shellius-check-principals</code> and wires it into{' '}
+                <code>sshd_config</code> via{' '}
+                <code>AuthorizedPrincipalsCommand</code>, then reloads sshd.
+              </li>
+              <li>Idempotent — safe to re-run. No static authorized_keys are added.</li>
+            </ul>
+          )}
         </div>
 
         <div data-sheet-footer className="flex items-center justify-between border-t border-border pt-3">

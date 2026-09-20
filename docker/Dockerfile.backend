@@ -9,6 +9,11 @@ COPY backend/ .
 # Include the CLI installer script so the backend can serve it from
 # /api/cli/install.sh. See backend/src/routes/cli.js.
 COPY scripts/install-tui.sh /app/scripts/install-tui.sh
+# Posture collector/wrapper/systemd-unit/sudoers source files, embedded
+# (base64) into the generated host bootstrap script. See
+# backend/src/routes/bootstrap.js's POSTURE_ASSET_PATHS and
+# docs/posture/posture-spec.md §4.
+COPY scripts/posture/ /app/scripts/posture/
 RUN npx prisma generate
 
 FROM node:20-alpine

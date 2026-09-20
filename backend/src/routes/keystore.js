@@ -139,7 +139,11 @@ router.get(
   VAULT_OR_KEYSTORE,
   asyncHandler(async (req, res) => {
     const ownerId = await ownerForScope(req, req.query.scope, 'keystore.view');
-    const result = await keystoreService.listKeys(req.orgId, { search: req.query.search, ownerId });
+    const result = await keystoreService.listKeys(req.orgId, {
+      search: req.query.search,
+      ownerId,
+      scope: req.scope,
+    });
     res.json({ success: true, data: result });
   })
 );
@@ -149,7 +153,7 @@ router.get(
   VAULT_OR_KEYSTORE,
   asyncHandler(async (req, res) => {
     const ownerId = await ownerForItem(req, 'sshKey', req.params.id, 'keystore.view');
-    const result = await keystoreService.getKey(req.orgId, req.params.id, { ownerId });
+    const result = await keystoreService.getKey(req.orgId, req.params.id, { ownerId, scope: req.scope });
     res.json({ success: true, data: result });
   })
 );
@@ -307,7 +311,7 @@ router.get(
   VAULT_OR_KEYSTORE,
   asyncHandler(async (req, res) => {
     const ownerId = await ownerForScope(req, req.query.scope, 'keystore.view');
-    const result = await keystoreService.listCredentials(req.orgId, { search: req.query.search, ownerId });
+    const result = await keystoreService.listCredentials(req.orgId, { search: req.query.search, ownerId, scope: req.scope });
     res.json({ success: true, data: result });
   })
 );
@@ -317,7 +321,7 @@ router.get(
   VAULT_OR_KEYSTORE,
   asyncHandler(async (req, res) => {
     const ownerId = await ownerForItem(req, 'credential', req.params.id, 'keystore.view');
-    const result = await keystoreService.getCredential(req.orgId, req.params.id, { ownerId });
+    const result = await keystoreService.getCredential(req.orgId, req.params.id, { ownerId, scope: req.scope });
     res.json({ success: true, data: result });
   })
 );
@@ -369,7 +373,7 @@ router.post(
     const ownerId = await ownerForItem(req, 'credential', req.params.id, 'keystore.test');
     if (ownerId) {
       // Your own identity: host tests only (prod / DENY guards in the service).
-      const result = await keystoreService.testCredential(req.orgId, req.params.id, req.body, req.user.userId, { ownerId });
+      const result = await keystoreService.testCredential(req.orgId, req.params.id, req.body, req.user.userId, { ownerId, scope: req.scope });
       res.json({ success: true, data: result });
       return;
     }
@@ -381,7 +385,7 @@ router.post(
         details: { missing: ['keystore.manage'] },
       });
     }
-    const result = await keystoreService.testCredential(req.orgId, req.params.id, req.body, req.user.userId);
+    const result = await keystoreService.testCredential(req.orgId, req.params.id, req.body, req.user.userId, { scope: req.scope });
     res.json({ success: true, data: result });
   })
 );
@@ -439,7 +443,7 @@ router.post(
   validate(createDeploymentSchema),
   asyncHandler(async (req, res) => {
     await assertCanDeployTo(req, req.body.serverIds);
-    const result = await keyDeploymentService.createBatch(req.orgId, req.body, req.user.userId);
+    const result = await keyDeploymentService.createBatch(req.orgId, req.body, req.user.userId, req.scope);
     res.status(202).json({ success: true, data: result });
   })
 );
@@ -449,7 +453,7 @@ router.get(
   requirePermission('keystore.view'),
   asyncHandler(async (req, res) => {
     const limit = parseInt(req.query.limit, 10) || 20;
-    const result = await keyDeploymentService.listBatches(req.orgId, { limit });
+    const result = await keyDeploymentService.listBatches(req.orgId, { limit }, req.scope);
     res.json({ success: true, data: result });
   })
 );
@@ -459,7 +463,7 @@ router.get(
   requirePermission('keystore.view'),
   validateQuery(listDeploymentsQuerySchema),
   asyncHandler(async (req, res) => {
-    const result = await keyDeploymentService.listDeployments(req.orgId, req.query);
+    const result = await keyDeploymentService.listDeployments(req.orgId, req.query, req.scope);
     res.json({ success: true, data: { deployments: result.deployments }, meta: result.meta });
   })
 );
@@ -471,7 +475,7 @@ router.post(
   asyncHandler(async (req, res) => {
     const dep = await prisma.keyDeployment.findFirst({ where: { id: req.params.id, orgId: req.orgId }, select: { serverId: true } });
     if (dep) await assertCanDeployTo(req, [dep.serverId]);
-    const result = await keyDeploymentService.retryDeployment(req.orgId, req.params.id, req.user.userId);
+    const result = await keyDeploymentService.retryDeployment(req.orgId, req.params.id, req.user.userId, req.scope);
     res.json({ success: true, data: result });
   })
 );

@@ -10,6 +10,8 @@ import {
   Zap,
   Mail,
   HardDrive,
+  Radar,
+  ShieldHalf,
 } from 'lucide-react';
 import { canAny } from '@/lib/permissions';
 
@@ -66,6 +68,15 @@ export const ADMIN_SECTIONS = [
     keywords: ['teams', 'membership', 'group'],
   },
   {
+    key: 'policies',
+    group: 'people',
+    label: 'Policies',
+    description: 'Who may reach which servers, and for how long',
+    icon: ShieldHalf,
+    anyOf: ['policies.view'],
+    keywords: ['policy', 'access policy', 'rules', 'grant', 'break-glass', 'break glass', 'auto approve', 'principals', 'ttl'],
+  },
+  {
     key: 'sso',
     group: 'authentication',
     label: 'Single sign-on',
@@ -118,6 +129,15 @@ export const ADMIN_SECTIONS = [
     icon: Zap,
     anyOf: ['quick_connect.settings'],
     keywords: ['quick connect', 'ad-hoc', 'adhoc', 'ssh'],
+  },
+  {
+    key: 'posture',
+    group: 'organization',
+    label: 'Posture',
+    description: 'Retention, expected-public ports and alert routing',
+    icon: Radar,
+    anyOf: ['posture.settings'],
+    keywords: ['posture', 'exposure', 'findings', 'firewall', 'collector', 'alert rules', 'retention'],
   },
   {
     key: 'email',
@@ -236,7 +256,7 @@ export const LEGACY_SETTINGS_TABS = {
   smtp: 'email',
 };
 
-const LEGACY_PAGES = ['users', 'roles', 'groups'];
+const LEGACY_PAGES = ['users', 'roles', 'groups', 'policies'];
 
 /**
  * The /admin URL for an old /settings, /users, /roles or /groups URL, or

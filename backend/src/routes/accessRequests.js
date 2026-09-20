@@ -132,6 +132,7 @@ router.post(
       protocol: req.body.protocol,
       callerRole: req.user.role,
       callerPermissions: req.user.permissions,
+      scope: req.scope,
     });
     res.status(201).json({ success: true, data: { accessRequest } });
   })
@@ -154,6 +155,7 @@ router.get(
       status: req.query.status,
       page: req.query.page,
       limit: req.query.limit,
+      scope: req.scope,
     });
     res.json({ success: true, data: result, meta: { page: result.page, limit: result.limit, total: result.total } });
   })
@@ -198,6 +200,7 @@ router.get(
       userId: req.user.userId,
       permissions: req.user.permissions,
       serverId,
+      scope: req.scope,
     });
     res.json({ success: true, data: intent });
   })
@@ -223,37 +226,90 @@ router.get(
       orgId: req.orgId,
       userId: req.user.userId,
       serverIds,
+      scope: req.scope,
     });
     res.json({ success: true, data: { intents } });
   })
 );
 
 // ---------------------------------------------------------------------------
-// POST /api/access-requests/break-glass — admin-only emergency access
+// Break-glass — step-up-verified emergency access.
 // Registered before /:id/* routes to avoid the "break-glass" path being
 // interpreted as an id lookup.
 // ---------------------------------------------------------------------------
 
-const breakGlassSchema = Joi.object({
+const startBreakGlassSchema = Joi.object({
   serverId: Joi.string().required(),
   reason: Joi.string().min(20).max(1000).required(),
-  durationSeconds: Joi.number().integer().min(300).max(3600).default(3600),
+  // No hardcoded upper bound here — the true ceiling is the matched
+  // isBreakGlass policy's maxSessionDuration, enforced in the service.
+  durationSeconds: Joi.number().integer().min(300).max(24 * 3600),
+  method: Joi.string().valid('totp', 'email'),
 });
 
+// POST /api/access-requests/break-glass/start — step 1: validate + issue a
+// step-up verification challenge. Grants nothing by itself.
 router.post(
-  '/break-glass',
+  '/break-glass/start',
   requirePermission('access.break_glass'),
-  validate(breakGlassSchema),
+  validate(startBreakGlassSchema),
   asyncHandler(async (req, res) => {
-    const ar = await accessRequestService.createBreakGlass({
+    const challenge = await accessRequestService.startBreakGlass({
       orgId: req.orgId,
       invokerId: req.user.userId,
       invokerPermissions: req.user.permissions,
       serverId: req.body.serverId,
       reason: req.body.reason,
       durationSeconds: req.body.durationSeconds,
+      method: req.body.method,
+      scope: req.scope,
+      ip: req.ip,
+      userAgent: req.headers['user-agent'],
+    });
+    res.status(201).json({ success: true, data: challenge });
+  })
+);
+
+const verifyBreakGlassSchema = Joi.object({
+  challengeId: Joi.string().required(),
+  code: Joi.string().required(),
+});
+
+// POST /api/access-requests/break-glass/verify — step 2: burn the challenge
+// against the code and, on success, create the pre-approved AccessRequest.
+router.post(
+  '/break-glass/verify',
+  requirePermission('access.break_glass'),
+  validate(verifyBreakGlassSchema),
+  asyncHandler(async (req, res) => {
+    const ar = await accessRequestService.verifyBreakGlass({
+      orgId: req.orgId,
+      invokerId: req.user.userId,
+      invokerPermissions: req.user.permissions,
+      challengeId: req.body.challengeId,
+      code: req.body.code,
+      ip: req.ip,
+      userAgent: req.headers['user-agent'],
     });
     res.status(201).json({ success: true, data: ar });
+  })
+);
+
+// POST /api/access-requests/break-glass — RETIRED. Always refuses: kept only
+// so a stray caller gets a loud, actionable 410 instead of silently
+// bypassing step-up verification. Use /break-glass/start + /break-glass/verify.
+const breakGlassSchema = Joi.object({
+  serverId: Joi.string().required(),
+  reason: Joi.string().min(20).max(1000).required(),
+  durationSeconds: Joi.number().integer().min(300).max(3600),
+}).unknown(true);
+
+router.post(
+  '/break-glass',
+  requirePermission('access.break_glass'),
+  validate(breakGlassSchema),
+  asyncHandler(async () => {
+    await accessRequestService.createBreakGlass();
   })
 );
 
@@ -270,6 +326,7 @@ router.get(
       orgId: req.orgId,
       callerId: req.user.userId,
       callerPermissions: req.user.permissions,
+      scope: req.scope,
     });
     res.json({ success: true, data: { accessRequest } });
   })
@@ -418,6 +475,7 @@ router.post(
     const rdpFile = await accessRequestService.generateRdpFile({
       requestId: req.params.id,
       callerId: req.user.userId,
+      scope: req.scope,
     });
     res.json({ success: true, data: rdpFile });
   })
@@ -448,7 +506,7 @@ router.post(
       throw new ApiError(403, 'Only the requester may obtain an RDP gateway token');
     }
 
-    const { gatewayToken } = await rdpService.createConnectionForRequest(id);
+    const { gatewayToken } = await rdpService.createConnectionForRequest(id, req.scope);
 
     // Gateway token TTL is 5 minutes; compute an approximate expiresAt
     const expiresAt = new Date(Date.now() + 5 * 60 * 1000).toISOString();

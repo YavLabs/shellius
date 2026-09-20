@@ -16,7 +16,7 @@ import CustomerDetail from './pages/CustomerDetail';
 import Servers from './pages/Servers';
 import ServerDetail from './pages/ServerDetail';
 import Certificates from './pages/Certificates';
-import Policies from './pages/Policies';
+import Posture from './pages/Posture';
 import Administration from './pages/Administration';
 import LegacyAdminRedirect from './components/admin/LegacyAdminRedirect';
 import AccessRequests from './pages/AccessRequests';
@@ -98,6 +98,7 @@ function App() {
                   <Route path="/roles/:id" element={<LegacyAdminRedirect />} />
                   <Route path="/groups" element={<LegacyAdminRedirect />} />
                   <Route path="/groups/:id" element={<LegacyAdminRedirect />} />
+                  <Route path="/policies" element={<LegacyAdminRedirect />} />
                   {/* Permission-gated pages — see ROUTE_ACCESS in lib/commands.js */}
                   <Route element={<PermissionRoute />}>
                     <Route path="/customers" element={<Customers />} />
@@ -109,7 +110,7 @@ function App() {
                     <Route path="/my-hosts" element={<MyHosts />} />
                     <Route path="/bulk-import" element={<BulkImport />} />
                     <Route path="/certificates" element={<Certificates />} />
-                    <Route path="/policies" element={<Policies />} />
+                    <Route path="/posture" element={<Posture />} />
                     <Route path="/audit-log" element={<AuditLog />} />
                   </Route>
                 </Route>

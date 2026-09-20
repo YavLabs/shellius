@@ -66,3 +66,16 @@ export const getUserIdentities = (id) => api.get(`/users/${id}/identities`).then
 /** DELETE /api/users/:id/identities/:identityId (users.manage_identities). */
 export const unlinkUserIdentity = (id, identityId) =>
   api.delete(`/users/${id}/identities/${identityId}`).then((r) => r.data?.data ?? r.data);
+
+// Customer scope (docs/rbac/customer-scope-spec.md) — gated by users.assign_scope.
+/** PUT /api/users/:id/scope { accessScope: 'ALL'|'CUSTOMERS', customerIds: string[] } */
+export const updateUserScope = (id, data) =>
+  api.put(`/users/${id}/scope`, data).then((r) => r.data?.data ?? r.data);
+
+/**
+ * GET /api/users/:id/effective-scope — what this user actually sees, and why
+ * (docs/rbac/customer-scope-spec.md §7 phase 4). Gated on `users.view`.
+ * → { kind: 'all'|'customers', customerIds, reason, sources: { direct, groups } }
+ */
+export const getUserEffectiveScope = (id) =>
+  api.get(`/users/${id}/effective-scope`).then((r) => r.data?.data ?? r.data);

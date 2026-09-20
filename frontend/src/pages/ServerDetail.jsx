@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
-import { useNavigate, useParams } from 'react-router-dom';
+import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import {
   ArrowLeft,
   Pencil,
@@ -15,6 +15,7 @@ import {
   PlugZap,
   Send,
   AlertTriangle,
+  ShieldAlert,
 } from 'lucide-react';
 import Modal from '@/components/shared/Modal';
 import ConfirmDialog from '@/components/shared/ConfirmDialog';
@@ -24,13 +25,16 @@ import HealthStatusDot from '@/components/shared/HealthStatusDot';
 import ServerForm from '@/components/servers/ServerForm';
 import BootstrapModal from '@/components/servers/BootstrapModal';
 import ProvisionModal from '@/components/servers/ProvisionModal';
+import BootstrapWizard from '@/components/servers/BootstrapWizard';
 import UninstallHostModal from '@/components/servers/UninstallHostModal';
 import QuickConnectButton from '@/components/servers/QuickConnectButton';
 import PrivateIPWarning from '@/components/servers/PrivateIPWarning';
+import BreakGlassModal from '@/components/access-requests/BreakGlassModal';
 import MobilePageHeader from '@/components/mobile/MobilePageHeader';
 import useIsMobile from '@/hooks/useIsMobile';
 import DeployWizardModal from '@/components/keystore/DeployWizardModal';
 import TestConnectionModal from '@/components/keystore/TestConnectionModal';
+import ServerPostureTab from '@/components/posture/ServerPostureTab';
 import { Button } from '@/components/ui/button';
 import {
   DropdownMenu,
@@ -88,19 +92,41 @@ function ServerDetail() {
   const navigate = useNavigate();
   const { user: currentUser } = useAuth();
   const isMobile = useIsMobile();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const canViewPosture = can(currentUser, 'posture.read');
+  const canMutePosture = can(currentUser, 'posture.mute');
+  const [activeTab, setActiveTab] = useState(
+    searchParams.get('tab') === 'posture' && canViewPosture ? 'posture' : 'overview'
+  );
+  const handleTabChange = (key) => {
+    setActiveTab(key);
+    const next = new URLSearchParams(searchParams);
+    if (key === 'overview') next.delete('tab');
+    else next.set('tab', key);
+    setSearchParams(next, { replace: true });
+  };
   const [server, setServer] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [editOpen, setEditOpen] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [checking, setChecking] = useState(false);
-  const [bootstrapOpen, setBootstrapOpen] = useState(false);
+  // null = closed; 'full' | 'posture' picks which install script the modal
+  // requests (Host menu → Bootstrap host always mints 'full'; the Posture
+  // tab's credential-mode empty state mints 'posture' — see BootstrapModal).
+  const [bootstrapMode, setBootstrapMode] = useState(null);
   const [uninstallOpen, setUninstallOpen] = useState(false);
   const [provisionOpen, setProvisionOpen] = useState(false);
+  // The install wizard (method + scope). On finish it opens BootstrapModal
+  // (manual) or ProvisionModal (automatic) with the scope the user picked.
+  const [wizardOpen, setWizardOpen] = useState(false);
+  const [wizardScope, setWizardScope] = useState(null);
+  const [installScope, setInstallScope] = useState('full');
   const [deployWizardOpen, setDeployWizardOpen] = useState(false);
   const [testIdentityOpen, setTestIdentityOpen] = useState(false);
   const [resetHostKeyConfirm, setResetHostKeyConfirm] = useState(false);
   const [resettingHostKey, setResettingHostKey] = useState(false);
+  const [breakGlassOpen, setBreakGlassOpen] = useState(false);
 
   const fetch = useCallback(async () => {
     setLoading(true);
@@ -149,10 +175,13 @@ function ServerDetail() {
   const canDelete = can(currentUser, 'servers.delete');
   const canDeployKeys = can(currentUser, 'keystore.deploy');
   const canResetHostKey = can(currentUser, 'servers.reset_host_key');
+  const canBreakGlass = can(currentUser, 'access.break_glass');
   const isCredentialMode = server?.authMode === 'credential';
+  // Credential-mode hosts can be bootstrapped too: the stored identity is
+  // precisely what gets us in for the first connect, and the wizard's scope
+  // step is where you choose whether that also reconfigures sshd.
   const canProvision =
     server &&
-    !isCredentialMode &&
     (server.protocol === 'ssh' || server.protocol === 'both') &&
     server.osType !== 'windows' &&
     canOnboard;
@@ -222,8 +251,7 @@ function ServerDetail() {
               hidden: !canOnboard,
               items: [
                 { key: 'health', label: checking ? 'Checking...' : 'Run health check', icon: Activity, onClick: handleHealthCheck, disabled: checking },
-                { key: 'bootstrap', label: 'Bootstrap host', icon: Download, onClick: () => setBootstrapOpen(true), hidden: isCredentialMode },
-                { key: 'provision', label: 'Auto-provision', icon: Terminal, onClick: () => setProvisionOpen(true), hidden: isCredentialMode || !canProvision },
+                { key: 'bootstrap', label: 'Bootstrap host', icon: Download, onClick: () => { setWizardScope(null); setWizardOpen(true); } },
                 { key: 'uninstall', label: 'Uninstall agent', icon: Eraser, onClick: () => setUninstallOpen(true), hidden: isCredentialMode },
                 { key: 'test', label: 'Test identity', icon: PlugZap, onClick: () => setTestIdentityOpen(true), hidden: !isCredentialMode },
               ],
@@ -235,6 +263,14 @@ function ServerDetail() {
               items: [
                 { key: 'deploy', label: 'Export key to servers…', icon: Send, onClick: () => setDeployWizardOpen(true), hidden: !canDeployKeys },
                 { key: 'reset-host-key', label: 'Reset host key', icon: RotateCw, onClick: () => setResetHostKeyConfirm(true), hidden: !canResetHostKey },
+              ],
+            },
+            {
+              key: 'emergency',
+              label: 'Emergency',
+              hidden: !canBreakGlass,
+              items: [
+                { key: 'break-glass', label: 'Break-glass access', icon: ShieldAlert, onClick: () => setBreakGlassOpen(true), destructive: true },
               ],
             },
             { key: 'delete', label: 'Delete server', icon: Trash2, variant: 'destructive', onClick: () => setConfirmDelete(true), hidden: !canDelete },
@@ -275,6 +311,20 @@ function ServerDetail() {
               <Pencil className="mr-2 h-4 w-4" /> Edit
             </Button>
           )}
+          {canBreakGlass && (
+            // Emergency action — visually separated from routine actions
+            // (its own destructive button, not folded into the "..." menu)
+            // so it reads as break-glass, not a normal button.
+            <Button
+              variant="destructive"
+              size="sm"
+              onClick={() => setBreakGlassOpen(true)}
+              className="ml-1 border-l border-destructive/30 pl-3"
+              title="Emergency access — bypasses the normal approval workflow"
+            >
+              <ShieldAlert className="mr-2 h-4 w-4" /> Break-glass
+            </Button>
+          )}
           {(canOnboard || canDelete || canDeployKeys || canResetHostKey) && (
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
@@ -292,20 +342,13 @@ function ServerDetail() {
                       <Activity className={`mr-2 h-4 w-4 ${checking ? 'animate-pulse' : ''}`} />
                       {checking ? 'Checking...' : 'Run health check'}
                     </DropdownMenuItem>
+                    <DropdownMenuItem onSelect={() => { setWizardScope(null); setWizardOpen(true); }}>
+                      <Download className="mr-2 h-4 w-4" /> Bootstrap host
+                    </DropdownMenuItem>
                     {!isCredentialMode && (
-                      <>
-                        <DropdownMenuItem onSelect={() => setBootstrapOpen(true)}>
-                          <Download className="mr-2 h-4 w-4" /> Bootstrap host
-                        </DropdownMenuItem>
-                        {canProvision && (
-                          <DropdownMenuItem onSelect={() => setProvisionOpen(true)}>
-                            <Terminal className="mr-2 h-4 w-4" /> Auto-provision
-                          </DropdownMenuItem>
-                        )}
-                        <DropdownMenuItem onSelect={() => setUninstallOpen(true)}>
-                          <Eraser className="mr-2 h-4 w-4" /> Uninstall agent
-                        </DropdownMenuItem>
-                      </>
+                      <DropdownMenuItem onSelect={() => setUninstallOpen(true)}>
+                        <Eraser className="mr-2 h-4 w-4" /> Uninstall agent
+                      </DropdownMenuItem>
                     )}
                     {isCredentialMode && (
                       <DropdownMenuItem onSelect={() => setTestIdentityOpen(true)}>
@@ -352,6 +395,40 @@ function ServerDetail() {
 
       <PrivateIPWarning ipAddress={server.ipAddress} />
 
+      {canViewPosture && (
+        <div className="flex items-center gap-1 overflow-x-auto border-b border-border md:overflow-visible">
+          {[
+            { key: 'overview', label: 'Overview' },
+            { key: 'posture', label: 'Posture' },
+          ].map((tab) => (
+            <button
+              key={tab.key}
+              onClick={() => handleTabChange(tab.key)}
+              className={[
+                'relative shrink-0 whitespace-nowrap px-2.5 py-2.5 text-sm font-medium transition-colors md:px-4',
+                activeTab === tab.key
+                  ? 'border-b-2 border-primary text-foreground'
+                  : 'text-muted-foreground hover:text-foreground',
+              ].join(' ')}
+            >
+              {tab.label}
+            </button>
+          ))}
+        </div>
+      )}
+
+      {canViewPosture && activeTab === 'posture' ? (
+        <ServerPostureTab
+          serverId={id}
+          canMute={canMutePosture}
+          authMode={server.authMode}
+          canBootstrap={canOnboard}
+          onBootstrap={(scope) => {
+            setWizardScope(scope || 'full');
+            setWizardOpen(true);
+          }}
+        />
+      ) : (
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
         <Card title="Connection">
           <Field label="IP Address" value={server.ipAddress} mono />
@@ -425,9 +502,27 @@ function ServerDetail() {
             <>
               <Field label="Status" value="Ready (stored identity)" />
               <p className="mt-1 text-xs text-muted-foreground">
-                No agent or bootstrap is required — Shellius connects using the stored identity
-                directly. Use &quot;Test identity&quot; from the More menu to verify access.
+                No agent is required — Shellius connects using the stored identity directly. Use
+                &quot;Test identity&quot; from the More menu to verify access.
               </p>
+              {canOnboard && (
+                <div className="pt-3">
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={() => {
+                      setWizardScope(null);
+                      setWizardOpen(true);
+                    }}
+                  >
+                    <Download className="mr-2 h-4 w-4" /> Bootstrap host
+                  </Button>
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    Optional. The stored identity is what gets us in, so it can install the posture
+                    collector — or upgrade this host to certificate auth — without you pasting a key.
+                  </p>
+                </div>
+              )}
             </>
           ) : server.protocol === 'rdp' ? (
             <>
@@ -510,6 +605,7 @@ function ServerDetail() {
           )}
         </Card>
       </div>
+      )}
 
       <Modal
         open={editOpen}
@@ -524,15 +620,30 @@ function ServerDetail() {
         />
       </Modal>
 
-      <BootstrapModal
-        open={bootstrapOpen}
+      <BootstrapWizard
+        open={wizardOpen}
         server={server}
-        onClose={() => setBootstrapOpen(false)}
+        initialScope={wizardScope}
+        onClose={() => setWizardOpen(false)}
+        onStart={({ method, scope }) => {
+          setWizardOpen(false);
+          setInstallScope(scope);
+          if (method === 'manual') setBootstrapMode(scope);
+          else setProvisionOpen(true);
+        }}
+      />
+
+      <BootstrapModal
+        open={!!bootstrapMode}
+        mode={bootstrapMode || 'full'}
+        server={server}
+        onClose={() => setBootstrapMode(null)}
       />
 
       {provisionOpen && (
         <ProvisionModal
           server={server}
+          installMode={installScope}
           onClose={() => {
             setProvisionOpen(false);
             fetch();
@@ -560,6 +671,14 @@ function ServerDetail() {
           open={testIdentityOpen}
           credential={server.credential}
           onClose={() => setTestIdentityOpen(false)}
+        />
+      )}
+
+      {breakGlassOpen && (
+        <BreakGlassModal
+          open={breakGlassOpen}
+          server={server}
+          onClose={() => setBreakGlassOpen(false)}
         />
       )}
 

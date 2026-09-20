@@ -37,7 +37,7 @@ router.get(
   '/',
   requirePermission('customers.view'),
   asyncHandler(async (req, res) => {
-    const result = await customerService.listCustomers(req.orgId, req.query);
+    const result = await customerService.listCustomers(req.orgId, req.query, req.scope);
     res.json({ success: true, data: result });
   })
 );
@@ -46,7 +46,7 @@ router.get(
   '/:id',
   requirePermission('customers.view'),
   asyncHandler(async (req, res) => {
-    const customer = await customerService.getCustomer(req.orgId, req.params.id);
+    const customer = await customerService.getCustomer(req.orgId, req.params.id, req.scope);
     res.json({ success: true, data: { customer } });
   })
 );
@@ -55,7 +55,7 @@ router.get(
   '/:id/stats',
   requirePermission('customers.view'),
   asyncHandler(async (req, res) => {
-    const stats = await customerService.getCustomerStats(req.orgId, req.params.id);
+    const stats = await customerService.getCustomerStats(req.orgId, req.params.id, req.scope);
     res.json({ success: true, data: stats });
   })
 );
@@ -66,7 +66,7 @@ router.post(
   audit('customer.create', 'Customer'),
   validate(createSchema),
   asyncHandler(async (req, res) => {
-    const customer = await customerService.createCustomer(req.orgId, req.body);
+    const customer = await customerService.createCustomer(req.orgId, req.body, req.scope, req.user.userId);
     res.status(201).json({ success: true, data: { customer } });
   })
 );
@@ -77,7 +77,7 @@ router.put(
   audit('customer.update', 'Customer'),
   validate(updateSchema),
   asyncHandler(async (req, res) => {
-    const customer = await customerService.updateCustomer(req.orgId, req.params.id, req.body);
+    const customer = await customerService.updateCustomer(req.orgId, req.params.id, req.body, req.scope);
     res.json({ success: true, data: { customer } });
   })
 );
@@ -86,7 +86,7 @@ router.get(
   '/:id/delete-impact',
   requirePermission('customers.delete'),
   asyncHandler(async (req, res) => {
-    const impact = await customerService.getDeleteImpact(req.orgId, req.params.id);
+    const impact = await customerService.getDeleteImpact(req.orgId, req.params.id, req.scope);
     res.json({ success: true, data: impact });
   })
 );
@@ -96,7 +96,7 @@ router.delete(
   requirePermission('customers.delete'),
   audit('customer.delete', 'Customer'),
   asyncHandler(async (req, res) => {
-    await customerService.deleteCustomer(req.orgId, req.params.id, req.body || {});
+    await customerService.deleteCustomer(req.orgId, req.params.id, req.body || {}, req.scope);
     res.json({ success: true, data: { success: true } });
   })
 );

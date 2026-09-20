@@ -15,6 +15,7 @@ import * as terminalService from './terminalService.js';
 import logger from '../utils/logger.js';
 import { permissionsForUser } from './roleService.js';
 import { isVaultEnabled, passwordSignInBlocked, isSsoRequired } from './orgService.js';
+import { resolveScope } from '../lib/scope.js';
 
 const REFRESH_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 
@@ -87,6 +88,10 @@ async function accessOf(user) {
       : user.roleId
         ? await prisma.role.findFirst({ where: { id: user.roleId, orgId: user.orgId } })
         : null;
+  // Customer scope (docs/rbac/customer-scope-spec.md) — mirrors req.scope
+  // (middleware/auth.js) so the frontend can badge/limit without a second
+  // round trip.
+  const resolvedScope = await resolveScope(user);
   return {
     roleInfo: assigned
       ? { id: assigned.id, key: assigned.key, name: assigned.name, isSystem: assigned.isSystem, baseRole: assigned.baseRole }
@@ -94,6 +99,7 @@ async function accessOf(user) {
     permissions: permissionsForUser({ ...user, assignedRole: assigned }),
     // Org switches the UI needs alongside permissions.
     features: { personalVault: await isVaultEnabled(user.orgId) },
+    scope: { kind: resolvedScope.mode === 'customers' ? 'customers' : 'all', customerIds: resolvedScope.customerIds },
   };
 }
 

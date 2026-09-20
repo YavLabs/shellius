@@ -27,6 +27,8 @@ import * as sshKeys from '../utils/sshKeys.js';
 import * as sshConnect from './sshConnect.js';
 import { log as auditLog } from './auditService.js';
 import { assertNotProdHost, assertNotDeniedHost } from './quickConnectService.js';
+import { isVaultEnabled } from './orgService.js';
+import { UNSCOPED, assertServerInScope, serverScopeWhere, relationScopeWhere } from '../lib/scope.js';
 
 // ---------------------------------------------------------------------------
 // Scope helpers
@@ -129,7 +131,7 @@ async function loadUsersById(orgId, ids) {
 // Keys
 // ---------------------------------------------------------------------------
 
-export async function listKeys(orgId, { search, ownerId = null } = {}) {
+export async function listKeys(orgId, { search, ownerId = null, scope = UNSCOPED } = {}) {
   const where = { orgId, ownerId };
   if (search) {
     where.OR = [
@@ -141,26 +143,45 @@ export async function listKeys(orgId, { search, ownerId = null } = {}) {
   const keys = await prisma.sshKey.findMany({
     where,
     orderBy: { createdAt: 'desc' },
-    include: { _count: { select: { credentials: true, deployments: true } } },
+    include: { _count: { select: { credentials: true } } },
   });
+  // `_count.deployments` would count deploys to servers this caller cannot
+  // see — a number is a disclosure too (customer-scope spec §6.3), and the
+  // key detail page already filters the list it belongs to. One groupBy
+  // keeps this O(1) queries instead of one count per key.
+  const deploymentCounts = new Map();
+  if (keys.length > 0) {
+    const grouped = await prisma.keyDeployment.groupBy({
+      by: ['sshKeyId'],
+      where: { orgId, sshKeyId: { in: keys.map((k) => k.id) }, ...relationScopeWhere(scope, 'server') },
+      _count: { _all: true },
+    });
+    for (const row of grouped) deploymentCounts.set(row.sshKeyId, row._count._all);
+  }
   const userMap = await loadUsersById(orgId, keys.map((k) => k.createdById));
   return {
     keys: keys.map((k) =>
       toSshKeyDTO(k, {
         createdBy: userMap.get(k.createdById) || null,
         credentialCount: k._count.credentials,
-        deploymentCount: k._count.deployments,
+        deploymentCount: deploymentCounts.get(k.id) ?? 0,
       })
     ),
   };
 }
 
-export async function getKey(orgId, id, { ownerId = null } = {}) {
+export async function getKey(orgId, id, { ownerId = null, scope = UNSCOPED } = {}) {
   const key = await prisma.sshKey.findFirst({
     where: { id, orgId, ownerId },
-    include: { _count: { select: { credentials: true, deployments: true } } },
+    include: { _count: { select: { credentials: true } } },
   });
   if (!key) throw new ApiError(404, 'Key not found');
+
+  // Scoped, for the same reason as listKeys: the raw relation count includes
+  // servers outside this caller's customers.
+  const scopedDeploymentCount = await prisma.keyDeployment.count({
+    where: { orgId, sshKeyId: id, ...relationScopeWhere(scope, 'server') },
+  });
 
   const [userMap, credentials, deployments, credentialServers, successfulDeployments] = await Promise.all([
     loadUsersById(orgId, [key.createdById]),
@@ -168,8 +189,11 @@ export async function getKey(orgId, id, { ownerId = null } = {}) {
       where: { orgId, sshKeyId: id },
       select: { id: true, name: true, username: true, authType: true },
     }),
+    // A key detail page is effectively an inventory listing (spec §4.1 #15) —
+    // scope every one of the three server-bearing relations below, and
+    // compute serverCount/stats AFTER filtering so totals don't leak.
     prisma.keyDeployment.findMany({
-      where: { orgId, sshKeyId: id },
+      where: { orgId, sshKeyId: id, ...relationScopeWhere(scope, 'server') },
       orderBy: { createdAt: 'desc' },
       take: 50,
       include: {
@@ -183,13 +207,13 @@ export async function getKey(orgId, id, { ownerId = null } = {}) {
       select: {
         id: true,
         name: true,
-        servers: { select: { id: true, hostname: true, displayName: true, environment: true } },
+        servers: { where: serverScopeWhere(scope), select: { id: true, hostname: true, displayName: true, environment: true } },
       },
     }),
     // Every *successful* deploy/remove/rotate for this key, oldest first — used to
     // derive "currently deployed on" (latest success per server whose action isn't 'remove').
     prisma.keyDeployment.findMany({
-      where: { orgId, sshKeyId: id, status: 'success' },
+      where: { orgId, sshKeyId: id, status: 'success', ...relationScopeWhere(scope, 'server') },
       orderBy: { createdAt: 'asc' },
       select: {
         serverId: true,
@@ -243,7 +267,7 @@ export async function getKey(orgId, id, { ownerId = null } = {}) {
     key: { ...toSshKeyDTO(key, {
       createdBy: userMap.get(key.createdById) || null,
       credentialCount: key._count.credentials,
-      deploymentCount: key._count.deployments,
+      deploymentCount: scopedDeploymentCount,
     }), certificateText: key.certificate ?? null },
     credentials,
     deployments: deployments.map((d) => toKeyDeploymentDTO(d, deployedByMap)),
@@ -251,7 +275,7 @@ export async function getKey(orgId, id, { ownerId = null } = {}) {
     stats: {
       identityCount: key._count.credentials,
       serverCount: servers.length,
-      deploymentCount: key._count.deployments,
+      deploymentCount: scopedDeploymentCount,
     },
   };
 }
@@ -549,7 +573,7 @@ export function validateAuthMaterial({ authType, password, sshKeyId, newKey }) {
   }
 }
 
-export async function listCredentials(orgId, { search, ownerId = null } = {}) {
+export async function listCredentials(orgId, { search, ownerId = null, scope = UNSCOPED } = {}) {
   const where = { orgId, ownerId };
   if (search) {
     where.OR = [
@@ -563,7 +587,9 @@ export async function listCredentials(orgId, { search, ownerId = null } = {}) {
     orderBy: { createdAt: 'desc' },
     include: {
       sshKey: { select: { id: true, name: true, fingerprint: true, keyType: true } },
-      _count: { select: { servers: true } },
+      // Filtered relation count — a scoped caller's serverCount must not
+      // include servers they can't see (spec §4.1 #16).
+      _count: { select: { servers: { where: serverScopeWhere(scope) } } },
     },
   });
   const userMap = await loadUsersById(orgId, creds.map((c) => c.createdById));
@@ -574,13 +600,16 @@ export async function listCredentials(orgId, { search, ownerId = null } = {}) {
   };
 }
 
-export async function getCredential(orgId, id, { ownerId = null } = {}) {
+export async function getCredential(orgId, id, { ownerId = null, scope = UNSCOPED } = {}) {
   const cred = await prisma.credential.findFirst({
     where: { id, orgId, ownerId },
     include: {
       sshKey: { select: { id: true, name: true, fingerprint: true, keyType: true } },
-      _count: { select: { servers: true } },
+      // Filtered relation count so the total matches the (also filtered)
+      // `servers` list below — never a bigger number than what's shown.
+      _count: { select: { servers: { where: serverScopeWhere(scope) } } },
       servers: {
+        where: serverScopeWhere(scope),
         select: { id: true, hostname: true, displayName: true, environment: true, ipAddress: true },
       },
     },
@@ -849,7 +878,51 @@ export function resolveCredentialAuth(credential) {
   return opts;
 }
 
-export async function testCredential(orgId, id, { serverId, host, port }, actorId, { ownerId = null } = {}) {
+/**
+ * Load a stored identity the caller may use, and decrypt it for an SSH
+ * connection. Scope rules mirror Quick Connect: an org identity needs
+ * `keystore.view`, one of the caller's own personal identities needs the
+ * vault switch plus `vault.use`, and somebody else's personal identity is a
+ * 404 (never a 403 — its existence is not disclosed).
+ *
+ * @param {object} actor - req.user ({ userId, permissions })
+ * @returns {Promise<{credential: object, auth: object}>} auth is an ssh2
+ *   connect fragment: { username, password?, privateKey?, passphrase? }
+ */
+export async function resolveCredentialForActor(orgId, actor, credentialId) {
+  const credential = await prisma.credential.findFirst({
+    where: { id: credentialId, orgId, OR: [{ ownerId: null }, { ownerId: actor.userId }] },
+    include: { sshKey: true },
+  });
+  if (!credential) throw new ApiError(404, 'Identity not found');
+
+  const holds = (key) => {
+    const p = actor?.permissions;
+    if (!p) return false;
+    return p instanceof Set ? p.has(key) : p.includes(key);
+  };
+
+  if (credential.ownerId) {
+    if (!(await isVaultEnabled(orgId))) {
+      throw new ApiError(403, 'The personal vault is turned off for this organization', { code: 'VAULT_DISABLED' });
+    }
+    if (!holds('vault.use')) {
+      throw new ApiError(403, 'Your role does not permit using your personal vault', {
+        code: 'PERMISSION_DENIED',
+        details: { missing: ['vault.use'] },
+      });
+    }
+  } else if (!holds('keystore.view')) {
+    throw new ApiError(403, 'Your role does not permit using stored identities', {
+      code: 'PERMISSION_DENIED',
+      details: { missing: ['keystore.view'] },
+    });
+  }
+
+  return { credential, auth: resolveCredentialAuth(credential) };
+}
+
+export async function testCredential(orgId, id, { serverId, host, port }, actorId, { ownerId = null, scope = UNSCOPED } = {}) {
   const cred = await prisma.credential.findFirst({
     where: { id, orgId, ownerId },
     include: { sshKey: true },
@@ -865,6 +938,9 @@ export async function testCredential(orgId, id, { serverId, host, port }, actorI
   if (serverId) {
     server = await prisma.server.findFirst({ where: { id: serverId, orgId } });
     if (!server) throw new ApiError(404, 'Server not found');
+    // Testing a credential sends the stored secret to the target — same
+    // guard as a real connect, not just a read.
+    assertServerInScope(scope, server);
     targetHost = server.ipAddress || server.hostname;
     targetPort = server.port || 22;
   }
@@ -986,6 +1062,7 @@ export default {
   updateCredential,
   deleteCredential,
   resolveCredentialAuth,
+  resolveCredentialForActor,
   validateAuthMaterial,
   testCredential,
   moveKeyToOrg,

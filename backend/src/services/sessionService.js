@@ -1,6 +1,7 @@
 import prisma from '../config/db.js';
 import ApiError from '../utils/ApiError.js';
 import logger from '../utils/logger.js';
+import { UNSCOPED, sessionScopeWhere, serverScopeWhere } from '../lib/scope.js';
 
 // ---------------------------------------------------------------------------
 // Shared include shape
@@ -159,7 +160,9 @@ export async function end(sessionId, { status = 'ENDED', metadataPatch } = {}) {
 // ---------------------------------------------------------------------------
 
 /**
- * Paginated list of sessions scoped to the org.
+ * Paginated list of sessions scoped to the org (and, for scoped users, to
+ * their customer set — via `sessionScopeWhere`'s OR-branch a scoped user
+ * still sees their own Quick Connect sessions, which have no server).
  *
  * @param {object} params
  * @param {string}  params.orgId
@@ -168,15 +171,22 @@ export async function end(sessionId, { status = 'ENDED', metadataPatch } = {}) {
  * @param {'ACTIVE'|'ENDED'|'TERMINATED'} [params.status]
  * @param {number}  [params.page=1]
  * @param {number}  [params.limit=25]
+ * @param {{mode: string, customerIds: string[]}} [params.scope=UNSCOPED]
+ * @param {string}  [params.callerId] - the authenticated caller's own user id,
+ *   NOT the `userId` filter above. `sessionScopeWhere`'s OR-branch keeps a
+ *   scoped caller's own Quick Connect sessions visible; if we reused the
+ *   `userId` filter here instead, an unfiltered request would pass
+ *   `undefined`, which Prisma drops from the `where` and would silently
+ *   surface *every* user's Quick Connect sessions to a scoped caller.
  * @returns {Promise<{ items: object[], total: number, page: number, limit: number }>}
  */
-export async function list({ orgId, userId, serverId, status, page = 1, limit = 25 }) {
+export async function list({ orgId, userId, serverId, status, page = 1, limit = 25, scope = UNSCOPED, callerId }) {
   if (!orgId) throw new ApiError(400, 'orgId is required');
 
   page = parseInt(page, 10) || 1;
   limit = Math.min(parseInt(limit, 10) || 25, 100);
 
-  const where = { orgId };
+  const where = { orgId, ...sessionScopeWhere(scope, callerId) };
   if (userId) where.userId = userId;
   if (serverId) where.serverId = serverId;
   if (status) where.status = status;
@@ -203,13 +213,17 @@ export async function list({ orgId, userId, serverId, status, page = 1, limit = 
  * Return all ACTIVE sessions for an org.
  *
  * @param {string} orgId
+ * @param {{mode: string, customerIds: string[]}} [scope=UNSCOPED]
+ * @param {string} [callerId] - the authenticated caller's own user id, so a
+ *   scoped caller keeps seeing their own active Quick Connect sessions (no
+ *   server) alongside sessions on servers in their customer scope.
  * @returns {Promise<object[]>}
  */
-export async function listActive(orgId) {
+export async function listActive(orgId, scope = UNSCOPED, callerId) {
   if (!orgId) throw new ApiError(400, 'orgId is required');
 
   return prisma.session.findMany({
-    where: { orgId, status: 'ACTIVE' },
+    where: { orgId, status: 'ACTIVE', ...sessionScopeWhere(scope, callerId) },
     orderBy: { startedAt: 'desc' },
     include: SESSION_INCLUDE,
   });
@@ -220,18 +234,22 @@ export async function listActive(orgId) {
 // ---------------------------------------------------------------------------
 
 /**
- * Fetch a single session by ID, scoped to org.
+ * Fetch a single session by ID, scoped to org (and, for scoped callers, to
+ * their customer set — out-of-scope is a 404, matching every other read).
  *
  * @param {string} orgId
  * @param {string} id
+ * @param {{mode: string, customerIds: string[]}} [scope=UNSCOPED]
+ * @param {string} [callerId] - the authenticated caller's own user id, so a
+ *   scoped caller can still open their own Quick Connect session (no server).
  * @returns {Promise<object>}
  */
-export async function getById(orgId, id) {
+export async function getById(orgId, id, scope = UNSCOPED, callerId) {
   if (!orgId) throw new ApiError(400, 'orgId is required');
   if (!id) throw new ApiError(400, 'id is required');
 
   const session = await prisma.session.findFirst({
-    where: { id, orgId },
+    where: { id, orgId, ...sessionScopeWhere(scope, callerId) },
     include: SESSION_INCLUDE,
   });
 
@@ -300,11 +318,14 @@ export async function terminate(orgId, sessionId, byUserId) {
  * SSH sessions opened through access requests / saved servers in the last
  * `days` days, one row per server, newest first. Quick Connect sessions are
  * excluded (they have their own history, with auth type and identity).
- * Scoped to org + user: never another user's activity.
+ * Scoped to org + user: never another user's activity. Also customer-scoped
+ * on the server hydrate step — a server that left the caller's scope since
+ * the session happened must not linger in their recents (spec §4.1 #20).
  *
+ * @param {{mode: string, customerIds: string[]}} [scope=UNSCOPED]
  * @returns {Promise<Array<{ server, lastConnectedAt, connectCount }>>}
  */
-export async function listRecentServersForUser(orgId, userId, { days = 7, limit = 8 } = {}) {
+export async function listRecentServersForUser(orgId, userId, { days = 7, limit = 8 } = {}, scope = UNSCOPED) {
   if (!orgId || !userId) throw new ApiError(400, 'orgId and userId are required');
   const since = new Date(Date.now() - Math.min(Math.max(days, 1), 30) * 86400 * 1000);
   const rows = await prisma.session.groupBy({
@@ -324,7 +345,7 @@ export async function listRecentServersForUser(orgId, userId, { days = 7, limit 
   });
   if (rows.length === 0) return [];
   const servers = await prisma.server.findMany({
-    where: { orgId, id: { in: rows.map((r) => r.serverId) } },
+    where: { orgId, id: { in: rows.map((r) => r.serverId) }, ...serverScopeWhere(scope) },
     select: {
       id: true, displayName: true, hostname: true, ipAddress: true, port: true,
       environment: true, authMode: true, provisionStatus: true, protocol: true, agentId: true, agentLastSeen: true,

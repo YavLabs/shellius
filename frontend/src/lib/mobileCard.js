@@ -1,5 +1,5 @@
 import { Children, isValidElement } from 'react';
-import { environmentTone } from '@/lib/badgeTones';
+import { environmentTone, severityTone } from '@/lib/badgeTones';
 
 /**
  * Pure helpers behind DataTable's mobile card list (docs/plans/1.5.1-mobile.md §5).
@@ -258,6 +258,17 @@ export function pagedRows(pages) {
 export function envAccent(environment) {
   if (!environment) return null;
   return environmentTone(environment);
+}
+
+/**
+ * A posture finding card's accent: tinted by severity (lib/badgeTones.js
+ * `severityTone`, same tone vocabulary as the desktop SeverityBadge), code
+ * in the bottom-left corner.
+ */
+export function severityAccent(severity) {
+  if (!severity) return null;
+  const { tone, label } = severityTone(severity);
+  return { tone, label };
 }
 
 /**

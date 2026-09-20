@@ -372,6 +372,29 @@ export const HELP_CONTENT = {
       },
     ],
   },
+
+  posture: {
+    title: 'Posture',
+    summary:
+      "Exposure findings for every server that reports a posture snapshot: what's listening, who owns it, and whether the host firewall actually protects it — including Docker ports that bypass ufw/firewalld entirely.",
+    sections: [
+      {
+        heading: 'Reading a finding',
+        body:
+          'Each finding names the port, the owning process (container, pm2 app or systemd unit) and why it matters. Severity ranges from Critical (e.g. a datastore reachable despite a firewall rule you believe covers it) to Info (an intentionally public port like 22 or 443).',
+      },
+      {
+        heading: 'Muting',
+        body:
+          'Mute a finding you have reviewed and accept, with a reason and an expiry. Muted findings stop notifying — including escalations — until the mute expires or is removed, and still show under the Muted tab.',
+      },
+      {
+        heading: 'A server that stops reporting',
+        body:
+          "Findings never silently clear because a collector died — a stale server keeps its last-known findings and is flagged separately so it isn't mistaken for clean.",
+      },
+    ],
+  },
 };
 
 // Settings became Administration in 1.5.0; the old key still resolves.

@@ -3,6 +3,7 @@ import { verifyAccessToken } from '../utils/jwt.js';
 import prisma from '../config/db.js';
 import * as mfaConfigService from '../services/mfaConfigService.js';
 import { permissionsForUser } from '../services/roleService.js';
+import { resolveScope } from '../lib/scope.js';
 
 // ---------------------------------------------------------------------------
 // Enforced-MFA allowlist — endpoints that must stay reachable for a user who
@@ -65,6 +66,7 @@ const authenticate = async (req, res, next) => {
         roleId: true,
         assignedRole: { select: { id: true, key: true, name: true, isSystem: true, baseRole: true, permissions: true } },
         status: true,
+        accessScope: true,
         sessionsValidFrom: true,
         mfaTotpEnabled: true,
         mfaEmailEnabled: true,
@@ -87,9 +89,20 @@ const authenticate = async (req, res, next) => {
     return next(new ApiError(401, 'Session has been revoked — please sign in again', { code: 'SESSION_REVOKED' }));
   }
 
+  // Customer scope, resolved per request like permissions — so narrowing or
+  // widening someone's scope takes effect on their next call, not their next
+  // login. Unscoped users (the default) cost nothing: resolveScope returns
+  // the shared UNSCOPED constant without touching the database.
+  try {
+    req.scope = await resolveScope(user);
+  } catch (err) {
+    return next(err);
+  }
+
   req.user = {
     userId: user.id,
     orgId: user.orgId,
+    accessScope: user.accessScope,
     role: user.role, // base tier — DB-authoritative, demotions apply immediately
     roleId: user.roleId,
     roleKey: user.assignedRole?.key || user.role,

@@ -167,10 +167,12 @@ export default function MobileDataList({
     );
   };
 
+  const showSearch = options?.showSearch !== false;
+
   return (
     <div className={cn('space-y-3', className)}>
       <div className="space-y-2">
-        <MobileSearch value={search} onChange={onSearch} placeholder={searchPlaceholder} />
+        {showSearch && <MobileSearch value={search} onChange={onSearch} placeholder={searchPlaceholder} />}
         {hasControls && (
           <div className="flex min-w-0 items-center gap-2">
             <MobileFiltersButton filters={filters} activeCount={filterCount} onReset={onResetFilters} />

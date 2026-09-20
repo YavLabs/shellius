@@ -1,0 +1,46 @@
+# Shellius posture collector — managed by Shellius bootstrap, DO NOT EDIT.
+#
+# Separate unit from shellius-heartbeat.service and the JIT reaper
+# (shellius-jit-reap.service) by hard requirement — a crashing or OOMing
+# collector must never be able to break SSH authentication on a prod box.
+# This unit is its own failure domain: it has no relationship to sshd's
+# AuthorizedPrincipalsCommand, and a failure here only ever costs a
+# missed posture snapshot (reported as a stale server in the UI), never a
+# login. See docs/posture/posture-spec.md §1 decision 4 and §9.1.
+#
+# Runs as the unprivileged 'shellius-posture' system account, never root,
+# never in the 'docker' group. Root-only reads (ss across all users' pids,
+# ufw/firewalld state, systemctl show) go through the narrow sudoers
+# drop-in at /etc/sudoers.d/shellius-posture — see that file for the exact
+# command list. No Docker socket access at all: see
+# shellius-posture-collect.sh's header for what that trades away and why.
+[Unit]
+Description=Shellius host posture collector
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=shellius-posture
+Group=shellius-posture
+ExecStart=/usr/local/sbin/shellius-posture-report
+# A collector that OOMs or spins must be a reported degradation, never a
+# resource fight with anything else on the box (docs/posture/posture-spec.md
+# §1 decision 4, §4).
+MemoryMax=128M
+CPUQuota=20%
+# Belt-and-braces alongside the narrow sudoers grant: even if the
+# collector were compromised, it cannot write outside its own scratch
+# dirs, cannot gain new privileges beyond the sudoers grant, and has no
+# access to the rest of the filesystem it doesn't explicitly need.
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+RestrictSUIDSGID=true
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=shellius-posture
+TimeoutStartSec=60
