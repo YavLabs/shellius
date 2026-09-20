@@ -444,6 +444,76 @@ function ServerPostureTab({
   const disk = metrics.map((m) => m.diskPct ?? null);
   const load = metrics.map((m) => m.load1 ?? null);
 
+  // Rendered by DataTable in its own toolbar row, beside the search — the
+  // shared shape every other grid uses. Rendering them above the table put
+  // the filters and the search on two rows and misaligned both.
+  // Rendered by DataTable in its own toolbar row, beside the search — the
+  // shared shape every other grid uses. Rendering them above the table put
+  // the filters and the search on separate rows and misaligned both.
+  const portFilterSlot = (
+    <>
+      <SearchableSelect
+        className="w-[170px]"
+        value={reachFilter}
+        onChange={setReachFilter}
+        options={[
+          { value: '', label: 'All reachability' },
+          { value: 'INTERNET', label: 'Internet' },
+          { value: 'LAN', label: 'LAN' },
+          { value: 'FIREWALLED', label: 'Firewalled' },
+          { value: 'LOOPBACK', label: 'Loopback' },
+          { value: 'UNKNOWN', label: 'Unknown' },
+        ]}
+        placeholder="All reachability"
+        searchable={false}
+      />
+      <SearchableSelect
+        className="w-[150px]"
+        value={ownerKindFilter}
+        onChange={setOwnerKindFilter}
+        options={[{ value: '', label: 'All owners' }, ...ownerKinds.map((k) => ({ value: k, label: k }))]}
+        placeholder="All owners"
+        searchable={false}
+      />
+      <SearchableSelect
+        className="w-[180px]"
+        value={portStateFilter}
+        onChange={setPortStateFilter}
+        options={[
+          { value: '', label: 'All ports' },
+          { value: 'findings', label: 'Has open findings' },
+          { value: 'expected', label: 'Marked expected' },
+          { value: 'stale', label: 'Expected, not listening' },
+        ]}
+        placeholder="All ports"
+        searchable={false}
+      />
+      {portFiltersActive && (
+        <button
+          type="button"
+          onClick={() => {
+            setReachFilter('');
+            setOwnerKindFilter('');
+            setPortStateFilter('');
+          }}
+          className="text-xs text-primary hover:underline"
+        >
+          Clear filters
+        </button>
+      )}
+      {staleExpected > 0 && (
+        <span className="text-xs text-amber-600 dark:text-amber-400">
+          {staleExpected} expected, no longer listening
+        </span>
+      )}
+      {canExport && listeners.length > 0 && (
+        <Button variant="outline" size="sm" onClick={() => setExportDataset('listeners')}>
+          <Download className="mr-1.5 h-4 w-4" /> Export
+        </Button>
+      )}
+    </>
+  );
+
   const listenerColumns = [
     {
       key: 'port',
@@ -875,73 +945,10 @@ function ServerPostureTab({
 
       {view === 'ports' && (
       <div>
-        {/* No "Ports" heading: the tab is already called that. The filters,
-            the export and the table's own search sit on one row instead of
-            three stacked ones. */}
-        <div className="mb-3 flex flex-wrap items-center gap-2">
-          <SearchableSelect
-            className="w-[170px]"
-            value={reachFilter}
-            onChange={setReachFilter}
-            options={[
-              { value: '', label: 'All reachability' },
-              { value: 'INTERNET', label: 'Internet' },
-              { value: 'LAN', label: 'LAN' },
-              { value: 'FIREWALLED', label: 'Firewalled' },
-              { value: 'LOOPBACK', label: 'Loopback' },
-              { value: 'UNKNOWN', label: 'Unknown' },
-            ]}
-            placeholder="All reachability"
-            searchable={false}
-          />
-          <SearchableSelect
-            className="w-[150px]"
-            value={ownerKindFilter}
-            onChange={setOwnerKindFilter}
-            options={[{ value: '', label: 'All owners' }, ...ownerKinds.map((k) => ({ value: k, label: k }))]}
-            placeholder="All owners"
-            searchable={false}
-          />
-          <SearchableSelect
-            className="w-[180px]"
-            value={portStateFilter}
-            onChange={setPortStateFilter}
-            options={[
-              { value: '', label: 'All ports' },
-              { value: 'findings', label: 'Has open findings' },
-              { value: 'expected', label: 'Marked expected' },
-              { value: 'stale', label: 'Expected, not listening' },
-            ]}
-            placeholder="All ports"
-            searchable={false}
-          />
-          {portFiltersActive && (
-            <button
-              type="button"
-              onClick={() => { setReachFilter(''); setOwnerKindFilter(''); setPortStateFilter(''); }}
-              className="text-xs text-primary hover:underline"
-            >
-              Clear filters
-            </button>
-          )}
-
-          <div className="ml-auto flex items-center gap-3">
-            {staleExpected > 0 && (
-              <span className="text-xs text-amber-600 dark:text-amber-400">
-                {staleExpected} expected, no longer listening
-              </span>
-            )}
-            {canExport && listeners.length > 0 && (
-              <Button variant="outline" size="sm" onClick={() => setExportDataset('listeners')}>
-                <Download className="mr-1.5 h-4 w-4" /> Export
-              </Button>
-            )}
-          </div>
-        </div>
-
         <DataTable
           columns={listenerColumns}
           data={visiblePorts}
+          filters={portFilterSlot}
           onRowClick={setDetailListener}
           showSearch={portRows.length > 8}
           searchPlaceholder="Search port, service, owner or status..."
