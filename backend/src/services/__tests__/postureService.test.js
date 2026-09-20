@@ -360,3 +360,109 @@ describe('computeFindings', () => {
     expect(result.findings).toEqual([]);
   });
 });
+
+describe('stopped services — the half a socket scan cannot see', () => {
+  const base = {
+    firewall: {
+      engine: 'ufw',
+      active: true,
+      defaultIncoming: 'deny',
+      rules: [{ port: '8080', proto: 'tcp', action: 'ALLOW', from: 'Anywhere' }],
+    },
+    listeners: [],
+  };
+
+  it('a rule with genuinely nothing behind it is still just a stale rule', () => {
+    const { findings } = computeFindings({ ...base, services: [] }, {});
+    const codes = findings.map((f) => f.code);
+    expect(codes).toContain('STALE_FIREWALL_RULE');
+    expect(codes).not.toContain('STOPPED_SERVICE_PORT_OPEN');
+  });
+
+  it('names the stopped container behind an open rule instead of calling it stale', () => {
+    const { findings } = computeFindings(
+      {
+        ...base,
+        services: [
+          {
+            kind: 'docker',
+            name: 'api',
+            ref: 'abc123',
+            state: 'exited',
+            running: false,
+            statusText: 'Exited (1) 2 days ago',
+            exitCode: 1,
+            ports: [{ proto: 'tcp', port: 8080, containerPort: 3000, bind: '0.0.0.0' }],
+          },
+        ],
+      },
+      {}
+    );
+    const codes = findings.map((f) => f.code);
+    // The two are mutually exclusive: attributing the rule REPLACES the
+    // unattributed version rather than adding a second row for one port.
+    expect(codes).toContain('STOPPED_SERVICE_PORT_OPEN');
+    expect(codes).not.toContain('STALE_FIREWALL_RULE');
+
+    const f = findings.find((x) => x.code === 'STOPPED_SERVICE_PORT_OPEN');
+    expect(f.port).toBe(8080);
+    expect(f.severity).toBe('MEDIUM');
+    expect(f.ownerLabel).toBe('docker/api');
+    expect(f.message).toContain('api');
+    expect(f.message).toContain('exited');
+    expect(f.detail.serviceState).toBe('exited');
+    expect(f.detail.exitCode).toBe(1);
+  });
+
+  it('a RUNNING service never suppresses the stale-rule verdict', () => {
+    // Running services are found through `ss`; if one is reported running
+    // and nothing is listening, the rule really is unbacked.
+    const { findings } = computeFindings(
+      {
+        ...base,
+        services: [
+          {
+            kind: 'docker',
+            name: 'api',
+            state: 'running',
+            running: true,
+            ports: [{ proto: 'tcp', port: 8080 }],
+          },
+        ],
+      },
+      {}
+    );
+    expect(findings.map((f) => f.code)).toContain('STALE_FIREWALL_RULE');
+  });
+
+  it('matches on protocol, not just port number', () => {
+    const { findings } = computeFindings(
+      {
+        ...base,
+        services: [
+          {
+            kind: 'systemd',
+            name: 'app.service',
+            state: 'inactive',
+            running: false,
+            ports: [{ proto: 'udp', port: 8080 }],
+          },
+        ],
+      },
+      {}
+    );
+    // The rule is tcp/8080; a stopped UDP service on 8080 does not explain it.
+    expect(findings.map((f) => f.code)).toContain('STALE_FIREWALL_RULE');
+  });
+
+  it('a stopped service with no declared ports explains nothing', () => {
+    const { findings } = computeFindings(
+      {
+        ...base,
+        services: [{ kind: 'systemd', name: 'cleanup.service', state: 'failed', running: false, ports: [] }],
+      },
+      {}
+    );
+    expect(findings.map((f) => f.code)).toContain('STALE_FIREWALL_RULE');
+  });
+});

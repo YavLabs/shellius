@@ -483,6 +483,9 @@ const inventoryQuerySchema = Joi.object({
   customerId: Joi.string().allow(''),
   environment: Joi.string().max(32).allow(''),
   serviceKey: Joi.string().max(160).allow(''),
+  // 'stopped' is the half a socket scan cannot see: installed services that
+  // still declare ports and still have firewall rules.
+  state: Joi.string().valid('running', 'stopped').allow(''),
   hasFindings: Joi.boolean(),
   page: Joi.number().integer().min(1),
   limit: Joi.number().integer().min(1).max(200),

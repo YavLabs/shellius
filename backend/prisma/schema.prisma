@@ -72,6 +72,7 @@ model Organization {
 
   postureSnapshots  HostSnapshot[]
   postureListeners  HostListener[]
+  postureServices   HostService[]
   postureFindings   ExposureFinding[]
   metricSamples     HostMetricSample[]
   expectedPorts     ServerExpectedPort[]
@@ -303,6 +304,7 @@ model Server {
   sessions         Session[]
   postureSnapshots HostSnapshot[]
   postureListeners HostListener[]
+  postureServices  HostService[]
   postureFindings  ExposureFinding[]
   metricSamples    HostMetricSample[]
   expectedPorts    ServerExpectedPort[]
@@ -1187,6 +1189,7 @@ model HostSnapshot {
   organization Organization   @relation(fields: [orgId], references: [id], onDelete: Cascade)
   server       Server         @relation(fields: [serverId], references: [id], onDelete: Cascade)
   listeners    HostListener[]
+  services     HostService[]
 
   @@index([orgId, serverId, collectedAt])
   @@index([orgId, receivedAt])
@@ -1223,6 +1226,51 @@ model HostListener {
   @@index([orgId, reachability])
   @@index([snapshotId])
   @@map("host_listeners")
+}
+
+/// What is INSTALLED on the host, and whether it is actually running.
+///
+/// HostListener only sees open sockets, so a stopped container, a failed
+/// unit or a disabled service is invisible there — while its firewall rule
+/// survives, its published port is still declared, and it re-opens the
+/// moment the thing starts again. That blind spot is what this closes: a
+/// STALE_FIREWALL_RULE could say "nothing is listening on tcp/8080" but
+/// never "because the container `api` is stopped", which is the half that
+/// tells you whether to delete the rule or restart the service.
+///
+/// Replaced wholesale on every ingest, like HostListener — this table is
+/// the host's current state, never its history.
+model HostService {
+  id         String    @id @default(cuid())
+  orgId      String    @map("org_id")
+  serverId   String    @map("server_id")
+  snapshotId String    @map("snapshot_id")
+  kind       String // docker | podman | pm2 | systemd
+  name       String
+  ref        String? // container id / unit name / pm2 id
+  /// running | exited | created | paused | restarting | failed | inactive | stopped | unknown
+  state      String
+  /// Denormalised from `state` so "is it up" is an index, not a string list
+  /// every caller has to keep in sync.
+  running    Boolean   @default(false)
+  statusText String?   @map("status_text") // "Exited (1) 2 days ago"
+  detail     String? // image / exec path
+  sourcePath String?   @map("source_path") // unit file / compose file
+  /// Ports the service DECLARES, whether or not anything is listening on
+  /// them right now: [{ proto, port, containerPort, bind }]. This is what
+  /// makes a stopped container's firewall rule attributable.
+  ports      Json      @default("[]")
+  exitCode   Int?      @map("exit_code")
+  since      DateTime?
+
+  organization Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  server       Server       @relation(fields: [serverId], references: [id], onDelete: Cascade)
+  snapshot     HostSnapshot @relation(fields: [snapshotId], references: [id], onDelete: Cascade)
+
+  @@index([orgId, serverId])
+  @@index([orgId, running])
+  @@index([snapshotId])
+  @@map("host_services")
 }
 
 /// An open exposure problem. Unique per (server, code, proto, port) so a

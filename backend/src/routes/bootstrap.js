@@ -73,6 +73,10 @@ const POSTURE_ASSET_PATHS = {
     path.resolve(__dirname, '..', '..', '..', 'scripts', 'posture', 'shellius-posture.timer'),
     '/app/scripts/posture/shellius-posture.timer',
   ],
+  containerSudoers: [
+    path.resolve(__dirname, '..', '..', '..', 'scripts', 'posture', 'shellius-posture-containers.sudoers'),
+    '/app/scripts/posture/shellius-posture-containers.sudoers',
+  ],
   sudoers: [
     path.resolve(__dirname, '..', '..', '..', 'scripts', 'posture', 'shellius-posture.sudoers'),
     '/app/scripts/posture/shellius-posture.sudoers',
@@ -101,6 +105,7 @@ const POSTURE_ASSETS = {
   service: readFirstExistingSync(POSTURE_ASSET_PATHS.service),
   timer: readFirstExistingSync(POSTURE_ASSET_PATHS.timer),
   sudoers: readFirstExistingSync(POSTURE_ASSET_PATHS.sudoers),
+  containerSudoers: readFirstExistingSync(POSTURE_ASSET_PATHS.containerSudoers),
 };
 if (Object.values(POSTURE_ASSETS).some((v) => v === null)) {
   logger.warn('bootstrap: posture collector assets missing on disk — install.sh will skip posture packaging', {
@@ -588,6 +593,23 @@ if [ "$PLATFORM" = "linux" ] && command -v systemctl >/dev/null 2>&1 \\
       fi
     fi
 
+    if [ "\$CONTAINER_SCAN" = "1" ] && [ -n "\$POSTURE_CONTAINER_SUDOERS_B64" ]; then
+      echo "\$POSTURE_CONTAINER_SUDOERS_B64" | base64 -d > /etc/sudoers.d/shellius-posture-containers
+      chmod 0440 /etc/sudoers.d/shellius-posture-containers
+      chown root:0 /etc/sudoers.d/shellius-posture-containers 2>/dev/null || true
+      if command -v visudo >/dev/null 2>&1; then
+        if visudo -c -f /etc/sudoers.d/shellius-posture-containers >/dev/null 2>&1; then
+          echo "[shellius]   Container state scan ENABLED (stopped containers will be reported)"
+        else
+          echo "[shellius]   ! container sudoers validation failed — removing bad drop-in" >&2
+          rm -f /etc/sudoers.d/shellius-posture-containers
+        fi
+      fi
+    elif [ "\$CONTAINER_SCAN" = "0" ]; then
+      rm -f /etc/sudoers.d/shellius-posture-containers
+      echo "[shellius]   Container state scan disabled"
+    fi
+
     echo "\$POSTURE_SERVICE_B64" | base64 -d > /etc/systemd/system/shellius-posture.service
     echo "\$POSTURE_TIMER_B64" | base64 -d > /etc/systemd/system/shellius-posture.timer
     chmod 644 /etc/systemd/system/shellius-posture.service /etc/systemd/system/shellius-posture.timer
@@ -688,6 +710,9 @@ function buildUnixInstallScript({ apiUrl, agentToken, caPubKey, hostname, sshUse
   const postureSudoersB64 = POSTURE_ASSETS.sudoers
     ? Buffer.from(POSTURE_ASSETS.sudoers, 'utf8').toString('base64')
     : '';
+  const postureContainerSudoersB64 = POSTURE_ASSETS.containerSudoers
+    ? Buffer.from(POSTURE_ASSETS.containerSudoers, 'utf8').toString('base64')
+    : '';
 
   return `#!/usr/bin/env bash
 # Shellius host bootstrap v2 — installs CA trust, check-principals agent,
@@ -700,6 +725,14 @@ function buildUnixInstallScript({ apiUrl, agentToken, caPubKey, hostname, sshUse
 #   sudo bash install.sh            — full install (CA + all agent components)
 #   sudo bash install.sh --upgrade  — re-install agent components only
 #                                     (skips CA key + sshd config rewrite)
+#
+#   --with-container-scan  also let the posture collector see STOPPED
+#                          containers (narrow sudoers grant for 'docker ps
+#                          -a' / 'podman ps -a' and a fixed-format inspect
+#                          of published ports only — never the docker
+#                          group, never the socket).
+#   --no-container-scan    remove that grant. Neither flag leaves whatever
+#                          is already installed untouched.
 set -euo pipefail
 
 if [ "$(id -u)" -ne 0 ]; then
@@ -708,8 +741,17 @@ if [ "$(id -u)" -ne 0 ]; then
 fi
 
 UPGRADE_ONLY=0
+# Off by default. 'ss' cannot see a stopped container, so its published port
+# and its firewall rule look like an abandoned rule rather than a service one
+# 'docker start' away from being reachable. Closing that blind spot needs a
+# root-level read of the container list, so it is the operator's call per
+# host — see scripts/posture/shellius-posture-containers.sudoers for exactly
+# what the grant does and does not allow.
+CONTAINER_SCAN=""
 for arg in "\$@"; do
   [ "\$arg" = "--upgrade" ] && UPGRADE_ONLY=1
+  [ "\$arg" = "--with-container-scan" ] && CONTAINER_SCAN=1
+  [ "\$arg" = "--no-container-scan" ] && CONTAINER_SCAN=0
 done
 
 # ---------------------------------------------------------------------------
@@ -746,6 +788,7 @@ POSTURE_REPORT_B64='${postureReportB64}'
 POSTURE_SERVICE_B64='${postureServiceB64}'
 POSTURE_TIMER_B64='${postureTimerB64}'
 POSTURE_SUDOERS_B64='${postureSudoersB64}'
+POSTURE_CONTAINER_SUDOERS_B64='${postureContainerSudoersB64}'
 POSTURE_USER=shellius-posture
 POSTURE_COLLECT_PATH=/usr/local/sbin/shellius-posture-collect
 POSTURE_REPORT_PATH=/usr/local/sbin/shellius-posture-report
@@ -1504,6 +1547,9 @@ function buildPostureOnlyInstallScript({ apiUrl, agentToken, hostname }) {
   const postureSudoersB64 = POSTURE_ASSETS.sudoers
     ? Buffer.from(POSTURE_ASSETS.sudoers, 'utf8').toString('base64')
     : '';
+  const postureContainerSudoersB64 = POSTURE_ASSETS.containerSudoers
+    ? Buffer.from(POSTURE_ASSETS.containerSudoers, 'utf8').toString('base64')
+    : '';
 
   return `#!/usr/bin/env bash
 # Shellius POSTURE-ONLY host install — mode=posture
@@ -1576,6 +1622,7 @@ POSTURE_REPORT_B64='${postureReportB64}'
 POSTURE_SERVICE_B64='${postureServiceB64}'
 POSTURE_TIMER_B64='${postureTimerB64}'
 POSTURE_SUDOERS_B64='${postureSudoersB64}'
+POSTURE_CONTAINER_SUDOERS_B64='${postureContainerSudoersB64}'
 
 if [ -z "\$POSTURE_COLLECT_B64" ] || [ -z "\$POSTURE_REPORT_B64" ] || [ -z "\$POSTURE_SERVICE_B64" ] \\
    || [ -z "\$POSTURE_TIMER_B64" ] || [ -z "\$POSTURE_SUDOERS_B64" ]; then
@@ -1583,6 +1630,12 @@ if [ -z "\$POSTURE_COLLECT_B64" ] || [ -z "\$POSTURE_REPORT_B64" ] || [ -z "\$PO
   echo "[shellius]   Posture-only mode has nothing else to install — aborting." >&2
   exit 1
 fi
+
+CONTAINER_SCAN=""
+for arg in "\$@"; do
+  [ "\$arg" = "--with-container-scan" ] && CONTAINER_SCAN=1
+  [ "\$arg" = "--no-container-scan" ] && CONTAINER_SCAN=0
+done
 
 echo "[shellius] [1/5] Writing per-host agent token → $AGENT_TOKEN_PATH"
 install -d "$AGENT_DIR"
@@ -1612,6 +1665,25 @@ if ! id -u "\$POSTURE_USER" >/dev/null 2>&1; then
 fi
 
 echo "[shellius] [4/5] Installing narrow sudoers drop-in + systemd unit/timer"
+# Optional, off by default: see the full installer and
+# scripts/posture/shellius-posture-containers.sudoers for what this grant
+# does and does not allow. Without it the collector cannot see a STOPPED
+# container, so that container's surviving firewall rule reports as an
+# abandoned rule rather than a service one docker-start from reachable.
+if [ "\$CONTAINER_SCAN" = "1" ] && [ -n "\$POSTURE_CONTAINER_SUDOERS_B64" ]; then
+  echo "\$POSTURE_CONTAINER_SUDOERS_B64" | base64 -d > /etc/sudoers.d/shellius-posture-containers
+  chmod 0440 /etc/sudoers.d/shellius-posture-containers
+  chown root:0 /etc/sudoers.d/shellius-posture-containers 2>/dev/null || true
+  if command -v visudo >/dev/null 2>&1 && ! visudo -c -f /etc/sudoers.d/shellius-posture-containers >/dev/null 2>&1; then
+    echo "[shellius]   ! container sudoers validation failed — removing bad drop-in" >&2
+    rm -f /etc/sudoers.d/shellius-posture-containers
+  else
+    echo "[shellius]   Container state scan ENABLED (stopped containers will be reported)"
+  fi
+elif [ "\$CONTAINER_SCAN" = "0" ]; then
+  rm -f /etc/sudoers.d/shellius-posture-containers
+  echo "[shellius]   Container state scan disabled"
+fi
 echo "\$POSTURE_SUDOERS_B64" | base64 -d > /etc/sudoers.d/shellius-posture
 chmod 0440 /etc/sudoers.d/shellius-posture
 chown root:0 /etc/sudoers.d/shellius-posture 2>/dev/null || true
@@ -2269,5 +2341,10 @@ router.post(
     });
   })
 );
+
+// Exported for the shell-syntax test only: these builders emit bash from a
+// JS template literal, which is a shape where a stray backtick or an
+// unescaped $ produces a script that only fails on a real host.
+export const __testBuilders = { buildUnixInstallScript, buildPostureOnlyInstallScript };
 
 export default router;

@@ -43,6 +43,8 @@ const REMEDIATION = {
     'IPv4 and IPv6 policy disagree for this port, so reporting the IPv4 answer alone would be a guess. Check the rules for both address families on the host.',
   STALE_FIREWALL_RULE:
     'A firewall rule allows a port nothing is listening on. Harmless today, but it will silently expose whatever binds that port next. Remove the rule if the service is gone for good.',
+  STOPPED_SERVICE_PORT_OPEN:
+    'This is not an abandoned rule — the service that serves this port is installed and stopped, and starting it re-opens the port with the firewall already allowing it. Decide which you meant: if the service is retired, remove it and the rule together; if it is meant to run, start it and re-check where it binds.',
   EXPECTED_PUBLIC:
     'This port is expected to be public and is recorded so the inventory is complete, not because anything is wrong.',
 };
@@ -53,6 +55,11 @@ const DETAIL_LABELS = {
   matchedBy: 'Matched by',
   from: 'Rule source',
   firewallEngine: 'Firewall',
+  serviceKind: 'Runtime',
+  serviceName: 'Service',
+  serviceState: 'State',
+  serviceStatus: 'Reported status',
+  exitCode: 'Exit code',
 };
 
 function FindingDetailModal({

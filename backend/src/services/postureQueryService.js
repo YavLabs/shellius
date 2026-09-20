@@ -349,6 +349,17 @@ export async function getServerPosture(orgId, serverId, scope) {
       })
     : [];
 
+  // Installed services and their state. Listeners only cover what is
+  // LISTENING; a stopped container's published port and its firewall rule
+  // both outlive the socket, so the ports view needs this to show the port
+  // at all — and to say why nothing is on it.
+  const services = latestSnapshot
+    ? await prisma.hostService.findMany({
+        where: { orgId, serverId, snapshotId: latestSnapshot.id },
+        orderBy: [{ running: 'desc' }, { kind: 'asc' }, { name: 'asc' }],
+      })
+    : [];
+
   const findingRows = await prisma.exposureFinding.findMany({
     where: { orgId, serverId },
     include: FINDING_INCLUDE,
@@ -382,9 +393,14 @@ export async function getServerPosture(orgId, serverId, scope) {
           collectorOk: latestSnapshot.collectorOk,
           degradedReason: latestSnapshot.degradedReason,
           firewall: latestSnapshot.firewall,
+          // Which halves of the service scan ran on this host. "No stopped
+          // containers" and "never looked for containers" must not render
+          // the same way.
+          serviceScan: latestSnapshot.raw?.serviceScan || null,
         }
       : null,
     listeners,
+    services,
     findings: findingRows.map(findingDto),
     metrics: metricRows
       .slice()
