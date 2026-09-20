@@ -2,17 +2,21 @@ import { AlertTriangle } from 'lucide-react';
 import Modal from '@/components/shared/Modal';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { serviceLabel } from '@/lib/postureLabels';
 import SeverityBadge from '@/components/posture/SeverityBadge';
+import { DetailRow, DetailSection } from '@/components/posture/DetailRow';
+import { serviceLabel } from '@/lib/postureLabels';
 
 /**
  * ListenerDetailModal — the row-click view for one listening socket.
  *
  * The table trims owner names, container ids and paths to fit; this shows
  * them in full, and explains what the reachability verdict actually means,
- * which is the part people most often get wrong (a "LOOPBACK" row is safe,
- * an "INTERNET" row on a host with a firewall may still be safe, and a
- * Docker publish is reachable whatever the firewall says).
+ * which is the part people most often get wrong (a LOOPBACK row is safe, an
+ * INTERNET row on a firewalled host may still be safe, and a Docker publish
+ * is reachable whatever the firewall says).
+ *
+ * Same layout as the Finding modal and the Session details modal: one
+ * column of DetailRows under short headings, actions in the footer slot.
  */
 
 const REACHABILITY = {
@@ -30,12 +34,14 @@ const REACHABILITY = {
   LOOPBACK: {
     tone: 'success',
     label: 'Loopback',
-    blurb: 'Bound to 127.0.0.1, so only processes on this host can reach it. This is the safe end state for an internal service.',
+    blurb:
+      'Bound to 127.0.0.1, so only processes on this host can reach it. This is the safe end state for an internal service.',
   },
   FIREWALLED: {
     tone: 'success',
     label: 'Firewalled',
-    blurb: 'Bound wide, but a host firewall rule denies the port. Reachable only if that rule is removed or the firewall is turned off.',
+    blurb:
+      'Bound wide, but a host firewall rule denies the port. Reachable only if that rule is removed or the firewall is turned off.',
   },
   UNKNOWN: {
     tone: 'neutral',
@@ -53,27 +59,6 @@ const OWNER_KIND = {
   systemd: 'systemd unit',
 };
 
-function Row({ label, children, mono }) {
-  if (children === null || children === undefined || children === '') return null;
-  return (
-    <div className="flex items-start justify-between gap-4 py-1.5">
-      <span className="shrink-0 text-xs text-muted-foreground">{label}</span>
-      <span className={`min-w-0 break-all text-right text-sm text-foreground ${mono ? 'font-mono text-xs' : ''}`}>
-        {children}
-      </span>
-    </div>
-  );
-}
-
-function Section({ title, children }) {
-  return (
-    <div className="rounded-lg border border-border bg-muted/20 p-3">
-      <p className="mb-1 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground/70">{title}</p>
-      {children}
-    </div>
-  );
-}
-
 function ListenerDetailModal({ open, listener, findings = [], onClose, onOpenFinding }) {
   if (!listener) return null;
 
@@ -83,95 +68,100 @@ function ListenerDetailModal({ open, listener, findings = [], onClose, onOpenFin
   const related = findings.filter(
     (f) => f.port === listener.port && (!f.proto || f.proto === listener.proto)
   );
+  const bypassed = related.some((f) => f.code === 'DOCKER_FIREWALL_BYPASS');
 
   const reach = REACHABILITY[listener.reachability] || REACHABILITY.UNKNOWN;
   const { text: service, inferred } = serviceLabel(listener);
   const kind = OWNER_KIND[listener.ownerKind] || listener.ownerKind || null;
 
+  const footer = (
+    <div className="flex items-center justify-end gap-2" data-sheet-footer>
+      <Button variant="outline" onClick={onClose}>
+        Close
+      </Button>
+    </div>
+  );
+
   return (
-    <Modal open={open} onClose={onClose} title="Listener" size="lg">
-      <div className="space-y-4 p-5 max-md:p-4">
-        <div className="flex flex-wrap items-center gap-2">
-          <span className="font-mono text-base font-semibold text-foreground">
-            {String(listener.proto || '').toUpperCase()}/{listener.port}
-          </span>
-          <Badge tone={reach.tone}>{reach.label}</Badge>
-        </div>
+    <Modal open={open} onClose={onClose} title="Listener" size="lg" footer={footer}>
+      <div className="space-y-5">
+        <header className="space-y-2">
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="font-mono text-base font-semibold text-foreground">
+              {String(listener.proto || '').toUpperCase()}/{listener.port}
+            </span>
+            <Badge tone={reach.tone}>{reach.label}</Badge>
+          </div>
+          <p className="text-sm leading-relaxed text-muted-foreground">{reach.blurb}</p>
+        </header>
 
-        <p className="text-xs leading-relaxed text-muted-foreground">{reach.blurb}</p>
-
-        {related.some((f) => f.code === 'DOCKER_FIREWALL_BYPASS') && (
-          <div className="flex items-start gap-2 rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2.5">
+        {bypassed && (
+          <div className="flex items-start gap-2 rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2.5">
             <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-amber-600 dark:text-amber-400" />
             <p className="text-xs leading-relaxed text-amber-800 dark:text-amber-200">
-              A firewall rule covers this port, but Docker published it with a DNAT rule in
-              <code className="mx-1 font-mono">nat/PREROUTING</code>, which traverses
-              <code className="mx-1 font-mono">FORWARD</code> — not the
-              <code className="mx-1 font-mono">INPUT</code> chain where ufw and firewalld put host
-              rules. The port is reachable regardless of what that rule says.
+              A firewall rule covers this port, but Docker published it with a DNAT rule in{' '}
+              <code className="font-mono">nat/PREROUTING</code>, which traverses{' '}
+              <code className="font-mono">FORWARD</code> — not the{' '}
+              <code className="font-mono">INPUT</code> chain where ufw and firewalld put host rules.
+              The port is reachable regardless of what that rule says.
             </p>
           </div>
         )}
 
-        <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
-          <Section title="Socket">
-            <Row label="Protocol">{String(listener.proto || '').toUpperCase()}</Row>
-            <Row label="Port" mono>{listener.port}</Row>
-            <Row label="Bind address" mono>{listener.bind}</Row>
-            {listener.containerPort ? (
-              <Row label="Container port" mono>
-                {listener.containerPort}
-              </Row>
-            ) : null}
-            <Row label="Service">
-              {inferred ? <span className="text-muted-foreground">{service}</span> : service}
-            </Row>
-          </Section>
+        <DetailSection title="Socket">
+          <DetailRow label="Protocol" value={String(listener.proto || '').toUpperCase()} />
+          <DetailRow label="Port" value={listener.port} mono />
+          <DetailRow label="Bind address" value={listener.bind} mono />
+          <DetailRow label="Container port" value={listener.containerPort} mono />
+          <DetailRow
+            label="Service"
+            value={inferred ? <span className="text-muted-foreground">{service}</span> : service}
+          />
+        </DetailSection>
 
-          <Section title="What owns it">
-            <Row label="Kind">{kind || <span className="text-muted-foreground">Unattributed</span>}</Row>
-            <Row label="Name">{listener.ownerName}</Row>
-            <Row label="Reference" mono>{listener.ownerRef}</Row>
-            <Row label="Unix user" mono>{listener.ownerUser}</Row>
-            <Row label="PID" mono>{listener.pid}</Row>
-          </Section>
-        </div>
+        <DetailSection title="What owns it">
+          <DetailRow
+            label="Kind"
+            value={kind || <span className="text-muted-foreground">Unattributed</span>}
+          />
+          <DetailRow label="Name" value={listener.ownerName} mono />
+          <DetailRow label="Reference" value={listener.ownerRef} mono />
+          <DetailRow label="Unix user" value={listener.ownerUser} mono />
+          <DetailRow label="PID" value={listener.pid} mono />
+        </DetailSection>
 
         {(listener.sourcePath || listener.ownerDetail) && (
-          <Section title="Where it is defined">
-            <Row label="Source" mono>{listener.sourcePath}</Row>
-            <Row label="Detail" mono>{listener.ownerDetail}</Row>
-            <p className="mt-1 text-[11px] leading-relaxed text-muted-foreground">
+          <DetailSection title="Where it is defined">
+            <DetailRow label="Source" value={listener.sourcePath} mono />
+            <DetailRow label="Detail" value={listener.ownerDetail} mono />
+            <p className="pt-2 text-xs leading-relaxed text-muted-foreground">
               This is the file or unit that starts the service — the place to change the bind
               address if this port should not be reachable.
             </p>
-          </Section>
+          </DetailSection>
         )}
+
         {related.length > 0 && (
-          <Section title={`Findings on this port (${related.length})`}>
-            <ul className="space-y-1">
+          <DetailSection title={`Findings on this port (${related.length})`}>
+            <ul className="divide-y divide-border">
               {related.map((f) => (
                 <li key={f.id}>
                   <button
                     type="button"
                     onClick={() => onOpenFinding?.(f)}
                     disabled={!onOpenFinding}
-                    className="flex w-full items-start gap-2 rounded-md px-1 py-1 text-left enabled:hover:bg-accent/50 disabled:cursor-default"
+                    className="grid w-full grid-cols-3 gap-3 py-2.5 text-left enabled:hover:bg-accent/40 disabled:cursor-default"
                   >
-                    <SeverityBadge severity={f.severity} />
-                    <span className="min-w-0 flex-1 text-xs text-foreground">{f.message}</span>
+                    <span className="col-span-1">
+                      <SeverityBadge severity={f.severity} />
+                    </span>
+                    <span className="col-span-2 text-sm text-foreground">{f.message}</span>
                   </button>
                 </li>
               ))}
             </ul>
-          </Section>
+          </DetailSection>
         )}
-      </div>
-
-      <div className="flex items-center justify-end gap-2 border-t border-border px-5 py-4 max-md:px-4">
-        <Button variant="outline" onClick={onClose}>
-          Close
-        </Button>
       </div>
     </Modal>
   );

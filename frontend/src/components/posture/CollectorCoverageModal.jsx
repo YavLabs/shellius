@@ -46,7 +46,7 @@ function CollectorCoverageModal({ open, onClose, onInstall, canInstall }) {
 
   return (
     <Modal open={open} onClose={onClose} title="Collector coverage" size="lg">
-      <div className="space-y-4 p-5 max-md:p-4">
+      <div className="space-y-4">
         <p className="text-xs text-muted-foreground">
           Posture only sees hosts running the collector. Servers below are grouped by what they are
           doing right now.
