@@ -1,9 +1,8 @@
 import { useCallback, useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { AlertTriangle, Check, Cpu, Database, Download, Gauge, HardDrive, Radar, ChevronRight, ShieldCheck, ShieldOff, Trash2, Volume1, VolumeX, Wifi } from 'lucide-react';
+import { AlertTriangle, Check, Cpu, Database, Download, Gauge, HardDrive, Radar, ShieldCheck, ShieldOff, Volume1, VolumeX, Wifi } from 'lucide-react';
 import DataTable from '@/components/shared/DataTable';
 import { serviceLabel } from '@/lib/postureLabels';
-import { cn } from '@/lib/utils';
 import FindingDetailModal from '@/components/posture/FindingDetailModal';
 import ListenerDetailModal from '@/components/posture/ListenerDetailModal';
 import ExportDialog from '@/components/posture/ExportDialog';
@@ -79,9 +78,6 @@ function ServerPostureTab({ serverId, canMute, authMode, canBootstrap, onBootstr
   // the confirmation has to live on the page — otherwise a successful save
   // looks identical to nothing happening.
   const [expectedNotice, setExpectedNotice] = useState('');
-  // Collapsed by default: this is reference data about decisions already
-  // made, not the thing you came to the tab to read.
-  const [expectedOpen, setExpectedOpen] = useState(false);
   const { user } = useAuth();
   const canExport = can(user, 'posture.export');
   const canExpect = can(user, 'posture.expected_ports');
@@ -218,108 +214,41 @@ function ServerPostureTab({ serverId, canMute, authMode, canBootstrap, onBootstr
   // declared expected that nothing is serving is worth surfacing: the
   // declaration outlived the service, and it will silently cover whatever
   // binds that port next.
-  const expectedRows = expectedPorts.map((e) => {
-    const listener = listeners.find(
-      (l) => l.port === e.port && (e.proto === 'any' || l.proto === e.proto)
-    );
-    return { ...e, listener };
-  });
-  const staleExpected = expectedRows.filter((r) => !r.listener).length;
+  // One row per port on this host.
+  //
+  // Listeners and expected-port declarations were two tables describing the
+  // same thing, which made a port's real state something you had to assemble
+  // by eye. They are one table now: every listener, plus any declaration with
+  // nothing behind it — a declaration that outlived its service still matters,
+  // because it will silently cover whatever binds that port next.
+  const expectedFor = (proto, port) =>
+    expectedPorts.find((e) => e.port === port && (e.proto === 'any' || e.proto === proto)) || null;
 
-  const expectedColumns = [
-    {
-      key: 'port',
-      label: 'Port',
-      sortable: true,
-      searchAccessor: (r) => `${r.proto} ${r.port}`,
-      render: (r) => (
-        <span className="font-mono text-sm font-medium text-foreground">
-          {r.proto === 'any' ? 'ANY' : r.proto.toUpperCase()}/{r.port}
-        </span>
-      ),
-    },
-    {
-      key: 'service',
-      label: 'Service',
-      searchAccessor: (r) => (r.listener ? serviceLabel(r.listener).text : 'not listening'),
-      render: (r) =>
-        r.listener ? (
-          <span className={serviceLabel(r.listener).inferred ? 'text-muted-foreground' : 'text-foreground'}>
-            {serviceLabel(r.listener).text}
-          </span>
-        ) : (
-          <span className="text-amber-600 dark:text-amber-400">Not listening</span>
-        ),
-    },
-    {
-      key: 'owner',
-      label: 'Owner',
-      hideBelow: 'lg',
-      searchAccessor: (r) => (r.listener ? `${r.listener.ownerKind} ${r.listener.ownerName}` : ''),
-      render: (r) =>
-        r.listener?.ownerKind ? (
-          <span className="font-mono text-xs text-muted-foreground">
-            {r.listener.ownerKind}/{r.listener.ownerName || '-'}
-          </span>
-        ) : (
-          <span className="text-muted-foreground">—</span>
-        ),
-    },
-    {
-      key: 'reachability',
-      label: 'Reachability',
-      hideBelow: 'lg',
-      render: (r) =>
-        r.listener ? (
-          <Badge tone={reachabilityTone(r.listener.reachability).tone}>
-            {reachabilityTone(r.listener.reachability).label}
-          </Badge>
-        ) : null,
-    },
-    {
-      key: 'note',
-      label: 'Reason',
-      searchAccessor: (r) => r.note || '',
-      render: (r) => (
-        <span className="block max-w-[22rem] truncate text-sm text-foreground" title={r.note}>
-          {r.note}
-        </span>
-      ),
-    },
-    {
-      key: 'createdBy',
-      label: 'Added by',
-      hideBelow: 'lg',
-      searchAccessor: (r) => r.createdBy?.name || '',
-      render: (r) => (
-        <span className="text-xs text-muted-foreground">
-          {r.createdBy?.name || 'Unknown'}
-          <span className="ml-1.5">{relativeTime(r.createdAt)}</span>
-        </span>
-      ),
-    },
-    ...(canExpect
-      ? [
-          {
-            key: 'actions',
-            label: '',
-            className: 'w-10',
-            actions: [
-              {
-                label: 'Stop expecting this port',
-                icon: Trash2,
-                variant: 'destructive',
-                onClick: async (r) => {
-                  await removeExpectedPort(serverId, r.id);
-                  loadExpected();
-                  fetch();
-                },
-              },
-            ],
-          },
-        ]
-      : []),
-  ];
+  const portRows = [
+    ...listeners.map((l) => ({
+      ...l,
+      rowKey: l.id,
+      listening: true,
+      expected: expectedFor(l.proto, l.port),
+      findings: findings.filter((f) => f.port === l.port && (!f.proto || f.proto === l.proto)),
+    })),
+    // Declarations with no matching listener, surfaced rather than hidden.
+    ...expectedPorts
+      .filter((e) => !listeners.some((l) => l.port === e.port && (e.proto === 'any' || l.proto === e.proto)))
+      .map((e) => ({
+        id: `expected-${e.id}`,
+        rowKey: `expected-${e.id}`,
+        proto: e.proto === 'any' ? 'tcp' : e.proto,
+        port: e.port,
+        bind: null,
+        reachability: null,
+        listening: false,
+        expected: e,
+        findings: [],
+      })),
+  ].sort((a, b) => a.port - b.port || String(a.proto).localeCompare(String(b.proto)));
+
+  const staleExpected = portRows.filter((r) => r.expected && !r.listening).length;
 
   const handleBulkAcknowledge = async () => {
     setBusyId('bulk');
@@ -402,6 +331,11 @@ function ServerPostureTab({ serverId, canMute, authMode, canBootstrap, onBootstr
       label: 'Reachability',
       mobile: { slot: 'meta', order: 1, render: (r) => <Badge tone={reachabilityTone(r.reachability).tone}>{reachabilityTone(r.reachability).label}</Badge> },
       render: (r) => {
+        if (!r.listening) {
+          return (
+            <span className="text-xs text-amber-600 dark:text-amber-400">Not listening</span>
+          );
+        }
         const { tone, label } = reachabilityTone(r.reachability);
         return <Badge tone={tone}>{label}</Badge>;
       },
@@ -411,9 +345,10 @@ function ServerPostureTab({ serverId, canMute, authMode, canBootstrap, onBootstr
       label: 'Service',
       // Search what the cell actually shows, so "docker" or "pm2" finds the
       // rows the column now labels that way.
-      searchAccessor: (r) => serviceLabel(r).text,
-      mobile: { slot: 'secondary', render: (r) => serviceLabel(r).text },
+      searchAccessor: (r) => (r.listening ? serviceLabel(r).text : ''),
+      mobile: { slot: 'secondary', render: (r) => (r.listening ? serviceLabel(r).text : '—') },
       render: (r) => {
+        if (!r.listening) return <span className="text-muted-foreground">—</span>;
         const { text, inferred } = serviceLabel(r);
         return (
           <span className={inferred ? 'text-muted-foreground' : 'text-foreground'} title={text}>
@@ -448,6 +383,51 @@ function ServerPostureTab({ serverId, canMute, authMode, canBootstrap, onBootstr
         <span className="max-w-[12rem] truncate font-mono text-[11px] text-muted-foreground" title={r.sourcePath}>
           {r.sourcePath || '-'}
         </span>
+      ),
+    },
+    {
+      key: 'status',
+      label: 'Status',
+      searchAccessor: (r) =>
+        [...r.findings.map((f) => `${f.severity} ${f.code}`), r.expected ? `expected ${r.expected.note}` : '']
+          .join(' ')
+          .trim(),
+      mobile: {
+        slot: 'meta',
+        order: 3,
+        render: (r) => (r.findings.length ? `${r.findings.length} finding${r.findings.length === 1 ? '' : 's'}` : null),
+      },
+      render: (r) => (
+        <div className="flex flex-wrap items-center gap-1.5">
+          {/* Each finding is its own control: the row opens the listener, a
+              badge opens that finding. stopPropagation keeps the two apart. */}
+          {r.findings.map((f) => (
+            <button
+              key={f.id}
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                setDetailFinding(f);
+              }}
+              title={f.message}
+              className="rounded focus:outline-none focus:ring-2 focus:ring-ring"
+            >
+              <SeverityBadge severity={f.severity} />
+            </button>
+          ))}
+          {r.expected && (
+            <Badge
+              tone="neutral"
+              variant="outline"
+              title={`Expected on this server: ${r.expected.note}${
+                r.expected.createdBy?.name ? ` — ${r.expected.createdBy.name}` : ''
+              }`}
+            >
+              Expected
+            </Badge>
+          )}
+          {r.findings.length === 0 && !r.expected && <span className="text-muted-foreground">—</span>}
+        </div>
       ),
     },
   ];
@@ -655,51 +635,19 @@ function ServerPostureTab({ serverId, canMute, authMode, canBootstrap, onBootstr
         )}
       </div>
 
-      {expectedPorts.length > 0 && (
-        <div className="overflow-hidden rounded-lg border border-border">
-          <button
-            type="button"
-            onClick={() => setExpectedOpen((v) => !v)}
-            aria-expanded={expectedOpen}
-            className="flex w-full items-center gap-2 px-3 py-2.5 text-left transition-colors hover:bg-accent/40"
-          >
-            <ChevronRight
-              className={cn('h-4 w-4 shrink-0 text-muted-foreground transition-transform', expectedOpen && 'rotate-90')}
-              aria-hidden="true"
-            />
-            <h3 className="text-sm font-semibold text-foreground">Expected on this server</h3>
+      <div>
+        <div className="mb-2 flex flex-wrap items-center justify-between gap-3">
+          <div className="flex items-center gap-2">
+            <h3 className="text-sm font-semibold text-foreground">Ports</h3>
             <span className="rounded-full bg-muted px-2 py-0.5 text-[11px] tabular-nums text-muted-foreground">
-              {expectedPorts.length}
+              {portRows.length}
             </span>
             {staleExpected > 0 && (
               <span className="text-[11px] text-amber-600 dark:text-amber-400">
-                {staleExpected} no longer listening
+                {staleExpected} expected, no longer listening
               </span>
             )}
-          </button>
-
-          {expectedOpen && (
-            <div className="border-t border-border px-3 pb-3 pt-2">
-              <DataTable
-                columns={expectedColumns}
-                data={expectedRows}
-                showSearch={expectedPorts.length > 8}
-                searchPlaceholder="Search port, service, owner or reason..."
-                emptyMessage="No expected ports"
-              />
-              <p className="mt-2 text-xs text-muted-foreground">
-                These ports are not reported as exposed on this host. Removing an entry does not
-                reopen the finding immediately — it comes back on the next snapshot if the port is
-                still listening, which is the only evidence that justifies reopening it.
-              </p>
-            </div>
-          )}
-        </div>
-      )}
-
-      <div>
-        <div className="mb-2 flex items-center justify-between gap-3">
-          <h3 className="text-sm font-semibold text-foreground">Listeners</h3>
+          </div>
           {canExport && listeners.length > 0 && (
             <Button variant="outline" size="sm" onClick={() => setExportDataset('listeners')}>
               <Download className="mr-1.5 h-4 w-4" /> Export
@@ -708,13 +656,19 @@ function ServerPostureTab({ serverId, canMute, authMode, canBootstrap, onBootstr
         </div>
         <DataTable
           columns={listenerColumns}
-          data={listeners}
+          data={portRows}
           onRowClick={setDetailListener}
-          showSearch={listeners.length > 8}
-          searchPlaceholder="Search port, service or owner..."
+          showSearch={portRows.length > 8}
+          searchPlaceholder="Search port, service, owner or status..."
           emptyMessage="No listening ports reported"
-          mobile={{ accent: (r) => (r.reachability === 'internet' ? { tone: 'danger', label: 'INTERNET' } : null) }}
+          mobile={{ accent: (r) => (r.reachability === 'INTERNET' ? { tone: 'danger', label: 'INTERNET' } : null) }}
         />
+        <p className="mt-2 text-xs text-muted-foreground">
+          Every port this host is serving, plus any marked expected. A severity badge opens that
+          finding; a row opens the port. A port marked expected is not reported as exposed here —
+          removing that does not reopen the finding immediately, it returns on the next snapshot if
+          the port is still listening.
+        </p>
       </div>
 
       <ExportDialog
@@ -764,8 +718,19 @@ function ServerPostureTab({ serverId, canMute, authMode, canBootstrap, onBootstr
         open={!!detailListener}
         listener={detailListener}
         findings={findings}
+        canExpect={canExpect}
         onClose={() => setDetailListener(null)}
         onOpenFinding={(f) => { setDetailListener(null); setDetailFinding(f); }}
+        onMarkExpected={(l) => {
+          setDetailListener(null);
+          setExpectedTargets([{ port: l.port, proto: l.proto }]);
+        }}
+        onRemoveExpected={async (entryId) => {
+          await removeExpectedPort(serverId, entryId);
+          setDetailListener(null);
+          loadExpected();
+          fetch();
+        }}
       />
 
       <MuteDialog

@@ -1,4 +1,4 @@
-import { AlertTriangle } from 'lucide-react';
+import { AlertTriangle, ShieldCheck, Trash2 } from 'lucide-react';
 import Modal from '@/components/shared/Modal';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -59,7 +59,16 @@ const OWNER_KIND = {
   systemd: 'systemd unit',
 };
 
-function ListenerDetailModal({ open, listener, findings = [], onClose, onOpenFinding }) {
+function ListenerDetailModal({
+  open,
+  listener,
+  findings = [],
+  canExpect = false,
+  onClose,
+  onOpenFinding,
+  onMarkExpected,
+  onRemoveExpected,
+}) {
   if (!listener) return null;
 
   // What posture actually concluded about this socket. The listener row is
@@ -70,29 +79,53 @@ function ListenerDetailModal({ open, listener, findings = [], onClose, onOpenFin
   );
   const bypassed = related.some((f) => f.code === 'DOCKER_FIREWALL_BYPASS');
 
+  // A row can also be an expected-port declaration with nothing behind it.
+  // Showing a reachability verdict for a socket that does not exist would be
+  // inventing an answer.
+  const notListening = listener.listening === false;
   const reach = REACHABILITY[listener.reachability] || REACHABILITY.UNKNOWN;
   const { text: service, inferred } = serviceLabel(listener);
   const kind = OWNER_KIND[listener.ownerKind] || listener.ownerKind || null;
 
+  const expected = listener.expected || null;
+
   const footer = (
-    <div className="flex items-center justify-end gap-2" data-sheet-footer>
+    <div className="flex flex-wrap items-center justify-end gap-2" data-sheet-footer>
       <Button variant="outline" onClick={onClose}>
         Close
       </Button>
+      {canExpect && expected && onRemoveExpected && (
+        <Button variant="outline" onClick={() => onRemoveExpected(expected.id)}>
+          <Trash2 className="mr-2 h-4 w-4" /> Stop expecting
+        </Button>
+      )}
+      {canExpect && !expected && onMarkExpected && listener.listening !== false && (
+        <Button variant="outline" onClick={() => onMarkExpected(listener)}>
+          <ShieldCheck className="mr-2 h-4 w-4" /> Mark expected
+        </Button>
+      )}
     </div>
   );
 
   return (
-    <Modal open={open} onClose={onClose} title="Listener" size="lg" footer={footer}>
+    <Modal open={open} onClose={onClose} title={notListening ? 'Expected port' : 'Listener'} size="lg" footer={footer}>
       <div className="space-y-5">
         <header className="space-y-2">
           <div className="flex flex-wrap items-center gap-2">
             <span className="font-mono text-base font-semibold text-foreground">
               {String(listener.proto || '').toUpperCase()}/{listener.port}
             </span>
-            <Badge tone={reach.tone}>{reach.label}</Badge>
+            {notListening ? (
+              <Badge tone="warning">Not listening</Badge>
+            ) : (
+              <Badge tone={reach.tone}>{reach.label}</Badge>
+            )}
           </div>
-          <p className="text-sm leading-relaxed text-muted-foreground">{reach.blurb}</p>
+          <p className="text-sm leading-relaxed text-muted-foreground">
+            {notListening
+              ? 'Nothing is serving this port in the most recent snapshot. It is listed because it is marked expected on this host — a declaration that outlived its service will silently cover whatever binds this port next.'
+              : reach.blurb}
+          </p>
         </header>
 
         {bypassed && (
@@ -119,6 +152,7 @@ function ListenerDetailModal({ open, listener, findings = [], onClose, onOpenFin
           />
         </DetailSection>
 
+        {!notListening && (
         <DetailSection title="What owns it">
           <DetailRow
             label="Kind"
@@ -129,6 +163,23 @@ function ListenerDetailModal({ open, listener, findings = [], onClose, onOpenFin
           <DetailRow label="Unix user" value={listener.ownerUser} mono />
           <DetailRow label="PID" value={listener.pid} mono />
         </DetailSection>
+        )}
+
+        {expected && (
+          <DetailSection title="Expected on this server">
+            <DetailRow label="Reason" value={expected.note} />
+            <DetailRow label="Declared by" value={expected.createdBy?.name || 'Unknown'} />
+            <DetailRow
+              label="Applies to"
+              value={expected.proto === 'any' ? 'Both protocols' : expected.proto.toUpperCase()}
+            />
+            <p className="pt-2 text-xs leading-relaxed text-muted-foreground">
+              This port is not reported as exposed on this host. Removing the declaration does not
+              reopen the finding immediately — it returns on the next snapshot if the port is still
+              listening, which is the only evidence that justifies reopening it.
+            </p>
+          </DetailSection>
+        )}
 
         {(listener.sourcePath || listener.ownerDetail) && (
           <DetailSection title="Where it is defined">
