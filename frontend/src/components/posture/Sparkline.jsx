@@ -11,13 +11,21 @@ const COLORS = {
   violet: { stroke: 'stroke-violet-500', fill: 'fill-violet-500/10', dot: 'fill-violet-500' },
 };
 
-function Sparkline({ points = [], max = 100, height = 32, width = 120, color = 'primary', formatValue }) {
+/**
+ * `fluid` drops the fixed pixel width so the SVG scales to its container via
+ * the viewBox — needed wherever the card itself is fluid (a phone's two-up
+ * gauge grid), where a hard 120px pushed the line past the card edge.
+ */
+function Sparkline({ points = [], max = 100, height = 32, width = 120, color = 'primary', formatValue, fluid = false }) {
   const values = points.filter((v) => v !== null && v !== undefined && !Number.isNaN(v));
   const c = COLORS[color] || COLORS.primary;
 
   if (values.length < 2) {
     return (
-      <div className="flex items-center justify-center text-xs text-muted-foreground" style={{ height, width }}>
+      <div
+        className={`flex items-center justify-center text-xs text-muted-foreground${fluid ? ' w-full' : ''}`}
+        style={fluid ? { height } : { height, width }}
+      >
         Not enough data
       </div>
     );
@@ -47,7 +55,13 @@ function Sparkline({ points = [], max = 100, height = 32, width = 120, color = '
   const lastY = y(last);
 
   return (
-    <svg viewBox={`0 0 ${width} ${height}`} width={width} height={height} className="overflow-visible">
+    <svg
+      viewBox={`0 0 ${width} ${height}`}
+      {...(fluid ? {} : { width, height })}
+      preserveAspectRatio={fluid ? 'none' : undefined}
+      className={fluid ? 'w-full overflow-visible' : 'overflow-visible'}
+      style={fluid ? { height } : undefined}
+    >
       {segments.map((seg, i) => {
         const line = seg.map((p) => p.join(',')).join(' ');
         const area = `${seg[0][0]},${height} ${line} ${seg[seg.length - 1][0]},${height}`;

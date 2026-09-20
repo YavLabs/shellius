@@ -37,6 +37,8 @@ import {
   TooltipTrigger,
 } from '@/components/ui/tooltip';
 import usePendingReviewCount from '@/hooks/usePendingReviewCount';
+import usePostureAlertCount from '@/hooks/usePostureAlertCount';
+import { can } from '@/lib/permissions';
 import { NAV_SECTIONS } from '@/lib/navSections';
 
 // ---------------------------------------------------------------------------
@@ -151,6 +153,9 @@ function SidebarBody({ collapsed, onToggle, onNavigate, mobile = false, onClose 
   // "Pending reviews" tab. (This used to show the unread notification count,
   // which matched nothing on the Access requests page.)
   const pendingReviews = usePendingReviewCount(unreadCount);
+  // Critical + high open findings — the same "needs attention" bar the
+  // Server Details tab dot uses, so the two can't tell different stories.
+  const postureAlerts = usePostureAlertCount(can(user, 'posture.read'), unreadCount);
 
   // Visibility comes from ROUTE_ACCESS (lib/commands.js), same as the router.
   const canSee = (item) => canAccessRoute(user, item.to);
@@ -165,6 +170,16 @@ function SidebarBody({ collapsed, onToggle, onNavigate, mobile = false, onClose 
           title={`${pendingReviews} pending review${pendingReviews === 1 ? '' : 's'}`}
         >
           {pendingReviews > 9 ? '9+' : pendingReviews}
+        </span>
+      );
+    }
+    if (item.id === 'posture' && postureAlerts > 0 && !collapsed) {
+      badge = (
+        <span
+          className="ml-2 flex h-5 min-w-5 items-center justify-center rounded-full bg-red-500/20 px-1 text-[10px] font-semibold text-red-600 dark:text-red-400"
+          title={`${postureAlerts} critical or high finding${postureAlerts === 1 ? '' : 's'} open`}
+        >
+          {postureAlerts > 9 ? '9+' : postureAlerts}
         </span>
       );
     }

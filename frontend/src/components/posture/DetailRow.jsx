@@ -11,11 +11,13 @@
 export function DetailRow({ label, value, mono }) {
   if (value === null || value === undefined || value === '') return null;
   return (
-    <div className="grid grid-cols-3 gap-3 border-b border-border py-2.5 last:border-0">
-      <dt className="col-span-1 text-xs font-medium uppercase tracking-wide text-muted-foreground">
+    // Stacked on a phone: a third of a 340px sheet is not a column, it is a
+    // place for "REACHABILITY" to become three lines beside a one-word value.
+    <div className="border-b border-border py-2.5 last:border-0 sm:grid sm:grid-cols-3 sm:gap-3">
+      <dt className="text-xs font-medium uppercase tracking-wide text-muted-foreground sm:col-span-1">
         {label}
       </dt>
-      <dd className={`col-span-2 break-all text-sm text-foreground ${mono ? 'font-mono text-xs' : ''}`}>
+      <dd className={`mt-0.5 break-all text-sm text-foreground sm:col-span-2 sm:mt-0 ${mono ? 'font-mono text-xs' : ''}`}>
         {value}
       </dd>
     </div>

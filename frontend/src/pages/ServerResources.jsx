@@ -143,24 +143,29 @@ function ServerResources() {
 
   const controls = (
     <div className="space-y-3">
-      <div className="flex flex-wrap items-center gap-2">
-        {RANGES.map((r) => (
-          <button
-            key={r.key}
-            type="button"
-            onClick={() => patch({ range: r.key })}
-            className={cn(
-              'inline-flex h-8 items-center rounded-md border px-3 text-xs transition-colors',
-              range === r.key
-                ? 'border-primary bg-primary/10 text-foreground'
-                : 'border-border text-muted-foreground hover:bg-accent'
-            )}
-          >
-            {r.label}
-          </button>
-        ))}
-        <div className="ml-auto flex items-center gap-2">
-          <span className="text-xs text-muted-foreground">Group by</span>
+      {/* The range buttons scroll as one row on a phone rather than wrapping
+          into three; "Group by" drops below them instead of being squeezed
+          onto the end of the same line. */}
+      <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center">
+        <div className="-mx-4 flex items-center gap-2 overflow-x-auto px-4 pb-1 sm:mx-0 sm:flex-wrap sm:overflow-visible sm:px-0 sm:pb-0">
+          {RANGES.map((r) => (
+            <button
+              key={r.key}
+              type="button"
+              onClick={() => patch({ range: r.key })}
+              className={cn(
+                'inline-flex h-8 shrink-0 items-center rounded-md border px-3 text-xs transition-colors',
+                range === r.key
+                  ? 'border-primary bg-primary/10 text-foreground'
+                  : 'border-border text-muted-foreground hover:bg-accent'
+              )}
+            >
+              {r.label}
+            </button>
+          ))}
+        </div>
+        <div className="flex items-center gap-2 sm:ml-auto">
+          <span className="shrink-0 text-xs text-muted-foreground">Group by</span>
           <SearchableSelect
             className="w-[140px]"
             value={bucket}
@@ -173,22 +178,22 @@ function ServerResources() {
 
       {range === 'custom' && (
         <div className="flex flex-wrap items-end gap-3 rounded-lg border border-border bg-muted/20 p-3">
-          <label className="text-xs text-muted-foreground">
+          <label className="min-w-0 flex-1 text-xs text-muted-foreground sm:flex-none">
             From
             <input
               type="datetime-local"
               value={customFrom || toLocalInput(Date.now() - 24 * 60 * 60 * 1000)}
               onChange={(e) => patch({ from: e.target.value })}
-              className="mt-1 block h-9 rounded-md border border-input bg-background px-3 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
+              className="mt-1 block h-9 w-full rounded-md border border-input bg-background px-3 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-ring sm:w-auto"
             />
           </label>
-          <label className="text-xs text-muted-foreground">
+          <label className="min-w-0 flex-1 text-xs text-muted-foreground sm:flex-none">
             To
             <input
               type="datetime-local"
               value={customTo || toLocalInput(Date.now())}
               onChange={(e) => patch({ to: e.target.value })}
-              className="mt-1 block h-9 rounded-md border border-input bg-background px-3 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
+              className="mt-1 block h-9 w-full rounded-md border border-input bg-background px-3 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-ring sm:w-auto"
             />
           </label>
         </div>
@@ -288,7 +293,7 @@ function ServerResources() {
           {METRICS.map((m) => {
             const summary = data.summary?.[m.key];
             return (
-              <div key={m.key} className="rounded-lg border border-border bg-card p-4">
+              <div key={m.key} className="rounded-lg border border-border bg-card p-3 sm:p-4">
                 <div className="mb-3 flex items-center justify-between gap-3">
                   <h3 className="flex items-center gap-1.5 text-sm font-semibold text-foreground">
                     <m.icon className="h-4 w-4 text-muted-foreground" />
@@ -308,7 +313,7 @@ function ServerResources() {
                   formatTime={(t) => formatDateTime(t)}
                 />
 
-                <div className="mt-3 grid grid-cols-5 gap-2 border-t border-border pt-3">
+                <div className="mt-3 grid grid-cols-3 gap-2 border-t border-border pt-3 sm:grid-cols-5">
                   <Stat label="Min" value={summary?.min} unit={m.unit} />
                   <Stat label="Avg" value={summary?.avg} unit={m.unit} />
                   <Stat label="p50" value={summary?.p50} unit={m.unit} />

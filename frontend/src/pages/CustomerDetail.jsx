@@ -58,6 +58,8 @@ import { fromState } from '@/hooks/useBackTarget';
 import { getPostureSummary } from '@/services/postureService';
 import { useBreadcrumbs } from '@/context/BreadcrumbContext';
 import useIsMobile from '@/hooks/useIsMobile';
+import { PostureTile, PostureTileGrid } from '@/components/posture/PostureTiles';
+import SectionHeading from '@/components/common/SectionHeading';
 import { useAuth } from '@/context/AuthContext';
 import { can } from '@/lib/permissions';
 import { ENVIRONMENT_LABELS } from '@/lib/labels';
@@ -426,7 +428,7 @@ function CustomerDetail() {
   // ---------------------------------------------------------------------------
   if (loading) {
     return (
-      <div className="space-y-6 p-6">
+      <div className="space-y-6 p-6 max-md:p-4">
         <HeroSkeleton />
         {/* table skeleton */}
         <div className="rounded-lg border border-border bg-card">
@@ -461,7 +463,7 @@ function CustomerDetail() {
   // ---------------------------------------------------------------------------
   if (error || !customer) {
     return (
-      <div className="space-y-4 p-6">
+      <div className="space-y-4 p-6 max-md:p-4">
         <Link
           to="/customers"
           className="inline-flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground"
@@ -487,7 +489,7 @@ function CustomerDetail() {
   // Main render
   // ---------------------------------------------------------------------------
   return (
-    <div className="space-y-6 p-6">
+    <div className="space-y-6 p-6 max-md:p-4">
 
       {/* ---- ZONE 1: HERO ---- */}
 
@@ -582,9 +584,7 @@ function CustomerDetail() {
 
       {/* ---- ZONE 1a: AT A GLANCE ---- */}
       <section className="space-y-3">
-        <h2 className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground/70">
-          At a glance
-        </h2>
+        <SectionHeading>At a glance</SectionHeading>
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
         <StatTile
           icon={Server}
@@ -621,17 +621,14 @@ function CustomerDetail() {
       {/* ---- ZONE 1b: POSTURE ---- */}
       {canViewPosture && posture && (
         <section className="space-y-3">
-          <div className="flex items-center justify-between gap-3">
-            <h2 className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground/70">
-              Security posture
-            </h2>
-            <Link
-              to={`/posture?customerId=${id}`}
-              className="text-xs text-primary hover:underline"
-            >
-              Open in Posture
-            </Link>
-          </div>
+          <SectionHeading
+            title="Security posture"
+            action={
+              <Link to={`/posture?customerId=${id}`} className="text-xs text-primary hover:underline">
+                Open in Posture
+              </Link>
+            }
+          />
 
           {/* "No collector anywhere" is notInstalled === total, NOT
               reporting === 0. A stale host still has a collector and still
@@ -648,38 +645,28 @@ function CustomerDetail() {
             </div>
           ) : (
             <>
-              <div className="grid grid-cols-2 gap-3 lg:grid-cols-5">
-                {POSTURE_TILES.map((t) => {
-                  const value = posture.findings[t.key] ?? 0;
-                  return (
-                    <Link
-                      key={t.key}
-                      to={`/posture?customerId=${id}&severity=${t.key.toUpperCase()}`}
-                      className="rounded-lg border border-border bg-card p-3.5 transition-colors hover:border-primary/40 hover:bg-accent/40"
-                    >
-                      <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
-                        <t.icon className={`h-3.5 w-3.5 ${t.tint}`} />
-                        {t.label}
-                      </span>
-                      <span className="mt-1 block text-2xl font-semibold tabular-nums text-foreground">
-                        {value}
-                      </span>
-                    </Link>
-                  );
-                })}
-                <div className="rounded-lg border border-border bg-card p-3.5">
-                  <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
-                    <Radar className="h-3.5 w-3.5 text-muted-foreground" />
-                    Collector installed
-                  </span>
-                  <span className="mt-1 block text-2xl font-semibold tabular-nums text-foreground">
-                    {posture.servers.reporting + posture.servers.stale}
+              <PostureTileGrid className="lg:grid-cols-5">
+                {POSTURE_TILES.map((t) => (
+                  <PostureTile
+                    key={t.key}
+                    icon={t.icon}
+                    tint={t.tint}
+                    label={t.label}
+                    value={posture.findings[t.key] ?? 0}
+                    to={`/posture?customerId=${id}&severity=${t.key.toUpperCase()}`}
+                  />
+                ))}
+                <PostureTile
+                  icon={Radar}
+                  label="Collector installed"
+                  value={posture.servers.reporting + posture.servers.stale}
+                  suffix={
                     <span className="ml-1 text-sm font-normal text-muted-foreground">
                       of {posture.servers.total}
                     </span>
-                  </span>
-                </div>
-              </div>
+                  }
+                />
+              </PostureTileGrid>
               {(posture.servers.notInstalled > 0 || posture.servers.stale > 0) && (
                 <p className="text-xs text-muted-foreground">
                   {posture.servers.notInstalled > 0 && (
@@ -709,20 +696,18 @@ function CustomerDetail() {
           own pagination, so wrapping it in another bordered box was a box
           inside a box that only narrowed the table. */}
       <section className="space-y-3">
-        <div className="flex items-center justify-between gap-3">
-          <h2 className="flex items-center gap-2 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground/70">
-            Servers
-            <span className="rounded-full bg-muted px-2 py-0.5 text-[11px] tabular-nums normal-case tracking-normal text-muted-foreground">
-              {filteredServers.length}{envFilter ? ` of ${servers.length}` : ''}
-            </span>
-          </h2>
-          {canAddServer && (
-            <Button size="sm" variant="outline" onClick={() => setAddServerOpen(true)}>
-              <Plus className="mr-1.5 h-3.5 w-3.5" />
-              Add server
-            </Button>
-          )}
-        </div>
+        <SectionHeading
+          title="Servers"
+          count={`${filteredServers.length}${envFilter ? ` of ${servers.length}` : ''}`}
+          action={
+            canAddServer ? (
+              <Button size="sm" variant="outline" onClick={() => setAddServerOpen(true)}>
+                <Plus className="mr-1.5 h-3.5 w-3.5" />
+                Add server
+              </Button>
+            ) : null
+          }
+        />
         <DataTable
           columns={serverColumns}
           data={filteredServers}
@@ -740,9 +725,7 @@ function CustomerDetail() {
 
       {/* ---- ZONE 3: DETAILS ---- */}
       <section className="space-y-3">
-        <h2 className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground/70">
-          Details
-        </h2>
+        <SectionHeading>Details</SectionHeading>
         <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
 
           {/* Customer Info card */}

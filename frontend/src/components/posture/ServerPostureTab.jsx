@@ -2,6 +2,8 @@ import { useCallback, useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { AlertTriangle, Check, Cpu, Database, Download, Gauge, HardDrive, Info, Radar, ShieldAlert, ShieldCheck, ShieldOff, Volume1, VolumeX, Wifi } from 'lucide-react';
 import DataTable from '@/components/shared/DataTable';
+import { PostureTile, PostureTileGrid } from '@/components/posture/PostureTiles';
+import { severityAccent } from '@/lib/mobileCard';
 import { serviceLabel, canMarkExpected } from '@/lib/postureLabels';
 import { cn } from '@/lib/utils';
 import SearchableSelect from '@/components/ui/SearchableSelect';
@@ -18,6 +20,8 @@ import SeverityBadge from '@/components/posture/SeverityBadge';
 import FindingStatusBadge from '@/components/posture/FindingStatusBadge';
 import MuteDialog from '@/components/posture/MuteDialog';
 import Sparkline from '@/components/posture/Sparkline';
+import useIsMobile from '@/hooks/useIsMobile';
+import SectionHeading from '@/components/common/SectionHeading';
 import { reachabilityTone } from '@/lib/badgeTones';
 import { getServerPosture, muteFinding, unmuteFinding, acknowledgeFinding, listExpectedPorts, removeExpectedPort } from '@/services/postureService';
 import { relativeTime, formatDateTime } from '@/utils/time';
@@ -32,6 +36,7 @@ function StatRow({ label, children }) {
 }
 
 function GaugeCard({ icon: Icon, label, points, unit = '%', color, onClick }) {
+  const fluid = useIsMobile();
   const last = [...points].reverse().find((v) => v !== null && v !== undefined && !Number.isNaN(v));
   const Tag = onClick ? 'button' : 'div';
   return (
@@ -39,20 +44,30 @@ function GaugeCard({ icon: Icon, label, points, unit = '%', color, onClick }) {
       type={onClick ? 'button' : undefined}
       onClick={onClick}
       title={onClick ? `${label} history` : undefined}
-      className={`flex w-full items-center justify-between gap-3 rounded-lg border border-border bg-card p-3.5 text-left ${
+      // Stacked on a phone, side by side from `sm`. Two gauges share a phone
+      // row, which leaves no room for a 120px sparkline beside the number —
+      // it used to push out past the card edge.
+      className={`flex w-full flex-col gap-1.5 rounded-lg border border-border bg-card p-3 text-left sm:flex-row sm:items-center sm:justify-between sm:gap-3 sm:p-3.5 ${
         onClick ? 'transition-colors hover:border-primary/40 hover:bg-accent/40' : ''
       }`}
     >
       <div className="min-w-0">
-        <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
-          <Icon className="h-3.5 w-3.5" />
-          {label}
+        <div className="flex min-w-0 items-center gap-1.5 text-xs text-muted-foreground">
+          <Icon className="h-3.5 w-3.5 shrink-0" />
+          <span className="truncate">{label}</span>
         </div>
         <p className="mt-1 text-xl font-semibold tabular-nums text-foreground">
           {last !== undefined ? `${Math.round(last)}${unit}` : '—'}
         </p>
       </div>
-      <Sparkline points={points} max={unit === '%' ? 100 : Math.max(1, ...points.filter((v) => v != null))} color={color} />
+      <div className="min-w-0 sm:shrink-0">
+        <Sparkline
+          points={points}
+          max={unit === '%' ? 100 : Math.max(1, ...points.filter((v) => v != null))}
+          color={color}
+          fluid={fluid}
+        />
+      </div>
     </Tag>
   );
 }
@@ -135,9 +150,9 @@ function PostureSkeleton() {
           </div>
         ))}
       </div>
-      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
+      <div className="grid grid-cols-2 gap-2 sm:gap-3 lg:grid-cols-4">
         {['CPU', 'Memory', 'Disk', 'Load (1m)'].map((label) => (
-          <div key={label} className="rounded-lg border border-border bg-card p-3.5">
+          <div key={label} className="rounded-lg border border-border bg-card p-3 sm:p-3.5">
             <span className="text-xs text-muted-foreground">{label}</span>
             <p className="mt-1 text-xl font-semibold text-foreground">--%</p>
           </div>
@@ -462,12 +477,53 @@ function ServerPostureTab({
   const disk = metrics.map((m) => m.diskPct ?? null);
   const load = metrics.map((m) => m.load1 ?? null);
 
-  // Rendered by DataTable in its own toolbar row, beside the search — the
-  // shared shape every other grid uses. Rendering them above the table put
-  // the filters and the search on two rows and misaligned both.
-  // Rendered by DataTable in its own toolbar row, beside the search — the
-  // shared shape every other grid uses. Rendering them above the table put
-  // the filters and the search on separate rows and misaligned both.
+  // Both filter sets go in DataTable's own toolbar slot — the shared shape
+  // every other grid uses. Rendered above the table instead, they sat on
+  // their own row (misaligned against the search on desktop) and, on a
+  // phone, became a column of full-width selects where every other list in
+  // the app has a single "Filters" button opening a sheet.
+  const findingFilterSlot = (
+    <>
+      <SearchableSelect
+        className="w-[150px]"
+        value={severityFilter}
+        onChange={setSeverityFilter}
+        options={[{ value: '', label: 'All severities' }, ...SEVERITY_TILES.map((t) => ({ value: t.key, label: t.label }))]}
+        placeholder="All severities"
+        searchable={false}
+      />
+      <SearchableSelect
+        className="w-[150px]"
+        value={statusFilter}
+        onChange={setStatusFilter}
+        options={[
+          { value: '', label: 'All statuses' },
+          { value: 'open', label: 'Open' },
+          { value: 'acknowledged', label: 'Acknowledged' },
+          { value: 'muted', label: 'Muted' },
+        ]}
+        placeholder="All statuses"
+        searchable={false}
+      />
+      <SearchableSelect
+        className="w-[190px]"
+        value={codeFilter}
+        onChange={setCodeFilter}
+        options={[{ value: '', label: 'All types' }, ...findingCodes.map((c) => ({ value: c, label: c }))]}
+        placeholder="All types"
+      />
+      {filtersActive && (
+        <button
+          type="button"
+          onClick={() => { setSeverityFilter(''); setStatusFilter(''); setCodeFilter(''); }}
+          className="text-xs text-primary hover:underline max-md:hidden"
+        >
+          Clear filters
+        </button>
+      )}
+    </>
+  );
+
   const portFilterSlot = (
     <>
       <SearchableSelect
@@ -517,7 +573,7 @@ function ServerPostureTab({
             setOwnerKindFilter('');
             setPortStateFilter('');
           }}
-          className="text-xs text-primary hover:underline"
+          className="text-xs text-primary hover:underline max-md:hidden"
         >
           Clear filters
         </button>
@@ -543,13 +599,22 @@ function ServerPostureTab({
       key: 'bind',
       label: 'Bind',
       hideBelow: 'md',
-      mobile: { slot: 'meta', order: 0, render: (r) => r.bind },
+      mobile: { slot: 'meta', order: 2, showLabel: true, render: (r) => (r.bind ? <span className="font-mono">{r.bind}</span> : null) },
       render: (r) => <span className="font-mono text-xs text-muted-foreground">{r.bind}</span>,
     },
     {
       key: 'reachability',
       label: 'Reachability',
-      mobile: { slot: 'meta', order: 1, render: (r) => <Badge tone={reachabilityTone(r.reachability).tone}>{reachabilityTone(r.reachability).label}</Badge> },
+      mobile: {
+        slot: 'meta',
+        order: 1,
+        render: (r) =>
+          r.listening ? (
+            <Badge tone={reachabilityTone(r.reachability).tone}>{reachabilityTone(r.reachability).label}</Badge>
+          ) : (
+            <Badge tone="warning">Not listening</Badge>
+          ),
+      },
       render: (r) => {
         if (!r.listening) {
           return (
@@ -566,7 +631,19 @@ function ServerPostureTab({
       // Search what the cell actually shows, so "docker" or "pm2" finds the
       // rows the column now labels that way.
       searchAccessor: (r) => (r.listening ? serviceLabel(r).text : ''),
-      mobile: { slot: 'secondary', render: (r) => (r.listening ? serviceLabel(r).text : '—') },
+      // What is behind the port, then who owns it. "systemd unit" on its own
+      // — the inferred label — said less than the card had room for, while
+      // the owner sat in an unlabelled chip below reading like a second,
+      // contradictory service name.
+      mobile: {
+        slot: 'secondary',
+        render: (r) => {
+          if (!r.listening) return 'Nothing listening on this port';
+          const owner = r.ownerKind ? `${r.ownerKind}/${r.ownerName || '-'}` : null;
+          const service = serviceLabel(r).text;
+          return owner && owner !== service ? `${service} · ${owner}` : service;
+        },
+      },
       render: (r) => {
         if (!r.listening) return <span className="text-muted-foreground">—</span>;
         const { text, inferred } = serviceLabel(r);
@@ -580,7 +657,9 @@ function ServerPostureTab({
     {
       key: 'owner',
       label: 'Owner',
-      mobile: { slot: 'meta', order: 2, render: (r) => (r.ownerKind ? `${r.ownerKind}/${r.ownerName || '-'}` : null) },
+      // Carried by the card's secondary line (see 'service') rather than a
+      // chip that repeated it.
+      mobile: 'hidden',
       render: (r) => (
         <div className="max-w-[14rem]">
           <p className="truncate text-sm text-foreground">
@@ -612,10 +691,25 @@ function ServerPostureTab({
         [...r.findings.map((f) => `${f.severity} ${f.code}`), r.expected ? `expected ${r.expected.note}` : '']
           .join(' ')
           .trim(),
+      // First chip, not fourth: with the default three-chip cap the status —
+      // the only thing on the row that says "look at this port" — was the
+      // one being dropped.
       mobile: {
         slot: 'meta',
-        order: 3,
-        render: (r) => (r.findings.length ? `${r.findings.length} finding${r.findings.length === 1 ? '' : 's'}` : null),
+        order: 0,
+        render: (r) =>
+          r.findings.length === 0 && !r.expected ? null : (
+            <span className="flex flex-wrap items-center gap-1">
+              {r.findings.map((f) => (
+                <SeverityBadge key={f.id} severity={f.severity} />
+              ))}
+              {r.expected && (
+                <Badge tone="neutral" variant="outline">
+                  Expected
+                </Badge>
+              )}
+            </span>
+          ),
       },
       render: (r) => (
         <div className="flex flex-wrap items-center gap-1.5">
@@ -663,7 +757,23 @@ function ServerPostureTab({
     {
       key: 'finding',
       label: 'Finding',
-      mobile: { slot: 'title', render: (r) => r.message },
+      searchAccessor: (r) => `${r.message || ''} ${r.code || ''}`,
+      // The card carried the message and nothing else identifying, so two
+      // findings of the same kind on different ports were indistinguishable.
+      // The code and port go on the second line, as on the desktop row.
+      mobile: [
+        { slot: 'title', render: (r) => r.message },
+        {
+          slot: 'secondary',
+          key: 'finding-code',
+          render: (r) => (
+            <span className="font-mono">
+              {r.code}
+              {r.proto && r.port ? ` · ${r.proto}/${r.port}` : ''}
+            </span>
+          ),
+        },
+      ],
       render: (r) => (
         <div>
           <p className="font-medium text-foreground">{r.message}</p>
@@ -677,14 +787,14 @@ function ServerPostureTab({
     {
       key: 'status',
       label: 'Status',
-      mobile: { slot: 'meta', render: (r) => <FindingStatusBadge status={r.status} /> },
+      mobile: { slot: 'meta', order: 0, render: (r) => <FindingStatusBadge status={r.status} /> },
       render: (r) => <FindingStatusBadge status={r.status} />,
     },
     {
       key: 'lastSeenAt',
       label: 'Last seen',
       hideBelow: 'md',
-      mobile: { slot: 'secondary', render: (r) => `Since ${relativeTime(r.firstSeenAt)}` },
+      mobile: { slot: 'meta', order: 1, render: (r) => `Since ${relativeTime(r.firstSeenAt)}` },
       render: (r) => (
         <span className="text-xs text-muted-foreground" title={formatDateTime(r.lastSeenAt)}>
           {relativeTime(r.lastSeenAt)}
@@ -799,17 +909,23 @@ function ServerPostureTab({
 
       {view === 'overview' && metrics.length > 0 && (
         <div>
-          <div className="mb-2 flex items-center justify-between gap-3">
-            <h3 className="text-sm font-semibold text-foreground">Resources (~24h)</h3>
-            <button
-              type="button"
-              onClick={() => navigate(`/servers/${serverId}/resources`)}
-              className="text-xs text-primary hover:underline"
-            >
-              View history
-            </button>
-          </div>
-          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
+          <SectionHeading
+            className="mb-2"
+            title="Resources (~24h)"
+            action={
+              <button
+                type="button"
+                onClick={() => navigate(`/servers/${serverId}/resources`)}
+                className="text-xs text-primary hover:underline"
+              >
+                View history
+              </button>
+            }
+          />
+          {/* Two to a row on a phone, not one: four full-width gauge cards
+              were a column of near-empty boxes with a sparkline stranded on
+              the right of each. */}
+          <div className="grid grid-cols-2 gap-2 sm:gap-3 lg:grid-cols-4">
             <GaugeCard icon={Cpu} label="CPU" points={cpu} color="primary" onClick={() => navigate(`/servers/${serverId}/resources`)} />
             <GaugeCard icon={Gauge} label="Memory" points={mem} color="violet" onClick={() => navigate(`/servers/${serverId}/resources`)} />
             <GaugeCard icon={HardDrive} label="Disk" points={disk} color="amber" onClick={() => navigate(`/servers/${serverId}/resources`)} />
@@ -833,101 +949,35 @@ function ServerPostureTab({
 
       {view === 'findings' && (
       <div className="space-y-4">
-        <div className="grid grid-cols-2 gap-3 lg:grid-cols-6">
+        <PostureTileGrid className="lg:grid-cols-6">
           {/* "All" clears the severity filter rather than setting one, so the
-              tiles are a single control with five positions instead of four
+              tiles are a single control with six positions instead of five
               toggles plus a hidden default. */}
-          <button
-            type="button"
+          <PostureTile
+            icon={Radar}
+            label="All findings"
+            value={findings.length}
+            active={!severityFilter}
             onClick={() => setSeverityFilter('')}
-            aria-pressed={!severityFilter}
-            className={cn(
-              'rounded-lg border p-3.5 text-left transition-colors hover:border-primary/40 hover:bg-accent/40',
-              !severityFilter ? 'border-primary bg-primary/5' : 'border-border bg-card'
-            )}
-          >
-            <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
-              <Radar className="h-3.5 w-3.5 text-muted-foreground" />
-              All findings
-            </span>
-            <span className="mt-1 block text-2xl font-semibold tabular-nums text-foreground">
-              {findings.length}
-            </span>
-          </button>
+          />
           {SEVERITY_TILES.map((t) => {
             const count = severityCounts[t.key] || 0;
             const active = severityFilter === t.key;
             return (
-              <button
+              <PostureTile
                 key={t.key}
-                type="button"
-                onClick={() => setSeverityFilter(active ? '' : t.key)}
-                aria-pressed={active}
+                icon={t.icon}
+                tint={t.tint}
+                label={t.label}
+                value={count}
+                active={active}
                 disabled={count === 0 && !active}
-                className={cn(
-                  'rounded-lg border p-3.5 text-left transition-colors',
-                  active ? 'border-primary bg-primary/5' : 'border-border bg-card',
-                  count > 0 || active ? 'hover:border-primary/40 hover:bg-accent/40' : 'opacity-60'
-                )}
-              >
-                <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
-                  <t.icon className={cn('h-3.5 w-3.5', t.tint)} />
-                  {t.label}
-                </span>
-                <span className="mt-1 block text-2xl font-semibold tabular-nums text-foreground">
-                  {count}
-                </span>
-              </button>
+                onClick={() => setSeverityFilter(active ? '' : t.key)}
+              />
             );
           })}
-        </div>
+        </PostureTileGrid>
 
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <div className="flex flex-wrap items-center gap-2">
-            <SearchableSelect
-              className="w-[150px]"
-              value={severityFilter}
-              onChange={setSeverityFilter}
-              options={[{ value: '', label: 'All severities' }, ...SEVERITY_TILES.map((t) => ({ value: t.key, label: t.label }))]}
-              placeholder="All severities"
-              searchable={false}
-            />
-            <SearchableSelect
-              className="w-[150px]"
-              value={statusFilter}
-              onChange={setStatusFilter}
-              options={[
-                { value: '', label: 'All statuses' },
-                { value: 'open', label: 'Open' },
-                { value: 'acknowledged', label: 'Acknowledged' },
-                { value: 'muted', label: 'Muted' },
-              ]}
-              placeholder="All statuses"
-              searchable={false}
-            />
-            <SearchableSelect
-              className="w-[190px]"
-              value={codeFilter}
-              onChange={setCodeFilter}
-              options={[{ value: '', label: 'All types' }, ...findingCodes.map((c) => ({ value: c, label: c }))]}
-              placeholder="All types"
-            />
-            {filtersActive && (
-              <button
-                type="button"
-                onClick={() => { setSeverityFilter(''); setStatusFilter(''); setCodeFilter(''); }}
-                className="text-xs text-primary hover:underline"
-              >
-                Clear filters
-              </button>
-            )}
-          </div>
-          {canExport && findings.length > 0 && (
-            <Button variant="outline" size="sm" onClick={() => setExportDataset('findings')}>
-              <Download className="mr-1.5 h-4 w-4" /> Export
-            </Button>
-          )}
-        </div>
         {findings.length === 0 ? (
           <EmptyState icon={ShieldCheck} title="No open findings" description="This host is clean as of the last snapshot." />
         ) : visibleFindings.length === 0 ? (
@@ -942,6 +992,16 @@ function ServerPostureTab({
           <DataTable
             columns={findingColumns}
             data={visibleFindings}
+            filters={findingFilterSlot}
+            activeFilterCount={[severityFilter, statusFilter, codeFilter].filter(Boolean).length}
+            onResetFilters={() => { setSeverityFilter(''); setStatusFilter(''); setCodeFilter(''); }}
+            toolbarActions={
+              canExport && findings.length > 0 ? (
+                <Button variant="outline" size="sm" onClick={() => setExportDataset('findings')}>
+                  <Download className="mr-1.5 h-4 w-4" /> Export
+                </Button>
+              ) : null
+            }
             onRowClick={setDetailFinding}
             showSearch={false}
             emptyMessage="No open findings"
@@ -949,6 +1009,10 @@ function ServerPostureTab({
             selectedIds={selected}
             onSelectionChange={setSelected}
             bulkActions={bulkBar}
+            // Severity is the column the phone card drops, so it has to come
+            // back as the card's own colour — otherwise the one thing that
+            // ranks a finding is the one thing a phone never shows.
+            mobile={{ accent: (r) => severityAccent(r.severity), titleClamp: 2 }}
           />
         )}
       </div>
@@ -971,7 +1035,9 @@ function ServerPostureTab({
           showSearch={portRows.length > 8}
           searchPlaceholder="Search port, service, owner or status..."
           emptyMessage={portFiltersActive ? 'No ports match these filters' : 'No listening ports reported'}
-          mobile={{ accent: (r) => (r.reachability === 'INTERNET' ? { tone: 'danger', label: 'INTERNET' } : null) }}
+          // Tint only, no corner label: the reachability chip already says
+          // INTERNET, and the card was printing it twice.
+          mobile={{ accent: (r) => (r.reachability === 'INTERNET' ? { tone: 'danger' } : null) }}
         />
         <p className="mt-2 text-xs text-muted-foreground">
           Every port this host is serving, plus any marked expected. A severity badge opens that

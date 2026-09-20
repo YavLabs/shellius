@@ -32,6 +32,7 @@ import QuickConnectButton from '@/components/servers/QuickConnectButton';
 import PrivateIPWarning from '@/components/servers/PrivateIPWarning';
 import useBackTarget from '@/hooks/useBackTarget';
 import { useBreadcrumbs } from '@/context/BreadcrumbContext';
+import SectionHeading from '@/components/common/SectionHeading';
 import BreakGlassModal from '@/components/access-requests/BreakGlassModal';
 import MobilePageHeader from '@/components/mobile/MobilePageHeader';
 import useIsMobile from '@/hooks/useIsMobile';
@@ -60,35 +61,35 @@ import {
 import { formatDateTime, relativeTime } from '@/utils/time';
 import { PROVISION_STATUS_LABELS } from '@/lib/labels';
 
-/** Heading above a group of Overview cards. */
-function SectionTitle({ children }) {
-  return (
-    <h2 className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground/70">
-      {children}
-    </h2>
-  );
-}
-
 function Card({ title, children }) {
   return (
     <div className="rounded-lg border border-border bg-card">
-      <div className="border-b border-border px-5 py-3">
+      <div className="border-b border-border px-4 py-3 sm:px-5">
         <h3 className="text-sm font-semibold text-foreground">{title}</h3>
       </div>
-      <div className="px-5 py-4">{children}</div>
+      <div className="px-4 py-3 sm:px-5 sm:py-4">{children}</div>
     </div>
   );
 }
 
+/**
+ * A label/value row.
+ *
+ * It used to be `justify-between` with the value pushed right, which works
+ * only while every value is short: "Not yet pinned" sat flush right while
+ * "Identity: OnPrem Penta (ithadmin)" wrapped and left-aligned its own inner
+ * flex, so consecutive rows started and ended at different places. A fixed
+ * label column and a left-aligned value give every row the same two edges,
+ * and on a phone — where a 7rem label plus a value is too narrow for either
+ * — the value moves onto its own line instead.
+ */
 function Field({ label, value, mono }) {
   return (
-    <div className="flex items-start justify-between gap-4 py-1.5">
-      <span className="text-xs text-muted-foreground">{label}</span>
-      <span
-        className={`text-sm text-foreground ${mono ? 'font-mono' : ''}`}
-      >
+    <div className="border-b border-border/50 py-2 last:border-0 sm:flex sm:items-start sm:gap-4">
+      <span className="block text-xs text-muted-foreground sm:w-32 sm:shrink-0 sm:pt-0.5">{label}</span>
+      <div className={`mt-0.5 min-w-0 break-words text-sm text-foreground sm:mt-0 sm:flex-1 ${mono ? 'font-mono' : ''}`}>
         {value ?? '-'}
-      </span>
+      </div>
     </div>
   );
 }
@@ -307,7 +308,7 @@ function ServerDetail() {
   }
 
   return (
-    <div className="space-y-5 p-6">
+    <div className="space-y-5 p-6 max-md:p-4">
       {isMobile ? (
         <MobilePageHeader
           back={{ onClick: () => navigate(back.to), label: back.label }}
@@ -547,7 +548,7 @@ function ServerDetail() {
           a tab you have to remember to open. */}
       {canViewPosture && (
         <section className="space-y-3">
-          <SectionTitle>Security posture</SectionTitle>
+          <SectionHeading>Security posture</SectionHeading>
         <ServerPostureTab
           serverId={id}
           view="overview"
@@ -567,7 +568,7 @@ function ServerDetail() {
       )}
 
       <section className="space-y-3">
-        <SectionTitle>Configuration</SectionTitle>
+        <SectionHeading>Configuration</SectionHeading>
         <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
         <Card title="Connection">
           <Field label="IP Address" value={server.ipAddress} mono />
@@ -597,8 +598,8 @@ function ServerDetail() {
                 label="Host key"
                 value={
                   server.hostKeyFingerprint ? (
-                    <span className="flex min-w-0 flex-col items-end gap-0.5">
-                      <span className="break-all text-right font-mono text-xs">{server.hostKeyFingerprint}</span>
+                    <span className="flex min-w-0 flex-col items-start gap-0.5">
+                      <span className="break-all font-mono text-xs">{server.hostKeyFingerprint}</span>
                       {server.hostKeyPinnedAt && (
                         <span className="text-[11px] text-muted-foreground">
                           pinned {formatDateTime(server.hostKeyPinnedAt)}
@@ -633,7 +634,7 @@ function ServerDetail() {
       </section>
 
       <section className="space-y-3">
-        <SectionTitle>Status</SectionTitle>
+        <SectionHeading>Status</SectionHeading>
         <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
         <Card title="Health">
           <Field label="Status" value={server.healthStatus} />
@@ -737,7 +738,7 @@ function ServerDetail() {
       </section>
 
       <section className="space-y-3">
-        <SectionTitle>Metadata</SectionTitle>
+        <SectionHeading>Metadata</SectionHeading>
         <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
         <Card title="Labels">
           {server.labels && server.labels.length > 0 ? (

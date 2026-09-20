@@ -43,6 +43,7 @@ import { listCustomers } from '@/services/customerService';
 import { useAuth } from '@/context/AuthContext';
 import { can } from '@/lib/permissions';
 import { severityAccent } from '@/lib/mobileCard';
+import { POSTURE_ALERTS_EVENT } from '@/hooks/usePostureAlertCount';
 import { relativeTime, formatDateTime } from '@/utils/time';
 import { ENVIRONMENT_LABELS } from '@/lib/labels';
 
@@ -106,6 +107,14 @@ function Posture() {
     try {
       const data = await getPostureSummary();
       setSummary(data);
+      // The sidebar badge counts the same thing; broadcasting it here means
+      // muting or resolving a finding clears the badge immediately instead of
+      // leaving it stale until the next poll.
+      window.dispatchEvent(
+        new CustomEvent(POSTURE_ALERTS_EVENT, {
+          detail: (data?.findings?.critical || 0) + (data?.findings?.high || 0),
+        })
+      );
     } catch {
       /* the page still works without the summary tiles */
     } finally {
@@ -207,7 +216,7 @@ function Posture() {
   };
 
   const summaryTiles = summary && (
-    <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+    <div className="grid grid-cols-2 gap-2 sm:grid-cols-4 sm:gap-3">
       <MetricCard
         title="Reporting"
         value={summaryLoading ? '—' : summary.servers?.reporting ?? 0}
@@ -508,7 +517,7 @@ function Posture() {
   );
 
   return (
-    <div className="space-y-6 p-6">
+    <div className="space-y-5 p-6 max-md:p-4 sm:space-y-6">
       <PageHeader
         icon={Radar}
         title="Posture"
@@ -530,11 +539,17 @@ function Posture() {
           built; silently implying full coverage would be the worse bug. */}
       <div className="flex items-start gap-2 rounded-md border border-border bg-muted/40 px-3 py-2 text-xs text-muted-foreground">
         <Info className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+        {/* The caveat matters, but at phone width the full paragraph was six
+            lines above the findings. The first sentence carries the warning;
+            the rest is the explanation, kept for anyone with the room. */}
         <p>
           <span className="font-medium text-foreground">Host-only view.</span> These findings come
-          from each host&rsquo;s own listeners and firewall. Cloud security groups and external
-          firewalls are not read yet, so a port shown here as exposed may still be blocked upstream
-          — and one shown as closed may be reachable through a rule Shellius cannot see.
+          from each host&rsquo;s own listeners and firewall.{' '}
+          <span className="max-sm:hidden">
+            Cloud security groups and external firewalls are not read yet, so a port shown here as
+            exposed may still be blocked upstream — and one shown as closed may be reachable through
+            a rule Shellius cannot see.
+          </span>
         </p>
       </div>
 
@@ -595,6 +610,9 @@ function Posture() {
           bulkActions={bulkActionsSlot}
           mobile={{
             accent: (r) => severityAccent(r.severity),
+            // Finding messages are sentences; one truncated line left every
+            // card starting the same way and saying nothing.
+            titleClamp: 2,
             group: (r) =>
               r.server
                 ? { key: r.server.id, label: r.server.displayName || r.server.hostname }

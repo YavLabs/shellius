@@ -144,9 +144,11 @@ function useDebounced(value, delay) {
  * "Load more" / compact paging and a bulk bar above the bottom navigation.
  * Card fields come from each column's `mobile` config (see lib/mobileCard.js);
  * actions with `primary: true` become buttons on the card. Table-level
- * options go in the `mobile` prop: { leading(row), maxMeta, maxPrimary,
+ * options go in the `mobile` prop: { leading(row), accent(row), maxMeta,
+ * maxPrimary, titleClamp (2 for card titles that are sentences, not names),
  * cardClassName(row), onCardClick(row) (tap target when there's no onRowClick) }. `activeFilterCount` / `onResetFilters` drive the
- * Filters badge and the sheet's Reset button.
+ * Filters badge and the sheet's Reset button. `toolbarActions` renders beside
+ * the Filters/Sort controls there.
  */
 function DataTable({
   // Core
@@ -493,6 +495,7 @@ function DataTable({
         onSearch={setSearchRaw}
         searchPlaceholder={searchPlaceholder}
         filters={filters}
+        toolbarActions={toolbarActions}
         activeFilterCount={activeFilterCount}
         onResetFilters={onResetFilters}
         sortKey={sortKey}

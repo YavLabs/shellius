@@ -8,6 +8,8 @@ import {
   ArrowRight,
   ChevronRight,
   LayoutDashboard,
+  ShieldAlert,
+  Radar,
 } from 'lucide-react';
 import PageHeader from '@/components/common/PageHeader';
 import MyAccessWidget from '@/components/dashboard/MyAccessWidget';
@@ -22,6 +24,8 @@ import { listCertificates, getMyCerts } from '@/services/certificateService';
 import { useTerminalWorkspace } from '@/context/TerminalWorkspaceContext';
 import { can } from '@/lib/permissions';
 import { listAudit } from '@/services/auditService';
+import { getPostureSummary } from '@/services/postureService';
+import { POSTURE_ALERTS_EVENT } from '@/hooks/usePostureAlertCount';
 import { relativeTime } from '@/utils/time';
 import Skeleton from '@/components/ui/Skeleton';
 import { Badge } from '@/components/ui/badge';
@@ -46,6 +50,7 @@ function StatTile({ icon: Icon, label, value, to, loading, tone = 'primary', chi
     emerald: 'bg-emerald-500/15 text-emerald-600 dark:text-emerald-300',
     amber: 'bg-amber-500/15 text-amber-600 dark:text-amber-300',
     violet: 'bg-violet-500/15 text-violet-600 dark:text-violet-300',
+    rose: 'bg-rose-500/15 text-rose-600 dark:text-rose-300',
   };
   return (
     <button
@@ -105,12 +110,14 @@ const METRIC_COLS = {
   2: 'sm:grid-cols-2',
   3: 'sm:grid-cols-2 lg:grid-cols-3',
   4: 'sm:grid-cols-2 lg:grid-cols-4',
+  5: 'sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5',
 };
 
 function Dashboard() {
   const navigate = useNavigate();
   const { user } = useAuth();
   const isAdmin = can(user, 'audit.view');
+  const canViewPosture = can(user, 'posture.read');
   // Org-wide numbers need org-wide permissions; everyone else sees their own
   // (instead of a misleading 0 from a refused request).
   const allSessions = can(user, 'sessions.view_all');
@@ -125,18 +132,32 @@ function Dashboard() {
   const [pendingRequests, setPendingRequests] = useState(0);
   const [activeCerts, setActiveCerts] = useState(0);
 
+  const [posture, setPosture] = useState(null);
+
   const [auditItems, setAuditItems] = useState([]);
   const [auditLoading, setAuditLoading] = useState(true);
 
   const loadStats = useCallback(async () => {
     setStatsLoading(true);
     try {
-      const [srvStats, sessResp, reqResp, certResp] = await Promise.allSettled([
+      const [srvStats, sessResp, reqResp, certResp, postureResp] = await Promise.allSettled([
         getServerStats(),
         allSessions ? listSessions({ limit: 1, status: 'ACTIVE' }) : Promise.reject(new Error('own only')),
         listAccessRequests({ tab: 'to-review', status: 'PENDING', limit: 1 }),
         allCerts ? listCertificates({ status: 'ACTIVE', limit: 1 }) : getMyCerts({ status: 'ACTIVE', limit: 1 }),
+        canViewPosture ? getPostureSummary() : Promise.reject(new Error('no posture access')),
       ]);
+      // A refused request must stay null, not become a reassuring zero — an
+      // unreadable fleet is unknown, not clean.
+      if (postureResp.status === 'fulfilled') {
+        setPosture(postureResp.value);
+        window.dispatchEvent(
+          new CustomEvent(POSTURE_ALERTS_EVENT, {
+            detail:
+              (postureResp.value?.findings?.critical || 0) + (postureResp.value?.findings?.high || 0),
+          })
+        );
+      }
 
       if (srvStats.status === 'fulfilled') setServerStats(srvStats.value);
       if (sessResp.status === 'fulfilled') {
@@ -156,7 +177,7 @@ function Dashboard() {
     } finally {
       setStatsLoading(false);
     }
-  }, [allSessions, allCerts]);
+  }, [allSessions, allCerts, canViewPosture]);
 
   const loadAudit = useCallback(async () => {
     if (!isAdmin) {
@@ -180,9 +201,15 @@ function Dashboard() {
   }, [loadStats, loadAudit]);
 
   const { byEnv } = serverStats;
+  // Critical + high only: the same "needs attention" bar as the sidebar badge
+  // and the Server Details tab dot. A tile that counts INFO too is never zero
+  // on a real fleet, and a number that is never zero stops being read.
+  const postureAlerts = posture ? (posture.findings?.critical || 0) + (posture.findings?.high || 0) : 0;
+  const unmonitored = posture ? (posture.servers?.notInstalled || 0) + (posture.servers?.stale || 0) : 0;
+  const showPosture = canViewPosture && !!posture;
   // Everything below renders only what this role can use, and each row's
   // grid adapts to the cards actually present, so nothing leaves a hole.
-  const metricCount = 4;
+  const metricCount = showPosture ? 5 : 4;
   // Phones: the bottom navigation's "+" is the quick actions list.
   const showQuickActions = !isMobile && QUICK_ACTIONS.some((a) => isQuickActionVisible(a, user, quickConnectAllowed));
 
@@ -220,11 +247,31 @@ function Dashboard() {
             tone="violet"
             to={allCerts ? '/certificates?status=ACTIVE' : undefined}
           />
+          {showPosture && (
+            <StatTile
+              icon={ShieldAlert}
+              label="Needs attention"
+              value={postureAlerts}
+              loading={statsLoading}
+              tone="rose"
+              to="/posture?severity=critical"
+            />
+          )}
+          {showPosture && (
+            <StatTile
+              icon={Radar}
+              label="Unmonitored hosts"
+              value={unmonitored}
+              loading={statsLoading}
+              tone="amber"
+              to="/posture"
+            />
+          )}
         </div>
       )}
 
       {/* Metric cards — the grid follows however many render (permissions). */}
-      <div className={cn('grid grid-cols-1 gap-4 max-md:hidden', METRIC_COLS[Math.min(metricCount, 4)])}>
+      <div className={cn('grid grid-cols-1 gap-4 max-md:hidden', METRIC_COLS[Math.min(metricCount, 5)])}>
         <MetricCard
           title="Total servers"
           value={serverStats.total}
@@ -307,6 +354,33 @@ function Dashboard() {
             ) : null
           }
         />
+
+        {/* Posture, for anyone who can read it. Critical + high open findings
+            with the unmonitored-host count underneath, because "0 findings"
+            across a fleet where nothing reports is the one number on this
+            page that could be read as good news while meaning the opposite. */}
+        {showPosture && (
+          <MetricCard
+            title="Needs attention"
+            value={postureAlerts}
+            subtitle="Critical & high findings"
+            icon={ShieldAlert}
+            accent="rose"
+            loading={statsLoading}
+            to="/posture?severity=critical"
+            footer={
+              !statsLoading ? (
+                unmonitored > 0 ? (
+                  <span className="text-amber-600 dark:text-amber-400">
+                    {unmonitored} host{unmonitored === 1 ? '' : 's'} not reporting
+                  </span>
+                ) : (
+                  <span>{postureAlerts === 0 ? 'Every host reporting, nothing urgent' : 'Review now →'}</span>
+                )
+              ) : null
+            }
+          />
+        )}
       </div>
 
       {/* Recent connections (wide) + Quick actions (narrow). Without any

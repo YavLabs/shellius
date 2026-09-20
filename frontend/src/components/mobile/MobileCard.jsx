@@ -141,6 +141,7 @@ export function MobileCard({
   corner,
   accent,
   reserveActions = false,
+  titleClamp = 1,
   onClick,
   selectable = false,
   selected = false,
@@ -188,7 +189,19 @@ export function MobileCard({
         {leading && <div className="flex shrink-0">{leading}</div>}
         <div className="min-w-0 flex-1">
           <div className="flex min-w-0 items-center gap-2">
-            <div className="min-w-0 flex-1 truncate font-semibold leading-5 text-foreground">{title}</div>
+            {/* A one-line title is right for a hostname or a port; a finding
+                message is a sentence, and truncating it at the first line
+                leaves "The firewall allows this port from Anyw…" — every row
+                starting the same way, none of them saying which port. Lists
+                of sentences ask for `titleClamp: 2`. */}
+            <div
+              className={cn(
+                'min-w-0 flex-1 font-semibold leading-5 text-foreground',
+                titleClamp > 1 ? 'line-clamp-2 break-words' : 'truncate'
+              )}
+            >
+              {title}
+            </div>
             {(corner || menu || selectable) && (
               // Negative margins: the 44px controls sit on the title line without
               // making it taller, so the next line stays right under the title.

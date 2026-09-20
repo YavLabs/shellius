@@ -38,8 +38,11 @@ function MetricCard({
   const accentCls = ACCENTS[accent] || ACCENTS.primary;
 
   const Wrapper = interactive ? 'button' : 'div';
+  // Tighter on phones: two of these to a row at desktop proportions turned a
+  // four-tile summary into most of the screen, with the list it summarises
+  // pushed below the fold.
   const baseCls =
-    'group relative flex h-full w-full flex-col rounded-lg border border-border bg-card p-4 text-left transition-all';
+    'group relative flex h-full w-full flex-col rounded-lg border border-border bg-card p-3 text-left transition-all sm:p-4';
   const interactiveCls = interactive
     ? ` hover:shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${accentCls.ring}`
     : '';
@@ -62,7 +65,7 @@ function MetricCard({
         {loading ? (
           <Skeleton className="h-7 w-12 shrink-0" />
         ) : (
-          <p className="shrink-0 text-2xl font-semibold tracking-tight text-foreground tabular-nums">
+          <p className="shrink-0 text-xl font-semibold tracking-tight text-foreground tabular-nums sm:text-2xl">
             {value}
           </p>
         )}
@@ -77,8 +80,15 @@ function MetricCard({
         </div>
       ) : (
         <>
-          <p className="mt-2 truncate text-xs text-muted-foreground">{subtitle || '\u00a0'}</p>
-          <div className="mt-2 flex min-h-5 flex-wrap items-center gap-1.5 text-xs text-muted-foreground">
+          <p className="mt-1.5 truncate text-xs text-muted-foreground sm:mt-2">{subtitle || '\u00a0'}</p>
+          {/* The blank footer row keeps desktop cards the same height; on a
+              phone it is 20px of nothing per card, so it only renders when
+              there is something to put in it. */}
+          <div
+            className={`mt-2 flex min-h-5 flex-wrap items-center gap-1.5 text-xs text-muted-foreground${
+              footer ? '' : ' max-sm:hidden'
+            }`}
+          >
             {footer}
           </div>
         </>
