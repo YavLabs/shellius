@@ -9,6 +9,49 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 Tracked here as work lands on `main`; moved into a dated section on release
 (`node scripts/version.mjs bump <major|minor|patch>`).
 
+## [1.6.0] - 2026-09-20
+
+### Added
+
+- **Customer scope for users and groups.** A user can now be limited to specific customers instead of the whole organization. Scope is granted on the user (Administration → Users) and on groups (Administration → Groups), and a person's effective scope is the **union** of their own grants and every group they belong to — a group with "entire organization" lifts any narrower personal grant, which the forms say out loud. Servers, customers, access requests, certificates, sessions, keystore, search, posture and the dashboard all filter by it. Users with no scope restriction behave exactly as before. See `docs/rbac/customer-scope-spec.md`.
+- **Security posture.** A new **Posture** page and a per-server **Posture** tab show what each host actually exposes: listening ports with the process and unix user behind them, firewall engine and state, and resource samples over time. Findings (`PORT_EXPOSED`, `FIREWALL_OFF`, `FIREWALL_STATE_UNKNOWN`, …) are long-lived records that open, re-open, escalate and resolve, so "open for 14 days" and "who resolved it" are answerable. Each can be acknowledged or muted with a reason for a chosen period.
+  - The collector reads `iptables`/`nft` NAT as well as `ss`, so a container published with `userland-proxy=false` — which has **no host listener at all**, only a DNAT rule — is still reported. Where IPv4 and IPv6 firewall policy disagree it reports `FIREWALL_STATE_UNKNOWN` rather than quietly answering for IPv4.
+  - **Alert rules** (Administration → Posture) route findings by severity, code, customer and environment to named users, roles or a group, in-app and by email, with a throttle window, opt-in resolution notices and an optional escalation after N hours. The recipient list is intersected with customer scope, so an alert can never be the thing that reveals a server someone is not allowed to see. A quiet default rule (CRITICAL → admins) is seeded for every organization.
+  - Retention, collection interval and an org-wide **expected public ports** list are configurable; a daily prune job enforces retention.
+- **Break-glass is now usable.** A break-glass policy can be invoked from the server's More menu: Shellius verifies the person with their authenticator when two-factor is enrolled and with an emailed one-time code when it is not, then grants a short, fully audited session. Only servers matched by a break-glass policy offer it, and a DENY policy still wins.
+- **Group membership from the user form.** Creating or editing a user now assigns groups directly, with the scope consequences of each group spelled out in the form.
+- **A single "Bootstrap host" wizard.** Every install entry point — server detail, the servers list, and the Posture page's collector coverage list — opens the same two-step wizard: automatic (Shellius connects over SSH) or manual (copy a command), then SSH bootstrap, posture collector, or both. Automatic installs can use a **saved Keystore identity** instead of pasting a key or password.
+- **Servers that authenticate with a stored identity can be bootstrapped.** Previously they offered no install option at all; the identity that already reaches the host is now preselected as the way in, so it can install the posture collector or upgrade the host to certificate authentication.
+- **Collector coverage list.** The Posture page's "reporting X of Y" tile opens the list of the other hosts, grouped by not installed / stale / reporting, with a per-row install action.
+
+### Changed
+
+- **Policies moved into Administration**, directly below Roles. A Role says what you may *do* in Shellius; a Policy says which hosts you may *reach* — the two were easy to confuse, and putting them side by side is the clearest fix. `/policies` still redirects, and the `g p` shortcut is unchanged.
+- **Sidebar regrouped** into Overview (Dashboard, Terminals, Notifications), Inventory, Access (Access requests, Certificates, Keystore) and Security & audit (Posture, Sessions, Audit log).
+- The Posture page states plainly that it is a **host-only view**: cloud security groups and external firewalls are not read yet, so a port shown as exposed may be blocked upstream and one shown as closed may still be reachable.
+
+### Fixed
+
+- **Scrolling inside the terminal on phones.** Dragging inside the terminal scrolled the page instead of the scrollback, because the element the gesture landed on is a sibling of the scrolling viewport rather than a child. Touch drag and flick now scroll the terminal itself; full-screen programs such as `less` and `vim` are left alone.
+- **Posture alerts were never delivered.** The dispatcher wrote a notification type that is not in the database enum, so every write failed and was swallowed by the per-recipient error handler: rules fired, findings transitioned, and nobody was told. Also repairs the notification icon map, whose keys had drifted from the enum so every notification showed a generic bell.
+- Double empty state on the Posture page.
+
+### Security
+
+- **Customer scope could be bypassed on a direct customer lookup.** The scope predicate contributes an `id` key, so spreading it into a query that already looked up a customer by id silently replaced that lookup: a scoped user requesting a customer they *are* allowed to see could receive a different customer's record and server breakdown. Five call sites were affected, including update and delete, which made it a wrong-target write and not only a read. All now compose the predicate instead of overwriting, and the hazard is documented where the predicate is defined.
+- **Host provisioning and bootstrap tokens are scope-checked.** Both could previously be aimed at a server outside the caller's scope.
+- **Out-of-scope records return 404, not 403.** A 403 confirms that the record exists, which is itself a disclosure.
+- Aggregate counts are scoped too — key deployment counts no longer include servers the caller cannot see.
+- Posture alert emails escape interpolated values: finding text carries process names and unix users read off the host, and a compromised host must not be able to inject markup into an administrator's mailbox.
+
+### Migration notes
+
+- Four migrations apply on start: `20260920163811_add_customer_scope`, `20260920170305_add_posture`, `20260920184744_add_group_access_scope`, `20260923000000_posture_notification_type`. No manual steps.
+- **Nothing changes for existing users by default.** Everyone stays unscoped (full organization access) until a customer scope is granted.
+- New permissions (`posture.read`, `posture.mute`, `posture.settings`, `access.break_glass`, scope management) are granted to existing roles by tier on first boot.
+- The posture collector is **not** installed on any host automatically. Install it per host from the Posture page or the server's Bootstrap host wizard; hosts without it simply report nothing.
+
+
 ## [1.5.3] - 2026-09-19
 
 ### Added

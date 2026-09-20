@@ -8,7 +8,7 @@
 // a Vite build (e.g. a plain Node script or an editor type-checker) where
 // __APP_VERSION__ is undefined. It is kept in sync by the same script — do
 // not hand-edit it.
-const FALLBACK_VERSION = '1.5.3';
+const FALLBACK_VERSION = '1.6.0';
 
 export const APP_VERSION =
   typeof __APP_VERSION__ !== 'undefined' ? __APP_VERSION__ : FALLBACK_VERSION;
