@@ -121,7 +121,8 @@ function useDebounced(value, delay) {
  *
  * New features:
  *   - Built-in debounced search (200ms)
- *   - `filters` slot for page-level Selects rendered above the search
+ *   - `filters` slot for page-level Selects, and `toolbarActions` for
+ *     right-aligned buttons — both share the toolbar row with the search
  *   - Sortable column headers (client-side or server-side via `serverSort`)
  *   - Pagination footer: "Showing X-Y of Z" + page-size select + prev/next + direct input
  *   - `serverPagination={{page, total, onPageChange}}` for server-driven pagination
@@ -162,6 +163,10 @@ function DataTable({
 
   // Filters slot (JSX rendered above the search)
   filters,
+  // Rendered at the far right of the toolbar row, after the search. For
+  // per-table actions (Export, and the like) that belong beside the filters
+  // rather than in a page header the table may not have.
+  toolbarActions,
 
   // Bulk actions slot (rendered when selection is non-empty)
   bulkActions,
@@ -536,6 +541,9 @@ function DataTable({
               type="search"
             />
           </div>
+        )}
+        {toolbarActions && (
+          <div className="flex items-center gap-2 sm:ml-auto">{toolbarActions}</div>
         )}
       </div>
 

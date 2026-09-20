@@ -26,6 +26,7 @@ import CollectorCoverageModal from '@/components/posture/CollectorCoverageModal'
 import FindingDetailModal from '@/components/posture/FindingDetailModal';
 import ExportDialog from '@/components/posture/ExportDialog';
 import ExpectedPortDialog from '@/components/posture/ExpectedPortDialog';
+import { canMarkExpected } from '@/lib/postureLabels';
 import BootstrapWizard from '@/components/servers/BootstrapWizard';
 import BootstrapModal from '@/components/servers/BootstrapModal';
 import ProvisionModal from '@/components/servers/ProvisionModal';
@@ -406,11 +407,17 @@ function Posture() {
   const selectionServerIds = [...new Set(selectedFindings.map((f) => f.server?.id).filter(Boolean))];
   const selectionIsOneServer = selectionServerIds.length === 1;
 
+  // Only exposure findings can be resolved by declaring a port expected; a
+  // firewall or already-expected finding would come back unchanged, which is
+  // indistinguishable from the action having done nothing.
+  const expectableFindings = selectedFindings.filter(canMarkExpected);
+
   const openBulkExpected = () => {
-    if (!selectionIsOneServer) return;
+    if (!selectionIsOneServer || expectableFindings.length === 0) return;
     setExpectedTarget({
       serverId: selectionServerIds[0],
-      targets: selectedFindings.filter((f) => f.port).map((f) => ({ port: f.port, proto: f.proto })),
+      targets: expectableFindings.map((f) => ({ port: f.port, proto: f.proto })),
+      skipped: selectedFindings.length - expectableFindings.length,
     });
   };
 
@@ -453,14 +460,20 @@ function Posture() {
               variant="outline"
               size="sm"
               onClick={openBulkExpected}
-              disabled={!selectionIsOneServer}
+              disabled={!selectionIsOneServer || expectableFindings.length === 0}
               title={
-                selectionIsOneServer
-                  ? 'Declare these ports expected on this server'
-                  : 'Expected-public is per server — select findings from one server'
+                !selectionIsOneServer
+                  ? 'Expected-public is per server — select findings from one server'
+                  : expectableFindings.length === 0
+                    ? 'None of the selected findings are port exposures — marking a port expected would not resolve them'
+                    : `Declare ${expectableFindings.length} port${expectableFindings.length === 1 ? '' : 's'} expected on this server`
               }
             >
-              <ShieldCheck className="mr-1.5 h-4 w-4" /> Mark expected
+              <ShieldCheck className="mr-1.5 h-4 w-4" />
+              Mark expected
+              {expectableFindings.length > 0 && expectableFindings.length !== selectedFindings.length && (
+                <span className="ml-1 text-xs opacity-70">({expectableFindings.length})</span>
+              )}
             </Button>
           )}
           <Button variant="outline" size="sm" onClick={() => setSelected([])}>
@@ -672,6 +685,7 @@ function Posture() {
         open={!!expectedTarget}
         serverId={expectedTarget?.serverId}
         targets={expectedTarget?.targets || []}
+        skipped={expectedTarget?.skipped || 0}
         onClose={() => setExpectedTarget(null)}
         onDone={(result) => {
           setExpectedTarget(null);

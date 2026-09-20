@@ -7,6 +7,7 @@ import FindingStatusBadge from '@/components/posture/FindingStatusBadge';
 import EnvironmentBadge from '@/components/shared/EnvironmentBadge';
 import { DetailRow, DetailSection } from '@/components/posture/DetailRow';
 import { formatDateTime, relativeTime } from '@/utils/time';
+import { canMarkExpected } from '@/lib/postureLabels';
 
 /**
  * FindingDetailModal — the row-click view for an exposure finding.
@@ -92,7 +93,11 @@ function FindingDetailModal({
           <Volume1 className="mr-2 h-4 w-4" /> Unmute
         </Button>
       )}
-      {canExpect && onMarkExpected && finding.port && !finding.resolvedAt && (
+      {/* Offered only when it would actually do something. A firewall
+          finding has no port, and an already-expected one has nothing left
+          to suppress — showing the button there is a promise the action
+          cannot keep. */}
+      {canExpect && onMarkExpected && canMarkExpected(finding) && !finding.resolvedAt && (
         <Button variant="outline" disabled={busy} onClick={() => onMarkExpected(finding)}>
           <ShieldCheck className="mr-2 h-4 w-4" /> Mark expected
         </Button>
@@ -128,6 +133,15 @@ function FindingDetailModal({
             </p>
           )}
         </header>
+
+        {canExpect && finding.port && !canMarkExpected(finding) && !finding.resolvedAt && (
+          <p className="rounded-md border border-border bg-muted/40 px-3 py-2 text-xs text-muted-foreground">
+            Marking a port expected does not apply here: this finding is about
+            {finding.code === 'STALE_FIREWALL_RULE'
+              ? ' a firewall rule for a port nothing is listening on, which stays stale either way.'
+              : ' a port that is already treated as expected.'}
+          </p>
+        )}
 
         <DetailSection title="What is listening">
           <DetailRow label="Port" value={where || null} mono />

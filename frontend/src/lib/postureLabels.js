@@ -49,3 +49,23 @@ export function serviceLabel(listener) {
   }
 }
 
+
+/**
+ * Finding codes that declaring a port expected actually resolves.
+ *
+ * Mirrors SUPERSEDED_CODES in backend/src/services/postureExpectedPortService.js
+ * — the backend is the source of truth; this copy exists so the UI can avoid
+ * offering an action that would be a no-op.
+ *
+ * The exclusions are deliberate, not gaps:
+ *   FIREWALL_INACTIVE    host-wide, has no port to declare.
+ *   STALE_FIREWALL_RULE  a rule for a port nothing is listening on. Calling
+ *                        the port expected does not make the rule less stale.
+ *   EXPECTED_PUBLIC      already expected; there is nothing to suppress.
+ */
+export const EXPECTED_PORT_RESOLVES = ['PORT_EXPOSED', 'SENSITIVE_PORT_EXPOSED', 'DOCKER_FIREWALL_BYPASS'];
+
+/** Would "Mark expected" do anything for this finding? */
+export function canMarkExpected(finding) {
+  return !!finding?.port && EXPECTED_PORT_RESOLVES.includes(finding.code);
+}

@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { AlertTriangle, Check, Cpu, Database, Download, Gauge, HardDrive, Info, Radar, ShieldAlert, ShieldCheck, ShieldOff, Volume1, VolumeX, Wifi } from 'lucide-react';
 import DataTable from '@/components/shared/DataTable';
-import { serviceLabel } from '@/lib/postureLabels';
+import { serviceLabel, canMarkExpected } from '@/lib/postureLabels';
 import { cn } from '@/lib/utils';
 import SearchableSelect from '@/components/ui/SearchableSelect';
 import FindingDetailModal from '@/components/posture/FindingDetailModal';
@@ -68,15 +68,17 @@ function GaugeCard({ icon: Icon, label, points, unit = '%', color, onClick }) {
  * @param {'overview'|'findings'|'ports'} props.view  which slice to render.
  */
 /**
- * The four severities that get a tile. INFO is deliberately absent: it is
- * the "expected public" bucket, which is a statement that nothing is wrong,
- * so giving it equal visual weight would dilute the three that need action.
+ * Every severity gets a tile, INFO included. It was left out as visual
+ * noise, but "All findings" counts what the table shows — so the tiles read
+ * 0+1+0+1 beside a total of 4 and looked broken. Tiles that do not add up
+ * are worse than a tile nobody needs.
  */
 const SEVERITY_TILES = [
   { key: 'CRITICAL', label: 'Critical', icon: ShieldAlert, tint: 'text-red-500' },
   { key: 'HIGH', label: 'High', icon: ShieldAlert, tint: 'text-orange-500' },
   { key: 'MEDIUM', label: 'Medium', icon: Radar, tint: 'text-amber-500' },
   { key: 'LOW', label: 'Low', icon: Info, tint: 'text-sky-500' },
+  { key: 'INFO', label: 'Info', icon: Info, tint: 'text-muted-foreground' },
 ];
 
 
@@ -337,6 +339,10 @@ function ServerPostureTab({
   const filtersActive = !!(severityFilter || statusFilter || codeFilter);
 
   const selectedFindings = visibleFindings.filter((f) => selected.includes(f.id));
+  // Marking a port expected only resolves exposure findings. A selection of
+  // firewall or already-expected findings would come back unchanged, which
+  // is exactly what "nothing happened" looks like.
+  const expectableFindings = selectedFindings.filter(canMarkExpected);
 
   // Join each declaration against what is actually listening now. A port you
   // declared expected that nothing is serving is worth surfacing: the
@@ -377,6 +383,8 @@ function ServerPostureTab({
   ].sort((a, b) => a.port - b.port || String(a.proto).localeCompare(String(b.proto)));
 
   const staleExpected = portRows.filter((r) => r.expected && !r.listening).length;
+  // Surfaced through the "Expected, not listening" filter option rather than
+  // a second amber line under the host's own stale banner.
 
   const ownerKinds = [...new Set(portRows.map((r) => r.ownerKind).filter(Boolean))].sort();
   const visiblePorts = portRows.filter((r) => {
@@ -423,13 +431,23 @@ function ServerPostureTab({
             variant="outline"
             size="sm"
             onClick={() =>
-              setExpectedTargets(
-                selectedFindings.filter((f) => f.port).map((f) => ({ port: f.port, proto: f.proto }))
-              )
+              setExpectedTargets({
+                targets: expectableFindings.map((f) => ({ port: f.port, proto: f.proto })),
+                skipped: selectedFindings.length - expectableFindings.length,
+              })
             }
-            disabled={!selectedFindings.some((f) => f.port)}
+            disabled={expectableFindings.length === 0}
+            title={
+              expectableFindings.length === 0
+                ? 'None of the selected findings are port exposures — marking a port expected would not resolve them'
+                : `Declare ${expectableFindings.length} port${expectableFindings.length === 1 ? '' : 's'} expected on this server`
+            }
           >
-            <ShieldCheck className="mr-1.5 h-4 w-4" /> Mark expected
+            <ShieldCheck className="mr-1.5 h-4 w-4" />
+            Mark expected
+            {expectableFindings.length > 0 && expectableFindings.length !== selectedFindings.length && (
+              <span className="ml-1 text-xs opacity-70">({expectableFindings.length})</span>
+            )}
           </Button>
         )}
         <Button variant="outline" size="sm" onClick={() => setSelected([])}>
@@ -483,7 +501,10 @@ function ServerPostureTab({
           { value: '', label: 'All ports' },
           { value: 'findings', label: 'Has open findings' },
           { value: 'expected', label: 'Marked expected' },
-          { value: 'stale', label: 'Expected, not listening' },
+          {
+            value: 'stale',
+            label: staleExpected > 0 ? `Expected, not listening (${staleExpected})` : 'Expected, not listening',
+          },
         ]}
         placeholder="All ports"
         searchable={false}
@@ -500,16 +521,6 @@ function ServerPostureTab({
         >
           Clear filters
         </button>
-      )}
-      {staleExpected > 0 && (
-        <span className="text-xs text-amber-600 dark:text-amber-400">
-          {staleExpected} expected, no longer listening
-        </span>
-      )}
-      {canExport && listeners.length > 0 && (
-        <Button variant="outline" size="sm" onClick={() => setExportDataset('listeners')}>
-          <Download className="mr-1.5 h-4 w-4" /> Export
-        </Button>
       )}
     </>
   );
@@ -822,7 +833,7 @@ function ServerPostureTab({
 
       {view === 'findings' && (
       <div className="space-y-4">
-        <div className="grid grid-cols-2 gap-3 lg:grid-cols-5">
+        <div className="grid grid-cols-2 gap-3 lg:grid-cols-6">
           {/* "All" clears the severity filter rather than setting one, so the
               tiles are a single control with five positions instead of four
               toggles plus a hidden default. */}
@@ -949,6 +960,13 @@ function ServerPostureTab({
           columns={listenerColumns}
           data={visiblePorts}
           filters={portFilterSlot}
+          toolbarActions={
+            canExport && listeners.length > 0 ? (
+              <Button variant="outline" size="sm" onClick={() => setExportDataset('listeners')}>
+                <Download className="mr-1.5 h-4 w-4" /> Export
+              </Button>
+            ) : null
+          }
           onRowClick={setDetailListener}
           showSearch={portRows.length > 8}
           searchPlaceholder="Search port, service, owner or status..."
@@ -975,7 +993,8 @@ function ServerPostureTab({
       <ExpectedPortDialog
         open={!!expectedTargets}
         serverId={serverId}
-        targets={expectedTargets || []}
+        targets={expectedTargets?.targets || []}
+        skipped={expectedTargets?.skipped || 0}
         onClose={() => setExpectedTargets(null)}
         onDone={(result) => {
           setExpectedTargets(null);
@@ -1003,7 +1022,7 @@ function ServerPostureTab({
         canExpect={canExpect}
         onMarkExpected={(f) => {
           setDetailFinding(null);
-          setExpectedTargets([{ port: f.port, proto: f.proto }]);
+          setExpectedTargets({ targets: [{ port: f.port, proto: f.proto }], skipped: 0 });
         }}
       />
 
@@ -1016,7 +1035,7 @@ function ServerPostureTab({
         onOpenFinding={(f) => { setDetailListener(null); setDetailFinding(f); }}
         onMarkExpected={(l) => {
           setDetailListener(null);
-          setExpectedTargets([{ port: l.port, proto: l.proto }]);
+          setExpectedTargets({ targets: [{ port: l.port, proto: l.proto }], skipped: 0 });
         }}
         onRemoveExpected={async (entryId) => {
           await removeExpectedPort(serverId, entryId);

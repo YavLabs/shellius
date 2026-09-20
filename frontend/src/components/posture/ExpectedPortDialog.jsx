@@ -20,7 +20,7 @@ import { addExpectedPorts } from '@/services/postureService';
  *
  * @param {{port: number, proto?: string}[]} targets  ports to declare
  */
-function ExpectedPortDialog({ open, serverId, targets = [], onClose, onDone }) {
+function ExpectedPortDialog({ open, serverId, targets = [], skipped = 0, onClose, onDone }) {
   const [reason, setReason] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
@@ -84,6 +84,14 @@ function ExpectedPortDialog({ open, serverId, targets = [], onClose, onDone }) {
           <span className="font-medium text-foreground">on this server only</span>. Their open
           findings resolve now, and they will not reopen while the declaration stands.
         </p>
+
+        {skipped > 0 && (
+          <p className="rounded-md border border-border bg-muted/40 px-3 py-2 text-xs text-muted-foreground">
+            {skipped} of the findings you selected {skipped === 1 ? 'is' : 'are'} not a port
+            exposure — a firewall finding, or a port already expected — so marking a port expected
+            cannot resolve {skipped === 1 ? 'it' : 'them'}. {skipped === 1 ? 'It stays' : 'They stay'} open.
+          </p>
+        )}
 
         <div className="rounded-lg border border-border">
           <p className="border-b border-border px-3 py-2 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground/70">
