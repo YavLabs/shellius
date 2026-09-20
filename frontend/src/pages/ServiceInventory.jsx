@@ -69,18 +69,12 @@ const KIND_LABELS = {
   unknown: 'Unattributed',
 };
 
-const TABS = [
-  { key: 'services', label: 'Services' },
-  { key: 'ports', label: 'Ports' },
-];
-
 function ServiceInventory() {
   const navigate = useNavigate();
   const { user } = useAuth();
   const canExport = can(user, 'posture.export');
   const [params, setParams] = useSearchParams();
 
-  const tab = params.get('tab') === 'ports' ? 'ports' : 'services';
   const serviceKey = params.get('service') || '';
   const q = params.get('q') || '';
   const proto = params.get('proto') || '';
@@ -89,6 +83,7 @@ function ServiceInventory() {
   const environment = params.get('environment') || '';
   const customerId = params.get('customerId') || '';
   const port = params.get('port') || '';
+  const state = params.get('state') || '';
 
   const [services, setServices] = useState(null);
   const [listeners, setListeners] = useState(null);
@@ -127,25 +122,30 @@ function ServiceInventory() {
       customerId: customerId || undefined,
       port: port || undefined,
       serviceKey: serviceKey || undefined,
+      state: state || undefined,
     }),
-    [q, proto, reachability, ownerKind, environment, customerId, port, serviceKey]
+    [q, proto, reachability, ownerKind, environment, customerId, port, serviceKey, state]
   );
 
   const load = useCallback(async () => {
     setLoading(true);
     setError('');
     try {
-      if (tab === 'services') {
-        setServices(await listInventoryServices(filters));
-      } else {
-        setListeners(await listInventoryListeners({ ...filters, page, limit: pageSize }));
-      }
+      // The grouped call feeds the tiles only. One grid was showing the same
+      // rows twice under two tab names — but "how many distinct services"
+      // still has to come from the grouping, not from a page of ports.
+      const [rows, grouped] = await Promise.all([
+        listInventoryListeners({ ...filters, page, limit: pageSize }),
+        listInventoryServices(filters),
+      ]);
+      setListeners(rows);
+      setServices(grouped);
     } catch (err) {
       setError(err.response?.data?.error?.message || err.message || 'Could not load the inventory');
     } finally {
       setLoading(false);
     }
-  }, [tab, filters, page, pageSize]);
+  }, [filters, page, pageSize]);
 
   useEffect(() => {
     load();
@@ -172,9 +172,10 @@ function ServiceInventory() {
       customerId: null,
       port: null,
       service: null,
+      state: null,
     });
 
-  const activeFilterCount = [proto, reachability, ownerKind, environment, customerId, port, serviceKey].filter(
+  const activeFilterCount = [proto, reachability, ownerKind, environment, customerId, port, serviceKey, state].filter(
     Boolean
   ).length;
 
@@ -235,6 +236,19 @@ function ServiceInventory() {
         clearable={false}
       />
       <SearchableSelect
+        className="w-[150px]"
+        value={state}
+        onChange={(v) => patch({ state: v })}
+        options={[
+          { value: '', label: 'Any state' },
+          { value: 'running', label: 'Running' },
+          { value: 'stopped', label: 'Installed, stopped' },
+        ]}
+        placeholder="Any state"
+        searchable={false}
+        clearable={false}
+      />
+      <SearchableSelect
         className="w-[180px]"
         value={customerId}
         onChange={(v) => patch({ customerId: v })}
@@ -246,114 +260,29 @@ function ServiceInventory() {
     </>
   );
 
+  const filtered = !!(activeFilterCount || q);
+  const emptyState = (
+    <EmptyState
+      icon={Network}
+      title={filtered ? 'Nothing matches these filters' : 'No services reported yet'}
+      description={
+        filtered
+          ? 'Try a different runtime, protocol, environment or customer.'
+          : 'Services appear here once hosts run the posture collector. Install it from Servers → Install collectors.'
+      }
+      action={
+        filtered
+          ? { label: 'Reset filters', onClick: resetFilters }
+          : { label: 'Go to servers', onClick: () => navigate('/servers') }
+      }
+    />
+  );
+
   const exportButton = canExport ? (
     <Button variant="outline" size="sm" onClick={() => setExportOpen(true)}>
       <Download className="mr-1.5 h-4 w-4" /> Export
     </Button>
   ) : null;
-
-  const serviceColumns = [
-    {
-      key: 'name',
-      label: 'Service',
-      searchAccessor: (r) => `${r.name} ${r.kind}`,
-      mobile: [
-        { slot: 'title', render: (r) => r.name },
-        {
-          slot: 'secondary',
-          key: 'service-kind',
-          render: (r) => `${KIND_LABELS[r.kind] || r.kind} · ${r.ports.join(', ')}`,
-        },
-      ],
-      render: (r) => (
-        <div className="min-w-0">
-          <p className="truncate font-medium text-foreground">{r.name}</p>
-          <p className="mt-0.5 text-[11px] text-muted-foreground">{KIND_LABELS[r.kind] || r.kind}</p>
-        </div>
-      ),
-    },
-    {
-      key: 'serverCount',
-      label: 'Hosts',
-      className: 'w-24',
-      mobile: { slot: 'meta', order: 1, showLabel: true, label: 'hosts' },
-      // The list of hostnames is what makes the count actionable — a title,
-      // so the answer to "where" does not need a second click.
-      render: (r) => (
-        <span
-          className="tabular-nums text-foreground"
-          title={r.servers.map((s) => s.displayName || s.hostname).join('\n')}
-        >
-          {r.serverCount}
-        </span>
-      ),
-    },
-    {
-      key: 'ports',
-      label: 'Ports',
-      sortAccessor: (r) => r.ports[0] ?? null,
-      mobile: 'hidden',
-      render: (r) => (
-        <span className="font-mono text-xs text-muted-foreground">
-          {r.protos.join('/').toUpperCase()} {r.ports.slice(0, 6).join(', ')}
-          {r.ports.length > 6 ? ` +${r.ports.length - 6}` : ''}
-        </span>
-      ),
-    },
-    {
-      key: 'environments',
-      label: 'Environments',
-      hideBelow: 'lg',
-      searchAccessor: (r) => r.environments.join(' '),
-      mobile: 'hidden',
-      render: (r) => (
-        <div className="flex flex-wrap gap-1">
-          {r.environments.map((e) => (
-            <EnvironmentBadge key={e} environment={e} />
-          ))}
-        </div>
-      ),
-    },
-    {
-      key: 'internetExposed',
-      label: 'Exposure',
-      sortAccessor: (r) => r.internetExposed,
-      mobile: {
-        slot: 'meta',
-        order: 0,
-        render: (r) =>
-          r.internetExposed > 0 ? <Badge tone="danger">{r.internetExposed} internet</Badge> : null,
-      },
-      render: (r) =>
-        r.internetExposed > 0 ? (
-          <Badge tone="danger" icon={Globe}>
-            {r.internetExposed} internet-facing
-          </Badge>
-        ) : (
-          <span className="text-xs text-muted-foreground">Internal</span>
-        ),
-    },
-    {
-      key: 'openFindings',
-      label: 'Findings',
-      className: 'w-28',
-      sortAccessor: (r) => r.criticalOrHigh * 1000 + r.openFindings,
-      mobile: {
-        slot: 'meta',
-        order: 2,
-        render: (r) => (r.openFindings > 0 ? `${r.openFindings} finding${r.openFindings === 1 ? '' : 's'}` : null),
-      },
-      render: (r) =>
-        r.openFindings === 0 ? (
-          <span className="text-xs text-muted-foreground">—</span>
-        ) : (
-          <span className="flex items-center gap-1.5">
-            {r.criticalOrHigh > 0 && <ShieldAlert className="h-3.5 w-3.5 text-red-500" />}
-            <span className="text-sm tabular-nums text-foreground">{r.openFindings}</span>
-          </span>
-        ),
-    },
-  ];
 
   const listenerColumns = [
     {
@@ -381,6 +310,34 @@ function ServiceInventory() {
           </span>
         );
       },
+    },
+    {
+      key: 'state',
+      label: 'State',
+      className: 'w-32',
+      sortAccessor: (r) => (r.listening === false ? 'stopped' : 'running'),
+      searchAccessor: (r) => (r.listening === false ? `stopped ${r.serviceState || ''}` : 'running listening'),
+      // A port that is closed only because the service behind it is stopped
+      // is a different thing from a port nobody serves — and the whole
+      // reason the collector now looks past open sockets.
+      mobile: {
+        slot: 'meta',
+        order: 4,
+        render: (r) =>
+          r.listening === false ? (
+            <Badge tone="warning" title={r.serviceStatusText || undefined}>
+              {r.serviceState || 'stopped'}
+            </Badge>
+          ) : null,
+      },
+      render: (r) =>
+        r.listening === false ? (
+          <Badge tone="warning" title={r.serviceStatusText || 'Installed but not running'}>
+            {r.serviceState || 'stopped'}
+          </Badge>
+        ) : (
+          <span className="text-xs text-muted-foreground">Listening</span>
+        ),
     },
     {
       key: 'server',
@@ -411,9 +368,13 @@ function ServiceInventory() {
       mobile: {
         slot: 'meta',
         order: 1,
-        render: (r) => <Badge tone={reachabilityTone(r.reachability).tone}>{reachabilityTone(r.reachability).label}</Badge>,
+        render: (r) =>
+          r.listening === false ? null : (
+            <Badge tone={reachabilityTone(r.reachability).tone}>{reachabilityTone(r.reachability).label}</Badge>
+          ),
       },
       render: (r) => {
+        if (r.listening === false) return <span className="text-xs text-muted-foreground">—</span>;
         const { tone, label } = reachabilityTone(r.reachability);
         return <Badge tone={tone}>{label}</Badge>;
       },
@@ -496,7 +457,6 @@ function ServiceInventory() {
           icon={Network}
           accent="violet"
           loading={loading && !services}
-          onClick={() => patch({ tab: 'ports' })}
         />
         <MetricCard
           title="Hosts reporting"
@@ -513,7 +473,7 @@ function ServiceInventory() {
           icon={Globe}
           accent="rose"
           loading={loading && !services}
-          onClick={() => patch({ tab: 'ports', reachability: 'INTERNET' })}
+          onClick={() => patch({ reachability: 'INTERNET' })}
         />
       </div>
 
@@ -549,95 +509,44 @@ function ServiceInventory() {
         </div>
       )}
 
-      <div className="flex items-center gap-1 overflow-x-auto border-b border-border">
-        {TABS.map((t) => (
-          <button
-            key={t.key}
-            onClick={() => patch({ tab: t.key === 'services' ? null : t.key })}
-            className={[
-              'shrink-0 whitespace-nowrap px-2.5 py-2.5 text-sm font-medium transition-colors md:px-4',
-              tab === t.key ? 'border-b-2 border-primary text-foreground' : 'text-muted-foreground hover:text-foreground',
-            ].join(' ')}
-          >
-            {t.label}
-          </button>
-        ))}
-      </div>
-
-      {tab === 'services' ? (
-        <DataTable
-          columns={serviceColumns}
-          data={services?.items || []}
-          loading={loading}
-          filters={filterSlot}
-          toolbarActions={exportButton}
-          activeFilterCount={activeFilterCount}
-          onResetFilters={resetFilters}
-          searchPlaceholder="Search service, host or port..."
-          onSearchChange={(value) => patch({ q: value })}
-          // One host: go straight there. Several: switch to the port list
-          // filtered to this service, which is the actual "where" answer.
-          onRowClick={(r) =>
-            r.serverCount === 1
-              ? openServer(r.servers[0].id)
-              : patch({ tab: 'ports', service: r.key })
-          }
-          emptyState={
-            <EmptyState
-              icon={Boxes}
-              title={activeFilterCount || q ? 'Nothing matches these filters' : 'No services reported yet'}
-              description={
-                activeFilterCount || q
-                  ? 'Try a different runtime, environment or customer.'
-                  : 'Services appear here once hosts run the posture collector. Install it from Servers → Install collectors.'
-              }
-              action={
-                activeFilterCount || q
-                  ? { label: 'Reset filters', onClick: resetFilters }
-                  : { label: 'Go to servers', onClick: () => navigate('/servers') }
-              }
-            />
-          }
-          mobile={{ titleClamp: 1 }}
-        />
+      {/* An empty result REPLACES the table rather than rendering inside it.
+          DataTable puts its empty state in a tbody cell, which is already
+          inside the table's own bordered card — so an EmptyState card there
+          is a card in a card, under a header row of columns with nothing
+          under them. Same split as MyHosts / Roles / Posture. */}
+      {!loading && (listeners?.items || []).length === 0 ? (
+        emptyState
       ) : (
-        <DataTable
-          columns={listenerColumns}
-          data={listeners?.items || []}
-          loading={loading}
-          filters={filterSlot}
-          toolbarActions={exportButton}
-          activeFilterCount={activeFilterCount}
-          onResetFilters={resetFilters}
-          searchPlaceholder="Search port, service, host or owner..."
-          onSearchChange={(value) => patch({ q: value })}
-          onRowClick={(r) => r.server?.id && openServer(r.server.id)}
-          emptyState={
-            <EmptyState
-              icon={Network}
-              title={activeFilterCount || q ? 'No ports match these filters' : 'No listening ports reported'}
-              description={
-                activeFilterCount || q
-                  ? 'Try a different protocol, reachability or environment.'
-                  : 'Ports appear here once hosts run the posture collector.'
-              }
-              action={activeFilterCount || q ? { label: 'Reset filters', onClick: resetFilters } : undefined}
-            />
-          }
-          serverPagination={{
-            page,
-            total: listeners?.meta?.total ?? 0,
-            onPageChange: setPage,
-            pageSize,
-            onPageSizeChange: (size) => {
-              setPageSize(size);
-              setPage(1);
-            },
-          }}
-          mobile={{
-            accent: (r) => (r.reachability === 'INTERNET' ? { tone: 'danger' } : null),
-          }}
-        />
+      <DataTable
+        columns={listenerColumns}
+        data={listeners?.items || []}
+        loading={loading}
+        filters={filterSlot}
+        toolbarActions={exportButton}
+        activeFilterCount={activeFilterCount}
+        onResetFilters={resetFilters}
+        searchPlaceholder="Search service, port, host, owner or customer..."
+        onSearchChange={(value) => patch({ q: value })}
+        onRowClick={(r) => r.server?.id && openServer(r.server.id)}
+        serverPagination={{
+          page,
+          total: listeners?.meta?.total ?? 0,
+          onPageChange: setPage,
+          pageSize,
+          onPageSizeChange: (size) => {
+            setPageSize(size);
+            setPage(1);
+          },
+        }}
+        mobile={{
+          accent: (r) =>
+            r.listening === false
+              ? { tone: 'warning' }
+              : r.reachability === 'INTERNET'
+                ? { tone: 'danger' }
+                : null,
+        }}
+      />
       )}
 
       <ExportDialog

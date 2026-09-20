@@ -69,3 +69,38 @@ export const EXPECTED_PORT_RESOLVES = ['PORT_EXPOSED', 'SENSITIVE_PORT_EXPOSED',
 export function canMarkExpected(finding) {
   return !!finding?.port && EXPECTED_PORT_RESOLVES.includes(finding.code);
 }
+
+/**
+ * Which section of the findings inbox a finding belongs to.
+ *
+ * The inbox is four sections, not four tabs, and they have to PARTITION —
+ * a finding counted in two places makes every total wrong. Precedence:
+ *
+ *   muted        a live mute wins outright; it is deliberately out of sight.
+ *   expected     a port someone declared public on purpose. It is inventory,
+ *                not a problem, so it never sits in the open queue even
+ *                after someone acknowledges it.
+ *   acknowledged seen, accepted, not yet fixed.
+ *   open         everything left — the only section that is actually a queue.
+ *
+ * Mirrors the counts in postureQueryService.getSummary; the backend is the
+ * source of truth for the numbers, this is the source of truth for which
+ * rows land where.
+ */
+export const FINDING_SECTIONS = ['open', 'expected', 'acknowledged', 'muted', 'resolved'];
+
+export function findingSection(finding) {
+  if (!finding) return 'open';
+  if (finding.status === 'resolved') return 'resolved';
+  if (finding.status === 'muted') return 'muted';
+  if (finding.code === 'EXPECTED_PUBLIC') return 'expected';
+  if (finding.status === 'acknowledged' || finding.acknowledgedAt) return 'acknowledged';
+  return 'open';
+}
+
+/** Group a list of findings into the sections above, in order. */
+export function partitionFindings(findings = []) {
+  const out = { open: [], expected: [], acknowledged: [], muted: [], resolved: [] };
+  for (const f of findings) out[findingSection(f)].push(f);
+  return out;
+}

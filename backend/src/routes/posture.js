@@ -57,6 +57,9 @@ const CHANNELS = ['inapp', 'email'];
 const findingsQuerySchema = Joi.object({
   severity: Joi.string().valid(...SEVERITIES),
   status: Joi.string().valid(...STATUSES),
+  // The findings inbox's own partition — open / expected / acknowledged /
+  // muted / resolved. Takes precedence over `status`.
+  section: Joi.string().valid('open', 'expected', 'acknowledged', 'muted', 'resolved'),
   customerId: Joi.string(),
   environment: Joi.string().valid(...ENVIRONMENTS),
   serverId: Joi.string(),

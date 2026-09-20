@@ -243,13 +243,27 @@ export async function getSummary(orgId, scope, { customerId, environment } = {})
     server: serverPredicate,
   };
 
-  const [severityGroups, mutedCount] = await Promise.all([
+  // The findings inbox is sections now, not tabs, so every section needs its
+  // count before it is expanded — a collapsed section with no number is a
+  // door with nothing written on it.
+  const live = { ...findingWhere, OR: [{ mutedUntil: null }, { mutedUntil: { lte: now } }] };
+  const [severityGroups, mutedCount, acknowledgedCount, expectedCount, resolvedCount] = await Promise.all([
     prisma.exposureFinding.groupBy({
       by: ['severity'],
-      where: { ...findingWhere, OR: [{ mutedUntil: null }, { mutedUntil: { lte: now } }] },
+      where: live,
       _count: { _all: true },
     }),
     prisma.exposureFinding.count({ where: { ...findingWhere, mutedUntil: { gt: now } } }),
+    // Precedence, so the sections partition rather than overlap:
+    // muted > expected > acknowledged > open. An EXPECTED_PUBLIC finding
+    // that is also acknowledged belongs to Expected, counted once.
+    prisma.exposureFinding.count({
+      where: { ...live, acknowledgedAt: { not: null }, NOT: { code: 'EXPECTED_PUBLIC' } },
+    }),
+    prisma.exposureFinding.count({ where: { ...live, code: 'EXPECTED_PUBLIC' } }),
+    prisma.exposureFinding.count({
+      where: { orgId, server: serverPredicate, NOT: { resolvedAt: null } },
+    }),
   ]);
 
   const findings = { critical: 0, high: 0, medium: 0, low: 0, info: 0, muted: mutedCount };
@@ -257,10 +271,23 @@ export async function getSummary(orgId, scope, { customerId, environment } = {})
     const key = SEVERITY_KEYS[g.severity] || String(g.severity).toLowerCase();
     findings[key] = (findings[key] || 0) + g._count._all;
   }
+  const liveTotal = findings.critical + findings.high + findings.medium + findings.low + findings.info;
+  // `open` is what is left once the sections that have their own home are
+  // taken out — an acknowledged or expected finding is not sitting in the
+  // inbox waiting for someone.
+  const sections = {
+    open: Math.max(0, liveTotal - acknowledgedCount - expectedCount),
+    expected: expectedCount,
+    acknowledged: acknowledgedCount,
+    muted: mutedCount,
+    resolved: resolvedCount,
+    total: liveTotal,
+  };
 
   return {
     servers: { total: serverIds.length, reporting, stale, notInstalled },
     findings,
+    sections,
   };
 }
 
@@ -271,7 +298,7 @@ export async function getSummary(orgId, scope, { customerId, environment } = {})
 export async function listFindings(orgId, query = {}, scope) {
   if (!orgId) throw new ApiError(400, 'orgId is required');
 
-  const { severity, status, customerId, environment, serverId } = query;
+  const { severity, status, section, customerId, environment, serverId } = query;
   const page = Math.max(parseInt(query.page, 10) || 1, 1);
   const limit = Math.min(Math.max(parseInt(query.limit, 10) || 25, 1), 100);
 
@@ -295,14 +322,37 @@ export async function listFindings(orgId, query = {}, scope) {
   else if (serverFilters.length > 1) where.server = { AND: serverFilters };
 
   const now = new Date();
-  if (status === 'resolved') {
+  // `section` is the inbox's partition (see getSummary's `sections` and
+  // frontend/src/lib/postureLabels.js findingSection) — the same precedence,
+  // expressed once here so a section's rows and its count can never
+  // disagree. `status` stays for callers that want the coarser buckets.
+  const live = () => {
+    where.resolvedAt = null;
+    where.OR = [{ mutedUntil: null }, { mutedUntil: { lte: now } }];
+  };
+  if (section === 'resolved') {
+    where.resolvedAt = { not: null };
+  } else if (section === 'muted') {
+    where.resolvedAt = null;
+    where.mutedUntil = { gt: now };
+  } else if (section === 'expected') {
+    live();
+    where.code = 'EXPECTED_PUBLIC';
+  } else if (section === 'acknowledged') {
+    live();
+    where.acknowledgedAt = { not: null };
+    where.NOT = { code: 'EXPECTED_PUBLIC' };
+  } else if (section === 'open') {
+    live();
+    where.acknowledgedAt = null;
+    where.NOT = { code: 'EXPECTED_PUBLIC' };
+  } else if (status === 'resolved') {
     where.resolvedAt = { not: null };
   } else if (status === 'muted') {
     where.resolvedAt = null;
     where.mutedUntil = { gt: now };
   } else if (status === 'open') {
-    where.resolvedAt = null;
-    where.OR = [{ mutedUntil: null }, { mutedUntil: { lte: now } }];
+    live();
   }
 
   const [items, total] = await Promise.all([

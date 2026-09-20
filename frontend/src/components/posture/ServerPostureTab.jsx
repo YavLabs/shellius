@@ -5,7 +5,8 @@ import DataTable from '@/components/shared/DataTable';
 import { PostureTile, PostureTileGrid } from '@/components/posture/PostureTiles';
 import { severityAccent } from '@/lib/mobileCard';
 import ExpectableMarker from '@/components/posture/ExpectableMarker';
-import { serviceLabel, canMarkExpected } from '@/lib/postureLabels';
+import FindingSection from '@/components/posture/FindingSection';
+import { serviceLabel, canMarkExpected, partitionFindings } from '@/lib/postureLabels';
 
 import SearchableSelect from '@/components/ui/SearchableSelect';
 import FindingDetailModal from '@/components/posture/FindingDetailModal';
@@ -92,6 +93,44 @@ function GaugeCard({ icon: Icon, label, points, unit = '%', color, onClick }) {
  */
 /** Worst first, for the phone preview list. */
 const SEVERITY_ORDER = ['CRITICAL', 'HIGH', 'MEDIUM', 'LOW', 'INFO'];
+
+/**
+ * The findings inbox, as sections. Order matters: the queue first, then the
+ * three states that are reference rather than work, then history.
+ */
+const FINDING_SECTION_META = [
+  {
+    key: 'open',
+    title: 'Open',
+    description: 'Not yet acknowledged, muted or declared expected.',
+    tone: 'danger',
+    defaultOpen: true,
+  },
+  {
+    key: 'expected',
+    title: 'Marked as expected',
+    description: 'Ports someone declared public on purpose, kept so the inventory is complete.',
+    tone: 'success',
+  },
+  {
+    key: 'acknowledged',
+    title: 'Acknowledged',
+    description: 'Seen and accepted; escalation is stopped but the finding is still open.',
+    tone: 'warning',
+  },
+  {
+    key: 'muted',
+    title: 'Muted',
+    description: 'Deliberately out of sight until the mute expires.',
+    tone: 'neutral',
+  },
+  {
+    key: 'resolved',
+    title: 'Resolved',
+    description: 'No longer reported by the collector. Kept for history.',
+    tone: 'neutral',
+  },
+];
 
 const SEVERITY_TILES = [
   { key: 'CRITICAL', label: 'Critical', icon: ShieldAlert, tint: 'text-red-500' },
@@ -201,6 +240,10 @@ function ServerPostureTab({
   const [expectedNotice, setExpectedNotice] = useState('');
   // Findings view filters. Severity is driven by the metric cards as well as
   // the select, so they cannot disagree about what is on screen.
+  // Only the queue is open on arrival; the rest are reference and open on
+  // demand. Their counts are visible either way, which is the part tabs got
+  // wrong — nothing on the page said a muted finding existed at all.
+  const [openSections, setOpenSections] = useState({ open: true });
   const [severityFilter, setSeverityFilter] = useState('');
   const [statusFilter, setStatusFilter] = useState('');
   const [codeFilter, setCodeFilter] = useState('');
@@ -342,7 +385,10 @@ function ServerPostureTab({
   }
 
   const listeners = data.listeners || [];
-  const findings = (data.findings || []).filter((f) => f.status !== 'resolved');
+  // Every finding, resolved included — the sections below need history too.
+  const allFindings = data.findings || [];
+  const findings = allFindings.filter((f) => f.status !== 'resolved');
+  const sectioned = partitionFindings(allFindings);
 
   const severityCounts = findings.reduce((acc, f) => {
     acc[f.severity] = (acc[f.severity] || 0) + 1;
@@ -352,12 +398,11 @@ function ServerPostureTab({
   // What the table shows. Counts on the cards stay whole-tab totals so the
   // numbers do not move when you filter by them — a card that recomputed to
   // match its own filter would always read as the full count.
-  const visibleFindings = findings.filter(
-    (f) =>
-      (!severityFilter || f.severity === severityFilter) &&
-      (!statusFilter || f.status === statusFilter) &&
-      (!codeFilter || f.code === codeFilter)
-  );
+  const matchesFilters = (f) =>
+    (!severityFilter || f.severity === severityFilter) &&
+    (!statusFilter || f.status === statusFilter) &&
+    (!codeFilter || f.code === codeFilter);
+  const visibleFindings = findings.filter(matchesFilters);
   const findingCodes = [...new Set(findings.map((f) => f.code))].sort();
   const filtersActive = !!(severityFilter || statusFilter || codeFilter);
 
@@ -1089,44 +1134,68 @@ function ServerPostureTab({
           })}
         </PostureTileGrid>
 
-        {findings.length === 0 ? (
-          <EmptyState icon={ShieldCheck} title="No open findings" description="This host is clean as of the last snapshot." />
-        ) : visibleFindings.length === 0 ? (
-          // A filtered view with nothing in it must never be mistaken for a
-          // clean host (spec §9.14).
-          <EmptyState
-            icon={Radar}
-            title="No findings match these filters"
-            description="This host does have open findings — clear the filters to see them."
-          />
+        {allFindings.length === 0 ? (
+          <EmptyState icon={ShieldCheck} title="No findings" description="This host is clean as of the last snapshot." />
         ) : (
-          <DataTable
-            columns={findingColumns}
-            data={visibleFindings}
-            filters={findingFilterSlot}
-            activeFilterCount={[severityFilter, statusFilter, codeFilter].filter(Boolean).length}
-            onResetFilters={() => { setSeverityFilter(''); setStatusFilter(''); setCodeFilter(''); }}
-            toolbarActions={
-              canExport && findings.length > 0 ? (
-                <Button variant="outline" size="sm" onClick={() => setExportDataset('findings')}>
-                  <Download className="mr-1.5 h-4 w-4" /> Export
-                </Button>
-              ) : null
-            }
-            onRowClick={setDetailFinding}
-            showSearch={false}
-            emptyMessage="No open findings"
-            selectable={canMute || canExpect}
-            selectedIds={selected}
-            onSelectionChange={setSelected}
-            bulkActions={bulkBar}
-            // Severity is the column the phone card drops, so it has to come
-            // back as the card's own colour — otherwise the one thing that
-            // ranks a finding is the one thing a phone never shows.
-            mobile={{ accent: (r) => severityAccent(r.severity), titleClamp: 2 }}
-          />
+          /* Sections, not tabs. Muted, acknowledged and expected findings
+             used to be reachable only through a filter nobody thought to
+             set, so a host with ten muted findings looked identical to one
+             with none. Every count is on screen; only the queue is open. */
+          <div className="space-y-2">
+            {FINDING_SECTION_META.map((sec) => {
+              const rows = sectioned[sec.key] || [];
+              const visible = rows.filter(matchesFilters);
+              return (
+                <FindingSection
+                  key={sec.key}
+                  title={sec.title}
+                  description={sec.description}
+                  count={rows.length}
+                  tone={sec.tone}
+                  open={!!openSections[sec.key]}
+                  onToggle={() => setOpenSections((p) => ({ ...p, [sec.key]: !p[sec.key] }))}
+                >
+                  {visible.length === 0 ? (
+                    // A filtered view with nothing in it must never be
+                    // mistaken for an empty section (spec §9.14).
+                    <p className="py-6 text-center text-sm text-muted-foreground">
+                      None of the {rows.length} finding{rows.length === 1 ? '' : 's'} here match the
+                      current filters.
+                    </p>
+                  ) : (
+                    <DataTable
+                      columns={findingColumns}
+                      data={visible}
+                      filters={sec.key === 'open' ? findingFilterSlot : undefined}
+                      activeFilterCount={[severityFilter, statusFilter, codeFilter].filter(Boolean).length}
+                      onResetFilters={() => { setSeverityFilter(''); setStatusFilter(''); setCodeFilter(''); }}
+                      toolbarActions={
+                        canExport && sec.key === 'open' ? (
+                          <Button variant="outline" size="sm" onClick={() => setExportDataset('findings')}>
+                            <Download className="mr-1.5 h-4 w-4" /> Export
+                          </Button>
+                        ) : null
+                      }
+                      onRowClick={setDetailFinding}
+                      showSearch={false}
+                      emptyMessage="Nothing here"
+                      selectable={canMute || canExpect}
+                      selectedIds={selected}
+                      onSelectionChange={setSelected}
+                      bulkActions={bulkBar}
+                      // Severity is the column the phone card drops, so it
+                      // has to come back as the card's own colour —
+                      // otherwise the one thing that ranks a finding is the
+                      // one thing a phone never shows.
+                      mobile={{ accent: (r) => severityAccent(r.severity), titleClamp: 2 }}
+                    />
+                  )}
+                </FindingSection>
+              );
+            })}
+          </div>
         )}
-        {canExpect && visibleFindings.some(canMarkExpected) && (
+        {canExpect && allFindings.some(canMarkExpected) && (
           <p className="flex items-center gap-1.5 text-xs text-muted-foreground">
             <ShieldCheck className="h-3.5 w-3.5 shrink-0 text-emerald-600/70 dark:text-emerald-400/70" aria-hidden="true" />
             marks a finding that <span className="font-medium text-foreground">Mark expected</span> can

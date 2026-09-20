@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import {
   Radar,
@@ -16,11 +16,11 @@ import {
 import DataTable from '@/components/shared/DataTable';
 import PageHeader from '@/components/common/PageHeader';
 import EmptyState from '@/components/ui/EmptyState';
-import MetricCard from '@/components/dashboard/MetricCard';
 import ServerName, { serverSearchString } from '@/components/shared/ServerName';
 import EnvironmentBadge from '@/components/shared/EnvironmentBadge';
 import SeverityBadge from '@/components/posture/SeverityBadge';
 import FindingStatusBadge from '@/components/posture/FindingStatusBadge';
+import FleetFindingsSection from '@/components/posture/FleetFindingsSection';
 import MuteDialog from '@/components/posture/MuteDialog';
 import CollectorCoverageModal from '@/components/posture/CollectorCoverageModal';
 import FindingDetailModal from '@/components/posture/FindingDetailModal';
@@ -37,7 +37,6 @@ import { Button } from '@/components/ui/button';
 import SearchableSelect from '@/components/ui/SearchableSelect';
 import {
   getPostureSummary,
-  listFindings,
   muteFinding,
   unmuteFinding,
   acknowledgeFinding,
@@ -61,10 +60,43 @@ const SEVERITY_TILES = [
   { key: 'info', label: 'Info', icon: Info, tint: 'text-muted-foreground' },
 ];
 const ENVIRONMENTS = ['demo', 'dev', 'staging', 'prod'];
-const STATUS_TABS = [
-  { key: 'open', label: 'Open' },
-  { key: 'muted', label: 'Muted' },
-  { key: 'resolved', label: 'Resolved' },
+/**
+ * The inbox, as sections rather than tabs. Tabs made three of these four
+ * views invisible: nothing on the page said a muted or acknowledged finding
+ * existed, so the only way to remember them was to already know. Sections
+ * put every count on screen and let the ones that are not a queue stay shut.
+ */
+const FINDING_SECTIONS = [
+  {
+    key: 'open',
+    title: 'Open',
+    description: 'Not yet acknowledged, muted or declared expected.',
+    tone: 'danger',
+  },
+  {
+    key: 'expected',
+    title: 'Marked as expected',
+    description: 'Ports someone declared public on purpose, kept so the inventory is complete.',
+    tone: 'success',
+  },
+  {
+    key: 'acknowledged',
+    title: 'Acknowledged',
+    description: 'Seen and accepted; escalation is stopped but the finding is still open.',
+    tone: 'warning',
+  },
+  {
+    key: 'muted',
+    title: 'Muted',
+    description: 'Deliberately out of sight until the mute expires.',
+    tone: 'neutral',
+  },
+  {
+    key: 'resolved',
+    title: 'Resolved',
+    description: 'No longer reported by any collector. Kept for history.',
+    tone: 'neutral',
+  },
 ];
 
 function Posture() {
@@ -84,7 +116,14 @@ function Posture() {
   const [autoOpen, setAutoOpen] = useState(false);
   const [bulkInstallIds, setBulkInstallIds] = useState(null);
 
-  const [status, setStatus] = useState('open');
+  // Only the queue is open on arrival; the rest are reference and open on
+  // demand, each fetching its own page when it does. Their counts come from
+  // the summary, so a shut section still says how much is behind it.
+  const [openSections, setOpenSections] = useState({ open: true });
+  // Bumped after any write, so every OPEN section refetches — muting a
+  // finding moves it between two sections, and leaving the other one stale
+  // would show the same row in both.
+  const [reloadKey, setReloadKey] = useState(0);
   // Seeded from the URL so a link in from Customer Details lands on the
   // filtered view rather than the whole fleet.
   const [searchParams] = useSearchParams();
@@ -93,14 +132,22 @@ function Posture() {
   const [environment, setEnvironment] = useState('');
   const [customers, setCustomers] = useState([]);
 
-  const [findings, setFindings] = useState([]);
-  const [total, setTotal] = useState(0);
-  const [page, setPage] = useState(1);
-  const [pageSize, setPageSize] = useState(20);
-  const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
 
   const [selected, setSelected] = useState([]);
+  // Selection spans sections, and each section only knows its own rows — so
+  // the page remembers the finding objects behind the ids. Bulk actions need
+  // the rows, not just the ids, to tell which ones an action can act on.
+  const [selectedRows, setSelectedRows] = useState({});
+  const handleSelection = useCallback((ids, rows = []) => {
+    setSelectedRows((prev) => {
+      const next = { ...prev };
+      for (const r of rows) next[r.id] = r;
+      for (const id of Object.keys(next)) if (!ids.includes(id)) delete next[id];
+      return next;
+    });
+    setSelected(ids);
+  }, []);
   const [muteTarget, setMuteTarget] = useState(null); // { ids: [...] } or null
   // Row click opens the finding; the row's … menu keeps the quick actions.
   const [detailFinding, setDetailFinding] = useState(null);
@@ -149,45 +196,33 @@ function Posture() {
     }
   }, []);
 
-  const fetch = useCallback(async () => {
-    setLoading(true);
-    setError('');
-    try {
-      const params = { page, limit: pageSize, status };
-      if (severity) params.severity = severity;
-      if (customerId) params.customerId = customerId;
-      if (environment) params.environment = environment;
-      const data = await listFindings(params);
-      setFindings(data.findings || []);
-      setTotal(data.meta?.total ?? data.findings?.length ?? 0);
-    } catch (err) {
-      setError(err.response?.data?.error?.message || err.message || 'Failed to load findings');
-    } finally {
-      setLoading(false);
-    }
-  }, [page, pageSize, status, severity, customerId, environment]);
+  // One object so every section shares the identity — a new literal each
+  // render would refetch all of them on every keystroke.
+  const sectionFilters = useMemo(
+    () => ({
+      severity: severity || undefined,
+      customerId: customerId || undefined,
+      environment: environment || undefined,
+    }),
+    [severity, customerId, environment]
+  );
+
+  /** Refetch the sections and the counts above them, together. */
+  const fetch = useCallback(() => {
+    setReloadKey((k) => k + 1);
+  }, []);
 
   useEffect(() => {
     fetchSummary();
     fetchCustomers();
   }, [fetchSummary, fetchCustomers]);
 
-  useEffect(() => {
-    fetch();
-  }, [fetch]);
-
   const resetFilters = () => {
     setSeverity('');
     setCustomerId('');
     setEnvironment('');
-    setPage(1);
   };
 
-  const changeStatus = (key) => {
-    setStatus(key);
-    setSelected([]);
-    setPage(1);
-  };
 
   const handleAcknowledge = async (finding) => {
     setBusyId(finding.id);
@@ -223,7 +258,7 @@ function Posture() {
         await muteFinding(id, payload);
       }
       setMuteTarget(null);
-      setSelected([]);
+      setSelected([]); setSelectedRows({});
       fetch();
       fetchSummary();
     } catch (err) {
@@ -240,58 +275,26 @@ function Posture() {
     ? SEVERITIES.reduce((n, key) => n + (summary.findings?.[key] ?? 0), 0)
     : 0;
 
+  // Choosing a severity narrows every section at once and opens the queue,
+  // which is where someone clicking "Critical" expects to land.
   const pickSeverity = (key) => {
-    setStatus('open');
     setSeverity(key);
-    setPage(1);
+    setOpenSections((p) => ({ ...p, open: true }));
   };
 
+  const coverage = summary?.servers;
   const summaryTiles = summary && (
     <div className="space-y-3">
-      <div className="grid grid-cols-3 gap-2 sm:gap-3">
-        <MetricCard
-          title="Reporting"
-          value={summaryLoading ? '—' : summary.servers?.reporting ?? 0}
-          subtitle={`of ${summary.servers?.total ?? 0} servers`}
-          icon={Radar}
-          accent="emerald"
-          loading={summaryLoading}
-          onClick={() => setCoverageOpen(true)}
-        />
-        <MetricCard
-          title="Stale"
-          value={summaryLoading ? '—' : summary.servers?.stale ?? 0}
-          subtitle="stopped reporting"
-          icon={ServerOff}
-          accent="amber"
-          loading={summaryLoading}
-          onClick={() => setCoverageOpen(true)}
-        />
-        <MetricCard
-          title="No collector"
-          value={summaryLoading ? '—' : summary.servers?.notInstalled ?? 0}
-          subtitle="exposure unknown"
-          icon={ServerOff}
-          accent="violet"
-          loading={summaryLoading}
-          onClick={() => setCoverageOpen(true)}
-        />
-      </div>
-
-      {/* Every severity, so the tiles add up to the table. Showing only
-          Critical and High meant a list of four rows sat under tiles
+      {/* Every severity, so the tiles add up to the sections below. Showing
+          only Critical and High meant a list of four rows sat under tiles
           totalling one, which reads as a bug whichever number you trust. */}
       <PostureTileGrid className="lg:grid-cols-6">
         <PostureTile
           icon={Radar}
           label="All open"
           value={summaryLoading ? '—' : openTotal}
-          active={!severity && status === 'open'}
-          onClick={() => {
-            setStatus('open');
-            setSeverity('');
-            setPage(1);
-          }}
+          active={!severity}
+          onClick={() => pickSeverity('')}
         />
         {SEVERITY_TILES.map((t) => (
           <PostureTile
@@ -300,12 +303,43 @@ function Posture() {
             tint={t.tint}
             label={t.label}
             value={summaryLoading ? '—' : summary.findings?.[t.key] ?? 0}
-            active={severity === t.key && status === 'open'}
+            active={severity === t.key}
             disabled={!summaryLoading && (summary.findings?.[t.key] ?? 0) === 0 && severity !== t.key}
             onClick={() => pickSeverity(severity === t.key ? '' : t.key)}
           />
         ))}
       </PostureTileGrid>
+
+      {/* Coverage is one line, not a second row of cards. It answers a
+          question about HOSTS, not findings — and a tile row that mixes the
+          two invites reading "0 critical" as good news on a fleet where 31
+          of 32 hosts are not reporting at all. Which is exactly the number
+          this line exists to keep in front of you. */}
+      <button
+        type="button"
+        onClick={() => setCoverageOpen(true)}
+        className="flex w-full flex-wrap items-center gap-x-4 gap-y-1 rounded-md border border-border bg-muted/40 px-3 py-2 text-left text-xs text-muted-foreground transition-colors hover:border-primary/40 hover:bg-accent/40"
+      >
+        <span className="flex items-center gap-1.5">
+          <Radar className="h-3.5 w-3.5 shrink-0 text-emerald-500" aria-hidden="true" />
+          <span className="font-medium text-foreground">{coverage?.reporting ?? 0}</span> of{' '}
+          {coverage?.total ?? 0} servers reporting
+        </span>
+        {coverage?.stale > 0 && (
+          <span className="flex items-center gap-1.5 text-amber-600 dark:text-amber-400">
+            <ServerOff className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+            {coverage.stale} stopped reporting
+          </span>
+        )}
+        {coverage?.notInstalled > 0 && (
+          <span className="flex items-center gap-1.5">
+            <ServerOff className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+            <span className="font-medium text-foreground">{coverage.notInstalled}</span> with no
+            collector — exposure unknown, not clean
+          </span>
+        )}
+        <span className="ml-auto shrink-0 text-primary">Coverage →</span>
+      </button>
     </div>
   );
 
@@ -443,7 +477,7 @@ function Posture() {
       <SearchableSelect
         className="w-[150px]"
         value={severity}
-        onChange={(v) => { setSeverity(v); setPage(1); }}
+        onChange={setSeverity}
         options={[{ value: '', label: 'All severities' }, ...SEVERITIES.map((s) => ({ value: s, label: s[0].toUpperCase() + s.slice(1) }))]}
         placeholder="All severities"
         searchable={false}
@@ -452,7 +486,7 @@ function Posture() {
       <SearchableSelect
         className="w-[150px]"
         value={environment}
-        onChange={(v) => { setEnvironment(v); setPage(1); }}
+        onChange={setEnvironment}
         options={[{ value: '', label: 'All environments' }, ...ENVIRONMENTS.map((e) => ({ value: e, label: ENVIRONMENT_LABELS[e] || e }))]}
         placeholder="All environments"
         searchable={false}
@@ -461,7 +495,7 @@ function Posture() {
       <SearchableSelect
         className="w-[180px]"
         value={customerId}
-        onChange={(v) => { setCustomerId(v); setPage(1); }}
+        onChange={setCustomerId}
         options={[{ value: '', label: 'All customers' }, ...customers.map((c) => ({ value: c.id, label: c.name }))]}
         placeholder="All customers"
         searchable
@@ -472,7 +506,7 @@ function Posture() {
 
   // Findings currently selected, resolved from the loaded page. Bulk actions
   // only ever act on rows the user can actually see.
-  const selectedFindings = findings.filter((f) => selected.includes(f.id));
+  const selectedFindings = selected.map((id) => selectedRows[id]).filter(Boolean);
   const selectionServerIds = [...new Set(selectedFindings.map((f) => f.server?.id).filter(Boolean))];
   const selectionIsOneServer = selectionServerIds.length === 1;
 
@@ -499,7 +533,7 @@ function Posture() {
       for (const id of selected) {
         await acknowledgeFinding(id);
       }
-      setSelected([]);
+      setSelected([]); setSelectedRows({});
       fetch();
       fetchSummary();
     } catch (err) {
@@ -557,7 +591,7 @@ function Posture() {
   // that must never be confused with "clean" — a filtered view with nothing
   // matching.
   const noneEverReported = !summaryLoading && summary && (summary.servers?.total ?? 0) === 0;
-  const hasActiveFilter = !!(severity || customerId || environment) || status !== 'open';
+  const hasActiveFilter = !!(severity || customerId || environment);
   const emptyState = noneEverReported ? (
     <EmptyState
       icon={Radar}
@@ -565,7 +599,7 @@ function Posture() {
       description="No server has reported a posture snapshot. Bootstrap or re-provision a host to install the collector — it starts reporting within a few minutes."
       action={{ label: 'Go to servers', onClick: () => navigate('/servers') }}
     />
-  ) : status === 'open' && !hasActiveFilter ? (
+  ) : !hasActiveFilter ? (
     <EmptyState icon={ShieldCheck} title="No open findings" description="Every reporting server is clean right now." />
   ) : (
     <EmptyState
@@ -585,7 +619,7 @@ function Posture() {
         helpKey="posture"
         actions={[
           { key: 'export', label: 'Export', icon: Download, variant: 'outline', onClick: () => setExportOpen(true), hidden: !canExport },
-          { key: 'refresh', label: 'Refresh', icon: RefreshCw, variant: 'outline', onClick: () => { fetch(); fetchSummary(); }, disabled: loading, spin: loading },
+          { key: 'refresh', label: 'Refresh', icon: RefreshCw, variant: 'outline', onClick: () => { fetch(); fetchSummary(); } },
         ]}
       />
 
@@ -632,71 +666,66 @@ function Posture() {
         </div>
       )}
 
-      <div className="flex items-center gap-1 overflow-x-auto border-b border-border">
-        {STATUS_TABS.map((tab) => (
-          <button
-            key={tab.key}
-            onClick={() => changeStatus(tab.key)}
-            className={[
-              'relative shrink-0 whitespace-nowrap px-2.5 py-2.5 text-sm font-medium transition-colors md:px-4',
-              status === tab.key ? 'border-b-2 border-primary text-foreground' : 'text-muted-foreground hover:text-foreground',
-            ].join(' ')}
-          >
-            {tab.label}
-          </button>
-        ))}
-      </div>
-
-      {/* An empty result (no findings at all, or none matching the current
-          filters) is fully replaced by its EmptyState card — never rendered
-          alongside the table's header row / bulk-select checkbox (see
-          pages/MyHosts.jsx, pages/Roles.jsx for the same list-vs-EmptyState
-          split). Loading keeps the table mounted so its skeleton rows show. */}
-      {!loading && findings.length === 0 ? (
+      {noneEverReported ? (
         emptyState
       ) : (
-        <DataTable
-          columns={columns}
-          data={findings}
-          onRowClick={setDetailFinding}
-          loading={loading}
-          emptyState={emptyState}
-          showSearch={false}
-          filters={filterSlot}
-          onResetFilters={resetFilters}
-          selectable={canMute && status === 'open'}
-          selectedIds={selected}
-          onSelectionChange={setSelected}
-          bulkActions={bulkActionsSlot}
-          mobile={{
-            accent: (r) => severityAccent(r.severity),
-            // Finding messages are sentences; one truncated line left every
-            // card starting the same way and saying nothing.
-            titleClamp: 2,
-            group: (r) =>
-              r.server
-                ? { key: r.server.id, label: r.server.displayName || r.server.hostname }
-                : { key: 'unknown', label: 'Unknown server' },
-          }}
-          serverPagination={{
-            page,
-            total,
-            onPageChange: setPage,
-            pageSize,
-            onPageSizeChange: (size) => { setPageSize(size); setPage(1); },
-          }}
-        />
+        <>
+          {/* Filters live above the sections, not inside one, because they
+              apply to all of them — a severity filter that only narrowed
+              "Open" would make the other counts lie. */}
+          <div className="flex flex-wrap items-center gap-2">
+            {filterSlot}
+            {hasActiveFilter && (
+              <button type="button" onClick={resetFilters} className="text-xs text-primary hover:underline">
+                Clear filters
+              </button>
+            )}
+          </div>
+
+          <div className="space-y-2">
+            {FINDING_SECTIONS.map((sec) => (
+              <FleetFindingsSection
+                key={sec.key}
+                section={sec.key}
+                title={sec.title}
+                description={sec.description}
+                tone={sec.tone}
+                count={summary?.sections?.[sec.key] ?? 0}
+                filters={sectionFilters}
+                columns={columns}
+                open={!!openSections[sec.key]}
+                onToggle={() => setOpenSections((p) => ({ ...p, [sec.key]: !p[sec.key] }))}
+                onRowClick={setDetailFinding}
+                // Bulk actions only where they mean something: you cannot
+                // mute what is already muted or resolved.
+                selectable={canMute && (sec.key === 'open' || sec.key === 'acknowledged')}
+                selectedIds={selected}
+                onSelectionChange={handleSelection}
+                bulkActions={bulkActionsSlot}
+                reloadKey={reloadKey}
+                mobile={{
+                  accent: (r) => severityAccent(r.severity),
+                  // Finding messages are sentences; one truncated line left
+                  // every card starting the same way and saying nothing.
+                  titleClamp: 2,
+                  group: (r) =>
+                    r.server
+                      ? { key: r.server.id, label: r.server.displayName || r.server.hostname }
+                      : { key: 'unknown', label: 'Unknown server' },
+                }}
+              />
+            ))}
+          </div>
+
+          {canExpect && (
+            <p className="flex items-center gap-1.5 text-xs text-muted-foreground">
+              <ShieldCheck className="h-3.5 w-3.5 shrink-0 text-emerald-600/70 dark:text-emerald-400/70" aria-hidden="true" />
+              marks a finding that <span className="font-medium text-foreground">Mark expected</span> can
+              resolve. Mute and Acknowledge apply to every finding.
+            </p>
+          )}
+        </>
       )}
-
-      {canExpect && findings.some(canMarkExpected) && (
-          <p className="flex items-center gap-1.5 text-xs text-muted-foreground">
-            <ShieldCheck className="h-3.5 w-3.5 shrink-0 text-emerald-600/70 dark:text-emerald-400/70" aria-hidden="true" />
-            marks a finding that <span className="font-medium text-foreground">Mark expected</span> can
-            resolve. Mute and Acknowledge apply to every finding.
-          </p>
-        )}
-
-
 
       <CollectorCoverageModal
         open={coverageOpen}
@@ -774,7 +803,7 @@ function Posture() {
       <ExportDialog
         open={exportOpen}
         dataset="findings"
-        filters={{ status, severity: severity || undefined, environment: environment || undefined, customerId: customerId || undefined }}
+        filters={{ status: 'open', severity: severity || undefined, environment: environment || undefined, customerId: customerId || undefined }}
         serverCount={2}
         scopeLabel="findings matching the current filters"
         onClose={() => setExportOpen(false)}
@@ -788,7 +817,7 @@ function Posture() {
         onClose={() => setExpectedTarget(null)}
         onDone={(result) => {
           setExpectedTarget(null);
-          setSelected([]);
+          setSelected([]); setSelectedRows({});
           setExpectedNotice(
             `${result.added} port${result.added === 1 ? '' : 's'} marked as expected` +
               (result.skipped ? `, ${result.skipped} already were` : '') +
