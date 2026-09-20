@@ -193,17 +193,17 @@ function ServerResources() {
     <div className="space-y-5 p-6 max-md:p-4">
       {isMobile ? (
         <MobilePageHeader
-          back={{ onClick: () => navigate(`/servers/${id}?tab=posture`), label: 'Back to posture' }}
+          back={{ onClick: () => navigate(`/servers/${id}`), label: 'Back to server' }}
           title={title}
           subtitle="Resource history"
         />
       ) : (
         <>
           <button
-            onClick={() => navigate(`/servers/${id}?tab=posture`)}
+            onClick={() => navigate(`/servers/${id}`)}
             className="flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground"
           >
-            <ArrowLeft className="h-4 w-4" /> Back to posture
+            <ArrowLeft className="h-4 w-4" /> Back to server
           </button>
           <PageHeader
             icon={Gauge}

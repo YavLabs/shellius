@@ -285,7 +285,7 @@ function Posture() {
       mobile: { slot: 'secondary', render: (r) => (r.server ? `${r.server.displayName || r.server.hostname}` : '—') },
       render: (r) => (
         <button
-          onClick={() => navigate(`/servers/${r.server?.id}?tab=posture`)}
+          onClick={() => navigate(`/servers/${r.server?.id}?tab=findings`)}
           className="flex items-center gap-2 text-left hover:text-primary"
           disabled={!r.server?.id}
         >
@@ -340,7 +340,7 @@ function Posture() {
         {
           label: 'View server posture',
           icon: Eye,
-          onClick: (r) => navigate(`/servers/${r.server?.id}?tab=posture`),
+          onClick: (r) => navigate(`/servers/${r.server?.id}?tab=findings`),
           hidden: (r) => !r.server?.id,
         },
         {

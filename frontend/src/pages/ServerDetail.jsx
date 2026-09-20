@@ -36,6 +36,7 @@ import useIsMobile from '@/hooks/useIsMobile';
 import DeployWizardModal from '@/components/keystore/DeployWizardModal';
 import TestConnectionModal from '@/components/keystore/TestConnectionModal';
 import ServerPostureTab from '@/components/posture/ServerPostureTab';
+import { getServerPosture } from '@/services/postureService';
 import { Button } from '@/components/ui/button';
 import {
   DropdownMenu,
@@ -96,9 +97,19 @@ function ServerDetail() {
   const [searchParams, setSearchParams] = useSearchParams();
   const canViewPosture = can(currentUser, 'posture.read');
   const canMutePosture = can(currentUser, 'posture.mute');
+  // 'posture' is the pre-split tab key and still arrives from older links,
+  // notifications and the fleet page's "View server posture" action.
+  const TAB_KEYS = ['overview', 'findings', 'ports'];
+  const requestedTab = searchParams.get('tab') === 'posture' ? 'findings' : searchParams.get('tab');
   const [activeTab, setActiveTab] = useState(
-    searchParams.get('tab') === 'posture' && canViewPosture ? 'posture' : 'overview'
+    TAB_KEYS.includes(requestedTab) && canViewPosture ? requestedTab : 'overview'
   );
+
+  // Posture lives here, not in the tab component, so the tab labels can carry
+  // counts without each tab refetching the same payload on every switch.
+  const [posture, setPosture] = useState(null);
+  const [postureLoading, setPostureLoading] = useState(false);
+  const [postureError, setPostureError] = useState('');
   const handleTabChange = (key) => {
     setActiveTab(key);
     const next = new URLSearchParams(searchParams);
@@ -155,6 +166,29 @@ function ServerDetail() {
   useEffect(() => {
     fetch();
   }, [fetch]);
+
+  const loadPosture = useCallback(async () => {
+    if (!canViewPosture) return;
+    setPostureLoading(true);
+    setPostureError('');
+    try {
+      setPosture(await getServerPosture(id));
+    } catch (err) {
+      setPostureError(err.response?.data?.error?.message || err.message || 'Failed to load posture data');
+    } finally {
+      setPostureLoading(false);
+    }
+  }, [id, canViewPosture]);
+
+  useEffect(() => {
+    loadPosture();
+  }, [loadPosture]);
+
+  // Resolved findings stay in the payload for history; the tab counts what is
+  // still open. "Needs attention" is CRITICAL or HIGH only — badging every
+  // severity would train people to ignore the badge.
+  const openFindings = (posture?.findings || []).filter((f) => f.status !== 'resolved');
+  const needsAttention = openFindings.some((f) => f.severity === 'CRITICAL' || f.severity === 'HIGH');
 
   // Prompt to bootstrap on every visit until the host is done.
   //
@@ -414,33 +448,51 @@ function ServerDetail() {
       </>
       )}
 
-      <PrivateIPWarning ipAddress={server.ipAddress} />
-
       {canViewPosture && (
         <div className="flex items-center gap-1 overflow-x-auto border-b border-border md:overflow-visible">
           {[
             { key: 'overview', label: 'Overview' },
-            { key: 'posture', label: 'Posture' },
+            { key: 'findings', label: 'Open findings', count: openFindings.length, alert: needsAttention },
+            { key: 'ports', label: 'Ports & services', count: posture?.listeners?.length ?? null },
           ].map((tab) => (
             <button
               key={tab.key}
               onClick={() => handleTabChange(tab.key)}
               className={[
-                'relative shrink-0 whitespace-nowrap px-2.5 py-2.5 text-sm font-medium transition-colors md:px-4',
+                'relative inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap px-2.5 py-2.5 text-sm font-medium transition-colors md:px-4',
                 activeTab === tab.key
                   ? 'border-b-2 border-primary text-foreground'
                   : 'text-muted-foreground hover:text-foreground',
               ].join(' ')}
             >
               {tab.label}
+              {tab.count > 0 && (
+                <span className="rounded-full bg-muted px-1.5 py-0.5 text-[10px] tabular-nums text-muted-foreground">
+                  {tab.count}
+                </span>
+              )}
+              {/* Only the findings tab can demand attention, and only for
+                  CRITICAL or HIGH — badging everything would train people to
+                  ignore the badge. */}
+              {tab.alert && (
+                <span className="inline-flex items-center gap-1 rounded-full bg-red-500/15 px-1.5 py-0.5 text-[10px] font-semibold text-red-600 dark:text-red-400">
+                  <AlertTriangle className="h-3 w-3" />
+                  Needs attention
+                </span>
+              )}
             </button>
           ))}
         </div>
       )}
 
-      {canViewPosture && activeTab === 'posture' ? (
+      {canViewPosture && (activeTab === 'findings' || activeTab === 'ports') ? (
         <ServerPostureTab
           serverId={id}
+          view={activeTab}
+          data={posture}
+          loading={postureLoading}
+          error={postureError}
+          onReload={loadPosture}
           canMute={canMutePosture}
           authMode={server.authMode}
           canBootstrap={canOnboard}
@@ -450,6 +502,28 @@ function ServerDetail() {
           }}
         />
       ) : (
+      <div className="space-y-4">
+      {/* Collector, firewall and the resource gauges: the host's current
+          state belongs on Overview beside Connection and Health, not behind
+          a tab you have to remember to open. */}
+      {canViewPosture && (
+        <ServerPostureTab
+          serverId={id}
+          view="overview"
+          data={posture}
+          loading={postureLoading}
+          error={postureError}
+          onReload={loadPosture}
+          canMute={canMutePosture}
+          authMode={server.authMode}
+          canBootstrap={canOnboard}
+          onBootstrap={(scope) => {
+            setWizardScope(scope || 'full');
+            setWizardOpen(true);
+          }}
+        />
+      )}
+
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
         <Card title="Connection">
           <Field label="IP Address" value={server.ipAddress} mono />
@@ -625,6 +699,11 @@ function ServerDetail() {
             <p className="text-xs text-muted-foreground">No labels</p>
           )}
         </Card>
+
+        {/* Last in the grid: it is a caveat about reaching the host, not a
+            fact about it, and it renders nothing for a public address. */}
+        <PrivateIPWarning ipAddress={server.ipAddress} variant="card" />
+      </div>
       </div>
       )}
 

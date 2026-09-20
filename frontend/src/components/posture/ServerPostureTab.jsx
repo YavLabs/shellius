@@ -1,8 +1,10 @@
 import { useCallback, useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { AlertTriangle, Check, Cpu, Database, Download, Gauge, HardDrive, Radar, ShieldCheck, ShieldOff, Volume1, VolumeX, Wifi } from 'lucide-react';
+import { AlertTriangle, Check, Cpu, Database, Download, Gauge, HardDrive, Info, Radar, ShieldAlert, ShieldCheck, ShieldOff, Volume1, VolumeX, Wifi } from 'lucide-react';
 import DataTable from '@/components/shared/DataTable';
 import { serviceLabel } from '@/lib/postureLabels';
+import { cn } from '@/lib/utils';
+import SearchableSelect from '@/components/ui/SearchableSelect';
 import FindingDetailModal from '@/components/posture/FindingDetailModal';
 import ListenerDetailModal from '@/components/posture/ListenerDetailModal';
 import ExportDialog from '@/components/posture/ExportDialog';
@@ -56,15 +58,43 @@ function GaugeCard({ icon: Icon, label, points, unit = '%', color, onClick }) {
 }
 
 /**
- * Server detail → Posture tab (docs/posture/posture-spec.md §8). Its own
- * fetch/loading/error cycle so it only runs while the tab is open.
+ * The posture slices of Server Details (docs/posture/posture-spec.md §8):
+ * the collector/firewall/resources summary on Overview, the findings inbox,
+ * and the ports table.
+ *
+ * Server Details owns the fetch and passes the payload in, so the tab labels
+ * can carry finding counts without every tab switch refetching it.
+ *
+ * @param {'overview'|'findings'|'ports'} props.view  which slice to render.
  */
+/**
+ * The four severities that get a tile. INFO is deliberately absent: it is
+ * the "expected public" bucket, which is a statement that nothing is wrong,
+ * so giving it equal visual weight would dilute the three that need action.
+ */
+const SEVERITY_TILES = [
+  { key: 'CRITICAL', label: 'Critical', icon: ShieldAlert, tint: 'text-red-500' },
+  { key: 'HIGH', label: 'High', icon: ShieldAlert, tint: 'text-orange-500' },
+  { key: 'MEDIUM', label: 'Medium', icon: Radar, tint: 'text-amber-500' },
+  { key: 'LOW', label: 'Low', icon: Info, tint: 'text-sky-500' },
+];
 
-function ServerPostureTab({ serverId, canMute, authMode, canBootstrap, onBootstrap }) {
+function ServerPostureTab({
+  serverId,
+  view = 'findings',
+  data,
+  loading,
+  error: loadError,
+  onReload,
+  canMute,
+  authMode,
+  canBootstrap,
+  onBootstrap,
+}) {
   const navigate = useNavigate();
-  const [data, setData] = useState(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState('');
+  const [actionError, setActionError] = useState('');
+  const error = loadError || actionError;
+  const setError = setActionError;
   const [busyId, setBusyId] = useState(null);
   const [muteTarget, setMuteTarget] = useState(null);
   // Row click opens the detail view; the row's … menu keeps the quick actions.
@@ -78,28 +108,18 @@ function ServerPostureTab({ serverId, canMute, authMode, canBootstrap, onBootstr
   // the confirmation has to live on the page — otherwise a successful save
   // looks identical to nothing happening.
   const [expectedNotice, setExpectedNotice] = useState('');
+  // Findings view filters. Severity is driven by the metric cards as well as
+  // the select, so they cannot disagree about what is on screen.
+  const [severityFilter, setSeverityFilter] = useState('');
+  const [statusFilter, setStatusFilter] = useState('');
+  const [codeFilter, setCodeFilter] = useState('');
   const { user } = useAuth();
   const canExport = can(user, 'posture.export');
   const canExpect = can(user, 'posture.expected_ports');
   const [muteSubmitting, setMuteSubmitting] = useState(false);
   const [muteError, setMuteError] = useState('');
 
-  const fetch = useCallback(async () => {
-    setLoading(true);
-    setError('');
-    try {
-      const res = await getServerPosture(serverId);
-      setData(res);
-    } catch (err) {
-      setError(err.response?.data?.error?.message || err.message || 'Failed to load posture data');
-    } finally {
-      setLoading(false);
-    }
-  }, [serverId]);
-
-  useEffect(() => {
-    fetch();
-  }, [fetch]);
+  const fetch = onReload;
 
   const loadExpected = useCallback(() => {
     // Best-effort: the tab is still useful without it, and a viewer who
@@ -208,7 +228,24 @@ function ServerPostureTab({ serverId, canMute, authMode, canBootstrap, onBootstr
   const listeners = data.listeners || [];
   const findings = (data.findings || []).filter((f) => f.status !== 'resolved');
 
-  const selectedFindings = findings.filter((f) => selected.includes(f.id));
+  const severityCounts = findings.reduce((acc, f) => {
+    acc[f.severity] = (acc[f.severity] || 0) + 1;
+    return acc;
+  }, {});
+
+  // What the table shows. Counts on the cards stay whole-tab totals so the
+  // numbers do not move when you filter by them — a card that recomputed to
+  // match its own filter would always read as the full count.
+  const visibleFindings = findings.filter(
+    (f) =>
+      (!severityFilter || f.severity === severityFilter) &&
+      (!statusFilter || f.status === statusFilter) &&
+      (!codeFilter || f.code === codeFilter)
+  );
+  const findingCodes = [...new Set(findings.map((f) => f.code))].sort();
+  const filtersActive = !!(severityFilter || statusFilter || codeFilter);
+
+  const selectedFindings = visibleFindings.filter((f) => selected.includes(f.id));
 
   // Join each declaration against what is actually listening now. A port you
   // declared expected that nothing is serving is worth surfacing: the
@@ -530,6 +567,7 @@ function ServerPostureTab({ serverId, canMute, authMode, canBootstrap, onBootstr
         </div>
       )}
 
+      {view === 'overview' && (
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
         <div className="rounded-lg border border-border bg-card">
           <div className="border-b border-border px-5 py-3">
@@ -574,8 +612,9 @@ function ServerPostureTab({ serverId, canMute, authMode, canBootstrap, onBootstr
           </div>
         </div>
       </div>
+      )}
 
-      {metrics.length > 0 && (
+      {view === 'overview' && metrics.length > 0 && (
         <div>
           <div className="mb-2 flex items-center justify-between gap-3">
             <h3 className="text-sm font-semibold text-foreground">Resources (~24h)</h3>
@@ -596,7 +635,7 @@ function ServerPostureTab({ serverId, canMute, authMode, canBootstrap, onBootstr
         </div>
       )}
 
-      {expectedNotice && (
+      {view === 'findings' && expectedNotice && (
         <div className="flex items-start justify-between gap-3 rounded-md border border-emerald-500/40 bg-emerald-500/10 px-3 py-2 text-sm text-emerald-800 dark:text-emerald-200">
           <span>{expectedNotice}</span>
           <button
@@ -609,9 +648,77 @@ function ServerPostureTab({ serverId, canMute, authMode, canBootstrap, onBootstr
         </div>
       )}
 
-      <div>
-        <div className="mb-2 flex items-center justify-between gap-3">
-          <h3 className="text-sm font-semibold text-foreground">Open findings</h3>
+      {view === 'findings' && (
+      <div className="space-y-4">
+        <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+          {SEVERITY_TILES.map((t) => {
+            const count = severityCounts[t.key] || 0;
+            const active = severityFilter === t.key;
+            return (
+              <button
+                key={t.key}
+                type="button"
+                onClick={() => setSeverityFilter(active ? '' : t.key)}
+                aria-pressed={active}
+                disabled={count === 0 && !active}
+                className={cn(
+                  'rounded-lg border p-3.5 text-left transition-colors',
+                  active ? 'border-primary bg-primary/5' : 'border-border bg-card',
+                  count > 0 || active ? 'hover:border-primary/40 hover:bg-accent/40' : 'opacity-60'
+                )}
+              >
+                <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                  <t.icon className={cn('h-3.5 w-3.5', t.tint)} />
+                  {t.label}
+                </span>
+                <span className="mt-1 block text-2xl font-semibold tabular-nums text-foreground">
+                  {count}
+                </span>
+              </button>
+            );
+          })}
+        </div>
+
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div className="flex flex-wrap items-center gap-2">
+            <SearchableSelect
+              className="w-[150px]"
+              value={severityFilter}
+              onChange={setSeverityFilter}
+              options={[{ value: '', label: 'All severities' }, ...SEVERITY_TILES.map((t) => ({ value: t.key, label: t.label }))]}
+              placeholder="All severities"
+              searchable={false}
+            />
+            <SearchableSelect
+              className="w-[150px]"
+              value={statusFilter}
+              onChange={setStatusFilter}
+              options={[
+                { value: '', label: 'All statuses' },
+                { value: 'open', label: 'Open' },
+                { value: 'acknowledged', label: 'Acknowledged' },
+                { value: 'muted', label: 'Muted' },
+              ]}
+              placeholder="All statuses"
+              searchable={false}
+            />
+            <SearchableSelect
+              className="w-[190px]"
+              value={codeFilter}
+              onChange={setCodeFilter}
+              options={[{ value: '', label: 'All types' }, ...findingCodes.map((c) => ({ value: c, label: c }))]}
+              placeholder="All types"
+            />
+            {filtersActive && (
+              <button
+                type="button"
+                onClick={() => { setSeverityFilter(''); setStatusFilter(''); setCodeFilter(''); }}
+                className="text-xs text-primary hover:underline"
+              >
+                Clear filters
+              </button>
+            )}
+          </div>
           {canExport && findings.length > 0 && (
             <Button variant="outline" size="sm" onClick={() => setExportDataset('findings')}>
               <Download className="mr-1.5 h-4 w-4" /> Export
@@ -620,10 +727,18 @@ function ServerPostureTab({ serverId, canMute, authMode, canBootstrap, onBootstr
         </div>
         {findings.length === 0 ? (
           <EmptyState icon={ShieldCheck} title="No open findings" description="This host is clean as of the last snapshot." />
+        ) : visibleFindings.length === 0 ? (
+          // A filtered view with nothing in it must never be mistaken for a
+          // clean host (spec §9.14).
+          <EmptyState
+            icon={Radar}
+            title="No findings match these filters"
+            description="This host does have open findings — clear the filters to see them."
+          />
         ) : (
           <DataTable
             columns={findingColumns}
-            data={findings}
+            data={visibleFindings}
             onRowClick={setDetailFinding}
             showSearch={false}
             emptyMessage="No open findings"
@@ -634,7 +749,9 @@ function ServerPostureTab({ serverId, canMute, authMode, canBootstrap, onBootstr
           />
         )}
       </div>
+      )}
 
+      {view === 'ports' && (
       <div>
         <div className="mb-2 flex flex-wrap items-center justify-between gap-3">
           <div className="flex items-center gap-2">
@@ -670,6 +787,7 @@ function ServerPostureTab({ serverId, canMute, authMode, canBootstrap, onBootstr
           the port is still listening.
         </p>
       </div>
+      )}
 
       <ExportDialog
         open={!!exportDataset}

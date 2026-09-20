@@ -190,7 +190,7 @@ function FindingDetailModal({
                 showServerLink ? (
                   <button
                     type="button"
-                    onClick={() => go(`/servers/${server.id}?tab=posture`)}
+                    onClick={() => go(`/servers/${server.id}?tab=findings`)}
                     className="inline-flex items-center gap-1 text-primary hover:underline"
                   >
                     {server.displayName || server.hostname}
