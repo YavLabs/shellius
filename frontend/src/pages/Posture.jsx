@@ -94,6 +94,8 @@ function Posture() {
   // cannot be declared in one go — the dialog is only offered for a single
   // server's worth of findings.
   const [expectedTarget, setExpectedTarget] = useState(null); // { serverId, targets: [] }
+  // The dialog closes on success, so its confirmation lives here instead.
+  const [expectedNotice, setExpectedNotice] = useState('');
 
   const fetchSummary = useCallback(async () => {
     setSummaryLoading(true);
@@ -520,6 +522,19 @@ function Posture() {
         </p>
       </div>
 
+      {expectedNotice && (
+        <div className="flex items-start justify-between gap-3 rounded-md border border-emerald-500/40 bg-emerald-500/10 px-3 py-2 text-sm text-emerald-800 dark:text-emerald-200">
+          <span>{expectedNotice}</span>
+          <button
+            type="button"
+            onClick={() => setExpectedNotice('')}
+            className="shrink-0 text-xs underline underline-offset-2 opacity-80 hover:opacity-100"
+          >
+            Dismiss
+          </button>
+        </div>
+      )}
+
       {error && (
         <div className="rounded-md border border-destructive/50 bg-destructive/10 px-3 py-2 text-sm text-destructive">
           {error}
@@ -655,7 +670,17 @@ function Posture() {
         serverId={expectedTarget?.serverId}
         targets={expectedTarget?.targets || []}
         onClose={() => setExpectedTarget(null)}
-        onDone={() => { setSelected([]); fetch(); fetchSummary(); }}
+        onDone={(result) => {
+          setExpectedTarget(null);
+          setSelected([]);
+          setExpectedNotice(
+            `${result.added} port${result.added === 1 ? '' : 's'} marked as expected` +
+              (result.skipped ? `, ${result.skipped} already were` : '') +
+              `. ${result.resolvedFindings} finding${result.resolvedFindings === 1 ? '' : 's'} resolved.`
+          );
+          fetch();
+          fetchSummary();
+        }}
       />
 
       <MuteDialog

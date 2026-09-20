@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { CheckCircle2, Loader2, ShieldCheck } from 'lucide-react';
+import { Loader2, ShieldCheck } from 'lucide-react';
 import Modal from '@/components/shared/Modal';
 import { Button } from '@/components/ui/button';
 import { addExpectedPorts } from '@/services/postureService';
@@ -24,14 +24,12 @@ function ExpectedPortDialog({ open, serverId, targets = [], onClose, onDone }) {
   const [reason, setReason] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
-  const [done, setDone] = useState(null);
 
   useEffect(() => {
     if (!open) return;
     setReason('');
     setError('');
     setBusy(false);
-    setDone(null);
   }, [open]);
 
   // Two findings can name the same port (a firewall bypass and an exposure,
@@ -55,7 +53,9 @@ function ExpectedPortDialog({ open, serverId, targets = [], onClose, onDone }) {
         serverId,
         unique.map((t) => ({ ...t, note: reason.trim() }))
       );
-      setDone(result);
+      // The caller closes and reports the outcome, the same way MuteDialog
+      // works — a dialog that stays open after a successful save reads as a
+      // save that did not happen.
       onDone?.(result);
     } catch (err) {
       setError(err?.response?.data?.error?.message || err.message || 'Could not save.');
@@ -66,73 +66,58 @@ function ExpectedPortDialog({ open, serverId, targets = [], onClose, onDone }) {
 
   const footer = (
     <div className="flex items-center justify-end gap-2" data-sheet-footer>
-      <Button variant="outline" onClick={onClose}>
-        {done ? 'Done' : 'Cancel'}
+      <Button variant="outline" onClick={onClose} disabled={busy}>
+        Cancel
       </Button>
-      {!done && (
-        <Button onClick={submit} disabled={busy || !reason.trim() || unique.length === 0}>
-          {busy ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <ShieldCheck className="mr-2 h-4 w-4" />}
-          Mark as expected
-        </Button>
-      )}
+      <Button onClick={submit} disabled={busy || !reason.trim() || unique.length === 0}>
+        {busy ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <ShieldCheck className="mr-2 h-4 w-4" />}
+        {busy ? 'Saving…' : 'Mark as expected'}
+      </Button>
     </div>
   );
 
   return (
     <Modal open={open} onClose={onClose} title="Expected on this server" size="md" footer={footer}>
       <div className="space-y-4">
-        {done ? (
-          <div className="flex items-start gap-2 rounded-md border border-emerald-500/40 bg-emerald-500/10 px-3 py-2.5 text-sm text-emerald-800 dark:text-emerald-200">
-            <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0" />
-            <p>
-              {done.added} port{done.added === 1 ? '' : 's'} marked as expected
-              {done.skipped > 0 && `, ${done.skipped} already were`}. {done.resolvedFindings} finding
-              {done.resolvedFindings === 1 ? '' : 's'} resolved.
-            </p>
-          </div>
-        ) : (
-          <>
-            <p className="text-sm text-muted-foreground">
-              These ports will stop being reported as exposed{' '}
-              <span className="font-medium text-foreground">on this server only</span>. Their open
-              findings resolve now, and they will not reopen while the declaration stands.
-            </p>
+        <p className="text-sm text-muted-foreground">
+          These ports will stop being reported as exposed{' '}
+          <span className="font-medium text-foreground">on this server only</span>. Their open
+          findings resolve now, and they will not reopen while the declaration stands.
+        </p>
 
-            <div className="rounded-lg border border-border">
-              <p className="border-b border-border px-3 py-2 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground/70">
-                {unique.length} port{unique.length === 1 ? '' : 's'}
-              </p>
-              <ul className="max-h-40 divide-y divide-border overflow-y-auto">
-                {unique.map((t) => (
-                  <li key={`${t.port}/${t.proto}`} className="px-3 py-2 font-mono text-sm text-foreground">
-                    {t.proto === 'any' ? 'any' : t.proto.toUpperCase()}/{t.port}
-                  </li>
-                ))}
-              </ul>
-            </div>
+        <div className="rounded-lg border border-border">
+          <p className="border-b border-border px-3 py-2 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground/70">
+            {unique.length} port{unique.length === 1 ? '' : 's'}
+          </p>
+          <ul className="max-h-40 divide-y divide-border overflow-y-auto">
+            {unique.map((t) => (
+              <li key={`${t.port}/${t.proto}`} className="px-3 py-2 font-mono text-sm text-foreground">
+                {t.proto === 'any' ? 'any' : t.proto.toUpperCase()}/{t.port}
+              </li>
+            ))}
+          </ul>
+        </div>
 
-            <label className="block">
-              <span className="text-sm font-medium text-foreground">
-                Why is this expected? <span className="text-destructive">*</span>
-              </span>
-              <textarea
-                rows={3}
-                value={reason}
-                onChange={(e) => setReason(e.target.value)}
-                placeholder="e.g. Public demo frontend behind Cloudflare"
-                className="mt-1 w-full rounded-md border border-input bg-background px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring"
-              />
-              <span className="mt-1 block text-xs text-muted-foreground">
-                Recorded against the entry and shown to whoever reviews this later.
-              </span>
-            </label>
+        <label className="block">
+          <span className="text-sm font-medium text-foreground">
+            Why is this expected? <span className="text-destructive">*</span>
+          </span>
+          <textarea
+            rows={3}
+            value={reason}
+            onChange={(e) => setReason(e.target.value)}
+            placeholder="e.g. Public demo frontend behind Cloudflare"
+            className="mt-1 w-full rounded-md border border-input bg-background px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring"
+          />
+          <span className="mt-1 block text-xs text-muted-foreground">
+            Recorded against the entry and shown to whoever reviews this later.
+          </span>
+        </label>
 
-            {error && (
-              <p role="alert" className="text-sm text-destructive">
-                {error}
-              </p>
-            )}
-          </>
+        {error && (
+          <p role="alert" className="text-sm text-destructive">
+            {error}
+          </p>
         )}
       </div>
     </Modal>
