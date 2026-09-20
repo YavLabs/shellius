@@ -759,14 +759,26 @@ SVC_CONTAINERS_BLOCKED=0
 MAX_SERVICES=200
 SERVICE_COUNT=0
 
+# kind name ref state running statusText detail sourcePath ports exitCode
+#
+# Every field is written, and an EMPTY one is written as "-".
+#
+# `IFS=$'\t' read` treats runs of tabs as a SINGLE delimiter, because tab is
+# IFS whitespace — so one empty field silently shifts every column after it
+# one to the left. A container with no sourcePath was landing its ports in
+# the sourcePath column and its exit code in ports, and the JSON renderer
+# dutifully published both. The fixture suite in .posture-wip/test caught
+# it; nothing else would have until a host had a stopped container.
 emit_service() {
-  # kind name ref state running statusText detail sourcePath ports exitCode
   (( SERVICE_COUNT >= MAX_SERVICES )) && return 0
   SERVICE_COUNT=$((SERVICE_COUNT + 1))
-  printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
-    "$(clean "${1-}")" "$(clean "${2-}")" "$(clean "${3--}")" "$(clean "${4-}")" \
-    "${5:-0}" "$(clean "${6--}")" "$(clean "${7--}")" "$(clean "${8--}")" \
-    "$(clean "${9--}")" "${10:--}" >> "$SERVICES"
+  local __f __v __out=()
+  for __v in "${@:1:10}"; do
+    __f=$(clean "${__v-}")
+    [[ -z "$__f" ]] && __f="-"
+    __out+=("$__f")
+  done
+  printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "${__out[@]}" >> "$SERVICES"
 }
 
 collect_systemd_services() {
@@ -885,6 +897,11 @@ collect_container_services() {
 # JSON output
 # ---------------------------------------------------------------------------
 
+# "-" is the TSV's placeholder for an empty field (see emit_service). It is
+# an artifact of the on-disk format and must never reach the JSON, where an
+# absent sourcePath would otherwise read as a path literally named "-".
+nz() { [[ "${1-}" == "-" ]] && printf '' || printf '%s' "${1-}"; }
+
 json_esc() {
   local s=${1-}
   s=${s//\\/\\\\}; s=${s//\"/\\\"}
@@ -939,9 +956,9 @@ render_json() {
     [[ -z "${skind:-}" ]] && continue
     [[ $first4 -eq 0 ]] && printf ','; first4=0
     printf '{"kind":"%s","name":"%s","ref":"%s","state":"%s","running":%s,"statusText":"%s","detail":"%s","sourcePath":"%s","exitCode":%s,"ports":[' \
-      "$(json_esc "$skind")" "$(json_esc "$sname")" "$(json_esc "$sref")" "$(json_esc "$sstate")" \
+      "$(json_esc "$skind")" "$(json_esc "$sname")" "$(json_esc "$(nz "$sref")")" "$(json_esc "$sstate")" \
       "$([[ "$srunning" == "1" ]] && echo true || echo false)" \
-      "$(json_esc "$sstatus")" "$(json_esc "$sdetail")" "$(json_esc "$ssrc")" \
+      "$(json_esc "$(nz "$sstatus")")" "$(json_esc "$(nz "$sdetail")")" "$(json_esc "$(nz "$ssrc")")" \
       "$([[ "$sexit" =~ ^[0-9]+$ ]] && echo "$sexit" || echo null)"
     # ports: "tcp/8080>3000@0.0.0.0;tcp/8443>443@0.0.0.0"
     local firstp=1 pentry pproto pport pcport pbind

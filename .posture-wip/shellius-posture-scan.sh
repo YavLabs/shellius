@@ -538,6 +538,168 @@ collect_docker() {
 }
 
 # ---------------------------------------------------------------------------
+# Step 3b — installed services and their state
+# ---------------------------------------------------------------------------
+#
+# `ss` only ever shows what is LISTENING. A stopped container, a failed unit
+# or a disabled service is invisible there — while its published port and
+# its firewall rule both survive, and both come back the moment it starts.
+# Without this, a ufw rule for a stopped container's port reads as "a rule
+# with nothing behind it" rather than "a service one `docker start` away
+# from being reachable", and those two want opposite fixes.
+#
+# Mirrors scripts/posture/shellius-posture-collect.sh collect_*_services, with
+# one difference: this script runs as root by choice, so it can talk to the
+# container runtime directly. The agent cannot — it holds a narrow sudoers
+# grant instead (shellius-posture-containers.sudoers), which is why the agent
+# reports WHETHER it looked and this script simply does.
+
+SERVICES="$TMP/services.tsv"   # kind name ref state running status detail source ports exit
+: > "$SERVICES"
+SVC_SYSTEMD=0
+SVC_CONTAINERS=0
+MAX_SERVICES=200
+SERVICE_COUNT=0
+
+# Every field is written, and an EMPTY one is written as "-".
+#
+# `IFS=$'\t' read` treats runs of tabs as a SINGLE delimiter, because tab is
+# IFS whitespace — so one empty field silently shifts every column after it
+# one to the left. A container with no sourcePath was landing its ports in
+# the sourcePath column and its exit code in ports, which the JSON renderer
+# then dutifully published. The fixture suite caught it; nothing else would
+# have until a host had a stopped container.
+emit_service() {
+  (( SERVICE_COUNT >= MAX_SERVICES )) && return 0
+  SERVICE_COUNT=$((SERVICE_COUNT + 1))
+  local __f __v __out=()
+  for __v in "${@:1:10}"; do
+    __f=$(clean "${__v-}")
+    [[ -z "$__f" ]] && __f="-"
+    __out+=("$__f")
+  done
+  printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "${__out[@]}" >> "$SERVICES"
+}
+
+collect_systemd_services() {
+  have systemctl || return 0
+  SVC_SYSTEMD=1
+
+  # "Supposed to be running" is what makes a stopped unit worth reporting.
+  # Every inactive unit on a host is hundreds of rows of noise; an ENABLED
+  # unit that is not active, or any unit that FAILED, is a real signal.
+  local enabled
+  enabled=$(systemctl list-unit-files --type=service --state=enabled --no-legend --no-pager 2>/dev/null | awk '{print $1}')
+
+  local name load active sub rest
+  while read -r name load active sub rest; do
+    [[ -z "${name:-}" ]] && continue
+    case "$name" in *.service) ;; *) continue ;; esac
+
+    local state=""
+    if [[ "$active" == "failed" || "$sub" == "failed" ]]; then
+      state="failed"
+    elif [[ "$active" != "active" ]] && printf '%s\n' "$enabled" | grep -qxF "$name"; then
+      state="inactive"
+    else
+      continue
+    fi
+
+    local src=""
+    src=$(systemctl show -p FragmentPath --value "$name" 2>/dev/null) || src=""
+    emit_service "systemd" "$name" "$name" "$state" 0 "$active/$sub" "${rest:-}" "$src" "" ""
+  done < <(systemctl list-units --type=service --all --no-legend --plain --no-pager 2>/dev/null)
+}
+
+# PortBindings, flattened to "tcp/8080>3000@0.0.0.0;tcp/8443>443@0.0.0.0".
+# Shape is fixed and tiny: {"3000/tcp":[{"HostIp":"0.0.0.0","HostPort":"8080"}]}
+parse_port_bindings() {
+  local json=${1-}
+  [[ -z "$json" || "$json" == "null" || "$json" == "{}" ]] && return 0
+  local out="" block cport cproto hostip hostport hp
+  while IFS= read -r block; do
+    [[ -z "$block" ]] && continue
+    cport=${block%%/*}; cport=${cport#\"}
+    cproto=${block#*/}; cproto=${cproto%%\"*}
+    [[ "$cport" =~ ^[0-9]+$ ]] || continue
+    case "$cproto" in tcp|udp) ;; *) continue ;; esac
+    while IFS= read -r hp; do
+      hostport=$(sed -n 's/.*"HostPort":"\([0-9]*\)".*/\1/p' <<<"$hp")
+      hostip=$(sed -n 's/.*"HostIp":"\([^"]*\)".*/\1/p' <<<"$hp")
+      [[ "$hostport" =~ ^[0-9]+$ ]] || continue
+      [[ -z "$hostip" ]] && hostip="0.0.0.0"
+      out+="${cproto}/${hostport}>${cport}@${hostip};"
+    done < <(grep -oE '\{[^{}]*"HostPort":"[0-9]+"[^{}]*\}' <<<"$block")
+  done < <(grep -oE '"[0-9]+/(tcp|udp)":\[[^]]*\]' <<<"$json")
+  printf '%s' "${out%;}"
+}
+
+collect_container_services() {
+  local rt
+  for rt in docker podman; do
+    have "$rt" || continue
+    "$rt" info >/dev/null 2>&1 || continue
+    local out
+    out=$("$rt" ps -a --format '{{.ID}}|{{.Names}}|{{.Image}}|{{.Status}}|{{.Ports}}' 2>/dev/null) || continue
+    [[ -z "$out" ]] && continue
+    SVC_CONTAINERS=1
+
+    local cid cname cimage cstatus cports
+    while IFS='|' read -r cid cname cimage cstatus cports; do
+      [[ -z "${cid:-}" ]] && continue
+      local state running=0 exitcode=""
+      case "$cstatus" in
+        Up*Paused*)  state="paused" ;;
+        Up*)         state="running"; running=1 ;;
+        Exited*)     state="exited"; exitcode=$(sed -n 's/^Exited (\([0-9]*\)).*/\1/p' <<<"$cstatus") ;;
+        Created*)    state="created" ;;
+        Restarting*) state="restarting" ;;
+        Dead*)       state="dead" ;;
+        *)           state="unknown" ;;
+      esac
+
+      # A running container's published ports already arrive through ss (or
+      # collect_docker). The ones worth an extra call are the ones with no
+      # socket to find them by.
+      local ports=""
+      if (( running == 0 )); then
+        local bindings
+        bindings=$("$rt" inspect --format '{{json .HostConfig.PortBindings}}' "$cid" 2>/dev/null) || bindings=""
+        ports=$(parse_port_bindings "$bindings")
+      fi
+      emit_service "$rt" "${cname:-$cid}" "${cid:0:12}" "$state" "$running" "$cstatus" "${cimage:-}" "" "$ports" "${exitcode:-}"
+    done <<<"$out"
+  done
+}
+
+# The stopped service that declares this proto/port, as "kind|name|state", or
+# empty. Used to attribute a firewall rule that has no listener behind it.
+stopped_owner_of() {
+  local want_proto=$1 want_port=$2
+  [[ -s "$SERVICES" ]] || return 0
+  local kind name ref state running status detail src ports exitcode
+  while IFS=$'\t' read -r kind name ref state running status detail src ports exitcode; do
+    [[ "${running:-0}" == "1" ]] && continue
+    [[ -z "${ports:-}" || "$ports" == "-" ]] && continue
+    local entry pproto pport
+    local IFS_SAVE=$IFS; IFS=';'
+    for entry in $ports; do
+      [[ -z "$entry" ]] && continue
+      pproto=${entry%%/*}
+      pport=${entry#*/}; pport=${pport%%>*}
+      if [[ "$pport" == "$want_port" ]] \
+         && { [[ -z "$want_proto" || "$want_proto" == "any" || "$want_proto" == "-" ]] || [[ "$pproto" == "$want_proto" ]]; }; then
+        IFS=$IFS_SAVE
+        printf '%s|%s|%s' "$kind" "$name" "$state"
+        return 0
+      fi
+    done
+    IFS=$IFS_SAVE
+  done < "$SERVICES"
+  return 0
+}
+
+# ---------------------------------------------------------------------------
 # Step 4 — firewall state
 # ---------------------------------------------------------------------------
 
@@ -814,7 +976,29 @@ analyze() {
         local hit=0
         [[ -n "${SEEN_PORT[tcp:$p]:-}" ]] && hit=1
         [[ -n "${SEEN_PORT[udp:$p]:-}" ]] && hit=1
-        [[ $hit -eq 0 ]] && add_finding "LOW" "STALE_FIREWALL_RULE" "${rproto}" "$p" "-" "-" \
+        [[ $hit -eq 1 ]] && continue
+
+        # "Nothing is listening" and "the thing that listens here is stopped"
+        # look identical from a socket table and mean opposite things: one
+        # rule should be deleted, the other is a service that re-opens this
+        # port the moment it starts.
+        local owner_row okind oname ostate olabel
+        owner_row=$(stopped_owner_of "$rproto" "$p")
+        if [[ -n "$owner_row" ]]; then
+          okind=${owner_row%%|*}
+          oname=${owner_row#*|}; oname=${oname%%|*}
+          ostate=${owner_row##*|}
+          case "$okind" in
+            docker|podman) olabel="the $okind container \"$oname\"" ;;
+            systemd)       olabel="the unit $oname" ;;
+            *)             olabel="\"$oname\"" ;;
+          esac
+          add_finding "MEDIUM" "STOPPED_SERVICE_PORT_OPEN" "${rproto}" "$p" "-" "${okind}/${oname}" \
+            "${olabel} is ${ostate} but the firewall still allows this port from ${from}. It becomes reachable again the moment the service starts."
+          continue
+        fi
+
+        add_finding "LOW" "STALE_FIREWALL_RULE" "${rproto}" "$p" "-" "-" \
           "ufw allows this port from ${from}, but nothing is listening on it. The rule can likely be removed."
       done
     done < "$FWRULES"
@@ -832,6 +1016,11 @@ analyze() {
 # ---------------------------------------------------------------------------
 # Step 6 — output
 # ---------------------------------------------------------------------------
+
+# "-" is the TSV's placeholder for an empty field (see emit_service). It is
+# an artifact of the on-disk format and must never reach the JSON, where an
+# absent sourcePath would otherwise read as a path literally named "-".
+nz() { [[ "${1-}" == "-" ]] && printf '' || printf '%s' "${1-}"; }
 
 json_esc() {
   local s=${1-}
@@ -862,6 +1051,46 @@ render_json() {
   done < <(sort -t$'\t' -k3,3n "$ENRICHED")
   printf '\n  ],\n'
 
+  printf '  "services": [\n'
+  first=1
+  local skind sname sref sstate srunning sstatus sdetail ssrc sports sexit
+  while IFS=$'\t' read -r skind sname sref sstate srunning sstatus sdetail ssrc sports sexit; do
+    [[ -z "${skind:-}" ]] && continue
+    [[ $first -eq 0 ]] && printf ',\n'; first=0
+    printf '    {"kind":"%s","name":"%s","ref":"%s","state":"%s","running":%s,"statusText":"%s","detail":"%s","sourcePath":"%s","exitCode":%s,"ports":[' \
+      "$(json_esc "$skind")" "$(json_esc "$sname")" "$(json_esc "$(nz "$sref")")" "$(json_esc "$sstate")" \
+      "$([[ "$srunning" == "1" ]] && echo true || echo false)" \
+      "$(json_esc "$(nz "$sstatus")")" "$(json_esc "$(nz "$sdetail")")" "$(json_esc "$(nz "$ssrc")")" \
+      "$([[ "$sexit" =~ ^[0-9]+$ ]] && echo "$sexit" || echo null)"
+    local firstp=1 pentry pproto pport pcport pbind
+    if [[ -n "$sports" && "$sports" != "-" ]]; then
+      local IFS_SAVE=$IFS; IFS=';'
+      for pentry in $sports; do
+        [[ -z "$pentry" ]] && continue
+        pproto=${pentry%%/*}
+        pport=${pentry#*/}; pport=${pport%%>*}
+        pcport=${pentry#*>}; pcport=${pcport%%@*}
+        pbind=${pentry#*@}
+        [[ "$pport" =~ ^[0-9]+$ ]] || continue
+        [[ $firstp -eq 0 ]] && printf ','; firstp=0
+        printf '{"proto":"%s","port":%s,"containerPort":%s,"bind":"%s"}' \
+          "$(json_esc "$pproto")" "$pport" \
+          "$([[ "$pcport" =~ ^[0-9]+$ ]] && echo "$pcport" || echo null)" \
+          "$(json_esc "$pbind")"
+      done
+      IFS=$IFS_SAVE
+    fi
+    printf ']}'
+  done < "$SERVICES"
+  printf '\n  ],\n'
+
+  # Which halves of the service scan ran. A host that never looked for
+  # containers must not be indistinguishable from one that looked and found
+  # none — that difference is the whole value of the field.
+  printf '  "serviceScan": { "systemd": %s, "containers": %s, "pm2": false },\n' \
+    "$([[ $SVC_SYSTEMD -eq 1 ]] && echo true || echo false)" \
+    "$([[ $SVC_CONTAINERS -eq 1 ]] && echo true || echo false)"
+
   printf '  "findings": [\n'
   first=1
   local sev code fproto fport fbind fowner msg
@@ -886,6 +1115,7 @@ declare -A FIND_TITLE=(
   [SENSITIVE_PORT_WILDCARD_BIND]="Datastores on a wildcard bind, held only by a firewall rule"
   [SENSITIVE_PORT_LAN]="Datastores reachable from the local network"
   [STALE_FIREWALL_RULE]="Firewall rules with nothing listening"
+  [STOPPED_SERVICE_PORT_OPEN]="Firewall rules held open for a stopped service"
   [UNATTRIBUTED_LISTENER]="Listeners that could not be attributed to a service"
   [EXPECTED_PUBLIC]="Public by design"
 )
@@ -898,6 +1128,7 @@ declare -A FIND_FIX=(
   [SENSITIVE_PORT_WILDCARD_BIND]="Bind to 127.0.0.1 so they are safe by construction, not by one firewall rule."
   [SENSITIVE_PORT_LAN]="Confirm the local network is a trust boundary you accept."
   [STALE_FIREWALL_RULE]="Remove the rules — they widen the attack surface for nothing."
+  [STOPPED_SERVICE_PORT_OPEN]="Not an abandoned rule: starting the service re-opens the port with the firewall already allowing it. Retire both together, or start it and check where it binds."
   [UNATTRIBUTED_LISTENER]="Re-run as root, or investigate these by hand."
   [EXPECTED_PUBLIC]=""
 )
@@ -1194,6 +1425,9 @@ log "${C_DIM}collecting listeners...${C_RESET}"
 collect_listeners || exit 2
 log "${C_DIM}collecting docker published ports...${C_RESET}"
 collect_docker
+log "${C_DIM}collecting installed services...${C_RESET}"
+collect_systemd_services
+collect_container_services
 log "${C_DIM}collecting firewall state...${C_RESET}"
 collect_firewall
 log "${C_DIM}correlating...${C_RESET}"

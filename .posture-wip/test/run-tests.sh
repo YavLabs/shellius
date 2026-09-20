@@ -25,6 +25,7 @@ RED=$'\033[31m'; GRN=$'\033[32m'; DIM=$'\033[2m'; BLD=$'\033[1m'; RST=$'\033[0m'
 
 run_scan() {
   PATH="$STUBS:$PATH" FX_SS="$FX_SS" FX_UFW="$FX_UFW" FX_DOCKER_PS="$FX_DOCKER_PS" \
+    FX_DOCKER_PS_A="${FX_DOCKER_PS_A:-}" FX_DOCKER_BINDINGS="${FX_DOCKER_BINDINGS:-}" \
     bash "$SCAN" --json --no-color --unprivileged 2>/dev/null
 }
 
@@ -90,7 +91,16 @@ print(r[0] if r else 'ABSENT')
   fi
 }
 
-scenario() { echo; echo "${BLD}Scenario $1:${RST} $2"; }
+scenario() {
+  echo; echo "${BLD}Scenario $1:${RST} $2"
+  # Fixtures are globals, so each scenario resets the optional ones. A
+  # stopped container left set by an earlier scenario would silently change
+  # a later one's verdict — which is exactly the bug class this suite
+  # exists to catch.
+  FX_DOCKER_PS_A=''
+  FX_DOCKER_BINDINGS=''
+  FX_DOCKER_WD=''
+}
 
 # Regression guard for the class of bug that silently blanked every pm2
 # listener: a subshell dying under `set -u` produces stderr noise and empty
@@ -99,6 +109,7 @@ scenario() { echo; echo "${BLD}Scenario $1:${RST} $2"; }
 assert_quiet() {
   local label=$1 noise
   noise=$(PATH="$STUBS:$PATH" FX_SS="$FX_SS" FX_UFW="$FX_UFW" FX_DOCKER_PS="$FX_DOCKER_PS" \
+            FX_DOCKER_PS_A="${FX_DOCKER_PS_A:-}" FX_DOCKER_BINDINGS="${FX_DOCKER_BINDINGS:-}" \
             FX_DOCKER_WD="${FX_DOCKER_WD:-}" bash "$SCAN" --json --no-color --unprivileged 2>&1 >/dev/null \
           | grep -vE '^(collecting|correlating|warning:|         re-run)' | grep -v '^$')
   if [[ -z "$noise" ]]; then
@@ -279,6 +290,81 @@ FX_DOCKER_PS=''
 OUT=$(run_scan)
 assert_quiet "scan produced no stderr noise"
 assert_finding "$OUT" SENSITIVE_PORT_EXPOSED CRITICAL "Redis with no firewall is CRITICAL"
+fi
+
+
+# ===========================================================================
+# 9. A stopped container behind a firewall rule that is still open.
+#
+#    `ss` shows nothing on 8080, so the socket table alone calls this an
+#    abandoned rule. It is not: the container is one `docker start` from
+#    serving that port with the firewall already allowing it. The two want
+#    opposite fixes, so they must not share a finding code.
+# ===========================================================================
+if [[ -z "$ONLY" || "$ONLY" == 9 ]]; then
+scenario 9 "Stopped container still holds an open ufw rule"
+FX_SS='tcp   LISTEN 0      4096   0.0.0.0:22        0.0.0.0:*     users:(("sshd",pid=800,fd=3))'
+FX_UFW='Status: active
+
+Default: deny (incoming), allow (outgoing), disabled (routed)
+
+To                         Action      From
+--                         ------      ----
+8080/tcp                   ALLOW IN    Anywhere'
+FX_DOCKER_PS=''
+FX_DOCKER_PS_A='c0ffee123456|api|myorg/api:1.4|Exited (1) 2 days ago|'
+FX_DOCKER_BINDINGS='c0ffee123456 {"3000/tcp":[{"HostIp":"0.0.0.0","HostPort":"8080"}]}'
+OUT=$(run_scan)
+assert_quiet "scan produced no stderr noise"
+assert_finding "$OUT" STOPPED_SERVICE_PORT_OPEN MEDIUM "attributed to the stopped container"
+assert_absent  "$OUT" STALE_FIREWALL_RULE "not reported as an abandoned rule as well"
+[[ -n "$ONLY" ]] && { PATH="$STUBS:$PATH" FX_SS="$FX_SS" FX_UFW="$FX_UFW" FX_DOCKER_PS="$FX_DOCKER_PS" \
+  FX_DOCKER_PS_A="$FX_DOCKER_PS_A" FX_DOCKER_BINDINGS="$FX_DOCKER_BINDINGS" bash "$SCAN" --all --unprivileged; }
+fi
+
+# ===========================================================================
+# 10. The same rule with genuinely nothing behind it is still just stale.
+#     Guards the attribution from becoming a blanket reclassification.
+# ===========================================================================
+if [[ -z "$ONLY" || "$ONLY" == 10 ]]; then
+scenario 10 "An open rule with no service at all is still STALE_FIREWALL_RULE"
+FX_SS='tcp   LISTEN 0      4096   0.0.0.0:22        0.0.0.0:*     users:(("sshd",pid=800,fd=3))'
+FX_UFW='Status: active
+
+Default: deny (incoming), allow (outgoing), disabled (routed)
+
+To                         Action      From
+--                         ------      ----
+8080/tcp                   ALLOW IN    Anywhere'
+FX_DOCKER_PS=''
+OUT=$(run_scan)
+assert_quiet "scan produced no stderr noise"
+assert_finding "$OUT" STALE_FIREWALL_RULE LOW "unattributed rule stays stale"
+assert_absent  "$OUT" STOPPED_SERVICE_PORT_OPEN "nothing invented to blame it on"
+fi
+
+# ===========================================================================
+# 11. A container that is RUNNING never suppresses the stale verdict.
+#     Running containers are found through ss / collect_docker; if one is
+#     reported up and nothing is listening, the rule really is unbacked.
+# ===========================================================================
+if [[ -z "$ONLY" || "$ONLY" == 11 ]]; then
+scenario 11 "A running container does not explain an empty rule"
+FX_SS='tcp   LISTEN 0      4096   0.0.0.0:22        0.0.0.0:*     users:(("sshd",pid=800,fd=3))'
+FX_UFW='Status: active
+
+Default: deny (incoming), allow (outgoing), disabled (routed)
+
+To                         Action      From
+--                         ------      ----
+8080/tcp                   ALLOW IN    Anywhere'
+FX_DOCKER_PS=''
+FX_DOCKER_PS_A='beef99887766|api|myorg/api:1.4|Up 3 hours|0.0.0.0:8080->3000/tcp'
+FX_DOCKER_BINDINGS='beef99887766 {"3000/tcp":[{"HostIp":"0.0.0.0","HostPort":"8080"}]}'
+OUT=$(run_scan)
+assert_quiet "scan produced no stderr noise"
+assert_finding "$OUT" STALE_FIREWALL_RULE LOW "still reported as stale"
+assert_absent  "$OUT" STOPPED_SERVICE_PORT_OPEN "a running container is not a stopped one"
 fi
 
 echo
