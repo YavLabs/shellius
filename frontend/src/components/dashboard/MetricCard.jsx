@@ -74,23 +74,20 @@ function MetricCard({
       {/* Identical rhythm on every card: subtitle line, then a footer line
           (badges or a link) with a fixed height so cards align in the grid. */}
       {loading ? (
-        <div className="mt-2 space-y-2">
+        <div className="mt-1">
           <Skeleton className="h-3.5 w-24" />
-          <Skeleton className="h-5 w-32" />
         </div>
       ) : (
         <>
-          <p className="mt-1.5 truncate text-xs text-muted-foreground sm:mt-2">{subtitle || '\u00a0'}</p>
-          {/* The blank footer row keeps desktop cards the same height; on a
-              phone it is 20px of nothing per card, so it only renders when
-              there is something to put in it. */}
-          <div
-            className={`mt-2 flex min-h-5 flex-wrap items-center gap-1.5 text-xs text-muted-foreground${
-              footer ? '' : ' max-sm:hidden'
-            }`}
-          >
-            {footer}
-          </div>
+          {subtitle && <p className="mt-1 truncate text-xs text-muted-foreground">{subtitle}</p>}
+          {/* No reserved blank row. It existed to keep cards the same height,
+              but the grid already stretches them (`h-full`) — so all it ever
+              added was 20px of empty card on every tile without a footer. */}
+          {footer && (
+            <div className="mt-2 flex flex-wrap items-center gap-1.5 text-xs text-muted-foreground">
+              {footer}
+            </div>
+          )}
         </>
       )}
     </Wrapper>

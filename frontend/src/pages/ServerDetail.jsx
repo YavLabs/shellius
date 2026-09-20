@@ -477,7 +477,21 @@ function ServerDetail() {
       </>
       )}
 
-      {canViewPosture && (
+      {/* Phones: no tab strip. Three tabs with counts on a 360px screen are
+          three truncated labels and a horizontal scroll gesture nobody
+          discovers, so Overview carries short previews of each list with
+          "View all" — the Dashboard's shape — and this is the way back. */}
+      {canViewPosture && isMobile && activeTab !== 'overview' && (
+        <button
+          onClick={() => handleTabChange('overview')}
+          className="flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground"
+        >
+          <ArrowLeft className="h-4 w-4" />
+          Back to overview
+        </button>
+      )}
+
+      {canViewPosture && !isMobile && (
         <div className="flex items-center gap-1 overflow-x-auto border-b border-border md:overflow-visible">
           {[
             { key: 'overview', label: 'Overview' },
@@ -552,6 +566,8 @@ function ServerDetail() {
         <ServerPostureTab
           serverId={id}
           view="overview"
+          onViewFindings={() => handleTabChange('findings')}
+          onViewPorts={() => handleTabChange('ports')}
           data={posture}
           loading={postureLoading}
           error={postureError}

@@ -27,6 +27,7 @@ import FindingDetailModal from '@/components/posture/FindingDetailModal';
 import ExportDialog from '@/components/posture/ExportDialog';
 import ExpectedPortDialog from '@/components/posture/ExpectedPortDialog';
 import { canMarkExpected } from '@/lib/postureLabels';
+import ExpectableMarker from '@/components/posture/ExpectableMarker';
 import BootstrapWizard from '@/components/servers/BootstrapWizard';
 import BulkInstallModal from '@/components/servers/BulkInstallModal';
 import BootstrapModal from '@/components/servers/BootstrapModal';
@@ -278,17 +279,32 @@ function Posture() {
       key: 'finding',
       label: 'Finding',
       searchAccessor: (r) => `${r.message || ''} ${r.code || ''} ${r.ownerLabel || ''}`,
-      mobile: {
-        slot: 'title',
-        render: (r) => <span className="break-words">{r.message}</span>,
-      },
+      mobile: [
+        { slot: 'title', render: (r) => <span className="break-words">{r.message}</span> },
+        {
+          slot: 'secondary',
+          key: 'finding-code',
+          render: (r) => (
+            <span className="flex min-w-0 items-center gap-1.5">
+              <ExpectableMarker finding={r} />
+              <span className="min-w-0 truncate font-mono">
+                {r.code}
+                {r.proto && r.port ? ` · ${r.proto}/${r.port}` : ''}
+              </span>
+            </span>
+          ),
+        },
+      ],
       render: (r) => (
         <div className="max-w-sm">
           <p className="font-medium text-foreground">{r.message}</p>
-          <p className="mt-0.5 font-mono text-[11px] text-muted-foreground">
-            {r.code}
-            {r.proto && r.port ? ` · ${r.proto}/${r.port}` : ''}
-            {r.ownerLabel ? ` · ${r.ownerLabel}` : ''}
+          <p className="mt-0.5 flex items-center gap-1.5 font-mono text-[11px] text-muted-foreground">
+            <ExpectableMarker finding={r} />
+            <span className="min-w-0 truncate">
+              {r.code}
+              {r.proto && r.port ? ` · ${r.proto}/${r.port}` : ''}
+              {r.ownerLabel ? ` · ${r.ownerLabel}` : ''}
+            </span>
           </p>
         </div>
       ),
@@ -629,6 +645,16 @@ function Posture() {
           }}
         />
       )}
+
+      {canExpect && findings.some(canMarkExpected) && (
+          <p className="flex items-center gap-1.5 text-xs text-muted-foreground">
+            <ShieldCheck className="h-3.5 w-3.5 shrink-0 text-emerald-600/70 dark:text-emerald-400/70" aria-hidden="true" />
+            marks a finding that <span className="font-medium text-foreground">Mark expected</span> can
+            resolve. Mute and Acknowledge apply to every finding.
+          </p>
+        )}
+
+
 
       <CollectorCoverageModal
         open={coverageOpen}

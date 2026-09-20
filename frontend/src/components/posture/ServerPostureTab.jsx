@@ -4,8 +4,9 @@ import { AlertTriangle, Check, Cpu, Database, Download, Gauge, HardDrive, Info, 
 import DataTable from '@/components/shared/DataTable';
 import { PostureTile, PostureTileGrid } from '@/components/posture/PostureTiles';
 import { severityAccent } from '@/lib/mobileCard';
+import ExpectableMarker from '@/components/posture/ExpectableMarker';
 import { serviceLabel, canMarkExpected } from '@/lib/postureLabels';
-import { cn } from '@/lib/utils';
+
 import SearchableSelect from '@/components/ui/SearchableSelect';
 import FindingDetailModal from '@/components/posture/FindingDetailModal';
 import ListenerDetailModal from '@/components/posture/ListenerDetailModal';
@@ -22,8 +23,9 @@ import MuteDialog from '@/components/posture/MuteDialog';
 import Sparkline from '@/components/posture/Sparkline';
 import useIsMobile from '@/hooks/useIsMobile';
 import SectionHeading from '@/components/common/SectionHeading';
+import { ViewAllLink } from '@/components/mobile/MobileNavList';
 import { reachabilityTone } from '@/lib/badgeTones';
-import { getServerPosture, muteFinding, unmuteFinding, acknowledgeFinding, listExpectedPorts, removeExpectedPort } from '@/services/postureService';
+import { muteFinding, unmuteFinding, acknowledgeFinding, listExpectedPorts, removeExpectedPort } from '@/services/postureService';
 import { relativeTime, formatDateTime } from '@/utils/time';
 
 function StatRow({ label, children }) {
@@ -88,6 +90,9 @@ function GaugeCard({ icon: Icon, label, points, unit = '%', color, onClick }) {
  * 0+1+0+1 beside a total of 4 and looked broken. Tiles that do not add up
  * are worse than a tile nobody needs.
  */
+/** Worst first, for the phone preview list. */
+const SEVERITY_ORDER = ['CRITICAL', 'HIGH', 'MEDIUM', 'LOW', 'INFO'];
+
 const SEVERITY_TILES = [
   { key: 'CRITICAL', label: 'Critical', icon: ShieldAlert, tint: 'text-red-500' },
   { key: 'HIGH', label: 'High', icon: ShieldAlert, tint: 'text-orange-500' },
@@ -173,8 +178,11 @@ function ServerPostureTab({
   authMode,
   canBootstrap,
   onBootstrap,
+  onViewFindings,
+  onViewPorts,
 }) {
   const navigate = useNavigate();
+  const isPhone = useIsMobile();
   const [actionError, setActionError] = useState('');
   const error = loadError || actionError;
   const setError = setActionError;
@@ -767,9 +775,12 @@ function ServerPostureTab({
           slot: 'secondary',
           key: 'finding-code',
           render: (r) => (
-            <span className="font-mono">
-              {r.code}
-              {r.proto && r.port ? ` · ${r.proto}/${r.port}` : ''}
+            <span className="flex min-w-0 items-center gap-1.5">
+              <ExpectableMarker finding={r} />
+              <span className="min-w-0 truncate font-mono">
+                {r.code}
+                {r.proto && r.port ? ` · ${r.proto}/${r.port}` : ''}
+              </span>
             </span>
           ),
         },
@@ -777,9 +788,12 @@ function ServerPostureTab({
       render: (r) => (
         <div>
           <p className="font-medium text-foreground">{r.message}</p>
-          <p className="mt-0.5 font-mono text-[11px] text-muted-foreground">
-            {r.code}
-            {r.proto && r.port ? ` · ${r.proto}/${r.port}` : ''}
+          <p className="mt-0.5 flex items-center gap-1.5 font-mono text-[11px] text-muted-foreground">
+            <ExpectableMarker finding={r} />
+            <span className="min-w-0 truncate">
+              {r.code}
+              {r.proto && r.port ? ` · ${r.proto}/${r.port}` : ''}
+            </span>
           </p>
         </div>
       ),
@@ -907,6 +921,103 @@ function ServerPostureTab({
       </div>
       )}
 
+      {/* Phones get the lists here rather than behind tabs (see ServerDetail:
+          a three-tab strip on a 360px screen is three truncated labels and a
+          scroll gesture). Same shape as the Dashboard: a short preview with
+          "View all" to the full, filterable list. */}
+      {view === 'overview' && isPhone && (
+        <section className="space-y-2">
+          <SectionHeading
+            title="Open findings"
+            count={findings.length}
+            action={onViewFindings ? <ViewAllLink onClick={onViewFindings} /> : null}
+          />
+          {/* Rendered even when empty: "no open findings" is a result worth
+              stating on the page you check, not an absent section. */}
+          {findings.length === 0 ? (
+            <p className="rounded-lg border border-border bg-card px-3 py-4 text-center text-sm text-muted-foreground">
+              This host is clean as of the last snapshot.
+            </p>
+          ) : (
+          <ul className="divide-y divide-border overflow-hidden rounded-lg border border-border bg-card">
+            {[...findings]
+              .sort((a, b) => SEVERITY_ORDER.indexOf(a.severity) - SEVERITY_ORDER.indexOf(b.severity))
+              .slice(0, 4)
+              .map((f) => (
+                <li key={f.id}>
+                  <button
+                    type="button"
+                    onClick={() => setDetailFinding(f)}
+                    className="flex w-full items-start gap-2.5 px-3 py-2.5 text-left active:bg-accent/40"
+                  >
+                    <span className="mt-0.5 shrink-0">
+                      <SeverityBadge severity={f.severity} />
+                    </span>
+                    <span className="min-w-0 flex-1">
+                      <span className="line-clamp-2 block text-sm text-foreground">{f.message}</span>
+                      <span className="mt-0.5 block truncate font-mono text-[11px] text-muted-foreground">
+                        {f.code}
+                        {f.proto && f.port ? ` · ${f.proto}/${f.port}` : ''}
+                      </span>
+                    </span>
+                  </button>
+                </li>
+              ))}
+          </ul>
+          )}
+        </section>
+      )}
+
+      {view === 'overview' && isPhone && portRows.length > 0 && (
+        <section className="space-y-2">
+          <SectionHeading
+            title="Ports & services"
+            count={portRows.length}
+            action={onViewPorts ? <ViewAllLink onClick={onViewPorts} /> : null}
+          />
+          <ul className="divide-y divide-border overflow-hidden rounded-lg border border-border bg-card">
+            {/* Internet-facing first, then ports with findings: the preview
+                shows the rows you would have scrolled to find. */}
+            {[...portRows]
+              .sort(
+                (a, b) =>
+                  (b.reachability === 'INTERNET') - (a.reachability === 'INTERNET') ||
+                  b.findings.length - a.findings.length ||
+                  a.port - b.port
+              )
+              .slice(0, 4)
+              .map((r) => (
+                <li key={r.rowKey}>
+                  <button
+                    type="button"
+                    onClick={() => setDetailListener(r)}
+                    className="flex w-full items-center gap-2.5 px-3 py-2.5 text-left active:bg-accent/40"
+                  >
+                    <span className="min-w-0 flex-1">
+                      <span className="block font-mono text-sm text-foreground">
+                        {(r.proto || '').toUpperCase()}/{r.port}
+                      </span>
+                      <span className="mt-0.5 block truncate text-[11px] text-muted-foreground">
+                        {r.listening ? serviceLabel(r).text : 'Nothing listening on this port'}
+                      </span>
+                    </span>
+                    <span className="flex shrink-0 items-center gap-1">
+                      {r.findings.slice(0, 2).map((f) => (
+                        <SeverityBadge key={f.id} severity={f.severity} />
+                      ))}
+                      {r.listening && (
+                        <Badge tone={reachabilityTone(r.reachability).tone}>
+                          {reachabilityTone(r.reachability).label}
+                        </Badge>
+                      )}
+                    </span>
+                  </button>
+                </li>
+              ))}
+          </ul>
+        </section>
+      )}
+
       {view === 'overview' && metrics.length > 0 && (
         <div>
           <SectionHeading
@@ -1014,6 +1125,13 @@ function ServerPostureTab({
             // ranks a finding is the one thing a phone never shows.
             mobile={{ accent: (r) => severityAccent(r.severity), titleClamp: 2 }}
           />
+        )}
+        {canExpect && visibleFindings.some(canMarkExpected) && (
+          <p className="flex items-center gap-1.5 text-xs text-muted-foreground">
+            <ShieldCheck className="h-3.5 w-3.5 shrink-0 text-emerald-600/70 dark:text-emerald-400/70" aria-hidden="true" />
+            marks a finding that <span className="font-medium text-foreground">Mark expected</span> can
+            resolve. Mute and Acknowledge apply to every finding.
+          </p>
         )}
       </div>
       )}
