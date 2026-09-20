@@ -28,6 +28,7 @@ import ExportDialog from '@/components/posture/ExportDialog';
 import ExpectedPortDialog from '@/components/posture/ExpectedPortDialog';
 import { canMarkExpected } from '@/lib/postureLabels';
 import BootstrapWizard from '@/components/servers/BootstrapWizard';
+import BulkInstallModal from '@/components/servers/BulkInstallModal';
 import BootstrapModal from '@/components/servers/BootstrapModal';
 import ProvisionModal from '@/components/servers/ProvisionModal';
 import { Button } from '@/components/ui/button';
@@ -70,6 +71,7 @@ function Posture() {
   const [installScope, setInstallScope] = useState('full');
   const [manualScope, setManualScope] = useState(null);
   const [autoOpen, setAutoOpen] = useState(false);
+  const [bulkInstallIds, setBulkInstallIds] = useState(null);
 
   const [status, setStatus] = useState('open');
   // Seeded from the URL so a link in from Customer Details lands on the
@@ -632,6 +634,10 @@ function Posture() {
         open={coverageOpen}
         canInstall={can(user, 'servers.onboard')}
         onClose={() => setCoverageOpen(false)}
+        onInstallAll={(ids) => {
+          setCoverageOpen(false);
+          setBulkInstallIds(ids);
+        }}
         onInstall={(server) => {
           // Hand straight to the same wizard the server page uses, so the
           // choices (and their warnings) are identical wherever you start.
@@ -639,6 +645,13 @@ function Posture() {
           setInstallServer(server);
           setWizardOpen(true);
         }}
+      />
+
+      <BulkInstallModal
+        open={!!bulkInstallIds}
+        serverIds={bulkInstallIds || []}
+        onClose={() => setBulkInstallIds(null)}
+        onDone={fetchSummary}
       />
 
       <BootstrapWizard

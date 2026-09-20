@@ -103,3 +103,16 @@ export const deleteAlertRule = (id) =>
  */
 export const getPostureServers = (params = {}) =>
   api.get('/posture/servers', { params }).then((r) => r.data?.data ?? r.data);
+
+// ---------------------------------------------------------------------------
+// Service inventory — what is running across the fleet (not what is wrong)
+// ---------------------------------------------------------------------------
+
+export const listInventoryServices = (params) =>
+  api.get('/posture/inventory/services', { params }).then((r) => r.data?.data ?? r.data);
+
+export const listInventoryListeners = (params) =>
+  api.get('/posture/inventory/listeners', { params }).then((r) => r.data?.data ?? r.data);
+
+export const getInventoryFacets = () =>
+  api.get('/posture/inventory/facets').then((r) => r.data?.data ?? r.data);

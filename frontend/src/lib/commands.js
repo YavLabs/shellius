@@ -1,4 +1,5 @@
-import { Cable,
+import {
+  Network, Cable,
   Inbox,
   LayoutDashboard,
   Building2,
@@ -166,6 +167,7 @@ export const ROUTE_ACCESS = {
   '/servers': { anyOf: ['servers.view'] },
   '/certificates': { anyOf: ['certificates.view_all'] },
   '/posture': { anyOf: ['posture.read'] },
+  '/services': { anyOf: ['posture.read'] },
   '/keystore': { anyOf: ['keystore.view', 'vault.use'] },
   '/my-hosts': { anyOf: ['vault.hosts'] },
   '/sessions': { anyOf: ['sessions.view_all'] },
@@ -204,6 +206,7 @@ export const NAV_ITEMS = [
   { id: 'policies', label: 'Policies', icon: Shield, to: '/admin/policies' },
   { id: 'certificates', label: 'Certificates', icon: FileKey, to: '/certificates' },
   { id: 'posture', label: 'Posture', icon: Radar, to: '/posture' },
+  { id: 'services', label: 'Services & ports', icon: Network, to: '/services' },
   { id: 'keystore', label: 'Keystore', icon: KeySquare, to: '/keystore' },
   { id: 'my-hosts', label: 'My hosts', icon: Lock, to: '/my-hosts' },
   { id: 'connections', label: 'Recent connections', icon: Cable, to: '/connections' },

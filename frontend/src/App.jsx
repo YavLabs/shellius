@@ -19,6 +19,7 @@ import ServerDetail from './pages/ServerDetail';
 import ServerResources from './pages/ServerResources';
 import Certificates from './pages/Certificates';
 import Posture from './pages/Posture';
+import ServiceInventory from './pages/ServiceInventory';
 import Administration from './pages/Administration';
 import LegacyAdminRedirect from './components/admin/LegacyAdminRedirect';
 import AccessRequests from './pages/AccessRequests';
@@ -115,6 +116,7 @@ function App() {
                     <Route path="/bulk-import" element={<BulkImport />} />
                     <Route path="/certificates" element={<Certificates />} />
                     <Route path="/posture" element={<Posture />} />
+                    <Route path="/services" element={<ServiceInventory />} />
                     <Route path="/audit-log" element={<AuditLog />} />
                   </Route>
                 </Route>

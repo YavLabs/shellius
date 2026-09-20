@@ -2186,4 +2186,88 @@ Write-Host "[shellius]   Check script: $checkPsPath"
 `;
 }
 
+
+// ---------------------------------------------------------------------------
+// POST /api/bootstrap/bulk-token
+// ---------------------------------------------------------------------------
+
+const bulkTokenSchema = Joi.object({
+  serverIds: Joi.array().items(Joi.string()).min(1).max(200).required(),
+  mode: Joi.string().valid(...INSTALL_MODES).default('posture'),
+});
+
+/**
+ * One install command per host, in one call.
+ *
+ * The automatic path (POST /api/servers/bulk-install) needs a credential for
+ * every host. Plenty of fleets have hosts with none stored — that is exactly
+ * the case where installing one at a time never happens, so the manual path
+ * needs a bulk form too: a list an operator can paste into a change window
+ * or a config-management run.
+ *
+ * Every token is per host, single use, and expires with the same TTL as a
+ * single one, which is the honest constraint and is reported back so the UI
+ * can say so rather than handing out a list that quietly goes stale.
+ */
+router.post(
+  '/bulk-token',
+  authenticate,
+  tenant,
+  requirePermission('servers.onboard'),
+  audit('bootstrap.link.created', 'Server'),
+  asyncHandler(async (req, res) => {
+    const { error, value } = bulkTokenSchema.validate(req.body || {});
+    if (error) throw new ApiError(400, error.message);
+
+    // Scope-filtered, exactly as the single-server route is: a token here is
+    // a working `curl … | sudo bash` bound to that host's CA trust.
+    const servers = await prisma.server.findMany({
+      where: { id: { in: value.serverIds }, orgId: req.orgId, ...serverScopeWhere(req.scope) },
+      select: { id: true, hostname: true, displayName: true, osType: true, protocol: true, sshUser: true },
+      orderBy: { hostname: 'asc' },
+    });
+    if (servers.length === 0) throw new ApiError(404, 'No matching servers');
+
+    // Once for the batch, not once per host.
+    if (value.mode !== 'posture') {
+      try {
+        await caService.getPublicKey(req.orgId);
+      } catch (err) {
+        if (err?.statusCode === 404) await caService.generateCaKeyPair(req.orgId, 'default');
+        else throw err;
+      }
+    }
+
+    const base = getPublicBaseUrl(req);
+    const items = [];
+    const skipped = [];
+
+    for (const server of servers) {
+      // Windows and RDP-only hosts have no installer to hand out. Saying so
+      // beats emitting a command that cannot work on that host.
+      if (server.osType === 'windows') {
+        skipped.push({ id: server.id, hostname: server.hostname, reason: 'windows' });
+        continue;
+      }
+      if (server.protocol === 'rdp') {
+        skipped.push({ id: server.id, hostname: server.hostname, reason: 'rdp_only' });
+        continue;
+      }
+      const token = signBootstrapToken({ serverId: server.id, orgId: req.orgId, mode: value.mode });
+      items.push({
+        id: server.id,
+        hostname: server.hostname,
+        displayName: server.displayName,
+        osType: server.osType || null,
+        command: `curl -fsSL "${base}/api/bootstrap/install.sh?token=${token}" | sudo bash`,
+      });
+    }
+
+    res.json({
+      success: true,
+      data: { mode: value.mode, expiresInSeconds: BOOTSTRAP_TTL_SECONDS, items, skipped },
+    });
+  })
+);
+
 export default router;

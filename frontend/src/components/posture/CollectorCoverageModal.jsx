@@ -20,7 +20,7 @@ const STATES = [
   { key: 'reporting', label: 'Reporting', icon: ShieldCheck, tone: 'success' },
 ];
 
-function CollectorCoverageModal({ open, onClose, onInstall, canInstall }) {
+function CollectorCoverageModal({ open, onClose, onInstall, onInstallAll, canInstall }) {
   const [state, setState] = useState('not_installed');
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(false);
@@ -99,6 +99,25 @@ function CollectorCoverageModal({ open, onClose, onInstall, canInstall }) {
                 : 'Nothing to do here.'
             }
           />
+        )}
+
+        {/* Installing them one at a time from this list is exactly the thing
+            nobody finishes. If there is a list, there is a bulk action. */}
+        {canInstall && onInstallAll && !loading && data && data.items.length > 1 && state !== 'reporting' && (
+          <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-border bg-accent/30 px-3 py-2">
+            <span className="text-xs text-muted-foreground">
+              {data.items.length} host{data.items.length === 1 ? '' : 's'}{' '}
+              {state === 'stale' ? 'stopped reporting' : 'have no collector'}.
+            </span>
+            <button
+              type="button"
+              onClick={() => onInstallAll(data.items.map((i) => i.id))}
+              className="inline-flex h-8 shrink-0 items-center gap-1.5 rounded-md border border-border bg-card px-2.5 text-xs text-foreground hover:bg-accent"
+            >
+              <Download className="h-3.5 w-3.5" />
+              Install on all of them
+            </button>
+          </div>
         )}
 
         {!loading && data && data.items.length > 0 && (

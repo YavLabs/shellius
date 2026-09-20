@@ -12,6 +12,7 @@ import {
   Download,
   Eye,
   Eraser,
+  Radar,
   RefreshCw,
   KeyRound,
   Send,
@@ -34,6 +35,7 @@ import UninstallHostModal from '@/components/servers/UninstallHostModal';
 import QuickConnectButton from '@/components/servers/QuickConnectButton';
 import QuickConnectHeaderButton from '@/components/quickConnect/QuickConnectButton';
 import DeployWizardModal from '@/components/keystore/DeployWizardModal';
+import BulkInstallModal from '@/components/servers/BulkInstallModal';
 import PageHeader from '@/components/common/PageHeader';
 import { Button } from '@/components/ui/button';
 import SearchableSelect from '@/components/ui/SearchableSelect';
@@ -102,6 +104,7 @@ function Servers() {
   const [bootstrapScope, setBootstrapScope] = useState('full');
   const [uninstallServer, setUninstallServer] = useState(null);
   const [deployWizardOpen, setDeployWizardOpen] = useState(false);
+  const [bulkInstallOpen, setBulkInstallOpen] = useState(false);
   const [newServerCustomerId, setNewServerCustomerId] = useState('');
   const [searchParams, setSearchParams] = useSearchParams();
 
@@ -320,6 +323,11 @@ function Servers() {
               disabled={!bulkField || bulkValue === ''}
             >
               Apply
+            </Button>
+          )}
+          {canOnboard && (
+            <Button variant="outline" size="sm" onClick={() => setBulkInstallOpen(true)}>
+              <Download className="mr-1 h-4 w-4" /> Install collector
             </Button>
           )}
           {canDeployKeys && (
@@ -565,6 +573,20 @@ function Servers() {
           // Quick connect has its own entry in the mobile bottom-nav sheet.
           { key: 'quick-connect', label: 'Quick connect', desktop: <QuickConnectHeaderButton />, mobile: false },
           { key: 'refresh', label: 'Refresh', icon: RefreshCw, variant: 'outline', onClick: () => fetch(), disabled: loading, spin: loading },
+          // No selection = the whole fleet in scope. That is the case this
+          // exists for: an inventory that predates posture, where installing
+          // one host at a time means it never happens.
+          {
+            key: 'bulk-install',
+            label: 'Install collectors',
+            icon: Radar,
+            variant: 'outline',
+            hidden: !canOnboard,
+            onClick: () => {
+              setSelected([]);
+              setBulkInstallOpen(true);
+            },
+          },
           {
             key: 'add',
             label: 'Add Server',
@@ -683,6 +705,13 @@ function Servers() {
         open={!!uninstallServer}
         server={uninstallServer}
         onClose={() => setUninstallServer(null)}
+      />
+
+      <BulkInstallModal
+        open={bulkInstallOpen}
+        serverIds={selected}
+        onClose={() => setBulkInstallOpen(false)}
+        onDone={fetch}
       />
 
       {deployWizardOpen && (

@@ -11,8 +11,29 @@ import * as healthCheckService from '../services/healthCheckService.js';
 import { provisionServer } from '../services/provisionService.js';
 import { resolveCredentialForActor } from '../services/keystoreService.js';
 import { signBootstrapToken, INSTALL_MODES } from './bootstrap.js';
+import { planBulkInstall } from '../services/bulkBootstrapService.js';
 
 const router = express.Router();
+
+/**
+ * The URL the TARGET HOST will use to fetch install.sh — not the URL the
+ * browser used. In prod TRAEFIK_HOST is always set; the request headers are
+ * the last resort because a host behind a proxy may not be able to reach
+ * whatever the admin's browser called us.
+ */
+function resolveBackendUrl(req) {
+  if (process.env.TRAEFIK_HOST) return `https://${process.env.TRAEFIK_HOST}`;
+  if (process.env.PUBLIC_API_URL) {
+    return String(process.env.PUBLIC_API_URL).replace(/\/$/, '').replace(/\/api$/, '');
+  }
+  if (process.env.VITE_API_URL) {
+    return String(process.env.VITE_API_URL).replace(/\/$/, '').replace(/\/api$/, '');
+  }
+  const proto = (req.headers['x-forwarded-proto'] || req.protocol || 'http').split(',')[0];
+  const host = req.headers['x-forwarded-host'] || req.get('host');
+  return `${proto}://${host}`;
+}
+
 
 const validate = (schema) => (req, res, next) => {
   const { error, value } = schema.validate(req.body, { abortEarly: false, stripUnknown: true });
@@ -20,6 +41,10 @@ const validate = (schema) => (req, res, next) => {
   req.body = value;
   next();
 };
+
+// Upper bound on one bulk run. Not a technical limit — a blast-radius one:
+// past this, "install on everything" stops being a reviewable action.
+const MAX_BULK_INSTALL = 200;
 
 const ENVIRONMENTS = ['demo', 'dev', 'staging', 'prod'];
 const PROTOCOLS = ['ssh', 'rdp', 'both'];
@@ -345,23 +370,7 @@ router.post(
       // (GET /api/bootstrap/install.sh) can never drift apart.
       const bootstrapToken = signBootstrapToken({ serverId: req.params.id, orgId: req.orgId, mode });
 
-      // Resolve the backend URL the target host will reach to fetch install.sh.
-      // In prod the TRAEFIK_HOST env var is always set; fall back to PUBLIC_API_URL,
-      // VITE_API_URL, then the incoming request headers.
-      let backendUrl;
-      if (process.env.TRAEFIK_HOST) {
-        backendUrl = `https://${process.env.TRAEFIK_HOST}`;
-      } else if (process.env.PUBLIC_API_URL) {
-        backendUrl = String(process.env.PUBLIC_API_URL).replace(/\/$/, '').replace(/\/api$/, '');
-      } else if (process.env.VITE_API_URL) {
-        backendUrl = String(process.env.VITE_API_URL).replace(/\/$/, '').replace(/\/api$/, '');
-      } else {
-        const proto = (req.headers['x-forwarded-proto'] || req.protocol || 'http').split(',')[0];
-        const host = req.headers['x-forwarded-host'] || req.get('host');
-        backendUrl = `${proto}://${host}`;
-      }
-
-      const bootstrapUrl = `${backendUrl}/api/bootstrap/install.sh?token=${bootstrapToken}`;
+      const bootstrapUrl = `${resolveBackendUrl(req)}/api/bootstrap/install.sh?token=${bootstrapToken}`;
 
       send('log', { message: `[shellius] Starting provisioning for server ${req.params.id}` });
       send('log', {
@@ -391,6 +400,203 @@ router.post(
       send('done', { success: true });
     } catch (err) {
       send('error', { message: err.message || 'Provisioning failed' });
+    } finally {
+      res.end();
+    }
+  })
+);
+
+
+// ---------------------------------------------------------------------------
+// Bulk bootstrap / collector install
+// ---------------------------------------------------------------------------
+
+const bulkPlanSchema = Joi.object({
+  serverIds: Joi.array().items(Joi.string()).default([]),
+  mode: Joi.string().valid(...INSTALL_MODES).default('posture'),
+  hasFallbackCredentials: Joi.boolean().default(false),
+  includeDone: Joi.boolean().default(false),
+});
+
+// POST /api/servers/bulk-install/plan
+// What a run would do, before it does any of it. Read-only.
+router.post(
+  '/bulk-install/plan',
+  requirePermission('servers.onboard'),
+  asyncHandler(async (req, res) => {
+    const { error, value } = bulkPlanSchema.validate(req.body || {});
+    if (error) throw new ApiError(400, error.message);
+    const plan = await planBulkInstall(req.orgId, value.serverIds, {
+      mode: value.mode,
+      hasFallbackCredentials: value.hasFallbackCredentials,
+      includeDone: value.includeDone,
+      scope: req.scope,
+    });
+    res.json({ success: true, data: plan });
+  })
+);
+
+const bulkInstallSchema = Joi.object({
+  serverIds: Joi.array().items(Joi.string()).min(1).max(MAX_BULK_INSTALL).required(),
+  mode: Joi.string().valid(...INSTALL_MODES).default('posture'),
+  concurrency: Joi.number().integer().min(1).max(8).default(3),
+  // Fallback identity for hosts with none of their own. Either a saved
+  // Keystore identity or credentials typed into the form — the same two
+  // options the single-host provision route takes.
+  credentialId: Joi.string().allow('', null),
+  sshUser: Joi.string().allow('', null),
+  privateKey: Joi.string().allow('', null),
+  passphrase: Joi.string().allow('', null),
+  password: Joi.string().allow('', null),
+  sudoPassword: Joi.string().allow('', null),
+  // Prefer each server's own bound identity where it has one. Off means "use
+  // the supplied credentials everywhere", which is what you want for a fleet
+  // that shares one break-in account.
+  useServerIdentity: Joi.boolean().default(true),
+}).unknown(false);
+
+// POST /api/servers/bulk-install
+// SSE. Runs the installer across many hosts, bounded concurrency, one event
+// stream. Secrets are resolved in memory per host and never stored.
+router.post(
+  '/bulk-install',
+  requirePermission('servers.onboard'),
+  audit('server.bulk_install', 'Server'),
+  asyncHandler(async (req, res) => {
+    const { error, value } = bulkInstallSchema.validate(req.body || {});
+    if (error) throw new ApiError(400, error.message);
+
+    const hasSupplied = !!(value.credentialId || value.privateKey || value.password);
+
+    // Everything that can 4xx happens BEFORE the SSE headers go out —
+    // otherwise a missing identity or a scope violation arrives as an error
+    // event inside a 200 and looks like a host that failed to install.
+    let fallbackAuth = null;
+    let fallbackName = null;
+    if (value.credentialId) {
+      const resolved = await resolveCredentialForActor(req.orgId, req.user, value.credentialId);
+      fallbackAuth = resolved.auth;
+      fallbackName = resolved.credential.name;
+    }
+
+    const plan = await planBulkInstall(req.orgId, value.serverIds, {
+      mode: value.mode,
+      hasFallbackCredentials: hasSupplied,
+      // The caller already chose these hosts from a plan; re-filtering
+      // "already done" here would silently drop a deliberate re-run.
+      includeDone: true,
+      scope: req.scope,
+    });
+
+    // Hosts the caller asked for that the plan refuses (out of scope, Windows,
+    // RDP-only, nothing to authenticate with) are reported, never attempted.
+    const targets = plan.targets;
+    if (targets.length === 0) {
+      throw new ApiError(
+        400,
+        'None of the selected servers can be installed on. ' +
+          (plan.skipped[0]?.message || 'Check the plan for why.')
+      );
+    }
+
+    res.setHeader('Content-Type', 'text/event-stream');
+    res.setHeader('Cache-Control', 'no-cache');
+    res.setHeader('Connection', 'keep-alive');
+    res.flushHeaders();
+
+    const send = (type, data) => {
+      res.write(`event: ${type}\ndata: ${JSON.stringify(data)}\n\n`);
+    };
+
+    // A client that navigates away must stop the run, not leave N SSH
+    // sessions installing software with nobody watching the output.
+    let aborted = false;
+    req.on('close', () => {
+      aborted = true;
+    });
+
+    send('start', {
+      mode: value.mode,
+      total: targets.length,
+      concurrency: value.concurrency,
+      skipped: plan.skipped.map((s) => ({ id: s.id, hostname: s.hostname, reason: s.reason, message: s.message })),
+    });
+
+    const backendUrl = resolveBackendUrl(req);
+    const results = [];
+
+    const runOne = async (target) => {
+      if (aborted) return;
+      send('server-start', { id: target.id, hostname: target.hostname });
+      const log = (message) => send('log', { id: target.id, message });
+
+      try {
+        let auth = fallbackAuth;
+        let authLabel = fallbackName ? `identity "${fallbackName}"` : 'supplied credentials';
+        let sshUser = value.sshUser || fallbackAuth?.username;
+
+        if (value.useServerIdentity && target.credential?.id) {
+          // Each host's own bound identity. This is the whole point of the
+          // bulk flow for an established fleet: nothing to type, N hosts.
+          const resolved = await resolveCredentialForActor(req.orgId, req.user, target.credential.id);
+          auth = resolved.auth;
+          authLabel = `saved identity "${resolved.credential.name}"`;
+          sshUser = target.sshUser || resolved.auth.username;
+        }
+
+        if (!auth) throw new ApiError(400, 'No credentials available for this host');
+        if (!sshUser) throw new ApiError(400, 'No SSH user for this host');
+
+        log(`[shellius] Connecting as ${sshUser} using ${authLabel}`);
+
+        const bootstrapToken = signBootstrapToken({
+          serverId: target.id,
+          orgId: req.orgId,
+          mode: value.mode,
+        });
+
+        await provisionServer(req.orgId, target.id, {
+          privateKey: auth.privateKey || value.privateKey || undefined,
+          passphrase: auth.passphrase || value.passphrase || undefined,
+          password: auth.password || value.password || undefined,
+          sshUser,
+          sudoPassword: value.sudoPassword || auth.password || '',
+          scope: req.scope,
+          bootstrapUrl: `${backendUrl}/api/bootstrap/install.sh?token=${bootstrapToken}`,
+          mode: value.mode,
+          onOutput: log,
+        });
+
+        results.push({ id: target.id, hostname: target.hostname, status: 'ok' });
+        send('server-done', { id: target.id, hostname: target.hostname, status: 'ok' });
+      } catch (err) {
+        // One host's failure is not the batch's. Twenty-nine successes and
+        // one unreachable box is a good outcome that must not be thrown away.
+        const message = err?.message || 'Install failed';
+        results.push({ id: target.id, hostname: target.hostname, status: 'failed', error: message });
+        send('server-done', { id: target.id, hostname: target.hostname, status: 'failed', error: message });
+      }
+    };
+
+    try {
+      // Bounded concurrency: a fleet run should not open ninety simultaneous
+      // SSH sessions, and it should not take an hour either.
+      const queue = [...targets];
+      const workers = Array.from({ length: Math.min(value.concurrency, queue.length) }, async () => {
+        while (queue.length > 0 && !aborted) {
+          await runOne(queue.shift());
+        }
+      });
+      await Promise.all(workers);
+
+      send('done', {
+        aborted,
+        ok: results.filter((r) => r.status === 'ok').length,
+        failed: results.filter((r) => r.status === 'failed').length,
+        results,
+      });
+    } catch (err) {
+      send('error', { message: err.message || 'Bulk install failed' });
     } finally {
       res.end();
     }

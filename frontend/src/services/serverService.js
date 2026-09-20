@@ -112,3 +112,84 @@ export const getServerStats = async () => {
   }
   return { total, byEnv };
 };
+
+// ---------------------------------------------------------------------------
+// Bulk bootstrap / collector install
+// ---------------------------------------------------------------------------
+
+/**
+ * What a bulk run would do, before it does any of it. Read-only — the
+ * interesting part is the hosts it will skip and why.
+ */
+export const planBulkInstall = (payload) =>
+  api.post('/servers/bulk-install/plan', payload).then((r) => r.data?.data ?? r.data);
+
+/** One install command per host, for the manual path. */
+export const createBulkBootstrapTokens = (payload) =>
+  api.post('/bootstrap/bulk-token', payload).then((r) => r.data?.data ?? r.data);
+
+/**
+ * Run the bulk installer. SSE, like the single-host provision, but the event
+ * stream carries several hosts at once so every event is dispatched by name
+ * rather than collapsed into one log.
+ *
+ * Events: start, server-start, log, server-done, done, error. Each carries
+ * the server id it belongs to (except start/done, which describe the batch).
+ *
+ * Returns an abort handle: navigating away or pressing Stop must actually
+ * stop the run, not leave N SSH sessions installing software unattended.
+ */
+export function runBulkInstall(payload, handlers = {}) {
+  const controller = new AbortController();
+  const token = localStorage.getItem('accessToken');
+
+  const promise = (async () => {
+    const response = await fetch('/api/servers/bulk-install', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      },
+      credentials: 'include',
+      body: JSON.stringify(payload),
+      signal: controller.signal,
+    });
+
+    if (!response.ok) {
+      const data = await response.json().catch(() => ({}));
+      throw new Error(data?.error?.message || `HTTP ${response.status}`);
+    }
+
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+
+    const dispatch = (block) => {
+      let type = '';
+      let data = '';
+      for (const line of block.split('\n')) {
+        if (line.startsWith('event: ')) type = line.slice(7).trim();
+        else if (line.startsWith('data: ')) data = line.slice(6).trim();
+      }
+      if (!type) return;
+      let payloadObj = {};
+      try {
+        payloadObj = data ? JSON.parse(data) : {};
+      } catch {
+        return;
+      }
+      handlers[type]?.(payloadObj);
+    };
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      const parts = buffer.split('\n\n');
+      buffer = parts.pop();
+      parts.forEach(dispatch);
+    }
+  })();
+
+  return { promise, abort: () => controller.abort() };
+}

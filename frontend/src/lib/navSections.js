@@ -1,4 +1,4 @@
-import { Bell, Building2, FileKey, KeyRound, KeySquare, LayoutDashboard, Lock, Radar, ScrollText, Server, SquareTerminal, Terminal } from 'lucide-react';
+import { Bell, Building2, FileKey, KeyRound, KeySquare, LayoutDashboard, Lock, Network, Radar, ScrollText, Server, SquareTerminal, Terminal } from 'lucide-react';
 
 /**
  * The app's grouped navigation — the desktop sidebar and the phone "More"
@@ -43,6 +43,7 @@ export const NAV_SECTIONS = [
     label: 'Security & audit',
     items: [
       { id: 'posture', label: 'Posture', icon: Radar, to: '/posture' },
+      { id: 'services', label: 'Services & ports', icon: Network, to: '/services' },
       { id: 'sessions', label: 'Sessions', icon: Terminal, to: '/sessions' },
       { id: 'audit-log', label: 'Audit log', icon: ScrollText, to: '/audit-log' },
     ],

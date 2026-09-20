@@ -19,6 +19,7 @@ import tenant from '../middleware/tenant.js';
 import { requirePermission } from '../middleware/rbac.js';
 import audit from '../middleware/audit.js';
 import * as postureQueryService from '../services/postureQueryService.js';
+import * as postureInventoryService from '../services/postureInventoryService.js';
 import * as postureSettingsService from '../services/postureSettingsService.js';
 import * as postureAlertService from '../services/postureAlertService.js';
 import * as postureExportService from '../services/postureExportService.js';
@@ -302,6 +303,14 @@ const exportSchema = Joi.object({
     code: Joi.string().max(64),
     environment: Joi.string().max(32),
     customerId: Joi.string(),
+    // Service-inventory filters (listeners dataset). Exporting from that page
+    // has to carry the same filters the page is showing.
+    proto: Joi.string().max(8),
+    reachability: Joi.string().max(16),
+    ownerKind: Joi.string().max(32),
+    port: Joi.number().integer().min(0).max(65535),
+    serviceKey: Joi.string().max(160),
+    q: Joi.string().max(200).allow(''),
   }).default({}),
 });
 
@@ -450,6 +459,60 @@ router.delete(
   asyncHandler(async (req, res) => {
     await postureAlertService.deleteAlertRule(req.orgId, req.params.id);
     res.json({ success: true, data: { success: true } });
+  })
+);
+
+
+// ---------------------------------------------------------------------------
+// Service inventory — what is running across the fleet, not what is wrong
+// ---------------------------------------------------------------------------
+
+const inventoryQuerySchema = Joi.object({
+  q: Joi.string().max(200).allow(''),
+  proto: Joi.string().max(8).allow(''),
+  reachability: Joi.string().max(16).allow(''),
+  ownerKind: Joi.string().max(32).allow(''),
+  port: Joi.number().integer().min(0).max(65535).allow(''),
+  portMin: Joi.number().integer().min(0).max(65535),
+  portMax: Joi.number().integer().min(0).max(65535),
+  serverId: Joi.string().allow(''),
+  customerId: Joi.string().allow(''),
+  environment: Joi.string().max(32).allow(''),
+  serviceKey: Joi.string().max(160).allow(''),
+  hasFindings: Joi.boolean(),
+  page: Joi.number().integer().min(1),
+  limit: Joi.number().integer().min(1).max(200),
+}).unknown(false);
+
+// GET /api/posture/inventory/services — one row per distinct service.
+router.get(
+  '/inventory/services',
+  requirePermission('posture.read'),
+  validateQuery(inventoryQuerySchema),
+  asyncHandler(async (req, res) => {
+    const data = await postureInventoryService.listServices(req.orgId, req.query, req.scope);
+    res.json({ success: true, data });
+  })
+);
+
+// GET /api/posture/inventory/listeners — the flat port list across the fleet.
+router.get(
+  '/inventory/listeners',
+  requirePermission('posture.read'),
+  validateQuery(inventoryQuerySchema),
+  asyncHandler(async (req, res) => {
+    const data = await postureInventoryService.listListeners(req.orgId, req.query, req.scope);
+    res.json({ success: true, data });
+  })
+);
+
+// GET /api/posture/inventory/facets — distinct filter values, in scope.
+router.get(
+  '/inventory/facets',
+  requirePermission('posture.read'),
+  asyncHandler(async (req, res) => {
+    const data = await postureInventoryService.listFacets(req.orgId, req.scope);
+    res.json({ success: true, data });
   })
 );
 
