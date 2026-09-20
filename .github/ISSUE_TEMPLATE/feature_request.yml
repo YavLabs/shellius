@@ -1,0 +1,56 @@
+name: Feature request
+description: Suggest a capability or improvement.
+labels: ["enhancement", "needs-triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        For open-ended ideas, [Discussions](https://github.com/YavLabs/shellius/discussions)
+        is often a better starting point than an issue.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: What problem does this solve?
+      description: Describe the situation you are in, not just the feature you want.
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed solution
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives you have considered
+      description: Including how you work around it today.
+
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options:
+        - Access policies / approvals
+        - SSH certificates / CA
+        - RDP / Guacamole
+        - Web terminal
+        - TUI client
+        - Audit / session recording
+        - Cloud discovery (AWS/Azure/GCP)
+        - RBAC / roles / SSO
+        - Deployment / operations
+        - Web UI
+        - Other
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: contribute
+    attributes:
+      label: Contribution
+      options:
+        - label: I would be willing to help implement this.

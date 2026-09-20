@@ -1,0 +1,4 @@
+#!/usr/bin/env bash
+# fixture stub: FX_UFW='__ABSENT__' simulates ufw not being installed
+[[ "${FX_UFW:-}" == "__ABSENT__" ]] && exit 1
+printf '%s\n' "${FX_UFW:-}"

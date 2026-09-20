@@ -1,0 +1,99 @@
+name: Bug report
+description: Something in Shellius does not work as documented.
+labels: ["bug", "needs-triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for filing a bug. Please do **not** paste private keys, certificates,
+        tokens, passwords, or full `.env` files — redact them first.
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: What you expected, and what actually happened instead.
+    validations:
+      required: true
+
+  - type: textarea
+    id: repro
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Go to ...
+        2. Click ...
+        3. See error
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: Shellius version
+      description: Footer of the web UI, or `docker compose exec backend cat VERSION`.
+      placeholder: "1.5.3"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: component
+    attributes:
+      label: Component
+      multiple: true
+      options:
+        - Web UI (React)
+        - Backend API
+        - TUI client (shellius CLI)
+        - SSH certificates / CA
+        - Web terminal (xterm.js)
+        - RDP / Guacamole
+        - Access policies or approvals
+        - SSO (OIDC/SAML)
+        - Email / SMTP
+        - Deployment (Docker, Traefik, Nginx)
+        - Other / not sure
+    validations:
+      required: true
+
+  - type: dropdown
+    id: deployment
+    attributes:
+      label: How is it deployed?
+      options:
+        - docker-compose.prod.yml
+        - docker-compose.allinone.yml
+        - Coolify
+        - Development (npm run dev)
+        - Other
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant logs
+      description: "`docker compose logs backend --tail=100`. Redact secrets."
+      render: shell
+
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      placeholder: |
+        Host OS: Ubuntu 24.04
+        Docker: 27.3.1
+        Browser: Firefox 131 (if UI-related)
+        Target host OS: Debian 12 (if SSH/cert-related)
+
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Before submitting
+      options:
+        - label: I searched existing issues and this is not a duplicate.
+          required: true
+        - label: This is not a security vulnerability (those go to security@yavlabs.com).
+          required: true
+        - label: I have redacted all secrets from logs and config above.
+          required: true
