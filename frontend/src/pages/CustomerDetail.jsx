@@ -580,7 +580,11 @@ function CustomerDetail() {
       </>
       )}
 
-      {/* Stat tiles */}
+      {/* ---- ZONE 1a: AT A GLANCE ---- */}
+      <section className="space-y-3">
+        <h2 className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground/70">
+          At a glance
+        </h2>
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
         <StatTile
           icon={Server}
@@ -612,6 +616,7 @@ function CustomerDetail() {
           iconClass="bg-muted-foreground/10 text-muted-foreground"
         />
       </div>
+      </section>
 
       {/* ---- ZONE 1b: POSTURE ---- */}
       {canViewPosture && posture && (
@@ -628,7 +633,11 @@ function CustomerDetail() {
             </Link>
           </div>
 
-          {posture.servers.total > 0 && posture.servers.reporting === 0 ? (
+          {/* "No collector anywhere" is notInstalled === total, NOT
+              reporting === 0. A stale host still has a collector and still
+              has findings worth showing — treating it as uninstalled hid
+              real data behind an install prompt. */}
+          {posture.servers.total > 0 && posture.servers.notInstalled === posture.servers.total ? (
             <div className="flex items-start gap-2 rounded-lg border border-border bg-muted/40 px-3 py-2.5 text-xs text-muted-foreground">
               <Radar className="mt-0.5 h-3.5 w-3.5 shrink-0" />
               <p>
@@ -661,20 +670,33 @@ function CustomerDetail() {
                 <div className="rounded-lg border border-border bg-card p-3.5">
                   <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
                     <Radar className="h-3.5 w-3.5 text-muted-foreground" />
-                    Reporting
+                    Collector installed
                   </span>
                   <span className="mt-1 block text-2xl font-semibold tabular-nums text-foreground">
-                    {posture.servers.reporting}
+                    {posture.servers.reporting + posture.servers.stale}
                     <span className="ml-1 text-sm font-normal text-muted-foreground">
                       of {posture.servers.total}
                     </span>
                   </span>
                 </div>
               </div>
-              {posture.servers.notInstalled > 0 && (
+              {(posture.servers.notInstalled > 0 || posture.servers.stale > 0) && (
                 <p className="text-xs text-muted-foreground">
-                  {posture.servers.notInstalled} of this customer&rsquo;s servers have no collector
-                  installed, so their exposure is unknown rather than clean.
+                  {posture.servers.notInstalled > 0 && (
+                    <>
+                      {posture.servers.notInstalled} of this customer&rsquo;s servers have no
+                      collector installed, so their exposure is unknown rather than clean.
+                    </>
+                  )}
+                  {posture.servers.stale > 0 && (
+                    <>
+                      {posture.servers.notInstalled > 0 ? ' ' : ''}
+                      <span className="text-amber-600 dark:text-amber-400">
+                        {posture.servers.stale} stopped reporting — their findings are held at the
+                        last known state, not cleared.
+                      </span>
+                    </>
+                  )}
                 </p>
               )}
             </>
@@ -682,50 +704,46 @@ function CustomerDetail() {
         </section>
       )}
 
-      {/* ---- ZONE 2: TWO-COLUMN MAIN CONTENT ---- */}
-      <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
-
-        {/* LEFT: servers table (2/3) */}
-        <div className="lg:col-span-2">
-          {/* Mobile: the cards sit directly on the page (no card-in-card). */}
-          <div className="md:overflow-hidden md:rounded-lg md:border md:border-border md:bg-card">
-            <div className="flex items-center justify-between pb-3 md:border-b md:border-border md:px-5 md:py-3">
-              <h3 className="text-sm font-semibold text-foreground">
-                Servers
-                <span className="ml-2 text-muted-foreground font-normal">
-                  ({filteredServers.length}{envFilter ? ` of ${servers.length}` : ''})
-                </span>
-              </h3>
-              {canAddServer && (
-                <Button size="sm" variant="outline" onClick={() => setAddServerOpen(true)}>
-                  <Plus className="mr-1.5 h-3.5 w-3.5" />
-                  Add server
-                </Button>
-              )}
-            </div>
-            {/* Padding around the DataTable so the inner content (search,
-                filters, rows, pagination) never butts up against the card
-                borders. */}
-            <div className="md:p-4">
-              <DataTable
-                columns={serverColumns}
-                data={filteredServers}
-                emptyMessage={
-                  envFilter
-                    ? `No ${envFilter} servers for this customer.`
-                    : 'No servers yet. Add one to get started.'
-                }
-                searchPlaceholder="Search hostname or IP..."
-                filters={filterSlot}
-                onRowClick={(r) => navigate(`/servers/${r.id}`, { state: fromState(`/customers/${id}`, customer?.name || 'customer') })}
-                mobile={{ accent: (r) => envAccent(r.environment) }}
-              />
-            </div>
-          </div>
+      {/* ---- ZONE 2: SERVERS (full width) ---- */}
+      {/* Not in a card: the grid already has a border, a header row and its
+          own pagination, so wrapping it in another bordered box was a box
+          inside a box that only narrowed the table. */}
+      <section className="space-y-3">
+        <div className="flex items-center justify-between gap-3">
+          <h2 className="flex items-center gap-2 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground/70">
+            Servers
+            <span className="rounded-full bg-muted px-2 py-0.5 text-[11px] tabular-nums normal-case tracking-normal text-muted-foreground">
+              {filteredServers.length}{envFilter ? ` of ${servers.length}` : ''}
+            </span>
+          </h2>
+          {canAddServer && (
+            <Button size="sm" variant="outline" onClick={() => setAddServerOpen(true)}>
+              <Plus className="mr-1.5 h-3.5 w-3.5" />
+              Add server
+            </Button>
+          )}
         </div>
+        <DataTable
+          columns={serverColumns}
+          data={filteredServers}
+          emptyMessage={
+            envFilter
+              ? `No ${envFilter} servers for this customer.`
+              : 'No servers yet. Add one to get started.'
+          }
+          searchPlaceholder="Search hostname or IP..."
+          filters={filterSlot}
+          onRowClick={(r) => navigate(`/servers/${r.id}`, { state: fromState(`/customers/${id}`, customer?.name || 'customer') })}
+          mobile={{ accent: (r) => envAccent(r.environment) }}
+        />
+      </section>
 
-        {/* RIGHT: info sidebar (1/3) */}
-        <div className="flex flex-col gap-5">
+      {/* ---- ZONE 3: DETAILS ---- */}
+      <section className="space-y-3">
+        <h2 className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground/70">
+          Details
+        </h2>
+        <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
 
           {/* Customer Info card */}
           <SectionCard title="Customer info">
@@ -861,9 +879,8 @@ function CustomerDetail() {
               )}
             </div>
           </SectionCard>
-
         </div>
-      </div>
+      </section>
 
       {/* ---- MODALS ---- */}
 

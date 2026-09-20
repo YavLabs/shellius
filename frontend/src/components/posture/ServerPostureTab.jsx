@@ -875,25 +875,9 @@ function ServerPostureTab({
 
       {view === 'ports' && (
       <div>
-        <div className="mb-2 flex flex-wrap items-center justify-between gap-3">
-          <div className="flex items-center gap-2">
-            <h3 className="text-sm font-semibold text-foreground">Ports</h3>
-            <span className="rounded-full bg-muted px-2 py-0.5 text-[11px] tabular-nums text-muted-foreground">
-              {portRows.length}
-            </span>
-            {staleExpected > 0 && (
-              <span className="text-[11px] text-amber-600 dark:text-amber-400">
-                {staleExpected} expected, no longer listening
-              </span>
-            )}
-          </div>
-          {canExport && listeners.length > 0 && (
-            <Button variant="outline" size="sm" onClick={() => setExportDataset('listeners')}>
-              <Download className="mr-1.5 h-4 w-4" /> Export
-            </Button>
-          )}
-        </div>
-
+        {/* No "Ports" heading: the tab is already called that. The filters,
+            the export and the table's own search sit on one row instead of
+            three stacked ones. */}
         <div className="mb-3 flex flex-wrap items-center gap-2">
           <SearchableSelect
             className="w-[170px]"
@@ -940,6 +924,19 @@ function ServerPostureTab({
               Clear filters
             </button>
           )}
+
+          <div className="ml-auto flex items-center gap-3">
+            {staleExpected > 0 && (
+              <span className="text-xs text-amber-600 dark:text-amber-400">
+                {staleExpected} expected, no longer listening
+              </span>
+            )}
+            {canExport && listeners.length > 0 && (
+              <Button variant="outline" size="sm" onClick={() => setExportDataset('listeners')}>
+                <Download className="mr-1.5 h-4 w-4" /> Export
+              </Button>
+            )}
+          </div>
         </div>
 
         <DataTable
