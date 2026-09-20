@@ -79,6 +79,72 @@ const SEVERITY_TILES = [
   { key: 'LOW', label: 'Low', icon: Info, tint: 'text-sky-500' },
 ];
 
+
+/**
+ * What the posture section looks like before a collector exists: the real
+ * layout, blurred and inert, with the install action on top.
+ *
+ * A plain empty state told you nothing was there; this shows the shape of
+ * what you get, which is the actual argument for installing it. The blurred
+ * layer is aria-hidden and pointer-events-none so it is decoration, not
+ * content a screen reader or a stray click can reach.
+ */
+function PostureLocked({ title, description, actionLabel, onAction, children }) {
+  return (
+    <div className="relative overflow-hidden rounded-lg">
+      <div className="pointer-events-none select-none blur-[6px] saturate-50 opacity-60" aria-hidden="true">
+        {children}
+      </div>
+      <div className="absolute inset-0 flex items-center justify-center bg-background/40 p-4">
+        <div className="max-w-md rounded-lg border border-border bg-card p-5 text-center shadow-lg">
+          <Radar className="mx-auto h-6 w-6 text-muted-foreground" />
+          <h3 className="mt-2 text-sm font-semibold text-foreground">{title}</h3>
+          <p className="mt-1 text-xs leading-relaxed text-muted-foreground">{description}</p>
+          {actionLabel && onAction && (
+            <Button size="sm" className="mt-3" onClick={onAction}>
+              <Download className="mr-1.5 h-4 w-4" />
+              {actionLabel}
+            </Button>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/** Inert stand-in for the collector / firewall / resources block. */
+function PostureSkeleton() {
+  return (
+    <div className="space-y-4">
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+        {['Collector', 'Firewall'].map((t) => (
+          <div key={t} className="rounded-lg border border-border bg-card">
+            <div className="border-b border-border px-5 py-3">
+              <h3 className="text-sm font-semibold text-foreground">{t}</h3>
+            </div>
+            <div className="space-y-2.5 px-5 py-4">
+              {[0, 1, 2, 3].map((i) => (
+                <div key={i} className="flex items-center justify-between gap-6">
+                  <span className="h-3 w-24 rounded bg-muted" />
+                  <span className="h-3 w-20 rounded bg-muted" />
+                </div>
+              ))}
+            </div>
+          </div>
+        ))}
+      </div>
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
+        {['CPU', 'Memory', 'Disk', 'Load (1m)'].map((label) => (
+          <div key={label} className="rounded-lg border border-border bg-card p-3.5">
+            <span className="text-xs text-muted-foreground">{label}</span>
+            <p className="mt-1 text-xl font-semibold text-foreground">--%</p>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 function ServerPostureTab({
   serverId,
   view = 'findings',
@@ -113,6 +179,10 @@ function ServerPostureTab({
   const [severityFilter, setSeverityFilter] = useState('');
   const [statusFilter, setStatusFilter] = useState('');
   const [codeFilter, setCodeFilter] = useState('');
+  // Ports view filters.
+  const [reachFilter, setReachFilter] = useState('');
+  const [ownerKindFilter, setOwnerKindFilter] = useState('');
+  const [portStateFilter, setPortStateFilter] = useState('');
   const { user } = useAuth();
   const canExport = can(user, 'posture.export');
   const canExpect = can(user, 'posture.expected_ports');
@@ -189,6 +259,27 @@ function ServerPostureTab({
   // Three distinct empty states (spec §9.14) — never a blank "no findings"
   // when the real story is "nothing has ever reported".
   if (!collector?.installed) {
+    // Overview shows the shape of what posture would add, behind a blur.
+    // The findings and ports tabs keep the plain empty state: there is no
+    // layout worth previewing when the answer is "no data at all".
+    if (view === 'overview') {
+      const posture = authMode === 'credential';
+      return (
+        <PostureLocked
+          title="Posture collector not installed"
+          description={
+            posture
+              ? 'This host connects with a stored identity, not a Shellius certificate. The collector adds only itself and its own systemd timer — it changes nothing about how SSH authentication works here.'
+              : 'This host has never sent a posture snapshot. Installing the collector reports its listening ports, firewall state and resource use within a few minutes.'
+          }
+          actionLabel={canBootstrap && onBootstrap ? (posture ? 'Install posture collector' : 'Bootstrap host') : null}
+          onAction={canBootstrap && onBootstrap ? () => onBootstrap(posture ? 'posture' : 'full') : null}
+        >
+          <PostureSkeleton />
+        </PostureLocked>
+      );
+    }
+
     // Credential-mode hosts connect with a stored identity, never a
     // bootstrap cert, so the "Host menu → Bootstrap host" item is hidden on
     // them (pages/ServerDetail.jsx). They can still get posture coverage
@@ -286,6 +377,17 @@ function ServerPostureTab({
   ].sort((a, b) => a.port - b.port || String(a.proto).localeCompare(String(b.proto)));
 
   const staleExpected = portRows.filter((r) => r.expected && !r.listening).length;
+
+  const ownerKinds = [...new Set(portRows.map((r) => r.ownerKind).filter(Boolean))].sort();
+  const visiblePorts = portRows.filter((r) => {
+    if (reachFilter && r.reachability !== reachFilter) return false;
+    if (ownerKindFilter && r.ownerKind !== ownerKindFilter) return false;
+    if (portStateFilter === 'findings' && r.findings.length === 0) return false;
+    if (portStateFilter === 'expected' && !r.expected) return false;
+    if (portStateFilter === 'stale' && (r.listening || !r.expected)) return false;
+    return true;
+  });
+  const portFiltersActive = !!(reachFilter || ownerKindFilter || portStateFilter);
 
   const handleBulkAcknowledge = async () => {
     setBusyId('bulk');
@@ -650,7 +752,27 @@ function ServerPostureTab({
 
       {view === 'findings' && (
       <div className="space-y-4">
-        <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+        <div className="grid grid-cols-2 gap-3 lg:grid-cols-5">
+          {/* "All" clears the severity filter rather than setting one, so the
+              tiles are a single control with five positions instead of four
+              toggles plus a hidden default. */}
+          <button
+            type="button"
+            onClick={() => setSeverityFilter('')}
+            aria-pressed={!severityFilter}
+            className={cn(
+              'rounded-lg border p-3.5 text-left transition-colors hover:border-primary/40 hover:bg-accent/40',
+              !severityFilter ? 'border-primary bg-primary/5' : 'border-border bg-card'
+            )}
+          >
+            <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
+              <Radar className="h-3.5 w-3.5 text-muted-foreground" />
+              All findings
+            </span>
+            <span className="mt-1 block text-2xl font-semibold tabular-nums text-foreground">
+              {findings.length}
+            </span>
+          </button>
           {SEVERITY_TILES.map((t) => {
             const count = severityCounts[t.key] || 0;
             const active = severityFilter === t.key;
@@ -771,13 +893,62 @@ function ServerPostureTab({
             </Button>
           )}
         </div>
+
+        <div className="mb-3 flex flex-wrap items-center gap-2">
+          <SearchableSelect
+            className="w-[170px]"
+            value={reachFilter}
+            onChange={setReachFilter}
+            options={[
+              { value: '', label: 'All reachability' },
+              { value: 'INTERNET', label: 'Internet' },
+              { value: 'LAN', label: 'LAN' },
+              { value: 'FIREWALLED', label: 'Firewalled' },
+              { value: 'LOOPBACK', label: 'Loopback' },
+              { value: 'UNKNOWN', label: 'Unknown' },
+            ]}
+            placeholder="All reachability"
+            searchable={false}
+          />
+          <SearchableSelect
+            className="w-[150px]"
+            value={ownerKindFilter}
+            onChange={setOwnerKindFilter}
+            options={[{ value: '', label: 'All owners' }, ...ownerKinds.map((k) => ({ value: k, label: k }))]}
+            placeholder="All owners"
+            searchable={false}
+          />
+          <SearchableSelect
+            className="w-[180px]"
+            value={portStateFilter}
+            onChange={setPortStateFilter}
+            options={[
+              { value: '', label: 'All ports' },
+              { value: 'findings', label: 'Has open findings' },
+              { value: 'expected', label: 'Marked expected' },
+              { value: 'stale', label: 'Expected, not listening' },
+            ]}
+            placeholder="All ports"
+            searchable={false}
+          />
+          {portFiltersActive && (
+            <button
+              type="button"
+              onClick={() => { setReachFilter(''); setOwnerKindFilter(''); setPortStateFilter(''); }}
+              className="text-xs text-primary hover:underline"
+            >
+              Clear filters
+            </button>
+          )}
+        </div>
+
         <DataTable
           columns={listenerColumns}
-          data={portRows}
+          data={visiblePorts}
           onRowClick={setDetailListener}
           showSearch={portRows.length > 8}
           searchPlaceholder="Search port, service, owner or status..."
-          emptyMessage="No listening ports reported"
+          emptyMessage={portFiltersActive ? 'No ports match these filters' : 'No listening ports reported'}
           mobile={{ accent: (r) => (r.reachability === 'INTERNET' ? { tone: 'danger', label: 'INTERNET' } : null) }}
         />
         <p className="mt-2 text-xs text-muted-foreground">

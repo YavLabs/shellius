@@ -132,6 +132,11 @@ function useDebounced(value, delay) {
  *   - Row selection: `selectable`, `selectedIds`, `onSelectionChange`, `bulkActions` slot
  *   - Sticky header
  *   - Responsive: `hideBelow:'md'|'lg'` on column hides it on narrow viewports
+ *   - Sorting is ON by default for every column except `actions` and the
+ *     selection column. A column sorts on `sortAccessor(row)` if given, else
+ *     the row's own scalar field, else `searchAccessor(row)` — so a rendered
+ *     column sorts on what it displays. Opt out with `sortable: false`, or
+ *     take full control with `sortFn(a, b)`.
  *
  * Mobile (< md, docs/plans/1.5.1-mobile.md §5): no table — a card list with a
  * full-width search, a "Filters" sheet (the `filters` slot), a "Sort" menu,
@@ -302,6 +307,24 @@ function DataTable({
     [columns]
   );
 
+  /**
+   * The value a column sorts on.
+   *
+   * `row[col.key]` alone only works for columns whose key happens to be a
+   * scalar field, which is why sorting used to be opt-in per column — a
+   * rendered column like "owner" or "status" would have compared undefined
+   * and silently done nothing. Falling back to the column's own accessors
+   * means almost every column can sort on what it actually displays.
+   */
+  const sortValue = useCallback((col, row) => {
+    if (!col) return null;
+    if (col.sortAccessor) return col.sortAccessor(row);
+    const raw = col.key ? row[col.key] : undefined;
+    if (raw !== undefined && raw !== null && typeof raw !== 'object') return raw;
+    if (col.searchAccessor) return col.searchAccessor(row);
+    return raw ?? null;
+  }, []);
+
   const processedData = useMemo(() => {
     let result = data;
 
@@ -316,19 +339,28 @@ function DataTable({
       const col = columns.find((c) => c.key === sortKey);
       const sorted = [...result].sort((a, b) => {
         if (col?.sortFn) return col.sortFn(a, b);
-        const aVal = a[sortKey];
-        const bVal = b[sortKey];
-        if (aVal == null && bVal == null) return 0;
-        if (aVal == null) return 1;
-        if (bVal == null) return -1;
-        if (typeof aVal === 'string') return aVal.localeCompare(bVal);
-        return aVal > bVal ? 1 : aVal < bVal ? -1 : 0;
+        const aVal = sortValue(col, a);
+        const bVal = sortValue(col, b);
+        // Empty values sort last in both directions, so a column of mostly
+        // blanks does not bury the rows you asked to see.
+        const aEmpty = aVal === null || aVal === undefined || aVal === '';
+        const bEmpty = bVal === null || bVal === undefined || bVal === '';
+        if (aEmpty && bEmpty) return 0;
+        if (aEmpty) return 1;
+        if (bEmpty) return -1;
+        if (typeof aVal === 'number' && typeof bVal === 'number') return aVal - bVal;
+        if (aVal instanceof Date || bVal instanceof Date) {
+          return new Date(aVal).getTime() - new Date(bVal).getTime();
+        }
+        // `numeric` so "port 9" sorts before "port 10", and so a column of
+        // numeric strings behaves the way it looks.
+        return String(aVal).localeCompare(String(bVal), undefined, { numeric: true, sensitivity: 'base' });
       });
       result = sortDir === 'desc' ? sorted.reverse() : sorted;
     }
 
     return result;
-  }, [data, search, isServerPagination, isServerSort, sortKey, sortDir, columns, getSearchString]);
+  }, [data, search, isServerPagination, isServerSort, sortKey, sortDir, columns, getSearchString, sortValue]);
 
   const total = isServerPagination ? (serverTotal ?? 0) : processedData.length;
   const totalPages = Math.max(1, Math.ceil(total / pageSize));
@@ -533,7 +565,13 @@ function DataTable({
                     );
                   }
 
-                  const isSortable = col.sortable && col.key !== 'actions';
+                  // Sortable by default: a column header that looks
+                  // clickable everywhere except where someone forgot the flag
+                  // is worse than one that always works. Action and selection
+                  // columns have nothing to sort; anything else opts out with
+                  // `sortable: false`.
+                  const isSortable =
+                    col.sortable !== false && col.key !== 'actions' && col.key !== '__select__';
                   const isSorted = sortKey === col.key;
 
                   // Sortable headers must be keyboard-operable (Task 15R-B):

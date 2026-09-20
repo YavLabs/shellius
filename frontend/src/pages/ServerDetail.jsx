@@ -58,6 +58,15 @@ import {
 import { formatDateTime, relativeTime } from '@/utils/time';
 import { PROVISION_STATUS_LABELS } from '@/lib/labels';
 
+/** Heading above a group of Overview cards. */
+function SectionTitle({ children }) {
+  return (
+    <h2 className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground/70">
+      {children}
+    </h2>
+  );
+}
+
 function Card({ title, children }) {
   return (
     <div className="rounded-lg border border-border bg-card">
@@ -133,6 +142,7 @@ function ServerDetail() {
   // (manual) or ProvisionModal (automatic) with the scope the user picked.
   const [wizardOpen, setWizardOpen] = useState(false);
   const promptedRef = useRef(null);
+  const [bootstrapPrompt, setBootstrapPrompt] = useState(false);
   const [wizardScope, setWizardScope] = useState(null);
   const [installScope, setInstallScope] = useState('full');
   const [deployWizardOpen, setDeployWizardOpen] = useState(false);
@@ -204,8 +214,11 @@ function ServerDetail() {
     if (promptedRef.current === server.id) return;
     if (!shouldPromptBootstrap(server, { canOnboard })) return;
     promptedRef.current = server.id;
-    setWizardScope(null);
-    setWizardOpen(true);
+    // Ask before taking over the page. Opening a multi-step wizard
+    // unprompted on every visit is the version of this that people learn to
+    // dismiss without reading; a one-line question they can answer with No
+    // is not.
+    setBootstrapPrompt(true);
   }, [server, canOnboard]);
 
   const handleEdit = async (payload) => {
@@ -458,6 +471,8 @@ function ServerDetail() {
             <button
               key={tab.key}
               onClick={() => handleTabChange(tab.key)}
+              title={tab.alert ? `${tab.label} — includes critical or high severity findings` : undefined}
+              aria-label={tab.alert ? `${tab.label}, ${tab.count}, needs attention` : undefined}
               className={[
                 'relative inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap px-2.5 py-2.5 text-sm font-medium transition-colors md:px-4',
                 activeTab === tab.key
@@ -465,19 +480,28 @@ function ServerDetail() {
                   : 'text-muted-foreground hover:text-foreground',
               ].join(' ')}
             >
-              {tab.label}
-              {tab.count > 0 && (
-                <span className="rounded-full bg-muted px-1.5 py-0.5 text-[10px] tabular-nums text-muted-foreground">
-                  {tab.count}
-                </span>
-              )}
-              {/* Only the findings tab can demand attention, and only for
-                  CRITICAL or HIGH — badging everything would train people to
-                  ignore the badge. */}
+              {/* A dot, not a chip. "Needs attention" spelled out competed
+                  with the tab's own label for the same few pixels; the count
+                  already says how much, so the colour only has to say how
+                  urgent. The words live in the title for anyone hovering,
+                  and in the aria-label for anyone who cannot. */}
               {tab.alert && (
-                <span className="inline-flex items-center gap-1 rounded-full bg-red-500/15 px-1.5 py-0.5 text-[10px] font-semibold text-red-600 dark:text-red-400">
-                  <AlertTriangle className="h-3 w-3" />
-                  Needs attention
+                <span
+                  className="h-1.5 w-1.5 shrink-0 rounded-full bg-red-500"
+                  aria-hidden="true"
+                />
+              )}
+              <span>{tab.label}</span>
+              {tab.count > 0 && (
+                <span
+                  className={[
+                    'rounded-full px-1.5 py-0.5 text-[10px] font-medium tabular-nums',
+                    tab.alert
+                      ? 'bg-red-500/15 text-red-600 dark:text-red-400'
+                      : 'bg-muted text-muted-foreground',
+                  ].join(' ')}
+                >
+                  {tab.count}
                 </span>
               )}
             </button>
@@ -502,11 +526,13 @@ function ServerDetail() {
           }}
         />
       ) : (
-      <div className="space-y-4">
+      <div className="space-y-6">
       {/* Collector, firewall and the resource gauges: the host's current
           state belongs on Overview beside Connection and Health, not behind
           a tab you have to remember to open. */}
       {canViewPosture && (
+        <section className="space-y-3">
+          <SectionTitle>Security posture</SectionTitle>
         <ServerPostureTab
           serverId={id}
           view="overview"
@@ -522,9 +548,12 @@ function ServerDetail() {
             setWizardOpen(true);
           }}
         />
+        </section>
       )}
 
-      <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+      <section className="space-y-3">
+        <SectionTitle>Configuration</SectionTitle>
+        <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
         <Card title="Connection">
           <Field label="IP Address" value={server.ipAddress} mono />
           <Field label="Port" value={server.port} mono />
@@ -585,6 +614,12 @@ function ServerDetail() {
           />
         </Card>
 
+        </div>
+      </section>
+
+      <section className="space-y-3">
+        <SectionTitle>Status</SectionTitle>
+        <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
         <Card title="Health">
           <Field label="Status" value={server.healthStatus} />
           <Field label="Last Check" value={formatDateTime(server.lastHealthCheck)} />
@@ -683,6 +718,12 @@ function ServerDetail() {
           </Card>
         )}
 
+        </div>
+      </section>
+
+      <section className="space-y-3">
+        <SectionTitle>Metadata</SectionTitle>
+        <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
         <Card title="Labels">
           {server.labels && server.labels.length > 0 ? (
             <div className="flex flex-wrap gap-2">
@@ -703,7 +744,8 @@ function ServerDetail() {
         {/* Last in the grid: it is a caveat about reaching the host, not a
             fact about it, and it renders nothing for a public address. */}
         <PrivateIPWarning ipAddress={server.ipAddress} variant="card" />
-      </div>
+        </div>
+      </section>
       </div>
       )}
 
@@ -719,6 +761,24 @@ function ServerDetail() {
           onCancel={() => setEditOpen(false)}
         />
       </Modal>
+
+      <ConfirmDialog
+        open={bootstrapPrompt}
+        title="Finish setting up this host?"
+        message={
+          server?.authMode === 'credential'
+            ? 'This host connects with a stored identity but has no Shellius agent yet. Bootstrapping installs the posture collector and can upgrade it to certificate authentication.'
+            : 'This host has not been bootstrapped, so Shellius cannot issue certificates for it or collect its exposure posture yet. Setting it up takes one command.'
+        }
+        confirmLabel="Set up now"
+        cancelLabel="Not now"
+        onConfirm={() => {
+          setBootstrapPrompt(false);
+          setWizardScope(null);
+          setWizardOpen(true);
+        }}
+        onCancel={() => setBootstrapPrompt(false)}
+      />
 
       <BootstrapWizard
         open={wizardOpen}
