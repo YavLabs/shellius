@@ -28,6 +28,7 @@ import ExportDialog from '@/components/posture/ExportDialog';
 import ExpectedPortDialog from '@/components/posture/ExpectedPortDialog';
 import { canMarkExpected } from '@/lib/postureLabels';
 import ExpectableMarker from '@/components/posture/ExpectableMarker';
+import { PostureTile, PostureTileGrid } from '@/components/posture/PostureTiles';
 import BootstrapWizard from '@/components/servers/BootstrapWizard';
 import BulkInstallModal from '@/components/servers/BulkInstallModal';
 import BootstrapModal from '@/components/servers/BootstrapModal';
@@ -50,6 +51,15 @@ import { relativeTime, formatDateTime } from '@/utils/time';
 import { ENVIRONMENT_LABELS } from '@/lib/labels';
 
 const SEVERITIES = ['critical', 'high', 'medium', 'low', 'info'];
+
+/** Same order, icons and tints as the per-server tab, so the two read alike. */
+const SEVERITY_TILES = [
+  { key: 'critical', label: 'Critical', icon: ShieldAlert, tint: 'text-red-500' },
+  { key: 'high', label: 'High', icon: ShieldAlert, tint: 'text-orange-500' },
+  { key: 'medium', label: 'Medium', icon: Radar, tint: 'text-amber-500' },
+  { key: 'low', label: 'Low', icon: Info, tint: 'text-sky-500' },
+  { key: 'info', label: 'Info', icon: Info, tint: 'text-muted-foreground' },
+];
 const ENVIRONMENTS = ['demo', 'dev', 'staging', 'prod'];
 const STATUS_TABS = [
   { key: 'open', label: 'Open' },
@@ -108,7 +118,12 @@ function Posture() {
   const fetchSummary = useCallback(async () => {
     setSummaryLoading(true);
     try {
-      const data = await getPostureSummary();
+      // The tiles have to describe the list under them. Without the page's
+      // own filters they were fleet totals sitting above a filtered table.
+      const data = await getPostureSummary({
+        customerId: customerId || undefined,
+        environment: environment || undefined,
+      });
       setSummary(data);
       // The sidebar badge counts the same thing; broadcasting it here means
       // muting or resolving a finding clears the badge immediately instead of
@@ -123,7 +138,7 @@ function Posture() {
     } finally {
       setSummaryLoading(false);
     }
-  }, []);
+  }, [customerId, environment]);
 
   const fetchCustomers = useCallback(async () => {
     try {
@@ -218,52 +233,79 @@ function Posture() {
     }
   };
 
+  // Two groups, because they answer two different questions and mixing them
+  // in one row of four was half the confusion: coverage is about hosts,
+  // severities are about findings.
+  const openTotal = summary
+    ? SEVERITIES.reduce((n, key) => n + (summary.findings?.[key] ?? 0), 0)
+    : 0;
+
+  const pickSeverity = (key) => {
+    setStatus('open');
+    setSeverity(key);
+    setPage(1);
+  };
+
   const summaryTiles = summary && (
-    <div className="grid grid-cols-2 gap-2 sm:grid-cols-4 sm:gap-3">
-      <MetricCard
-        title="Reporting"
-        value={summaryLoading ? '—' : summary.servers?.reporting ?? 0}
-        subtitle={`of ${summary.servers?.total ?? 0} servers`}
-        icon={Radar}
-        accent="emerald"
-        loading={summaryLoading}
-        onClick={() => setCoverageOpen(true)}
-      />
-      <MetricCard
-        title="Stale"
-        value={summaryLoading ? '—' : summary.servers?.stale ?? 0}
-        subtitle="stopped reporting"
-        icon={ServerOff}
-        accent="amber"
-        loading={summaryLoading}
-        onClick={summary.servers?.stale ? () => navigate('/servers') : undefined}
-      />
-      <MetricCard
-        title="Critical"
-        value={summaryLoading ? '—' : summary.findings?.critical ?? 0}
-        subtitle="open findings"
-        icon={ShieldAlert}
-        accent="rose"
-        loading={summaryLoading}
-        onClick={() => {
-          setStatus('open');
-          setSeverity('critical');
-          setPage(1);
-        }}
-      />
-      <MetricCard
-        title="High"
-        value={summaryLoading ? '—' : summary.findings?.high ?? 0}
-        subtitle="open findings"
-        icon={ShieldAlert}
-        accent="violet"
-        loading={summaryLoading}
-        onClick={() => {
-          setStatus('open');
-          setSeverity('high');
-          setPage(1);
-        }}
-      />
+    <div className="space-y-3">
+      <div className="grid grid-cols-3 gap-2 sm:gap-3">
+        <MetricCard
+          title="Reporting"
+          value={summaryLoading ? '—' : summary.servers?.reporting ?? 0}
+          subtitle={`of ${summary.servers?.total ?? 0} servers`}
+          icon={Radar}
+          accent="emerald"
+          loading={summaryLoading}
+          onClick={() => setCoverageOpen(true)}
+        />
+        <MetricCard
+          title="Stale"
+          value={summaryLoading ? '—' : summary.servers?.stale ?? 0}
+          subtitle="stopped reporting"
+          icon={ServerOff}
+          accent="amber"
+          loading={summaryLoading}
+          onClick={() => setCoverageOpen(true)}
+        />
+        <MetricCard
+          title="No collector"
+          value={summaryLoading ? '—' : summary.servers?.notInstalled ?? 0}
+          subtitle="exposure unknown"
+          icon={ServerOff}
+          accent="violet"
+          loading={summaryLoading}
+          onClick={() => setCoverageOpen(true)}
+        />
+      </div>
+
+      {/* Every severity, so the tiles add up to the table. Showing only
+          Critical and High meant a list of four rows sat under tiles
+          totalling one, which reads as a bug whichever number you trust. */}
+      <PostureTileGrid className="lg:grid-cols-6">
+        <PostureTile
+          icon={Radar}
+          label="All open"
+          value={summaryLoading ? '—' : openTotal}
+          active={!severity && status === 'open'}
+          onClick={() => {
+            setStatus('open');
+            setSeverity('');
+            setPage(1);
+          }}
+        />
+        {SEVERITY_TILES.map((t) => (
+          <PostureTile
+            key={t.key}
+            icon={t.icon}
+            tint={t.tint}
+            label={t.label}
+            value={summaryLoading ? '—' : summary.findings?.[t.key] ?? 0}
+            active={severity === t.key && status === 'open'}
+            disabled={!summaryLoading && (summary.findings?.[t.key] ?? 0) === 0 && severity !== t.key}
+            onClick={() => pickSeverity(severity === t.key ? '' : t.key)}
+          />
+        ))}
+      </PostureTileGrid>
     </div>
   );
 

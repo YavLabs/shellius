@@ -115,7 +115,10 @@ router.use(authenticate, tenant);
 // GET /api/posture/summary
 // ---------------------------------------------------------------------------
 
-const summaryQuerySchema = Joi.object({ customerId: Joi.string() });
+const summaryQuerySchema = Joi.object({
+  customerId: Joi.string(),
+  environment: Joi.string().valid(...ENVIRONMENTS),
+});
 
 router.get(
   '/summary',
@@ -124,6 +127,7 @@ router.get(
   asyncHandler(async (req, res) => {
     const data = await postureQueryService.getSummary(req.orgId, req.scope, {
       customerId: req.query.customerId,
+      environment: req.query.environment,
     });
     res.json({ success: true, data });
   })

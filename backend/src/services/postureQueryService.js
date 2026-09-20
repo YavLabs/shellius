@@ -176,7 +176,7 @@ export async function listServerCoverage(orgId, scope, { state, page = 1, limit 
  * it — asking for a customer you cannot see returns that customer's empty
  * summary rather than its real one.
  */
-export async function getSummary(orgId, scope, { customerId } = {}) {
+export async function getSummary(orgId, scope, { customerId, environment } = {}) {
   if (!orgId) throw new ApiError(400, 'orgId is required');
 
   const settings = await postureSettingsService.getSettings(orgId);
@@ -188,7 +188,11 @@ export async function getSummary(orgId, scope, { customerId } = {}) {
       orgId,
       isActive: true,
       ...serverScopeWhere(scope),
-      ...(customerId ? { AND: [{ customerId }] } : {}),
+      // ANDed, never merged into the scope predicate — a scoped caller
+      // passing an out-of-scope customerId must still see nothing.
+      ...(customerId || environment
+        ? { AND: [...(customerId ? [{ customerId }] : []), ...(environment ? [{ environment }] : [])] }
+        : {}),
     },
     select: { id: true },
   });
@@ -221,13 +225,22 @@ export async function getSummary(orgId, scope, { customerId } = {}) {
   // Findings bucket — computed AFTER the scope filter (customer-scope-spec
   // §6.3: aggregates are the easiest place for a leak to slip through).
   const now = new Date();
+  // Built as ONE `server` predicate rather than a scope spread plus an
+  // optional serverId list. The old shape only narrowed the findings when a
+  // customer or environment filter was set, so with no filters the servers
+  // bucket counted active hosts while the findings bucket counted every
+  // host in the org — the tiles and the table under them were describing
+  // different populations, and only a deactivated server made it visible.
+  const serverPredicate = { isActive: true };
+  const relFilter = relationScopeWhere(scope, 'server');
+  if (relFilter.server) Object.assign(serverPredicate, relFilter.server);
+  if (customerId) serverPredicate.customerId = customerId;
+  if (environment) serverPredicate.environment = environment;
+
   const findingWhere = {
     orgId,
     resolvedAt: null,
-    ...relationScopeWhere(scope, 'server'),
-    // Restricting by serverId (already scope-filtered above) rather than by
-    // a second customer predicate keeps the two filters from disagreeing.
-    ...(customerId ? { serverId: { in: serverIds } } : {}),
+    server: serverPredicate,
   };
 
   const [severityGroups, mutedCount] = await Promise.all([
@@ -272,6 +285,10 @@ export async function listFindings(orgId, query = {}, scope) {
   const serverFilters = [];
   const relFilter = relationScopeWhere(scope, 'server');
   if (relFilter.server) serverFilters.push(relFilter.server);
+  // getSummary counts active servers only. Without the same predicate here,
+  // a finding on a deactivated host is in the list but not in the tiles
+  // above it, and the two disagree for no reason a reader can see.
+  serverFilters.push({ isActive: true });
   if (customerId) serverFilters.push({ customerId });
   if (environment) serverFilters.push({ environment });
   if (serverFilters.length === 1) where.server = serverFilters[0];

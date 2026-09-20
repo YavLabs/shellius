@@ -273,3 +273,104 @@ describe('inventory + bulk plan (DB)', () => {
     expect(plan.targets).toHaveLength(0);
   });
 });
+
+/**
+ * The tiles on the Posture page are getSummary(); the table under them is
+ * listFindings(). They were computed from different populations — the
+ * summary counted active servers only, the list counted every server — so a
+ * finding on a deactivated host appeared in the table and in no tile. The
+ * property worth pinning is not either number, it is that they agree.
+ */
+describe('summary and list describe the same findings', () => {
+  let org;
+  let customer;
+  let liveServer;
+  let retiredServer;
+
+  beforeAll(async () => {
+    if (!(await dbReachable())) return;
+    const q = await import('../postureQueryService.js');
+    org = await createTestOrg();
+    customer = await prisma.customer.create({
+      data: { orgId: org.id, name: 'Acme', slug: `acme-${unique()}` },
+    });
+    liveServer = await prisma.server.create({
+      data: {
+        orgId: org.id,
+        customerId: customer.id,
+        hostname: `live-${unique()}`,
+        ipAddress: '10.0.0.5',
+        environment: 'prod',
+        isActive: true,
+      },
+    });
+    retiredServer = await prisma.server.create({
+      data: {
+        orgId: org.id,
+        customerId: customer.id,
+        hostname: `retired-${unique()}`,
+        ipAddress: '10.0.0.6',
+        environment: 'prod',
+        isActive: false,
+      },
+    });
+    const mk = (serverId, severity, port) =>
+      prisma.exposureFinding.create({
+        data: {
+          orgId: org.id,
+          serverId,
+          code: 'PORT_EXPOSED',
+          proto: 'tcp',
+          port,
+          severity,
+          message: 'exposed',
+          firstSeenAt: new Date(),
+          lastSeenAt: new Date(),
+        },
+      });
+    await mk(liveServer.id, 'HIGH', 8080);
+    await mk(liveServer.id, 'INFO', 8081);
+    await mk(retiredServer.id, 'CRITICAL', 5432);
+    global.__q = q;
+  });
+
+  afterAll(async () => {
+    if (!(await dbReachable()) || !org) return;
+    await prisma.exposureFinding.deleteMany({ where: { orgId: org.id } });
+    await prisma.server.deleteMany({ where: { orgId: org.id } });
+    await prisma.customer.deleteMany({ where: { orgId: org.id } });
+    await prisma.postureSettings.deleteMany({ where: { orgId: org.id } });
+    await prisma.postureAlertRule.deleteMany({ where: { orgId: org.id } });
+    await cleanupOrg(org.id);
+  });
+
+  it('neither the tiles nor the list count a deactivated server', async () => {
+    if (!(await dbReachable())) return console.warn('DB unreachable — skipping');
+    const q = global.__q;
+    const summary = await q.getSummary(org.id, UNSCOPED, {});
+    const list = await q.listFindings(org.id, { status: 'open', limit: 100 }, UNSCOPED);
+    expect(summary.findings.critical).toBe(0);
+    expect(list.findings.map((f) => f.serverId ?? f.server?.id)).not.toContain(retiredServer.id);
+  });
+
+  it('the severity tiles add up to the open list', async () => {
+    if (!(await dbReachable())) return console.warn('DB unreachable — skipping');
+    const q = global.__q;
+    const summary = await q.getSummary(org.id, UNSCOPED, {});
+    const list = await q.listFindings(org.id, { status: 'open', limit: 100 }, UNSCOPED);
+    const tileTotal = ['critical', 'high', 'medium', 'low', 'info'].reduce(
+      (n, k) => n + summary.findings[k],
+      0
+    );
+    expect(tileTotal).toBe(list.total);
+  });
+
+  it('the summary follows the page’s environment filter, as the list does', async () => {
+    if (!(await dbReachable())) return console.warn('DB unreachable — skipping');
+    const q = global.__q;
+    const summary = await q.getSummary(org.id, UNSCOPED, { environment: 'dev' });
+    const list = await q.listFindings(org.id, { status: 'open', environment: 'dev', limit: 100 }, UNSCOPED);
+    expect(summary.findings.high).toBe(0);
+    expect(list.total).toBe(0);
+  });
+});
