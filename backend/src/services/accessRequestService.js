@@ -198,6 +198,7 @@ const REQUEST_INCLUDE = {
       port: true,
       ipAddress: true,
       customerId: true,
+      customer: { select: { id: true, name: true } },
     },
   },
   certificate: { select: { id: true, serial: true, status: true, validBefore: true } },

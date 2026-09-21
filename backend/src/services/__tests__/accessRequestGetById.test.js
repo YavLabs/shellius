@@ -27,7 +27,14 @@ describe('accessRequestService.getById org scoping', () => {
     adminB = await createTestUser(orgB.id, { role: 'admin' });
     const customer = await prisma.customer.create({ data: { orgId: orgA.id, name: 'Acme', slug: `acme-${Date.now()}` } });
     const server = await prisma.server.create({
-      data: { orgId: orgA.id, customerId: customer.id, hostname: 'a.internal', ipAddress: '10.30.0.1', environment: 'dev' },
+      data: {
+        orgId: orgA.id,
+        customerId: customer.id,
+        hostname: 'a.internal',
+        displayName: 'Acme app server',
+        ipAddress: '10.30.0.1',
+        environment: 'dev',
+      },
     });
     request = await prisma.accessRequest.create({
       data: {
@@ -48,6 +55,16 @@ describe('accessRequestService.getById org scoping', () => {
   maybeTest('the requester can read it in their org', async () => {
     const ar = await getById({ requestId: request.id, orgId: orgA.id, callerId: requester.id, callerRole: 'member' });
     expect(ar.id).toBe(request.id);
+  });
+
+  // The Access Requests UI needs both the server's display name (primary
+  // label) and its customer (for a "View customer" link) — regression guard
+  // for the REQUEST_INCLUDE select (Problem A / EntityLink rollout).
+  maybeTest('includes the server displayName and customer for the UI', async () => {
+    const ar = await getById({ requestId: request.id, orgId: orgA.id, callerId: requester.id, callerRole: 'member' });
+    expect(ar.server.displayName).toBe('Acme app server');
+    expect(ar.server.hostname).toBe('a.internal');
+    expect(ar.server.customer).toMatchObject({ name: 'Acme' });
   });
 
   maybeTest("another org's admin gets a 404, not the request", async () => {

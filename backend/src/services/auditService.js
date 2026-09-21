@@ -336,7 +336,7 @@ async function enrichAuditItems(items, orgId) {
       prisma.server
         .findMany({
           where: { id: { in: [...byType.get('Server')] }, orgId },
-          select: { id: true, hostname: true, environment: true, ipAddress: true },
+          select: { id: true, hostname: true, displayName: true, environment: true, ipAddress: true },
         })
         .then((rows) => {
           lookups.Server = new Map(rows.map((r) => [r.id, r]));
@@ -365,7 +365,7 @@ async function enrichAuditItems(items, orgId) {
             requestedPrincipal: true,
             requesterId: true,
             requester: { select: { name: true, email: true } },
-            server: { select: { hostname: true, environment: true } },
+            server: { select: { hostname: true, displayName: true, environment: true } },
           },
         })
         .then((rows) => {
@@ -396,7 +396,7 @@ async function enrichAuditItems(items, orgId) {
             targetHost: true,
             targetUser: true,
             user: { select: { name: true, email: true } },
-            server: { select: { hostname: true } },
+            server: { select: { hostname: true, displayName: true } },
           },
         })
         .then((rows) => {
@@ -462,12 +462,17 @@ async function enrichAuditItems(items, orgId) {
         case 'User': {
           const u = lookups.User?.get(rid);
           if (u) label = u.name || u.email || 'User';
-          link = '/admin/users';
+          // No standalone user detail page — deep-links into the Users list
+          // the same way Users.jsx's own row actions do.
+          link = `/admin/users?highlight=${rid}`;
           break;
         }
         case 'Server': {
           const s = lookups.Server?.get(rid);
-          if (s) label = `${s.hostname}${s.environment ? ` (${s.environment})` : ''}`;
+          if (s) {
+            const name = s.displayName || s.hostname;
+            label = `${name}${s.environment ? ` (${s.environment})` : ''}`;
+          }
           link = `/servers/${rid}`; // detail page exists
           break;
         }
@@ -480,7 +485,7 @@ async function enrichAuditItems(items, orgId) {
         case 'AccessRequest': {
           const ar = lookups.AccessRequest?.get(rid);
           if (ar) {
-            const where = ar.server?.hostname || 'server';
+            const where = ar.server?.displayName || ar.server?.hostname || 'server';
             // Own request: just the server ("Jane requested access sshtest"),
             // someone else's: "Jane → sshtest" (e.g. an approver acting on it).
             label =
@@ -488,8 +493,9 @@ async function enrichAuditItems(items, orgId) {
                 ? where
                 : `${ar.requester?.name || ar.requester?.email || 'someone'} → ${where}`;
           }
-          // No detail route — go to the list.
-          link = '/access-requests';
+          // No standalone detail page — deep-link into the list, which opens
+          // the request's detail modal for this id (AccessRequests.jsx).
+          link = `/access-requests?request=${rid}`;
           break;
         }
         case 'Certificate': {
@@ -503,6 +509,7 @@ async function enrichAuditItems(items, orgId) {
           if (s) {
             // Saved server, else the Quick Connect target (user@host).
             const where =
+              s.server?.displayName ||
               s.server?.hostname ||
               (s.targetHost ? `${s.targetUser ? `${s.targetUser}@` : ''}${s.targetHost}` : 'host');
             // Own session: just where; someone else's (admin terminate): "Jane on where".
@@ -523,7 +530,8 @@ async function enrichAuditItems(items, orgId) {
         case 'AccessPolicy': {
           const p = lookups.AccessPolicy?.get(rid);
           if (p) label = p.name;
-          link = '/policies'; // list only
+          // Policies moved into Administration; deep-link opens its edit modal.
+          link = `/admin/policies?highlight=${rid}`;
           break;
         }
         default:
