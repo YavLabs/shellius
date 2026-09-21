@@ -200,6 +200,15 @@ router.get(
   })
 );
 
+router.get(
+  '/meta/os-types',
+  requirePermission('servers.view'),
+  asyncHandler(async (req, res) => {
+    const osTypes = await serverService.listOsTypes(req.orgId, req.scope);
+    res.json({ success: true, data: { osTypes } });
+  })
+);
+
 router.post(
   '/bulk/environment',
   requirePermission('servers.change_environment'),

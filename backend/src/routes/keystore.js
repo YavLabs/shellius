@@ -432,6 +432,7 @@ const listDeploymentsQuerySchema = Joi.object({
   batchId: Joi.string(),
   sshKeyId: Joi.string(),
   serverId: Joi.string(),
+  search: Joi.string().trim().max(200).allow(''),
   page: Joi.number().integer().min(1).default(1),
   pageSize: Joi.number().integer().min(1).max(100).default(25),
 });

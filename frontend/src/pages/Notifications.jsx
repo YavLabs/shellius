@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Bell, CheckCheck } from 'lucide-react';
 import DataTable from '@/components/shared/DataTable';
@@ -15,6 +15,7 @@ import { RELATED_ROUTE } from '@/lib/notificationRoutes';
 import { NOTIFICATION_META, notificationMeta } from '@/lib/notificationMeta';
 import { cn } from '@/lib/utils';
 import useAutoRefresh from '@/hooks/useAutoRefresh';
+import useUrlFilters from '@/hooks/useUrlFilters';
 
 
 /** The type's icon, dimmed once read — the same cue the dropdown uses. */
@@ -37,29 +38,49 @@ function NotificationIcon({ n }) {
 function Notifications() {
   const navigate = useNavigate();
   const [items, setItems] = useState([]);
+  const [total, setTotal] = useState(0);
   const [unreadCount, setUnreadCount] = useState(0);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
-  const [filter, setFilter] = useState('all');
-  const [typeFilter, setTypeFilter] = useState('');
+
+  const [f, setF] = useUrlFilters({
+    readState: '',
+    type: '',
+    createdFrom: '',
+    createdTo: '',
+    page: '1',
+    pageSize: '20',
+  });
+  const page = parseInt(f.page, 10) || 1;
+  const pageSize = parseInt(f.pageSize, 10) || 20;
+  // `filter` stays 'all'|'unread' — the vocabulary the fetch/empty-state code
+  // already used; only the URL key (`readState`, matching the drawer) differs.
+  const filter = f.readState === 'unread' ? 'unread' : 'all';
 
   const loadedRef = useRef(false);
   const fetch = useCallback(async () => {
     if (!loadedRef.current) setLoading(true);
     setError('');
     try {
-      const params = { page: 1, limit: 100 };
+      // Only the latest 100 used to load with no pager — a busy org's
+      // history past that was simply gone. Now server-paginated, like every
+      // other list.
+      const params = { page, limit: pageSize };
       if (filter === 'unread') params.isRead = 'false';
-      const { notifications, unreadCount: count } = await listNotifications(params);
+      if (f.type) params.type = f.type;
+      if (f.createdFrom) params.createdFrom = f.createdFrom;
+      if (f.createdTo) params.createdTo = f.createdTo;
+      const { notifications, unreadCount: count, meta } = await listNotifications(params);
       setItems(notifications);
       setUnreadCount(count);
+      setTotal(meta?.total ?? notifications.length);
     } catch (err) {
       setError(err.response?.data?.error?.message || err.message || 'Failed to load notifications');
     } finally {
       setLoading(false);
       loadedRef.current = true;
     }
-  }, [filter]);
+  }, [page, pageSize, filter, f.type, f.createdFrom, f.createdTo]);
 
   useEffect(() => {
     fetch();
@@ -105,20 +126,19 @@ function Notifications() {
         ...Object.keys(NOTIFICATION_META).map((t) => ({ value: t, label: notificationMeta(t).label })),
       ],
     },
+    { key: 'createdFrom', label: 'Created from', type: 'date' },
+    { key: 'createdTo', label: 'Created to', type: 'date' },
   ];
-  // `filter` stays 'all'|'unread' for the fetch param; the drawer sees '' for "all".
-  const filterValues = { readState: filter === 'unread' ? 'unread' : '', type: typeFilter };
+  const filterValues = { readState: f.readState, type: f.type, createdFrom: f.createdFrom, createdTo: f.createdTo };
   const applyFilters = (next) => {
-    setFilter(next.readState === 'unread' ? 'unread' : 'all');
-    setTypeFilter(next.type ?? '');
+    setF({
+      readState: next.readState === 'unread' ? 'unread' : '',
+      type: next.type ?? '',
+      createdFrom: next.createdFrom ?? '',
+      createdTo: next.createdTo ?? '',
+      page: '1',
+    });
   };
-
-  // Type is a client-side narrowing of the already-loaded page (isRead is
-  // the only dimension the API filters on — see routes/notifications.js).
-  const filteredItems = useMemo(
-    () => (typeFilter ? items.filter((n) => n.type === typeFilter) : items),
-    [items, typeFilter]
-  );
 
   // Same row anatomy as the top-bar dropdown: a coloured icon for the type,
   // the title, the body underneath. The page used to show a blue "info"
@@ -222,7 +242,7 @@ function Notifications() {
 
       <DataTable
         columns={columns}
-        data={filteredItems}
+        data={items}
         loading={loading}
         emptyMessage={filter === 'unread' ? 'No unread notifications.' : 'No notifications yet.'}
         emptyState={
@@ -230,11 +250,21 @@ function Notifications() {
             <FilteredEmptyState onClear={() => applyFilters(clearedFilterValues(filterDefs))} />
           ) : undefined
         }
-        searchPlaceholder="Search notifications..."
+        // No backend free-text search on notifications — an unwired search
+        // box here would silently filter nothing (DataTable skips client
+        // filtering in server-paginated mode).
+        showSearch={false}
         filterDefs={filterDefs}
         filterValues={filterValues}
         onFilterChange={applyFilters}
         mobile={{ onCardClick: (n) => openNotification(n), titleClamp: 2 }}
+        serverPagination={{
+          page,
+          total,
+          onPageChange: (p) => setF({ page: String(p) }),
+          pageSize,
+          onPageSizeChange: (size) => setF({ pageSize: String(size), page: '1' }),
+        }}
       />
     </div>
   );

@@ -270,11 +270,18 @@ export async function createBatch(
 // list / batches / retry
 // ---------------------------------------------------------------------------
 
-export async function listDeployments(orgId, { batchId, sshKeyId, serverId, page = 1, pageSize = 25 } = {}, scope = UNSCOPED) {
+export async function listDeployments(orgId, { batchId, sshKeyId, serverId, search, page = 1, pageSize = 25 } = {}, scope = UNSCOPED) {
   const where = { orgId, ...relationScopeWhere(scope, 'server') };
   if (batchId) where.batchId = batchId;
   if (sshKeyId) where.sshKeyId = sshKeyId;
   if (serverId) where.serverId = serverId;
+  if (search) {
+    where.OR = [
+      { server: { hostname: { contains: search, mode: 'insensitive' } } },
+      { server: { displayName: { contains: search, mode: 'insensitive' } } },
+      { sshKey: { name: { contains: search, mode: 'insensitive' } } },
+    ];
+  }
 
   const p = Math.max(1, parseInt(page, 10) || 1);
   const ps = Math.min(100, Math.max(1, parseInt(pageSize, 10) || 25));

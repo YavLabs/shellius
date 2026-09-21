@@ -51,10 +51,19 @@ import {
   updateUserScope,
 } from '@/services/userService';
 import { listRoles } from '@/services/roleService';
+import { listGroups } from '@/services/groupService';
 import { useAuth } from '@/context/AuthContext';
 import useAutoRefresh from '@/hooks/useAutoRefresh';
+import useUrlFilters from '@/hooks/useUrlFilters';
 
 const STATUSES = ['active', 'invited', 'suspended', 'deactivated'];
+// Column key -> backend sortBy for listUsers.
+const SORT_KEY_TO_BACKEND = {
+  name: 'name',
+  role: 'role',
+  status: 'status',
+  lastLogin: 'lastLogin',
+};
 
 function isLocked(u) {
   return !!u.lockedUntil && new Date(u.lockedUntil).getTime() > Date.now();
@@ -93,30 +102,39 @@ function CopyUrlButton({ url }) {
 function Users() {
   const [users, setUsers] = useState([]);
   const [total, setTotal] = useState(0);
-  const [page, setPage] = useState(1);
-  const [pageSize, setPageSize] = useState(20);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
 
-  const [role, setRole] = useState('');
-  const [status, setStatus] = useState('');
-  const [managerId, setManagerId] = useState('');
-  const [mfaFilter, setMfaFilter] = useState('');
+  const [f, setF] = useUrlFilters({
+    q: '',
+    role: '',
+    status: '',
+    manager: '',
+    mfa: '',
+    locked: '',
+    lastLoginFrom: '',
+    lastLoginTo: '',
+    accessScope: '',
+    group: '',
+    sortBy: '',
+    sortDir: 'asc',
+    page: '1',
+    pageSize: '20',
+  });
+  const page = parseInt(f.page, 10) || 1;
+  const pageSize = parseInt(f.pageSize, 10) || 20;
 
   const { user: me, can } = useAuth();
   const [roles, setRoles] = useState([]);
-  const [managers, setManagers] = useState([]);
+  const [groups, setGroups] = useState([]);
   const fetchOptions = useCallback(async () => {
     await Promise.all([
       listRoles()
         .then(setRoles)
         .catch(() => setRoles([])),
-      // Light option list for the "Manager" filter — anyone could be a
-      // manager, so this pulls the full (bounded) user directory once rather
-      // than only the names present on the current page.
-      listUsers({ page: 1, pageSize: 200 })
-        .then((d) => setManagers(d.items || []))
-        .catch(() => {}),
+      listGroups()
+        .then((rows) => setGroups(rows || []))
+        .catch(() => setGroups([])),
     ]);
   }, []);
   useEffect(() => { fetchOptions(); }, [fetchOptions]);
@@ -173,10 +191,20 @@ function Users() {
     setError('');
     try {
       const params = { page, pageSize };
-      if (role) params.roleId = role;
-      if (status) params.status = status;
-      if (managerId) params.managerId = managerId;
-      if (mfaFilter) params.mfaEnabled = mfaFilter;
+      if (f.role) params.roleId = f.role;
+      if (f.status) params.status = f.status;
+      if (f.manager) params.managerId = f.manager;
+      if (f.mfa) params.mfaEnabled = f.mfa;
+      if (f.locked) params.locked = f.locked;
+      if (f.lastLoginFrom) params.lastLoginFrom = f.lastLoginFrom;
+      if (f.lastLoginTo) params.lastLoginTo = f.lastLoginTo;
+      if (f.accessScope) params.accessScope = f.accessScope;
+      if (f.group) params.groupId = f.group;
+      if (f.q) params.search = f.q;
+      if (f.sortBy) {
+        params.sortBy = SORT_KEY_TO_BACKEND[f.sortBy] || f.sortBy;
+        params.sortDir = f.sortDir;
+      }
       const data = await listUsers(params);
       setUsers(data.items || []);
       setTotal(data.total || 0);
@@ -186,7 +214,7 @@ function Users() {
       setLoading(false);
       loadedRef.current = true;
     }
-  }, [page, pageSize, role, status, managerId, mfaFilter]);
+  }, [page, pageSize, f.role, f.status, f.manager, f.mfa, f.locked, f.lastLoginFrom, f.lastLoginTo, f.accessScope, f.group, f.q, f.sortBy, f.sortDir]);
 
   useEffect(() => {
     fetchUsers();
@@ -196,6 +224,16 @@ function Users() {
     await Promise.all([fetchUsers(), fetchOptions()]);
   }, [fetchUsers, fetchOptions]);
   const { refresh, refreshing, lastUpdated } = useAutoRefresh(loadAll);
+
+  const handleSearchChange = useCallback((q) => {
+    setF({ q, page: '1' });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const handleSortChange = useCallback((sortBy, sortDir) => {
+    setF({ sortBy, sortDir });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const openCreate = () => { setEditingUser(null); setFormOpen(true); };
   // The list row doesn't carry `customerIds` (only `accessScope`) — fetch
@@ -345,16 +383,7 @@ function Users() {
         ...STATUSES.map((st) => ({ value: st, label: USER_STATUS_LABELS[st] || formatLabel(st) })),
       ],
     },
-    {
-      key: 'manager',
-      label: 'Manager',
-      placeholder: 'All managers',
-      searchable: true,
-      options: [
-        { value: '', label: 'All managers' },
-        ...managers.map((m) => ({ value: m.id, label: m.name || m.email })),
-      ],
-    },
+    { key: 'manager', label: 'Manager', placeholder: 'All managers', type: 'entity', entity: 'users' },
     {
       key: 'mfa',
       label: 'MFA',
@@ -365,14 +394,63 @@ function Users() {
         { value: 'false', label: 'Not enabled' },
       ],
     },
+    {
+      key: 'locked',
+      label: 'Locked',
+      placeholder: 'Any',
+      options: [
+        { value: '', label: 'Any' },
+        { value: 'true', label: 'Locked' },
+        { value: 'false', label: 'Not locked' },
+      ],
+    },
+    {
+      key: 'accessScope',
+      label: 'Access scope',
+      placeholder: 'Any',
+      options: [
+        { value: '', label: 'Any' },
+        { value: 'ALL', label: 'All customers' },
+        { value: 'CUSTOMERS', label: 'Scoped to customers' },
+      ],
+    },
+    {
+      key: 'group',
+      label: 'Group',
+      placeholder: 'All groups',
+      searchable: true,
+      options: [
+        { value: '', label: 'All groups' },
+        ...groups.map((g) => ({ value: g.id, label: g.name })),
+      ],
+    },
+    { key: 'lastLoginFrom', label: 'Last login from', type: 'date' },
+    { key: 'lastLoginTo', label: 'Last login to', type: 'date' },
   ];
-  const filterValues = { role, status, manager: managerId, mfa: mfaFilter };
+  const filterValues = {
+    role: f.role,
+    status: f.status,
+    manager: f.manager,
+    mfa: f.mfa,
+    locked: f.locked,
+    accessScope: f.accessScope,
+    group: f.group,
+    lastLoginFrom: f.lastLoginFrom,
+    lastLoginTo: f.lastLoginTo,
+  };
   const applyFilters = (next) => {
-    setRole(next.role ?? '');
-    setStatus(next.status ?? '');
-    setManagerId(next.manager ?? '');
-    setMfaFilter(next.mfa ?? '');
-    setPage(1);
+    setF({
+      role: next.role ?? '',
+      status: next.status ?? '',
+      manager: next.manager ?? '',
+      mfa: next.mfa ?? '',
+      locked: next.locked ?? '',
+      accessScope: next.accessScope ?? '',
+      group: next.group ?? '',
+      lastLoginFrom: next.lastLoginFrom ?? '',
+      lastLoginTo: next.lastLoginTo ?? '',
+      page: '1',
+    });
   };
 
   const columns = [
@@ -437,6 +515,7 @@ function Users() {
       key: 'mfa',
       label: 'MFA',
       hideBelow: 'md',
+      sortable: false,
       mobile: {
         slot: 'meta',
         order: 3,
@@ -460,6 +539,7 @@ function Users() {
       key: 'manager',
       label: 'Manager',
       hideBelow: 'md',
+      sortable: false,
       render: (r) => <span className="text-muted-foreground">{r.manager?.name || '-'}</span>,
     },
     {
@@ -570,9 +650,12 @@ function Users() {
           ) : undefined
         }
         searchPlaceholder="Search by name or email..."
+        initialSearch={f.q}
+        onSearchChange={handleSearchChange}
         filterDefs={filterDefs}
         filterValues={filterValues}
         onFilterChange={applyFilters}
+        serverSort={{ sortKey: f.sortBy, sortDir: f.sortDir, onSortChange: handleSortChange }}
         mobile={{
           leading: (r) => <Avatar name={r.name} email={r.email} avatarUrl={r.avatarUrl} size="md" />,
           corner: (r) =>
@@ -585,9 +668,9 @@ function Users() {
         serverPagination={{
           page,
           total,
-          onPageChange: setPage,
+          onPageChange: (p) => setF({ page: String(p) }),
           pageSize,
-          onPageSizeChange: (size) => { setPageSize(size); setPage(1); },
+          onPageSizeChange: (size) => setF({ pageSize: String(size), page: '1' }),
         }}
       />
 

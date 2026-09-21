@@ -49,6 +49,9 @@ const SshKeysTab = forwardRef(function SshKeysTab({ canManage, scope = 'org', ca
   const [keyTypeFilter, setKeyTypeFilter] = useState('');
   const [sourceFilter, setSourceFilter] = useState('');
   const [certFilter, setCertFilter] = useState('');
+  const [unusedFilter, setUnusedFilter] = useState('');
+  const [createdFrom, setCreatedFrom] = useState('');
+  const [createdTo, setCreatedTo] = useState('');
 
   const loadedRef = useRef(false);
   const fetch = useCallback(async () => {
@@ -150,26 +153,62 @@ const SshKeysTab = forwardRef(function SshKeysTab({ canManage, scope = 'org', ca
       options: [
         { value: '', label: 'Any' },
         { value: 'signed', label: 'Signed' },
+        { value: 'expired', label: 'Expired' },
         { value: 'none', label: 'Unsigned' },
       ],
     },
+    {
+      key: 'unused',
+      label: 'Unused',
+      placeholder: 'Any',
+      options: [
+        { value: '', label: 'Any' },
+        { value: 'true', label: 'Unused (0 identities)' },
+        { value: 'false', label: 'In use' },
+      ],
+    },
+    { key: 'createdFrom', label: 'Created from', type: 'date' },
+    { key: 'createdTo', label: 'Created to', type: 'date' },
   ];
-  const filterValues = { keyType: keyTypeFilter, source: sourceFilter, cert: certFilter };
+  const filterValues = {
+    keyType: keyTypeFilter,
+    source: sourceFilter,
+    cert: certFilter,
+    unused: unusedFilter,
+    createdFrom,
+    createdTo,
+  };
   const applyFilters = (next) => {
     setKeyTypeFilter(next.keyType ?? '');
     setSourceFilter(next.source ?? '');
     setCertFilter(next.cert ?? '');
+    setUnusedFilter(next.unused ?? '');
+    setCreatedFrom(next.createdFrom ?? '');
+    setCreatedTo(next.createdTo ?? '');
   };
 
   const filteredKeys = useMemo(() => {
+    // Bare "to" date is a day, not an instant — include the whole day, same
+    // as the backend's endOfDayInclusive.
+    const fromTime = createdFrom ? new Date(createdFrom).getTime() : null;
+    const toTime = createdTo ? new Date(`${createdTo}T23:59:59.999`).getTime() : null;
     return keys.filter((k) => {
       if (keyTypeFilter && (k.keyType || '').toLowerCase() !== keyTypeFilter) return false;
       if (sourceFilter && (k.source || '').toLowerCase() !== sourceFilter) return false;
       if (certFilter === 'signed' && !k.certificate) return false;
+      if (certFilter === 'expired' && !k.certificate?.expired) return false;
       if (certFilter === 'none' && k.certificate) return false;
+      if (unusedFilter === 'true' && (k.credentialCount ?? 0) !== 0) return false;
+      if (unusedFilter === 'false' && (k.credentialCount ?? 0) === 0) return false;
+      if (fromTime !== null || toTime !== null) {
+        const created = k.createdAt ? new Date(k.createdAt).getTime() : null;
+        if (created === null) return false;
+        if (fromTime !== null && created < fromTime) return false;
+        if (toTime !== null && created > toTime) return false;
+      }
       return true;
     });
-  }, [keys, keyTypeFilter, sourceFilter, certFilter]);
+  }, [keys, keyTypeFilter, sourceFilter, certFilter, unusedFilter, createdFrom, createdTo]);
 
   const columns = [
     {

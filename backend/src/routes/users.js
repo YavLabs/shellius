@@ -107,8 +107,9 @@ router.get(
   requirePermission('users.view'),
   asyncHandler(async (req, res) => {
     const query = { ...req.query };
-    // Query strings arrive as strings — coerce the one boolean filter so
-    // `mfaEnabled=false` doesn't fall through userService's truthy check.
+    // Query strings arrive as strings — coerce the boolean filters so
+    // `mfaEnabled=false` / `locked=false` don't fall through userService's
+    // truthy checks.
     if (query.mfaEnabled === 'true') query.mfaEnabled = true;
     else if (query.mfaEnabled === 'false') query.mfaEnabled = false;
     else delete query.mfaEnabled;
