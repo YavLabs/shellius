@@ -6,7 +6,7 @@ import SudoPasswordRow from '@/components/posture/SudoPasswordRow';
 import { collectorStateOf, isOlderVersion } from '@/lib/collectorHealth';
 import { groupListeners, bindNote } from '@/lib/listenerGroups';
 import { describeListener } from '@/lib/serviceIdentity';
-import ServiceCell from '@/components/posture/ServiceCell';
+import ServiceCell, { RuntimeChip } from '@/components/posture/ServiceCell';
 import DataTable from '@/components/shared/DataTable';
 import { PostureTile, PostureTileGrid } from '@/components/posture/PostureTiles';
 import { severityAccent } from '@/lib/mobileCard';
@@ -691,6 +691,15 @@ function ServerPostureTab({
         ),
     },
     {
+      key: 'type',
+      label: 'Type',
+      className: 'w-32',
+      sortAccessor: (r) => (r.listening ? describeListener(r).runtime.label : ''),
+      searchAccessor: (r) => (r.listening ? describeListener(r).runtime.label : ''),
+      mobile: { slot: 'meta', order: 3, render: (r) => (r.listening ? <RuntimeChip runtime={describeListener(r).runtime} /> : null) },
+      render: (r) => (r.listening ? <RuntimeChip runtime={describeListener(r).runtime} /> : <span className="text-xs text-muted-foreground">—</span>),
+    },
+    {
       key: 'port',
       label: 'Port',
       className: 'w-24',
@@ -750,9 +759,7 @@ function ServerPostureTab({
       },
       render: (r) => {
         if (!r.listening) {
-          return (
-            <span className="text-xs text-amber-600 dark:text-amber-400">Not listening</span>
-          );
+          return <Badge tone="warning">Not listening</Badge>;
         }
         const { tone, label } = reachabilityTone(r.reachability);
         return <Badge tone={tone}>{label}</Badge>;

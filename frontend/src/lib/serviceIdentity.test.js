@@ -42,4 +42,13 @@ describe('describeListener', () => {
     expect(describeListener({ ownerKind: 'process', ownerName: 'python3', ownerDetail: 'python3 -m http.server' }).name).toBe('python3');
     expect(describeListener({ ownerKind: 'unknown', ownerName: 'unknown' }).name).toBe('Unknown process');
   });
+
+  it('a container from the service inventory is named by its own name, with its image', () => {
+    const d = describeListener({ ownerKind: 'docker', ownerName: 'chatbot_api', ownerDetail: 'myorg/chatbot:2.1', ownerRef: 'ab12cd34ef56' });
+    expect(d).toMatchObject({ name: 'chatbot_api', subtext: 'myorg/chatbot:2.1', id: 'ab12cd34ef56' });
+    expect(d.runtime.label).toBe('Docker');
+  });
+  it('a NAT-only publish is named by the address it forwards to', () => {
+    expect(describeListener({ ownerKind: 'docker', ownerName: 'runtime:172.17.0.3:9000' }).name).toBe('container 172.17.0.3:9000');
+  });
 });

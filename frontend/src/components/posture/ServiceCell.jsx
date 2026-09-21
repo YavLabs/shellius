@@ -50,13 +50,13 @@ function tooltipFor(d) {
     .join('\n');
 }
 
-export default function ServiceCell({ listener, className }) {
+export default function ServiceCell({ listener, className, showRuntime = false }) {
   const d = describeListener(listener);
   return (
     <div className={cn('min-w-0 max-w-[26rem]', className)} title={tooltipFor(d)}>
       <div className="flex min-w-0 items-center gap-1.5">
         <span className="truncate text-sm font-medium text-foreground">{d.name}</span>
-        <RuntimeChip runtime={d.runtime} />
+        {showRuntime && <RuntimeChip runtime={d.runtime} />}
         {d.protocol && (
           <span className="inline-flex shrink-0 items-center rounded border border-border px-1.5 py-px text-[10px] leading-4 text-muted-foreground">
             {d.protocol}

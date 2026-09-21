@@ -89,11 +89,20 @@ export function describeListener(l) {
       if (!subtext) subtext = target ? `→ container ${target}` : '';
       break;
     }
-    case 'docker': {
-      // A port found only as a NAT rule: "runtime:172.17.0.3:9000".
-      const target = ownerName.replace(/^runtime:/, '');
-      name = clean(l?.containerName) || service || `container ${target}`;
-      if (!subtext) subtext = `→ container ${target} (NAT rule)`;
+    case 'docker':
+    case 'podman': {
+      if (/^runtime:/.test(ownerName)) {
+        // A port found only as a NAT rule: "runtime:172.17.0.3:9000".
+        const target = ownerName.replace(/^runtime:/, '');
+        name = clean(l?.containerName) || service || `container ${target}`;
+        if (!subtext) subtext = `→ container ${target} (NAT rule)`;
+      } else {
+        // From the service inventory (container scan): ownerName IS the
+        // container's name, ownerDetail its image, ownerRef its id.
+        name = ownerName || service || 'container';
+        id = clean(l?.ownerRef);
+        if (!subtext) subtext = detail || (id ? `container ${id}` : '');
+      }
       break;
     }
     case 'process':
