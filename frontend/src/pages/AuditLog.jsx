@@ -369,7 +369,7 @@ function AuditLog() {
         <MobileCardList>
           {mobileItems.map((item) => {
             const isExpanded = expandedRow === item.id;
-            const actor = item.actorId ? item.actorName || item.actorEmail || item.actorId : 'System';
+            const actorName = item.actorId ? item.actorName || item.actorEmail || item.actorId : 'System';
             return (
               <MobileCard
                 key={item.id}
@@ -384,7 +384,14 @@ function AuditLog() {
                 }
                 secondary={
                   <span>
-                    {actor} · <span title={formatDateTime(item.createdAt)}>{relativeTime(item.createdAt)}</span>
+                    {item.actorId ? (
+                      <EntityLink to={`/admin/users?highlight=${item.actorId}`} entityType="user" entityName={actorName} icon={false}>
+                        {actorName}
+                      </EntityLink>
+                    ) : (
+                      actorName
+                    )}{' '}
+                    · <span title={formatDateTime(item.createdAt)}>{relativeTime(item.createdAt)}</span>
                   </span>
                 }
                 meta={[

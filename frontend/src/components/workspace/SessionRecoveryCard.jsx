@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { AlertTriangle, Clock, KeyRound, Loader2, PlugZap, RefreshCw, ServerCrash, X, Zap } from 'lucide-react';
 import EnvironmentBadge from '@/components/shared/EnvironmentBadge';
+import EntityLink from '@/components/EntityLink';
 import RequestForm from '@/components/access-requests/RequestForm';
 import { useTerminalWorkspace } from '@/context/TerminalWorkspaceContext';
 import { useQuickConnect } from '@/context/QuickConnectContext';
@@ -142,6 +143,20 @@ function SessionRecoveryCard({ tab }) {
   return (
     <Shell>
       <Header icon={Icon} title={reason.title} label={server?.displayName || server?.hostname || label} env={server?.environment || tab.env} />
+      {server?.id && (
+        // New tab — this card is mid-recovery, so a same-tab navigation
+        // would abandon the reconnect/request-access flow.
+        <EntityLink
+          to={`/servers/${server.id}`}
+          entityType="server"
+          entityName={server.displayName || server.hostname}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="mt-1 inline-flex justify-center text-[11px] text-muted-foreground"
+        >
+          View server
+        </EntityLink>
+      )}
       <p className="mt-2 text-xs text-muted-foreground">{reason.body}</p>
 
       {loading && !info && (

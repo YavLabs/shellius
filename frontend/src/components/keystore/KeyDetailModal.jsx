@@ -18,6 +18,7 @@ import {
 import Modal from '@/components/shared/Modal';
 import ConfirmDialog from '@/components/shared/ConfirmDialog';
 import UserCell from '@/components/shared/UserCell';
+import EntityLink from '@/components/EntityLink';
 import EnvironmentBadge from '@/components/shared/EnvironmentBadge';
 import ScopeBadge from '@/components/shared/ScopeBadge';
 import EmptyState from '@/components/ui/EmptyState';
@@ -446,7 +447,17 @@ function KeyDetailModal({ open, onClose, keyId, canManage, scope = 'org', canMov
                             <span className="flex min-w-0 items-center gap-2">
                               <Badge tone="neutral">{DEPLOYMENT_ACTION_LABEL[d.action] || d.action}</Badge>
                               <span className="min-w-0 truncate text-foreground">
-                                {d.server?.displayName || d.server?.hostname}
+                                {d.server?.id ? (
+                                  <EntityLink
+                                    to={`/servers/${d.server.id}`}
+                                    entityType="server"
+                                    entityName={d.server.displayName || d.server.hostname}
+                                  >
+                                    {d.server.displayName || d.server.hostname}
+                                  </EntityLink>
+                                ) : (
+                                  d.server?.displayName || d.server?.hostname || 'Unknown server'
+                                )}
                               </span>
                             </span>
                             <span className="flex shrink-0 items-center gap-2 text-xs text-muted-foreground">

@@ -419,7 +419,16 @@ function Servers() {
       label: 'Customer',
       sortable: true,
       searchAccessor: (r) => r.customer?.name || '',
-      mobile: { slot: 'meta', order: 1, render: (r) => r.customer?.name || null },
+      mobile: {
+        slot: 'meta',
+        order: 1,
+        render: (r) =>
+          r.customer ? (
+            <EntityLink to={`/customers/${r.customer.id}`} entityType="customer" entityName={r.customer.name} icon={false}>
+              {r.customer.name}
+            </EntityLink>
+          ) : null,
+      },
       render: (r) =>
         r.customer ? (
           // Nested inside a row that navigates to the server on click —
