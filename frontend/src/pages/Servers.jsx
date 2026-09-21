@@ -18,6 +18,7 @@ import {
   Send,
 } from 'lucide-react';
 import DataTable from '@/components/shared/DataTable';
+import EntityLink from '@/components/EntityLink';
 import { CardIcon } from '@/components/mobile/MobileCard';
 import Modal from '@/components/shared/Modal';
 import ConfirmDialog from '@/components/shared/ConfirmDialog';
@@ -421,12 +422,16 @@ function Servers() {
       mobile: { slot: 'meta', order: 1, render: (r) => r.customer?.name || null },
       render: (r) =>
         r.customer ? (
-          <button
-            onClick={() => navigate(`/customers/${r.customer.id}`)}
-            className="text-muted-foreground hover:text-primary"
+          // Nested inside a row that navigates to the server on click —
+          // EntityLink stops the click from also bubbling to the row.
+          <EntityLink
+            to={`/customers/${r.customer.id}`}
+            entityType="customer"
+            entityName={r.customer.name}
+            className="text-muted-foreground"
           >
             {r.customer.name}
-          </button>
+          </EntityLink>
         ) : (
           <span className="text-muted-foreground">-</span>
         ),
