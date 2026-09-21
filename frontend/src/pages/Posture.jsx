@@ -1,6 +1,6 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
-import { Check, Download, Eye, Info, Radar, RefreshCw, ServerOff, ShieldAlert, ShieldCheck, ShieldOff, Volume1, VolumeX } from 'lucide-react';
+import { Check, Download, Eye, Info, Radar, ServerOff, ShieldAlert, ShieldCheck, ShieldOff, Volume1, VolumeX } from 'lucide-react';
 import DataTable from '@/components/shared/DataTable';
 import PageHeader from '@/components/common/PageHeader';
 import EmptyState from '@/components/ui/EmptyState';
@@ -34,6 +34,7 @@ import { useAuth } from '@/context/AuthContext';
 import { can } from '@/lib/permissions';
 import { severityAccent } from '@/lib/mobileCard';
 import { POSTURE_ALERTS_EVENT } from '@/hooks/usePostureAlertCount';
+import useAutoRefresh from '@/hooks/useAutoRefresh';
 import { relativeTime, formatDateTime } from '@/utils/time';
 import { ENVIRONMENT_LABELS } from '@/lib/labels';
 
@@ -150,8 +151,9 @@ function Posture() {
   // The dialog closes on success, so its confirmation lives here instead.
   const [expectedNotice, setExpectedNotice] = useState('');
 
+  const summaryLoadedRef = useRef(false);
   const fetchSummary = useCallback(async () => {
-    setSummaryLoading(true);
+    if (!summaryLoadedRef.current) setSummaryLoading(true);
     try {
       // The tiles have to describe the list under them. Without the page's
       // own filters they were fleet totals sitting above a filtered table.
@@ -172,6 +174,7 @@ function Posture() {
       /* the page still works without the summary tiles */
     } finally {
       setSummaryLoading(false);
+      summaryLoadedRef.current = true;
     }
   }, [customerId, environment]);
 
@@ -204,6 +207,15 @@ function Posture() {
     fetchSummary();
     fetchCustomers();
   }, [fetchSummary, fetchCustomers]);
+
+  // One function reloads the tiles, the customer list and every open
+  // section (via reloadKey) without disturbing filters or which sections
+  // are expanded.
+  const loadAll = useCallback(async () => {
+    await Promise.all([fetchSummary(), fetchCustomers()]);
+    fetch();
+  }, [fetchSummary, fetchCustomers, fetch]);
+  const { refresh, refreshing, lastUpdated } = useAutoRefresh(loadAll);
 
   const resetFilters = () => {
     setSeverity('');
@@ -636,9 +648,11 @@ function Posture() {
         title="Posture"
         subtitle="Exposure findings across every server that reports to Shellius."
         helpKey="posture"
+        onRefresh={refresh}
+        refreshing={refreshing}
+        lastUpdated={lastUpdated}
         actions={[
           { key: 'export', label: 'Export', icon: Download, variant: 'outline', onClick: () => setExportOpen(true), hidden: !canExport },
-          { key: 'refresh', label: 'Refresh', icon: RefreshCw, variant: 'outline', onClick: () => { fetch(); fetchSummary(); } },
         ]}
       />
 

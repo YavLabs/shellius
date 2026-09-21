@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Plus, UsersRound, Trash2, Pencil } from 'lucide-react';
 import Modal from '@/components/shared/Modal';
@@ -12,6 +12,7 @@ import { Input } from '@/components/ui/input';
 import { listGroups, createGroup } from '@/services/groupService';
 import { relativeTime } from '@/utils/time';
 import { useAuth } from '@/context/AuthContext';
+import useAutoRefresh from '@/hooks/useAutoRefresh';
 
 function Groups() {
   const { can } = useAuth();
@@ -25,8 +26,9 @@ function Groups() {
   const [deleteTarget, setDeleteTarget] = useState(null);
   const navigate = useNavigate();
 
+  const loadedRef = useRef(false);
   const fetch = useCallback(async () => {
-    setLoading(true);
+    if (!loadedRef.current) setLoading(true);
     setError('');
     try {
       const data = await listGroups();
@@ -35,12 +37,14 @@ function Groups() {
       setError(err.response?.data?.error?.message || err.message || 'Failed to load groups');
     } finally {
       setLoading(false);
+      loadedRef.current = true;
     }
   }, []);
 
   useEffect(() => {
     fetch();
   }, [fetch]);
+  const { refresh, refreshing, lastUpdated } = useAutoRefresh(fetch);
 
   const handleDelete = (g) => setDeleteTarget(g);
 
@@ -128,6 +132,9 @@ function Groups() {
         title="Groups"
         subtitle="Organize users into access groups."
         helpKey="groups"
+        onRefresh={refresh}
+        refreshing={refreshing}
+        lastUpdated={lastUpdated}
         actions={[
           { key: 'create', label: 'Create Group', icon: Plus, onClick: () => setCreateOpen(true), hidden: !canManage },
         ]}

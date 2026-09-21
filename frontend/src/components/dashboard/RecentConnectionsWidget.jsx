@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { Input } from '@/components/ui/input';
 import {
@@ -172,7 +172,7 @@ function Row({ icon: Icon, iconTone = 'text-muted-foreground', dot, dotLabel, ti
  * Everything is your own data only (both APIs are user-scoped).
  */
 // `showQuickConnect={false}`: the host page already offers Quick connect (Connect hub).
-export function RecentConnections({ variant = 'widget', showQuickConnect = true }) {
+export function RecentConnections({ variant = 'widget', showQuickConnect = true, refreshKey = 0 }) {
   const isPage = variant === 'page';
   const navigate = useNavigate();
   const { allowed: qcAllowed, openQuickConnect } = useQuickConnect();
@@ -195,8 +195,9 @@ export function RecentConnections({ variant = 'widget', showQuickConnect = true 
   const [kind, setKind] = useState('all');
   const [days, setDays] = useState(7);
 
+  const loadedRef = useRef(false);
   const load = useCallback(async () => {
-    setLoading(true);
+    if (!loadedRef.current) setLoading(true);
     const [srv, hist] = await Promise.all([
       getRecentServers({ days: isPage ? days : 7, limit: isPage ? PAGE_FETCH_LIMIT : WIDGET_RECENT_LIMIT * 2 }).catch(() => []),
       qcAllowed ? getHistory({ limit: isPage ? PAGE_FETCH_LIMIT : WIDGET_RECENT_LIMIT * 2 }).catch(() => []) : Promise.resolve([]),
@@ -205,12 +206,14 @@ export function RecentConnections({ variant = 'widget', showQuickConnect = true 
     setHistory(hist);
     setIntents(await getAccessIntents(srv.map((r) => r.server.id)).catch(() => ({})));
     setLoading(false);
+    loadedRef.current = true;
   }, [qcAllowed, isPage, days]);
 
   useEffect(() => {
     load();
     refreshLiveSessions();
-  }, [load, refreshLiveSessions]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [load, refreshLiveSessions, refreshKey]);
 
   // Where each live session is open ("Open in a tab" / Workspace name), if anywhere.
   const placeOf = useMemo(() => {
@@ -705,8 +708,8 @@ export function RecentConnections({ variant = 'widget', showQuickConnect = true 
   );
 }
 
-function RecentConnectionsWidget() {
-  return <RecentConnections variant="widget" />;
+function RecentConnectionsWidget({ refreshKey = 0 }) {
+  return <RecentConnections variant="widget" refreshKey={refreshKey} />;
 }
 
 export default RecentConnectionsWidget;

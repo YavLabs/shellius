@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import {
   Plus,
@@ -24,6 +24,7 @@ import { listCustomers } from '@/services/customerService';
 import { useAuth } from '@/context/AuthContext';
 import { relativeTime } from '@/utils/time';
 import { can } from '@/lib/permissions';
+import useAutoRefresh from '@/hooks/useAutoRefresh';
 
 
 function EffectBadge({ effect }) {
@@ -88,8 +89,9 @@ function Policies() {
     } catch { /* ignore */ }
   }, []);
 
+  const loadedRef = useRef(false);
   const fetchPolicies = useCallback(async () => {
-    setLoading(true);
+    if (!loadedRef.current) setLoading(true);
     setError('');
     try {
       const params = { page, limit: pageSize };
@@ -105,8 +107,16 @@ function Policies() {
       setError(err.response?.data?.error?.message || err.message || 'Failed to load policies');
     } finally {
       setLoading(false);
+      loadedRef.current = true;
     }
   }, [page, pageSize, effectFilter, customerFilter, activeFilter]);
+
+  // One function so the header's Refresh button reloads both the table and
+  // the customer filter options.
+  const loadAll = useCallback(async () => {
+    await Promise.all([fetchPolicies(), fetchCustomers()]);
+  }, [fetchPolicies, fetchCustomers]);
+  const { refresh, refreshing, lastUpdated } = useAutoRefresh(loadAll);
 
   useEffect(() => { fetchCustomers(); }, [fetchCustomers]);
   useEffect(() => { fetchPolicies(); }, [fetchPolicies]);
@@ -285,6 +295,9 @@ function Policies() {
         title="Policies"
         subtitle="Access control policies governing who can reach which servers."
         helpKey="policies"
+        onRefresh={refresh}
+        refreshing={refreshing}
+        lastUpdated={lastUpdated}
         actions={[
           {
             key: 'new',
