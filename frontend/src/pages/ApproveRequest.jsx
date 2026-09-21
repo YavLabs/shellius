@@ -132,6 +132,11 @@ function ApproveRequest() {
                       <span className="font-medium text-foreground">
                         {request.server?.displayName || request.server?.hostname}
                       </span>{' '}
+                      {request.server?.displayName &&
+                        request.server?.hostname &&
+                        request.server.displayName !== request.server.hostname && (
+                          <span className="text-xs text-muted-foreground">({request.server.hostname})</span>
+                        )}{' '}
                       {env && <EnvironmentBadge environment={env} className="ml-1" />}
                     </div>
                     <div>

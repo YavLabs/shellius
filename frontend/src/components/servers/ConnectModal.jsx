@@ -81,7 +81,7 @@ function ConnectModal({ open, onClose, server, intent, currentUser }) {
     if (!(await ensureIpSaved())) return;
     openTab(
       { requestId: intent.activeRequestId, principal: trimmed && trimmed !== intent.preferredPrincipal ? trimmed : undefined },
-      { label: server?.hostname, env: server?.environment, host: server?.ipAddress || server?.hostname, focus: true }
+      { label: server?.displayName || server?.hostname, env: server?.environment, host: server?.ipAddress || server?.hostname, focus: true }
     );
     onClose();
   };
@@ -105,7 +105,7 @@ function ConnectModal({ open, onClose, server, intent, currentUser }) {
       title={
         <span className="flex items-center gap-2">
           <Terminal className="h-4 w-4" />
-          <span className="font-semibold">{server?.hostname}</span>
+          <span className="font-semibold">{server?.displayName || server?.hostname}</span>
           {server?.environment && <EnvironmentBadge environment={server.environment} />}
           <span className="text-xs font-normal text-muted-foreground uppercase">{proto}</span>
         </span>

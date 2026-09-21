@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { Clock, RefreshCw, CheckCircle2, XCircle, Loader2, PlugZap } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import EnvironmentBadge from '@/components/shared/EnvironmentBadge';
+import EntityLink from '@/components/EntityLink';
 import { statusTone } from '@/lib/badgeTones';
 import { getAccessRequest } from '@/services/accessRequestService';
 import { formatDateTime } from '@/utils/time';
@@ -112,6 +113,20 @@ function RequestStatusCard({ tab, focused }) {
           <span className="text-base font-semibold text-foreground">{serverName}</span>
           {ar.server?.environment && <EnvironmentBadge environment={ar.server.environment} />}
         </div>
+        {ar.server?.id && (
+          // Opens in a new tab — this card is polling / mid-connect, so a
+          // same-tab navigation would abandon that in-progress flow.
+          <EntityLink
+            to={`/servers/${ar.server.id}`}
+            entityType="server"
+            entityName={serverName}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="mb-3 inline-flex justify-center text-xs text-muted-foreground"
+          >
+            View server
+          </EntityLink>
+        )}
 
         <Badge tone={tone} className="mx-auto">
           {ar.status === 'PENDING' && <Clock className="mr-1 h-3 w-3" />}

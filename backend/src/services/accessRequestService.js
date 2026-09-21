@@ -198,6 +198,7 @@ const REQUEST_INCLUDE = {
       port: true,
       ipAddress: true,
       customerId: true,
+      customer: { select: { id: true, name: true } },
     },
   },
   certificate: { select: { id: true, serial: true, status: true, validBefore: true } },
@@ -388,7 +389,7 @@ export async function submit({
         userId: approver.id,
         type: 'ACCESS_REQUEST_SUBMITTED',
         title: 'New access request requires your review',
-        body: `${requester.name} is requesting ${protocol} access to ${server.hostname} (${server.environment}). Reason: ${reason}`,
+        body: `${requester.name} is requesting ${protocol} access to ${server.displayName || server.hostname} (${server.environment}). Reason: ${reason}`,
         metadata: { accessRequestId: accessRequest.id, requesterId, serverId },
       });
     }
@@ -455,7 +456,7 @@ export async function submit({
     userId: requesterId,
     type: 'ACCESS_REQUEST_APPROVED',
     title: 'Your access request was automatically approved',
-    body: `Access to ${server.hostname} (${server.environment}) has been granted for ${Math.round(effectiveDuration / 60)} minutes.`,
+    body: `Access to ${server.displayName || server.hostname} (${server.environment}) has been granted for ${Math.round(effectiveDuration / 60)} minutes.`,
     metadata: { accessRequestId: accessRequest.id, serverId, expiresAt },
   });
 
@@ -512,7 +513,7 @@ export async function submit({
           userId: approver.id,
           type: 'ACCESS_REQUEST_APPROVED',
           title: `Production access bypass — ${requester.name}`,
-          body: `${requester.name} (${callerRole}) was auto-approved for ${protocol} access to ${server.hostname} (prod) without review, because their role may skip production approval. Reason: ${reason}`,
+          body: `${requester.name} (${callerRole}) was auto-approved for ${protocol} access to ${server.displayName || server.hostname} (prod) without review, because their role may skip production approval. Reason: ${reason}`,
           metadata: { accessRequestId: accessRequest.id, requesterId, serverId, bypass: true },
         });
       }
@@ -633,7 +634,7 @@ export async function review({ requestId, reviewerId, decision, approvedDuration
       userId: accessRequest.requesterId,
       type: 'ACCESS_REQUEST_APPROVED',
       title: 'Your access request was approved',
-      body: `Your request for ${accessRequest.server.hostname} has been approved for ${Math.round(duration / 60)} minutes.`,
+      body: `Your request for ${accessRequest.server.displayName || accessRequest.server.hostname} has been approved for ${Math.round(duration / 60)} minutes.`,
       metadata: { accessRequestId: requestId, reviewerId, expiresAt },
     });
 
@@ -669,8 +670,8 @@ export async function review({ requestId, reviewerId, decision, approvedDuration
       type: 'ACCESS_REQUEST_DENIED',
       title: 'Your access request was denied',
       body: deniedReason
-        ? `Your request for ${accessRequest.server.hostname} was denied. Reason: ${deniedReason}`
-        : `Your request for ${accessRequest.server.hostname} was denied.`,
+        ? `Your request for ${accessRequest.server.displayName || accessRequest.server.hostname} was denied. Reason: ${deniedReason}`
+        : `Your request for ${accessRequest.server.displayName || accessRequest.server.hostname} was denied.`,
       metadata: { accessRequestId: requestId, reviewerId, deniedReason },
     });
 
@@ -1063,7 +1064,7 @@ export async function revoke({ requestId, orgId, callerId, callerPermissions, re
   // Org-scoped lookup (F-07: a bare findUnique let one org revoke another's).
   const accessRequest = await prisma.accessRequest.findFirst({
     where: { id: requestId, orgId },
-    include: { server: { select: { hostname: true } }, approvers: { select: { userId: true } } },
+    include: { server: { select: { hostname: true, displayName: true } }, approvers: { select: { userId: true } } },
   });
 
   if (!accessRequest) throw new ApiError(404, 'Access request not found');
@@ -1113,8 +1114,8 @@ export async function revoke({ requestId, orgId, callerId, callerPermissions, re
     type: 'ACCESS_REQUEST_REVOKED',
     title: 'Your access has been revoked',
     body: reason
-      ? `Your access to ${accessRequest.server.hostname} was revoked. Reason: ${reason}`
-      : `Your access to ${accessRequest.server.hostname} was revoked.`,
+      ? `Your access to ${accessRequest.server.displayName || accessRequest.server.hostname} was revoked. Reason: ${reason}`
+      : `Your access to ${accessRequest.server.displayName || accessRequest.server.hostname} was revoked.`,
     metadata: { accessRequestId: requestId, revokedBy: callerId, reason },
   });
 
@@ -1314,7 +1315,7 @@ export async function markExpired() {
       expiresAt: { lt: now },
     },
     include: {
-      server: { select: { hostname: true } },
+      server: { select: { hostname: true, displayName: true } },
     },
   });
 
@@ -1345,7 +1346,7 @@ export async function markExpired() {
         userId: req.requesterId,
         type: 'ACCESS_REQUEST_EXPIRED',
         title: 'Your access has expired',
-        body: `Your access to ${req.server.hostname} has expired.`,
+        body: `Your access to ${req.server.displayName || req.server.hostname} has expired.`,
         metadata: { accessRequestId: req.id },
       });
 
@@ -1385,7 +1386,7 @@ export async function markPendingExpired() {
       createdAt: { lt: cutoff },
     },
     include: {
-      server: { select: { hostname: true } },
+      server: { select: { hostname: true, displayName: true } },
     },
   });
 
@@ -1404,7 +1405,7 @@ export async function markPendingExpired() {
         userId: req.requesterId,
         type: 'ACCESS_REQUEST_EXPIRED',
         title: 'Your pending access request has expired',
-        body: `Your pending request for access to ${req.server.hostname} was not reviewed within 24 hours and has expired.`,
+        body: `Your pending request for access to ${req.server.displayName || req.server.hostname} was not reviewed within 24 hours and has expired.`,
         metadata: { accessRequestId: req.id },
       });
 
@@ -1447,7 +1448,7 @@ export async function notifyExpiringAccess() {
       expiresAt: { gt: now, lte: windowEnd },
     },
     include: {
-      server: { select: { hostname: true } },
+      server: { select: { hostname: true, displayName: true } },
     },
   });
 
@@ -1477,7 +1478,7 @@ export async function notifyExpiringAccess() {
         userId: req.requesterId,
         type: 'ACCESS_REQUEST_EXPIRING',
         title: 'Your access is expiring soon',
-        body: `Your access to ${req.server.hostname} expires at ${req.expiresAt.toISOString()}. Download credentials now if you still need them.`,
+        body: `Your access to ${req.server.displayName || req.server.hostname} expires at ${req.expiresAt.toISOString()}. Download credentials now if you still need them.`,
         metadata: { requestId: req.id, expiresAt: req.expiresAt },
       });
 
@@ -2123,8 +2124,8 @@ export async function verifyBreakGlass({ orgId, invokerId, invokerPermissions, c
         orgId,
         userId: admin.id,
         type: 'BREAK_GLASS_INVOKED',
-        title: `[Break-glass] access invoked on ${server.hostname}`,
-        body: `${invoker.name} invoked break-glass access to ${server.hostname} (${server.environment}), verified with ${methodLabel}. Reason: ${payload.reason.slice(0, 160)}`,
+        title: `[Break-glass] access invoked on ${server.displayName || server.hostname}`,
+        body: `${invoker.name} invoked break-glass access to ${server.displayName || server.hostname} (${server.environment}), verified with ${methodLabel}. Reason: ${payload.reason.slice(0, 160)}`,
         metadata: {
           accessRequestId: ar.id,
           invokerId,

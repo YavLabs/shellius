@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { Check, Copy, Loader, AlertTriangle, ExternalLink } from 'lucide-react';
 import Modal from '@/components/shared/Modal';
 import { createBootstrapToken } from '@/services/bootstrapService';
+import { serverInlineLabel } from '@/lib/serverLabel';
 
 const OS_TABS = [
   { key: 'linux', label: 'Linux' },
@@ -79,7 +80,7 @@ function BootstrapModal({ open, server, mode = 'full', onClose }) {
                 <p className="mt-0.5">
                   This host connects with a stored identity, not a Shellius certificate.
                   Run the command below <strong>once</strong> on{' '}
-                  <strong>{server?.hostname || 'the target server'}</strong> as an
+                  <strong>{server ? serverInlineLabel(server) : 'the target server'}</strong> as an
                   administrator. It installs only the posture collector, its timer and
                   its own sudoers drop-in — it never touches sshd config, CA trust,
                   check-principals or JIT, and changes nothing about how SSH
@@ -93,7 +94,7 @@ function BootstrapModal({ open, server, mode = 'full', onClose }) {
                   The target host must trust the Shellius CA and run the
                   <code className="mx-1 rounded bg-amber-500/20 px-1">check-principals</code>
                   agent. Run the command below <strong>once</strong> on{' '}
-                  <strong>{server?.hostname || 'the target server'}</strong> as an
+                  <strong>{server ? serverInlineLabel(server) : 'the target server'}</strong> as an
                   administrator. It installs the CA public key, the agent secret, the
                   check-principals script, and updates sshd.
                 </p>

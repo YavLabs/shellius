@@ -13,6 +13,7 @@ import {
 } from 'lucide-react';
 import DataTable from '@/components/shared/DataTable';
 import ServerName, { serverSearchString } from '@/components/shared/ServerName';
+import EntityLink from '@/components/EntityLink';
 import Badge from '@/components/shared/Badge';
 import EnvironmentBadge from '@/components/shared/EnvironmentBadge';
 import UserCell from '@/components/shared/UserCell';
@@ -339,7 +340,13 @@ function SessionDetailDrawer({ sessionId, open, onClose, currentUser, sessionCon
             value={
               session.server ? (
                 <span className="flex items-center gap-2">
-                  {session.server.hostname || session.server.name}
+                  <EntityLink
+                    to={`/servers/${session.server.id}`}
+                    entityType="server"
+                    entityName={session.server.displayName || session.server.hostname}
+                  >
+                    <ServerName server={session.server} />
+                  </EntityLink>
                   {session.server.environment && (
                     <EnvironmentBadge environment={session.server.environment} />
                   )}
@@ -367,15 +374,27 @@ function SessionDetailDrawer({ sessionId, open, onClose, currentUser, sessionCon
               label="Access Request"
               value={
                 <span className="flex items-center gap-2">
-                  <span>
+                  <EntityLink
+                    to={`/access-requests?request=${session.accessRequest.id}`}
+                    entityType="access request"
+                    entityName={
+                      session.accessRequest.server?.displayName ||
+                      session.accessRequest.server?.hostname ||
+                      session.server?.displayName ||
+                      session.server?.hostname ||
+                      'server'
+                    }
+                  >
                     {session.accessRequest.requester?.name ||
                       session.accessRequest.requester?.email ||
                       'requester'}{' '}
                     →{' '}
-                    {session.accessRequest.server?.hostname ||
+                    {session.accessRequest.server?.displayName ||
+                      session.accessRequest.server?.hostname ||
+                      session.server?.displayName ||
                       session.server?.hostname ||
                       'server'}
-                  </span>
+                  </EntityLink>
                   {session.accessRequest.reason && (
                     <span
                       className="truncate text-xs text-muted-foreground max-w-xs"
@@ -389,10 +408,7 @@ function SessionDetailDrawer({ sessionId, open, onClose, currentUser, sessionCon
             />
           )}
           {session.terminatedBy && (
-            <DetailRow
-              label="Terminated by"
-              value={session.terminatedBy?.name || session.terminatedBy?.email || 'Unknown'}
-            />
+            <DetailRow label="Terminated by" value={<UserCell user={session.terminatedBy} fallback="Unknown" />} />
           )}
         </dl>
       )}

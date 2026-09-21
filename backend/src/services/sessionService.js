@@ -28,7 +28,7 @@ const SESSION_INCLUDE = {
       reason: true,
       requestedPrincipal: true,
       requester: { select: { name: true, email: true } },
-      server: { select: { hostname: true, environment: true } },
+      server: { select: { id: true, hostname: true, displayName: true, environment: true } },
     },
   },
 };
