@@ -11,6 +11,7 @@ import {
 import { Badge } from '@/components/ui/badge';
 import { auditCategoryTone } from '@/lib/badgeTones';
 import UserCell from '@/components/shared/UserCell';
+import EntityLink from '@/components/EntityLink';
 import DataTable from '@/components/shared/DataTable';
 import PageHeader from '@/components/common/PageHeader';
 import { Button } from '@/components/ui/button';
@@ -105,6 +106,24 @@ for (const [key, cat] of Object.entries(ACTION_CATEGORIES)) {
 function ActionBadge({ action }) {
   const category = ACTION_CATEGORY_MAP[action];
   return <Badge tone={auditCategoryTone(category)}>{action}</Badge>;
+}
+
+/**
+ * ResourceRef — the audit log's "Resource" cell. auditService.list() already
+ * computes `resourceLabel` (server display name, customer name, etc.) and
+ * `resourceLink` (a route that actually exists for that resource type, or
+ * null when there's only a list page to fall back to / nothing to link).
+ * EntityLink itself degrades to plain text when the viewer can't open it.
+ */
+function ResourceRef({ item }) {
+  const label = item.resourceLabel || item.resourceType;
+  if (!label) return <span className="text-muted-foreground">-</span>;
+  if (!item.resourceLink) return <span>{label}</span>;
+  return (
+    <EntityLink to={item.resourceLink} entityType={item.resourceType?.toLowerCase()} entityName={label}>
+      {label}
+    </EntityLink>
+  );
 }
 
 
@@ -359,7 +378,7 @@ function AuditLog() {
                   <span className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
                     <ActionBadge action={item.action} />
                     <span className="min-w-0 break-all text-sm">
-                      {item.resourceLabel || item.resourceType || '-'}
+                      <ResourceRef item={item} />
                     </span>
                   </span>
                 }
@@ -576,13 +595,17 @@ function AuditLog() {
                         </td>
                         <td className="px-4 py-3">
                           <UserCell
-                            user={item.actorId ? { name: item.actorName, email: item.actorEmail, avatarUrl: item.actorAvatarUrl } : null}
+                            user={
+                              item.actorId
+                                ? { id: item.actorId, name: item.actorName, email: item.actorEmail, avatarUrl: item.actorAvatarUrl }
+                                : null
+                            }
                             fallback="System"
                           />
                         </td>
                         <td className="px-4 py-3">
                           <span className="text-xs text-foreground">
-                            {item.resourceLabel || item.resourceType || <span className="text-muted-foreground">-</span>}
+                            <ResourceRef item={item} />
                           </span>
                         </td>
                         <td className="px-4 py-3">

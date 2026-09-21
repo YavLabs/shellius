@@ -15,6 +15,7 @@ import {
 } from 'lucide-react';
 import DataTable from '@/components/shared/DataTable';
 import ServerName, { serverSearchString } from '@/components/shared/ServerName';
+import EntityLink from '@/components/EntityLink';
 import Badge from '@/components/shared/Badge';
 import EnvironmentBadge from '@/components/shared/EnvironmentBadge';
 import UserCell from '@/components/shared/UserCell';
@@ -147,7 +148,13 @@ function RequestDetailModal({ requestId, open, onClose, onRefresh, currentUser }
               value={
                 request.server ? (
                   <span className="flex items-center gap-2">
-                    {request.server.hostname || request.server.name}
+                    <EntityLink
+                      to={`/servers/${request.server.id}`}
+                      entityType="server"
+                      entityName={request.server.displayName || request.server.hostname}
+                    >
+                      <ServerName server={request.server} />
+                    </EntityLink>
                     {request.server.environment && (
                       <EnvironmentBadge environment={request.server.environment} />
                     )}
@@ -155,6 +162,20 @@ function RequestDetailModal({ requestId, open, onClose, onRefresh, currentUser }
                 ) : request.serverId
               }
             />
+            {request.server?.customer && (
+              <DetailRow
+                label="Customer"
+                value={
+                  <EntityLink
+                    to={`/customers/${request.server.customer.id}`}
+                    entityType="customer"
+                    entityName={request.server.customer.name}
+                  >
+                    {request.server.customer.name}
+                  </EntityLink>
+                }
+              />
+            )}
             <DetailRow label="Protocol" value={request.protocol} />
             <DetailRow label="Status" value={<StatusBadge status={request.status} />} />
             <DetailRow
@@ -267,6 +288,19 @@ function AccessRequests() {
       next.delete('new');
       next.delete('action');
       next.delete('serverId');
+      setSearchParams(next, { replace: true });
+    }
+  }, [searchParams, setSearchParams]);
+
+  // Deep link: ?request=<id> (e.g. from the Audit Log or a notification)
+  // opens that request's detail modal, whichever tab it's in.
+  useEffect(() => {
+    const requestId = searchParams.get('request');
+    if (requestId) {
+      setSelectedId(requestId);
+      setDetailOpen(true);
+      const next = new URLSearchParams(searchParams);
+      next.delete('request');
       setSearchParams(next, { replace: true });
     }
   }, [searchParams, setSearchParams]);

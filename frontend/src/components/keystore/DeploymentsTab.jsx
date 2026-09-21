@@ -2,6 +2,7 @@ import { useCallback, useEffect, useImperativeHandle, useRef, useState, forwardR
 import { ChevronDown, ChevronRight, RefreshCw, History, Send, Trash2 } from 'lucide-react';
 import { CardIcon, CardStatus } from '@/components/mobile/MobileCard';
 import EmptyState from '@/components/ui/EmptyState';
+import EntityLink from '@/components/EntityLink';
 import { statusTone } from '@/lib/badgeTones';
 import DeployWizardModal from './DeployWizardModal';
 import { listDeploymentBatches, listDeployments, retryDeployment } from '@/services/keystoreService';
@@ -48,18 +49,34 @@ function DeploymentRow({ deployment, canRetry, onRetry }) {
   return (
     <li className="px-3 py-2">
       <div className="flex items-center justify-between gap-2">
-        <button
-          type="button"
-          onClick={() => hasDetail && setOpen((o) => !o)}
-          className="flex min-h-10 min-w-0 flex-1 items-center gap-2 text-left text-sm md:min-h-0"
-        >
-          {hasDetail ? (
-            open ? <ChevronDown className="h-3.5 w-3.5 shrink-0 text-muted-foreground" /> : <ChevronRight className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
-          ) : (
-            <span className="w-3.5" />
-          )}
-          <span className="truncate text-foreground">{deployment.server?.displayName || deployment.server?.hostname}</span>
-        </button>
+        <div className="flex min-h-10 min-w-0 flex-1 items-center gap-2 text-sm md:min-h-0">
+          <button
+            type="button"
+            onClick={() => hasDetail && setOpen((o) => !o)}
+            disabled={!hasDetail}
+            aria-label={open ? 'Hide details' : 'Show details'}
+            className="shrink-0 disabled:cursor-default"
+          >
+            {hasDetail ? (
+              open ? <ChevronDown className="h-3.5 w-3.5 text-muted-foreground" /> : <ChevronRight className="h-3.5 w-3.5 text-muted-foreground" />
+            ) : (
+              <span className="block w-3.5" />
+            )}
+          </button>
+          <span className="min-w-0 truncate text-foreground">
+            {deployment.server?.id ? (
+              <EntityLink
+                to={`/servers/${deployment.server.id}`}
+                entityType="server"
+                entityName={deployment.server.displayName || deployment.server.hostname}
+              >
+                {deployment.server.displayName || deployment.server.hostname}
+              </EntityLink>
+            ) : (
+              deployment.server?.displayName || deployment.server?.hostname || 'Unknown server'
+            )}
+          </span>
+        </div>
         <CardStatus tone={meta.tone} label={meta.label} />
         {canRetry && deployment.status === 'failed' && (
           <button
