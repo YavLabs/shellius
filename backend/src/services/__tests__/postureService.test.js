@@ -466,3 +466,55 @@ describe('stopped services — the half a socket scan cannot see', () => {
     expect(findings.map((f) => f.code)).toContain('STALE_FIREWALL_RULE');
   });
 });
+
+describe('stopped pm2 apps', () => {
+  const base = {
+    firewall: {
+      engine: 'ufw',
+      active: true,
+      defaultIncoming: 'deny',
+      rules: [{ port: '3000', proto: 'tcp', action: 'ALLOW', from: 'Anywhere' }],
+    },
+    listeners: [],
+  };
+
+  it('names the stopped pm2 app behind an open rule', () => {
+    const { findings } = computeFindings(
+      {
+        ...base,
+        services: [
+          {
+            kind: 'pm2',
+            name: 'chartgpt-frontend',
+            state: 'stopped',
+            running: false,
+            // pm2 binds the host port directly — no container indirection.
+            ports: [{ proto: 'tcp', port: 3000, containerPort: null, bind: '0.0.0.0' }],
+          },
+        ],
+      },
+      {}
+    );
+    const f = findings.find((x) => x.code === 'STOPPED_SERVICE_PORT_OPEN');
+    expect(f).toBeDefined();
+    expect(f.ownerLabel).toBe('pm2/chartgpt-frontend');
+    expect(f.message).toContain('pm2 app');
+    expect(f.message).toContain('chartgpt-frontend');
+    expect(findings.map((x) => x.code)).not.toContain('STALE_FIREWALL_RULE');
+  });
+
+  it('a pm2 app that declares no port explains nothing', () => {
+    // Most pm2 apps never set PORT in their env, so this is the common
+    // shape — it must not swallow the stale-rule verdict for an unrelated
+    // port just because something is stopped on the host.
+    const { findings } = computeFindings(
+      {
+        ...base,
+        services: [{ kind: 'pm2', name: 'ost_pg_script', state: 'stopped', running: false, ports: [] }],
+      },
+      {}
+    );
+    expect(findings.map((f) => f.code)).toContain('STALE_FIREWALL_RULE');
+    expect(findings.map((f) => f.code)).not.toContain('STOPPED_SERVICE_PORT_OPEN');
+  });
+});

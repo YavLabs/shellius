@@ -379,6 +379,7 @@ export function computeFindings(snapshot, settings = {}) {
     if (!svc) return 'a service';
     if (svc.kind === 'docker' || svc.kind === 'podman') return `the ${svc.kind} container “${svc.name}”`;
     if (svc.kind === 'systemd') return `the unit ${svc.name}`;
+    if (svc.kind === 'pm2') return `the pm2 app “${svc.name}”`;
     return `“${svc.name}”`;
   };
   // Per-server entries first so the most specific rule wins the match.

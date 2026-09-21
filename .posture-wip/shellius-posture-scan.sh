@@ -557,6 +557,7 @@ collect_docker() {
 SERVICES="$TMP/services.tsv"   # kind name ref state running status detail source ports exit
 : > "$SERVICES"
 SVC_SYSTEMD=0
+SVC_PM2=0
 SVC_CONTAINERS=0
 MAX_SERVICES=200
 SERVICE_COUNT=0
@@ -579,6 +580,115 @@ emit_service() {
     __out+=("$__f")
   done
   printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "${__out[@]}" >> "$SERVICES"
+}
+
+# name<TAB>PORT<TAB>script, one line per saved app.
+#
+# python3 when present (every distro that ships systemd ships it), because
+# dump.pm2 is a single-line JSON array with nested per-app env and picking
+# the right PORT out of it with sed is the kind of parser that works on the
+# author's host and nowhere else. Without python3, names only — degraded,
+# and honest about it, rather than wrong.
+pm2_dump_apps() {
+  local dump=$1
+  if have python3; then
+    python3 - "$dump" <<'PY' 2>/dev/null
+import json, sys
+try:
+    apps = json.load(open(sys.argv[1]))
+except Exception:
+    sys.exit(0)
+if not isinstance(apps, list):
+    sys.exit(0)
+for a in apps:
+    if not isinstance(a, dict):
+        continue
+    name = str(a.get('name') or '').replace('\t', ' ')
+    env = a.get('env') or a.get('pm2_env') or {}
+    port = ''
+    if isinstance(env, dict):
+        raw = env.get('PORT')
+        if raw is not None and str(raw).strip().isdigit():
+            port = str(raw).strip()
+    script = str(a.get('pm_exec_path') or a.get('script') or '').replace('\t', ' ')
+    if name:
+        print('\t'.join((name, port, script)))
+PY
+    return 0
+  fi
+  # Names only. `"name":"..."` is the one field flat enough to take from a
+  # JSON blob with a regex and still be right.
+  grep -oE '"name":"[^"]*"' "$dump" 2>/dev/null | sed 's/^"name":"//; s/"$//' | while IFS= read -r n; do
+    [[ -n "$n" ]] && printf '%s\t\t\n' "$n"
+  done
+}
+
+# pm2 apps, running and stopped.
+#
+# pm2 is where this matters most in practice and where it is hardest: a
+# stopped app has no process and no socket, so `ss` and /proc see nothing at
+# all — a host can have thirty stopped apps and look completely idle.
+#
+# Read from $PM2_HOME on disk rather than by asking the daemon. `pm2 jlist`
+# is authoritative but has to run AS the owning user with that user's
+# PM2_HOME, which is a general run-as-any-user grant; the dump file is a
+# plain file, so root reads it directly and the unprivileged collector reads
+# it when the home is world-readable (the common case) and reports pm2:false
+# when it is not.
+#
+# Status comes from $PM2_HOME/pids/<name>-<id>.pid plus /proc, because
+# dump.pm2 records what was SAVED, not what is running now.
+#
+# Ports: pm2 has no published-port map the way Docker does, so a port is
+# only knowable when the app declares one in its env (PORT=). Where it does
+# not, the app is still reported — "this is installed and stopped" is worth
+# knowing even when it cannot be tied to a firewall rule.
+pm2_running_pid() {
+  local home=$1 name=$2 f pid
+  for f in "$home"/pids/"$name"-*.pid; do
+    [[ -r "$f" ]] || continue
+    pid=$(cat "$f" 2>/dev/null)
+    [[ "$pid" =~ ^[0-9]+$ ]] || continue
+    [[ -d "/proc/$pid" ]] && { printf '%s' "$pid"; return 0; }
+  done
+  return 1
+}
+
+declare -A PM2_SEEN=()
+
+collect_pm2_services() {
+  # The standard homes, plus PM2_HOME when the environment names a
+  # non-default one — which is both a real deployment shape (the owner
+  # resolution below already handles a custom PM2_HOME for RUNNING apps)
+  # and what makes this testable against a fixture.
+  local home dump owner
+  for home in ${PM2_HOME:+"$PM2_HOME"} /root/.pm2 /home/*/.pm2; do
+    [[ -d "$home" ]] || continue
+    [[ -n "${PM2_SEEN[$home]:-}" ]] && continue
+    PM2_SEEN[$home]=1
+    dump="$home/dump.pm2"
+    [[ -r "$dump" ]] || continue
+    owner=$(stat -c '%U' "$home" 2>/dev/null || echo "-")
+    SVC_PM2=1
+
+    local name port script
+    while IFS=$'\t' read -r name port script; do
+      [[ -z "${name:-}" ]] && continue
+      local pid="" state="stopped" running=0
+      if pid=$(pm2_running_pid "$home" "$name"); then
+        state="running"; running=1
+      fi
+      local ports=""
+      # A declared PORT is a host port with no container indirection.
+      # "-" for the container port: pm2 binds the host port directly, so
+      # rendering it as 4200 -> 4200 would imply an indirection that only
+      # containers have.
+      [[ "$port" =~ ^[0-9]+$ ]] && ports="tcp/${port}>-@0.0.0.0"
+      emit_service "pm2" "$name" "${owner}:${name}" "$state" "$running" \
+        "$([[ $running -eq 1 ]] && echo "online (pid $pid)" || echo "stopped")" \
+        "${script:-}" "$home" "$ports" ""
+    done < <(pm2_dump_apps "$dump")
+  done
 }
 
 collect_systemd_services() {
@@ -605,8 +715,21 @@ collect_systemd_services() {
       continue
     fi
 
-    local src=""
-    src=$(systemctl show -p FragmentPath --value "$name" 2>/dev/null) || src=""
+    # Type and the unit file in one read. `systemctl show` needs no
+    # privilege for either.
+    local props utype src
+    props=$(systemctl show -p Type -p FragmentPath "$name" 2>/dev/null) || props=""
+    utype=$(sed -n 's/^Type=//p' <<<"$props")
+    src=$(sed -n 's/^FragmentPath=//p' <<<"$props")
+
+    # A oneshot or idle unit that has finished is inactive BY DESIGN — it
+    # ran, it exited, that is the whole contract. Reporting those buried the
+    # three stopped apps that mattered under fifteen rows of snapd.* and
+    # apparmor.service. A FAILED unit is still reported whatever its type.
+    if [[ "$state" == "inactive" ]]; then
+      case "$utype" in oneshot|idle) continue ;; esac
+    fi
+
     emit_service "systemd" "$name" "$name" "$state" 0 "$active/$sub" "${rest:-}" "$src" "" ""
   done < <(systemctl list-units --type=service --all --no-legend --plain --no-pager 2>/dev/null)
 }
@@ -707,6 +830,8 @@ FW_ENGINE="none"
 FW_ACTIVE=0
 FW_DEFAULT_IN="unknown"
 
+declare -A FW_SEEN=()   # v4/v6 rule pairs collapse to one row
+
 collect_firewall() {
   if have ufw; then
     local status
@@ -729,7 +854,12 @@ collect_firewall() {
         from=$(sed -E "s/.*(ALLOW|DENY|REJECT|LIMIT)([[:space:]]+IN)?[[:space:]]+//" <<<"$line" | sed 's/ *$//')
 
         # "80,443/tcp", "6000:6007/tcp", "22/tcp (v6)", "22"
+        # Strip the marker from BOTH columns: ufw writes the twin as
+        # "8083/tcp (v6) ALLOW IN Anywhere (v6)", so stripping only the port
+        # spec leaves the two rows differing by the source and the dedupe
+        # below never fires.
         spec=$(sed 's/ *(v6)//' <<<"$spec")
+        from=$(sed 's/ *(v6)//' <<<"$from")
         local pspec proto
         if [[ "$spec" == */* ]]; then
           pspec=${spec%%/*}; proto=${spec##*/}
@@ -738,7 +868,15 @@ collect_firewall() {
         fi
         [[ "$pspec" =~ ^[0-9,:]+$ ]] || continue
 
-        printf '%s\t%s\t%s\t%s\n' "$pspec" "$proto" "$action" "${from:-Anywhere}" >> "$FWRULES"
+        # ufw prints an IPv4 rule and its IPv6 twin as two lines that differ
+        # only by the "(v6)" marker stripped above — so without this, every
+        # port produces TWO identical rows and every stale-rule finding is
+        # reported twice. A real host with 40 leftover rules reported 80.
+        local fwkey="${pspec}|${proto}|${action}|${from:-Anywhere}"
+        if [[ -z "${FW_SEEN[$fwkey]:-}" ]]; then
+          FW_SEEN[$fwkey]=1
+          printf '%s\t%s\t%s\t%s\n' "$pspec" "$proto" "$action" "${from:-Anywhere}" >> "$FWRULES"
+        fi
       done <<<"$status"
       return
     fi
@@ -991,6 +1129,7 @@ analyze() {
           case "$okind" in
             docker|podman) olabel="the $okind container \"$oname\"" ;;
             systemd)       olabel="the unit $oname" ;;
+            pm2)           olabel="the pm2 app \"$oname\"" ;;
             *)             olabel="\"$oname\"" ;;
           esac
           add_finding "MEDIUM" "STOPPED_SERVICE_PORT_OPEN" "${rproto}" "$p" "-" "${okind}/${oname}" \
@@ -1087,9 +1226,10 @@ render_json() {
   # Which halves of the service scan ran. A host that never looked for
   # containers must not be indistinguishable from one that looked and found
   # none — that difference is the whole value of the field.
-  printf '  "serviceScan": { "systemd": %s, "containers": %s, "pm2": false },\n' \
+  printf '  "serviceScan": { "systemd": %s, "containers": %s, "pm2": %s },\n' \
     "$([[ $SVC_SYSTEMD -eq 1 ]] && echo true || echo false)" \
-    "$([[ $SVC_CONTAINERS -eq 1 ]] && echo true || echo false)"
+    "$([[ $SVC_CONTAINERS -eq 1 ]] && echo true || echo false)" \
+    "$([[ $SVC_PM2 -eq 1 ]] && echo true || echo false)"
 
   printf '  "findings": [\n'
   first=1
@@ -1363,6 +1503,51 @@ render_findings() {
   echo
 }
 
+# Installed but not running. This section exists because the rest of the
+# report can only describe open sockets: a host with thirty stopped pm2 apps
+# and forty firewall rules held open for them reads as completely idle.
+#
+# Sorted so the ones holding a port come first — those are the ones that
+# change something the moment they start.
+render_stopped() {
+  [[ -s "$SERVICES" ]] || return 0
+  local n=0 kind name ref state running status detail src ports exitcode
+  while IFS=$'\t' read -r kind name ref state running status detail src ports exitcode; do
+    [[ "${running:-0}" == "1" ]] && continue
+    n=$((n+1))
+  done < "$SERVICES"
+  (( n == 0 )) && return 0
+
+  echo
+  printf '%s%s (%d)%s\n' "$C_BOLD" "INSTALLED, NOT RUNNING" "$n" "$C_RESET"
+  printf '  %s%s  %s  %s  %s%s\n' "$C_DIM" \
+    "$(pad 'KIND' 10)" "$(pad 'NAME' 34)" "$(pad 'STATE' 10)" "PORTS" "$C_RESET"
+
+  # Ports first, then kind/name — the ones with a declared port are the ones
+  # that reopen something.
+  while IFS=$'\t' read -r _sortkey kind name ref state running status detail src ports exitcode; do
+    local shown="${ports}"
+    [[ -z "$shown" || "$shown" == "-" ]] && shown="${C_DIM}—${C_RESET}"
+    printf '  %s  %s  %s  %s\n' \
+      "$(pad "$kind" 10)" "$(pad "$(trunc "$name" 34)" 34)" \
+      "$(pad "$state" 10)" "$shown"
+  done < <(
+    while IFS=$'\t' read -r kind name ref state running status detail src ports exitcode; do
+      [[ "${running:-0}" == "1" ]] && continue
+      local k=1
+      [[ -n "$ports" && "$ports" != "-" ]] && k=0
+      printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+        "$k" "$kind" "$name" "$ref" "$state" "$running" "$status" "$detail" "$src" "$ports" "$exitcode"
+    done < "$SERVICES" | sort -t$'\t' -k1,1 -k2,2 -k3,3
+  )
+
+  local scanned=""
+  [[ $SVC_SYSTEMD -eq 1 ]] && scanned+="systemd "
+  [[ $SVC_CONTAINERS -eq 1 ]] && scanned+="containers "
+  [[ $SVC_PM2 -eq 1 ]] && scanned+="pm2 "
+  printf '  %sscanned: %s%s\n' "$C_DIM" "${scanned:-nothing}" "$C_RESET"
+}
+
 render_table() {
   build_rows
 
@@ -1414,6 +1599,7 @@ render_table() {
       "$C_DIM" "$hidden" "$C_RESET"
   fi
 
+  render_stopped
   render_findings
 }
 
@@ -1428,6 +1614,7 @@ collect_docker
 log "${C_DIM}collecting installed services...${C_RESET}"
 collect_systemd_services
 collect_container_services
+collect_pm2_services
 log "${C_DIM}collecting firewall state...${C_RESET}"
 collect_firewall
 log "${C_DIM}correlating...${C_RESET}"

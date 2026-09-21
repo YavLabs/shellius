@@ -26,6 +26,7 @@ RED=$'\033[31m'; GRN=$'\033[32m'; DIM=$'\033[2m'; BLD=$'\033[1m'; RST=$'\033[0m'
 run_scan() {
   PATH="$STUBS:$PATH" FX_SS="$FX_SS" FX_UFW="$FX_UFW" FX_DOCKER_PS="$FX_DOCKER_PS" \
     FX_DOCKER_PS_A="${FX_DOCKER_PS_A:-}" FX_DOCKER_BINDINGS="${FX_DOCKER_BINDINGS:-}" \
+    PM2_HOME="${FX_PM2_HOME:-}" \
     bash "$SCAN" --json --no-color --unprivileged 2>/dev/null
 }
 
@@ -91,6 +92,36 @@ print(r[0] if r else 'ABSENT')
   fi
 }
 
+assert_service_state() {
+  local out=$1 kind=$2 name=$3 want_state=$4 label=$5 got
+  got=$(python3 -c "
+import json,sys
+d=json.load(sys.stdin)
+for s in d.get('services', []):
+    if s['kind']=='$kind' and s['name']=='$name': print(s['state']); break
+else: print('ABSENT')
+" <<<"$out")
+  if [[ "$got" == "$want_state" ]]; then
+    echo "  ${GRN}✓${RST} $label ${DIM}($kind/$name = $got)${RST}"; PASS=$((PASS+1))
+  else
+    echo "  ${RED}✗${RST} $label ${DIM}($kind/$name: expected $want_state, got $got)${RST}"; FAIL=$((FAIL+1))
+  fi
+}
+
+assert_count() {
+  local out=$1 code=$2 want=$3 label=$4 got
+  got=$(python3 -c "
+import json,sys
+d=json.load(sys.stdin)
+print(sum(1 for f in d['findings'] if f['code']=='$code'))
+" <<<"$out")
+  if [[ "$got" == "$want" ]]; then
+    echo "  ${GRN}✓${RST} $label ${DIM}($code × $got)${RST}"; PASS=$((PASS+1))
+  else
+    echo "  ${RED}✗${RST} $label ${DIM}($code: expected $want, got $got)${RST}"; FAIL=$((FAIL+1))
+  fi
+}
+
 scenario() {
   echo; echo "${BLD}Scenario $1:${RST} $2"
   # Fixtures are globals, so each scenario resets the optional ones. A
@@ -100,6 +131,7 @@ scenario() {
   FX_DOCKER_PS_A=''
   FX_DOCKER_BINDINGS=''
   FX_DOCKER_WD=''
+  FX_PM2_HOME=''
 }
 
 # Regression guard for the class of bug that silently blanked every pm2
@@ -110,6 +142,7 @@ assert_quiet() {
   local label=$1 noise
   noise=$(PATH="$STUBS:$PATH" FX_SS="$FX_SS" FX_UFW="$FX_UFW" FX_DOCKER_PS="$FX_DOCKER_PS" \
             FX_DOCKER_PS_A="${FX_DOCKER_PS_A:-}" FX_DOCKER_BINDINGS="${FX_DOCKER_BINDINGS:-}" \
+            PM2_HOME="${FX_PM2_HOME:-}" \
             FX_DOCKER_WD="${FX_DOCKER_WD:-}" bash "$SCAN" --json --no-color --unprivileged 2>&1 >/dev/null \
           | grep -vE '^(collecting|correlating|warning:|         re-run)' | grep -v '^$')
   if [[ -z "$noise" ]]; then
@@ -365,6 +398,66 @@ OUT=$(run_scan)
 assert_quiet "scan produced no stderr noise"
 assert_finding "$OUT" STALE_FIREWALL_RULE LOW "still reported as stale"
 assert_absent  "$OUT" STOPPED_SERVICE_PORT_OPEN "a running container is not a stopped one"
+fi
+
+
+# ===========================================================================
+# 12. A ufw rule and its IPv6 twin are ONE rule, not two.
+#
+#     `ufw status` prints "8083/tcp" and "8083/tcp (v6)" as separate lines.
+#     The parser strips the marker, so both became identical rows and every
+#     stale-rule finding fired twice. A real host with 40 leftover rules
+#     reported 80 of them.
+# ===========================================================================
+if [[ -z "$ONLY" || "$ONLY" == 12 ]]; then
+scenario 12 "A rule and its (v6) twin report once, not twice"
+FX_SS='tcp   LISTEN 0      4096   0.0.0.0:22        0.0.0.0:*     users:(("sshd",pid=800,fd=3))'
+FX_UFW='Status: active
+
+Default: deny (incoming), allow (outgoing), disabled (routed)
+
+To                         Action      From
+--                         ------      ----
+8083/tcp                   ALLOW IN    Anywhere
+8083/tcp (v6)              ALLOW IN    Anywhere (v6)'
+FX_DOCKER_PS=''
+OUT=$(run_scan)
+assert_quiet "scan produced no stderr noise"
+assert_count "$OUT" STALE_FIREWALL_RULE 1 "one finding for one port"
+fi
+
+# ===========================================================================
+# 13. A STOPPED pm2 app that declares PORT, behind an open ufw rule.
+#
+#     This is the shape that prompted the whole feature: pm2 apps are the
+#     most common thing to leave stopped, they have no socket and no
+#     process, and their firewall rules outlive them.
+# ===========================================================================
+if [[ -z "$ONLY" || "$ONLY" == 13 ]]; then
+scenario 13 "Stopped pm2 app is reported, and explains its open rule"
+PM2FX=$(mktemp -d)
+mkdir -p "$PM2FX/pids"
+cat > "$PM2FX/dump.pm2" <<'JSON'
+[{"name":"chartgpt-frontend","pm_exec_path":"/home/ubuntu/chartgpt/serve.js","env":{"PORT":"3000"}},
+ {"name":"ost_pg_script","pm_exec_path":"/home/ubuntu/scripts/ost.js","env":{"NODE_ENV":"production"}}]
+JSON
+FX_PM2_HOME="$PM2FX"
+FX_SS='tcp   LISTEN 0      4096   0.0.0.0:22        0.0.0.0:*     users:(("sshd",pid=800,fd=3))'
+FX_UFW='Status: active
+
+Default: deny (incoming), allow (outgoing), disabled (routed)
+
+To                         Action      From
+--                         ------      ----
+3000/tcp                   ALLOW IN    Anywhere'
+FX_DOCKER_PS=''
+OUT=$(run_scan)
+assert_quiet "scan produced no stderr noise"
+assert_service_state "$OUT" pm2 chartgpt-frontend stopped "the stopped app is reported at all"
+assert_service_state "$OUT" pm2 ost_pg_script stopped "an app with no PORT is still reported"
+assert_finding "$OUT" STOPPED_SERVICE_PORT_OPEN MEDIUM "its open rule is attributed to it"
+assert_absent  "$OUT" STALE_FIREWALL_RULE "not also reported as an abandoned rule"
+rm -rf "$PM2FX"
 fi
 
 echo
