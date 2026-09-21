@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useMemo } from 'react';
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Bell, CheckCheck } from 'lucide-react';
 import DataTable from '@/components/shared/DataTable';
@@ -14,6 +14,7 @@ import { relativeTime } from '@/utils/time';
 import { RELATED_ROUTE } from '@/lib/notificationRoutes';
 import { NOTIFICATION_META, notificationMeta } from '@/lib/notificationMeta';
 import { cn } from '@/lib/utils';
+import useAutoRefresh from '@/hooks/useAutoRefresh';
 
 
 /** The type's icon, dimmed once read — the same cue the dropdown uses. */
@@ -42,8 +43,9 @@ function Notifications() {
   const [filter, setFilter] = useState('all');
   const [typeFilter, setTypeFilter] = useState('');
 
+  const loadedRef = useRef(false);
   const fetch = useCallback(async () => {
-    setLoading(true);
+    if (!loadedRef.current) setLoading(true);
     setError('');
     try {
       const params = { page: 1, limit: 100 };
@@ -55,12 +57,14 @@ function Notifications() {
       setError(err.response?.data?.error?.message || err.message || 'Failed to load notifications');
     } finally {
       setLoading(false);
+      loadedRef.current = true;
     }
   }, [filter]);
 
   useEffect(() => {
     fetch();
   }, [fetch]);
+  const { refresh, refreshing, lastUpdated } = useAutoRefresh(fetch);
 
   const handleMarkAll = async () => {
     try {
@@ -194,6 +198,9 @@ function Notifications() {
             ? `${unreadCount} unread notification${unreadCount === 1 ? '' : 's'}`
             : 'Recent system notifications and alerts.'
         }
+        onRefresh={refresh}
+        refreshing={refreshing}
+        lastUpdated={lastUpdated}
         actions={[
           {
             key: 'mark-all',

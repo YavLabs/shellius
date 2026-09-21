@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import {
   Boxes,
@@ -6,7 +6,6 @@ import {
   Globe,
   Info,
   Network,
-  RefreshCw,
   Server as ServerIcon,
   ShieldAlert,
 } from 'lucide-react';
@@ -34,6 +33,7 @@ import {
 import { listCustomers } from '@/services/customerService';
 import BulkInstallModal from '@/components/servers/BulkInstallModal';
 import { ENVIRONMENT_LABELS } from '@/lib/labels';
+import useAutoRefresh from '@/hooks/useAutoRefresh';
 
 /**
  * Services & ports — what is running across the fleet.
@@ -129,8 +129,9 @@ function ServiceInventory() {
     [q, proto, reachability, ownerKind, environment, customerId, port, serviceKey, state]
   );
 
+  const loadedRef = useRef(false);
   const load = useCallback(async () => {
-    setLoading(true);
+    if (!loadedRef.current) setLoading(true);
     setError('');
     try {
       // The grouped call feeds the tiles only. One grid was showing the same
@@ -146,6 +147,7 @@ function ServiceInventory() {
       setError(err.response?.data?.error?.message || err.message || 'Could not load the inventory');
     } finally {
       setLoading(false);
+      loadedRef.current = true;
     }
   }, [filters, page, pageSize]);
 
@@ -153,12 +155,20 @@ function ServiceInventory() {
     load();
   }, [load]);
 
-  useEffect(() => {
-    getInventoryFacets().then(setFacets).catch(() => setFacets(null));
-    listCustomers({ page: 1, pageSize: 200 })
-      .then((d) => setCustomers(d.items || []))
-      .catch(() => setCustomers([]));
+  const fetchFacets = useCallback(async () => {
+    await Promise.all([
+      getInventoryFacets().then(setFacets).catch(() => setFacets(null)),
+      listCustomers({ page: 1, pageSize: 200 })
+        .then((d) => setCustomers(d.items || []))
+        .catch(() => setCustomers([])),
+    ]);
   }, []);
+  useEffect(() => { fetchFacets(); }, [fetchFacets]);
+
+  const loadAll = useCallback(async () => {
+    await Promise.all([load(), fetchFacets()]);
+  }, [load, fetchFacets]);
+  const { refresh, refreshing, lastUpdated } = useAutoRefresh(loadAll);
 
   // The services view always loads the whole grouped set, so its totals are
   // the honest fleet numbers rather than a page's worth.
@@ -436,16 +446,10 @@ function ServiceInventory() {
         icon={Network}
         title="Services & ports"
         subtitle="Every service listening across the fleet, and where it runs."
+        onRefresh={refresh}
+        refreshing={refreshing}
+        lastUpdated={lastUpdated}
         actions={[
-          {
-            key: 'refresh',
-            label: 'Refresh',
-            icon: RefreshCw,
-            variant: 'outline',
-            onClick: load,
-            disabled: loading,
-            spin: loading,
-          },
           {
             key: 'export',
             label: 'Export',

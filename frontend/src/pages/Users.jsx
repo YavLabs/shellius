@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import {
   Plus,
@@ -52,6 +52,7 @@ import {
 } from '@/services/userService';
 import { listRoles } from '@/services/roleService';
 import { useAuth } from '@/context/AuthContext';
+import useAutoRefresh from '@/hooks/useAutoRefresh';
 
 const STATUSES = ['active', 'invited', 'suspended', 'deactivated'];
 
@@ -105,17 +106,20 @@ function Users() {
   const { user: me, can } = useAuth();
   const [roles, setRoles] = useState([]);
   const [managers, setManagers] = useState([]);
-  useEffect(() => {
-    listRoles()
-      .then(setRoles)
-      .catch(() => setRoles([]));
-    // Light option list for the "Manager" filter — anyone could be a
-    // manager, so this pulls the full (bounded) user directory once rather
-    // than only the names present on the current page.
-    listUsers({ page: 1, pageSize: 200 })
-      .then((d) => setManagers(d.items || []))
-      .catch(() => {});
+  const fetchOptions = useCallback(async () => {
+    await Promise.all([
+      listRoles()
+        .then(setRoles)
+        .catch(() => setRoles([])),
+      // Light option list for the "Manager" filter — anyone could be a
+      // manager, so this pulls the full (bounded) user directory once rather
+      // than only the names present on the current page.
+      listUsers({ page: 1, pageSize: 200 })
+        .then((d) => setManagers(d.items || []))
+        .catch(() => {}),
+    ]);
   }, []);
+  useEffect(() => { fetchOptions(); }, [fetchOptions]);
   const assignableRoleIds = new Set(roles.filter((r) => r.assignable).map((r) => r.id));
   const isMe = (r) => r.id === me?.id;
   // You can manage yourself, and anyone whose role you could assign.
@@ -163,8 +167,9 @@ function Users() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  const loadedRef = useRef(false);
   const fetchUsers = useCallback(async () => {
-    setLoading(true);
+    if (!loadedRef.current) setLoading(true);
     setError('');
     try {
       const params = { page, pageSize };
@@ -179,12 +184,18 @@ function Users() {
       setError(err.response?.data?.error?.message || err.message || 'Failed to load users');
     } finally {
       setLoading(false);
+      loadedRef.current = true;
     }
   }, [page, pageSize, role, status, managerId, mfaFilter]);
 
   useEffect(() => {
     fetchUsers();
   }, [fetchUsers]);
+
+  const loadAll = useCallback(async () => {
+    await Promise.all([fetchUsers(), fetchOptions()]);
+  }, [fetchUsers, fetchOptions]);
+  const { refresh, refreshing, lastUpdated } = useAutoRefresh(loadAll);
 
   const openCreate = () => { setEditingUser(null); setFormOpen(true); };
   // The list row doesn't carry `customerIds` (only `accessScope`) — fetch
@@ -530,6 +541,9 @@ function Users() {
         title="Users"
         subtitle="Manage user accounts, roles, and access."
         helpKey="users"
+        onRefresh={refresh}
+        refreshing={refreshing}
+        lastUpdated={lastUpdated}
         actions={[{ key: 'add', label: 'Add User', icon: Plus, onClick: openCreate, hidden: !can('users.invite') }]}
       />
 

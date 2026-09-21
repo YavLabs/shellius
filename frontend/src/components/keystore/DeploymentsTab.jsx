@@ -253,6 +253,7 @@ const DeploymentsTab = forwardRef(function DeploymentsTab({ canManage }, ref) {
       setTimeout(() => rowRefs.current[id]?.scrollIntoView({ behavior: 'smooth', block: 'center' }), 100);
       setTimeout(() => setHighlightId((cur) => (cur === id ? null : cur)), 2500);
     },
+    refresh: fetch,
   }));
 
   return (

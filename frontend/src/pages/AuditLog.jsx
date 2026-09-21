@@ -1,4 +1,4 @@
-import { Fragment, useState, useEffect, useCallback } from 'react';
+import { Fragment, useState, useEffect, useCallback, useRef } from 'react';
 import {
   ChevronDown,
   ChevronUp,
@@ -31,6 +31,7 @@ import { can } from '@/lib/permissions';
 import useIsMobile from '@/hooks/useIsMobile';
 import FilterControl from '@/components/shared/FilterControl';
 import useMobilePages from '@/hooks/useMobilePages';
+import useAutoRefresh from '@/hooks/useAutoRefresh';
 import { MobileCard, MobileCardList, MobileCardSkeleton, MobileEmptyCard } from '@/components/mobile/MobileCard';
 import { MobileFiltersButton, MobileLoadMore, MobileSearch } from '@/components/mobile/MobileListControls';
 import Avatar from '@/components/ui/Avatar';
@@ -165,8 +166,9 @@ function AuditLog() {
   const [expandedRow, setExpandedRow] = useState(null);
   const [exporting, setExporting] = useState(false);
 
+  const loadedRef = useRef(false);
   const fetchData = useCallback(async () => {
-    setLoading(true);
+    if (!loadedRef.current) setLoading(true);
     setError('');
     try {
       const params = { page, limit: pageSize };
@@ -184,10 +186,12 @@ function AuditLog() {
       setError(err.response?.data?.error?.message || err.message || 'Failed to load audit log.');
     } finally {
       setLoading(false);
+      loadedRef.current = true;
     }
   }, [page, pageSize, search, actionFilter, resourceTypeFilter, actorSearch, startDate, endDate]);
 
   useEffect(() => { fetchData(); }, [fetchData]);
+  const { refresh, refreshing, lastUpdated } = useAutoRefresh(fetchData);
 
   const handleFilterChange = (setter) => (value) => {
     setter(value);
@@ -514,6 +518,9 @@ function AuditLog() {
         title="Audit Log"
         subtitle="Immutable record of all system events."
         helpKey="audit-log"
+        onRefresh={refresh}
+        refreshing={refreshing}
+        lastUpdated={lastUpdated}
         actions={[
           {
             key: 'export',

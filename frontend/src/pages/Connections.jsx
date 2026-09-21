@@ -1,8 +1,9 @@
-import { useEffect } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { useLocation } from 'react-router-dom';
 import { Cable } from 'lucide-react';
 import PageHeader from '@/components/common/PageHeader';
 import { RecentConnections } from '@/components/dashboard/RecentConnectionsWidget';
+import useAutoRefresh from '@/hooks/useAutoRefresh';
 
 /**
  * Connections — full view behind the dashboard widget's "View all": every
@@ -20,10 +21,25 @@ function Connections() {
     return () => clearTimeout(t);
   }, [hash]);
 
+  // RecentConnections owns its own fetch; bumping this key makes it reload
+  // without disturbing the page's search/filter/range state.
+  const [refreshKey, setRefreshKey] = useState(0);
+  const load = useCallback(async () => {
+    setRefreshKey((k) => k + 1);
+  }, []);
+  const { refresh, refreshing, lastUpdated } = useAutoRefresh(load);
+
   return (
     <div className="space-y-6 p-6">
-      <PageHeader icon={Cable} title="Recent connections" subtitle="Your active sessions, and the servers and hosts you connected to recently." />
-      <RecentConnections variant="page" />
+      <PageHeader
+        icon={Cable}
+        title="Recent connections"
+        subtitle="Your active sessions, and the servers and hosts you connected to recently."
+        onRefresh={refresh}
+        refreshing={refreshing}
+        lastUpdated={lastUpdated}
+      />
+      <RecentConnections variant="page" refreshKey={refreshKey} />
     </div>
   );
 }

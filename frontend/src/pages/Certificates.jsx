@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import {
   Eye,
   Download,
@@ -27,6 +27,7 @@ import { useAuth } from '@/context/AuthContext';
 import { formatDateTime } from '@/utils/time';
 import { CERT_STATUS_LABELS } from '@/lib/labels';
 import { can } from '@/lib/permissions';
+import useAutoRefresh from '@/hooks/useAutoRefresh';
 import { envAccent } from '@/lib/mobileCard';
 import { certificateStatusTone } from '@/lib/badgeTones';
 import { CardStatus } from '@/components/mobile/MobileCard';
@@ -179,8 +180,9 @@ function Certificates() {
   const [revokeTarget, setRevokeTarget] = useState(null);
   const [revoking, setRevoking] = useState(false);
 
+  const loadedRef = useRef(false);
   const fetchCerts = useCallback(async () => {
-    setLoading(true);
+    if (!loadedRef.current) setLoading(true);
     setError('');
     try {
       const params = { page, limit: pageSize };
@@ -200,20 +202,29 @@ function Certificates() {
       setError(err.response?.data?.error?.message || err.message || 'Failed to load certificates');
     } finally {
       setLoading(false);
+      loadedRef.current = true;
     }
   }, [page, pageSize, statusFilter, serverFilter, userFilter, environmentFilter, certTypeFilter, startDate, endDate]);
 
   useEffect(() => { fetchCerts(); }, [fetchCerts]);
 
   // Lightweight option lists for the filter drawer.
-  useEffect(() => {
-    listServers({ page: 1, pageSize: 200 })
-      .then((d) => setServers(d.items || []))
-      .catch(() => {});
-    listUsers({ page: 1, pageSize: 200 })
-      .then((d) => setIssuers(d.items || []))
-      .catch(() => {});
+  const fetchOptions = useCallback(async () => {
+    await Promise.all([
+      listServers({ page: 1, pageSize: 200 })
+        .then((d) => setServers(d.items || []))
+        .catch(() => {}),
+      listUsers({ page: 1, pageSize: 200 })
+        .then((d) => setIssuers(d.items || []))
+        .catch(() => {}),
+    ]);
   }, []);
+  useEffect(() => { fetchOptions(); }, [fetchOptions]);
+
+  const loadAll = useCallback(async () => {
+    await Promise.all([fetchCerts(), fetchOptions()]);
+  }, [fetchCerts, fetchOptions]);
+  const { refresh, refreshing, lastUpdated } = useAutoRefresh(loadAll);
 
   // Count certs expiring within 24h
   const expiringSoonCount = certs.filter((c) => {
@@ -428,7 +439,11 @@ function Certificates() {
         icon={FileKey}
         title="Certificates"
         subtitle="Short-lived SSH certificates issued by the Shellius CA."
-      helpKey="certificates" />
+        helpKey="certificates"
+        onRefresh={refresh}
+        refreshing={refreshing}
+        lastUpdated={lastUpdated}
+      />
 
       {expiringSoonCount > 0 && (
         <div className="flex items-center gap-3 rounded-md border border-amber-500/40 bg-amber-500/10 px-4 py-3">

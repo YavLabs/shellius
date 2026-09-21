@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { useTerminalWorkspace } from '@/context/TerminalWorkspaceContext';
 import { useSearchParams } from 'react-router-dom';
 import {
@@ -10,7 +10,6 @@ import {
   AlertCircle,
   KeyRound,
   Eye,
-  RefreshCw,
   Zap,
 } from 'lucide-react';
 import DataTable from '@/components/shared/DataTable';
@@ -40,6 +39,7 @@ import { relativeTime, formatDateTime } from '@/utils/time';
 import { ACCESS_REQUEST_STATUS_LABELS } from '@/lib/labels';
 import { PENDING_REVIEWS_EVENT } from '@/hooks/usePendingReviewCount';
 import { can } from '@/lib/permissions';
+import useAutoRefresh from '@/hooks/useAutoRefresh';
 import { envAccent } from '@/lib/mobileCard';
 import { CardStatus } from '@/components/mobile/MobileCard';
 import { statusTone } from '@/lib/badgeTones';
@@ -316,8 +316,9 @@ function AccessRequests() {
     }
   }, [searchParams, setSearchParams]);
 
+  const loadedRef = useRef(false);
   const fetchRequests = useCallback(async () => {
-    setLoading(true);
+    if (!loadedRef.current) setLoading(true);
     setError('');
     try {
       const params = { tab: activeTab, page, limit: pageSize };
@@ -337,6 +338,7 @@ function AccessRequests() {
       setError(err.response?.data?.error?.message || err.message || 'Failed to load access requests.');
     } finally {
       setLoading(false);
+      loadedRef.current = true;
     }
   }, [
     activeTab,
@@ -377,6 +379,13 @@ function AccessRequests() {
 
   useEffect(() => { fetchRequests(); }, [fetchRequests]);
   useEffect(() => { fetchPendingReviewCount(); }, [fetchPendingReviewCount]);
+
+  // Pending requests change on their own (another reviewer acts, one
+  // expires) — gentle 30s polling on top of the manual Refresh button.
+  const loadAll = useCallback(async () => {
+    await Promise.all([fetchRequests(), fetchPendingReviewCount()]);
+  }, [fetchRequests, fetchPendingReviewCount]);
+  const { refresh, refreshing, lastUpdated } = useAutoRefresh(loadAll, { interval: 30000 });
 
   const handleTabChange = (key) => {
     setActiveTab(key);
@@ -626,8 +635,10 @@ function AccessRequests() {
         title="Access Requests"
         subtitle="Request temporary access to servers or review pending requests."
         helpKey="access-requests"
+        onRefresh={refresh}
+        refreshing={refreshing}
+        lastUpdated={lastUpdated}
         actions={[
-          { key: 'refresh', label: 'Refresh', icon: RefreshCw, variant: 'outline', onClick: () => fetchRequests(), disabled: loading, spin: loading },
           { key: 'new', label: 'New request', icon: Plus, onClick: () => setFormOpen(true) },
         ]}
       />
