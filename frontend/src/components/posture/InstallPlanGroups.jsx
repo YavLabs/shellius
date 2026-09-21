@@ -81,10 +81,9 @@ function ReadyGroup({ rows, selectedIds, onToggle, selectable, onInstallHost }) 
                 selectable ? (
                   <label
                     key={host.id}
-                    className="flex cursor-pointer items-center gap-2 rounded hover:bg-accent/50"
+                    className="flex cursor-pointer items-center gap-2 rounded pl-2 hover:bg-accent/50"
                   >
                     <Checkbox
-                      className="ml-2"
                       checked={selectedIds.includes(host.id)}
                       onChange={() => onToggle(host.id)}
                     />
