@@ -26,6 +26,8 @@ import { Popover, PopoverTrigger, PopoverContent } from '@/components/ui/popover
  *   renderValue?(option|options) => ReactNode  custom trigger label rendering
  *   getKey?      (option) => string   defaults to option.value
  *   filterFn?    (option, query) => boolean  defaults to label substring
+ *   onQueryChange?(query)  called as the user types — for pickers that search
+ *                the server; pair with filterFn={() => true}
  *   emptyMessage?
  *   className?   wrapper class
  *   id?
@@ -53,6 +55,7 @@ export default function SearchableSelect({
   emptyMessage = 'No matches',
   className = '',
   id,
+  onQueryChange,
 }) {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState('');
@@ -172,7 +175,10 @@ export default function SearchableSelect({
             <input
               ref={inputRef}
               value={query}
-              onChange={(e) => setQuery(e.target.value)}
+              onChange={(e) => {
+                setQuery(e.target.value);
+                onQueryChange?.(e.target.value);
+              }}
               placeholder={searchPlaceholder}
               className="h-8 w-full bg-transparent text-sm text-foreground placeholder:text-muted-foreground focus:outline-none"
             />

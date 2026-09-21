@@ -41,6 +41,7 @@ import cliRouter from './routes/cli.js';
 import keystoreRouter from './routes/keystore.js';
 import quickConnectRouter from './routes/quickConnect.js';
 import searchRouter from './routes/search.js';
+import lookupRouter from './routes/lookup.js';
 import terminalRouter from './routes/terminal.js';
 import rolesRouter from './routes/roles.js';
 import vaultRouter from './routes/vault.js';
@@ -120,6 +121,7 @@ app.use('/api/cli', cliRouter);
 app.use('/api/keystore', keystoreRouter);
 app.use('/api/quick-connect', quickConnectRouter);
 app.use('/api/search', searchRouter);
+app.use('/api/lookup', lookupRouter);
 // REST surface for the Terminals workspace — the WS upgrade for
 // /api/terminal/ssh is intercepted on the http.Server before it reaches
 // Express (see terminalService.attachWebSocketServer), so no conflict.

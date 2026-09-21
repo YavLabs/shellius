@@ -228,6 +228,10 @@ function DataTable({
   // do nothing (Posture's findings inbox: severity/status/customer/
   // environment filters only).
   showSearch = true,
+
+  // Initial search text (e.g. a ?q= from the URL), so a linked or refreshed
+  // page shows the query it is actually filtered by.
+  initialSearch = '',
 }) {
   const isMobile = useIsMobile();
   const hasFilterDefs = Array.isArray(filterDefs) && filterDefs.length > 0;
@@ -235,7 +239,7 @@ function DataTable({
   // -------------------------------------------------------------------
   // Search
   // -------------------------------------------------------------------
-  const [searchRaw, setSearchRaw] = useState('');
+  const [searchRaw, setSearchRaw] = useState(initialSearch || '');
   const search = useDebounced(searchRaw, 200);
 
   // -------------------------------------------------------------------
@@ -255,6 +259,12 @@ function DataTable({
   const [localPageSize, setLocalPageSize] = useState(defaultPageSize);
 
   const isServerPagination = !!serverPagination;
+  // Honesty for server-paged tables: a search box the page never sends to
+  // the API filtered nothing (DataTable skips client filtering in server
+  // mode), and a header click sorted only the rows already on screen. With
+  // no `onSearchChange` / `serverSort`, neither is offered.
+  const searchAvailable = showSearch && (!isServerPagination || !!onSearchChange);
+  const sortAvailable = !isServerPagination || !!serverSort;
   const page = isServerPagination ? serverPagination.page : localPage;
   // In server mode, honour the parent-controlled pageSize when provided (Task 18A)
   const pageSize =
@@ -536,7 +546,7 @@ function DataTable({
         onSelectionChange={onSelectionChange}
         bulkActions={bulkActions}
         onRowClick={onRowClick}
-        options={showSearch ? mobile : { ...mobile, showSearch: false }}
+        options={searchAvailable ? mobile : { ...mobile, showSearch: false }}
       />
     );
   }
@@ -553,7 +563,7 @@ function DataTable({
           Search stays on the row because it is the control people reach for
           without thinking; everything else moved behind the button. */}
       <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:flex-wrap">
-        {showSearch && (
+        {searchAvailable && (
           <div className="relative min-w-0 flex-1 max-w-sm">
             <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
             <Input
@@ -608,7 +618,7 @@ function DataTable({
                   // columns have nothing to sort; anything else opts out with
                   // `sortable: false`.
                   const isSortable =
-                    col.sortable !== false && col.key !== 'actions' && col.key !== '__select__';
+                    sortAvailable && col.sortable !== false && col.key !== 'actions' && col.key !== '__select__';
                   const isSorted = sortKey === col.key;
 
                   // Sortable headers must be keyboard-operable (Task 15R-B):
