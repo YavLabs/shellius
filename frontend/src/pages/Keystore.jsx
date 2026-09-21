@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { KeyRound, Plus, Upload, Send, Lock, Building2 } from 'lucide-react';
 import PageHeader from '@/components/common/PageHeader';
@@ -8,6 +8,7 @@ import SshKeysTab from '@/components/keystore/SshKeysTab';
 import DeploymentsTab from '@/components/keystore/DeploymentsTab';
 import { useAuth } from '@/context/AuthContext';
 import { can } from '@/lib/permissions';
+import useAutoRefresh from '@/hooks/useAutoRefresh';
 
 const TABS_BY_SCOPE = {
   org: [
@@ -62,6 +63,14 @@ function Keystore() {
   const identitiesRef = useRef(null);
   const keysRef = useRef(null);
   const deploymentsRef = useRef(null);
+
+  // Only the active tab is mounted, so "refresh everything visible" means
+  // reloading whichever one that is.
+  const load = useCallback(async () => {
+    const refMap = { identities: identitiesRef, keys: keysRef, deployments: deploymentsRef };
+    await refMap[activeTab]?.current?.refresh?.();
+  }, [activeTab]);
+  const { refresh, refreshing, lastUpdated } = useAutoRefresh(load);
 
   const handleScopeChange = (nextScope) => {
     if (nextScope === scope) return;
@@ -149,6 +158,9 @@ function Keystore() {
         title="Keystore"
         subtitle={subtitle}
         helpKey="keystore"
+        onRefresh={refresh}
+        refreshing={refreshing}
+        lastUpdated={lastUpdated}
         actions={headerActions}
       />
 

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useImperativeHandle, useMemo, useState, forwardRef } from 'react';
+import { useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState, forwardRef } from 'react';
 import { Pencil, Trash2, Copy, Download, Send, RefreshCw, Key, FileKey, Lock } from 'lucide-react';
 import DataTable from '@/components/shared/DataTable';
 import { CardIcon, CardStatus } from '@/components/mobile/MobileCard';
@@ -50,8 +50,9 @@ const SshKeysTab = forwardRef(function SshKeysTab({ canManage, scope = 'org', ca
   const [sourceFilter, setSourceFilter] = useState('');
   const [certFilter, setCertFilter] = useState('');
 
+  const loadedRef = useRef(false);
   const fetch = useCallback(async () => {
-    setLoading(true);
+    if (!loadedRef.current) setLoading(true);
     setError('');
     try {
       const data = await listKeys({ scope });
@@ -62,6 +63,7 @@ const SshKeysTab = forwardRef(function SshKeysTab({ canManage, scope = 'org', ca
       return [];
     } finally {
       setLoading(false);
+      loadedRef.current = true;
     }
   }, [scope]);
 
@@ -77,6 +79,7 @@ const SshKeysTab = forwardRef(function SshKeysTab({ canManage, scope = 'org', ca
       const match = list.find((k) => k.id === id);
       if (match) setDetailId(match.id);
     },
+    refresh: fetch,
   }));
 
   const copyPublicKey = async (key) => {

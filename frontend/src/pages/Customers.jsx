@@ -1,6 +1,6 @@
-import { useState, useEffect, useCallback, useMemo } from 'react';
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
-import { Plus, Building2, Server, Eye, Pencil, Trash2, RefreshCw } from 'lucide-react';
+import { Plus, Building2, Server, Eye, Pencil, Trash2 } from 'lucide-react';
 import Badge from '@/components/shared/Badge';
 import Modal from '@/components/shared/Modal';
 import ConfirmDialog from '@/components/shared/ConfirmDialog';
@@ -15,6 +15,7 @@ import { useAuth } from '@/context/AuthContext';
 import { can } from '@/lib/permissions';
 import { listCustomers, createCustomer, updateCustomer } from '@/services/customerService';
 import DeleteCustomerDialog from '@/components/customers/DeleteCustomerDialog';
+import useAutoRefresh from '@/hooks/useAutoRefresh';
 
 function Customers() {
   const navigate = useNavigate();
@@ -44,8 +45,9 @@ function Customers() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  const loadedRef = useRef(false);
   const fetch = useCallback(async () => {
-    setLoading(true);
+    if (!loadedRef.current) setLoading(true);
     setError('');
     try {
       const data = await listCustomers({ page: 1, pageSize: 200 });
@@ -54,12 +56,14 @@ function Customers() {
       setError(err.response?.data?.error?.message || err.message || 'Failed to load customers');
     } finally {
       setLoading(false);
+      loadedRef.current = true;
     }
   }, []);
 
   useEffect(() => {
     fetch();
   }, [fetch]);
+  const { refresh, refreshing, lastUpdated } = useAutoRefresh(fetch);
 
   const handleCreate = async (payload) => {
     await createCustomer(payload);
@@ -208,8 +212,10 @@ function Customers() {
         title="Customers"
         subtitle="Organize servers and access by tenant."
         helpKey="customers"
+        onRefresh={refresh}
+        refreshing={refreshing}
+        lastUpdated={lastUpdated}
         actions={[
-          { key: 'refresh', label: 'Refresh', icon: RefreshCw, variant: 'outline', onClick: () => fetch(), disabled: loading, spin: loading },
           { key: 'add', label: 'Add Customer', icon: Plus, onClick: () => setCreateOpen(true), hidden: !canCreate },
         ]}
       />

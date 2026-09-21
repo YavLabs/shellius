@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useMemo } from 'react';
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import {
   Film,
   Terminal as TerminalIcon,
@@ -40,6 +40,7 @@ import { can } from '@/lib/permissions';
 import { envAccent } from '@/lib/mobileCard';
 import { statusTone } from '@/lib/badgeTones';
 import { CardStatus } from '@/components/mobile/MobileCard';
+import useAutoRefresh from '@/hooks/useAutoRefresh';
 
 // A session row is "connectable" from this page when it's the caller's own
 // still-ACTIVE session — matches the terminal hub's "caller's own sessions
@@ -488,8 +489,9 @@ function Sessions() {
   const [terminateTarget, setTerminateTarget] = useState(null);
   const [terminating, setTerminating] = useState(false);
 
+  const loadedRef = useRef(false);
   const fetchSessions = useCallback(async () => {
-    setLoading(true);
+    if (!loadedRef.current) setLoading(true);
     setError('');
     try {
       let resp;
@@ -516,6 +518,7 @@ function Sessions() {
       setError(err.response?.data?.error?.message || err.message || 'Failed to load sessions.');
     } finally {
       setLoading(false);
+      loadedRef.current = true;
     }
   }, [
     activeTab,
@@ -542,6 +545,10 @@ function Sessions() {
       .then((d) => setUsers(d.items || []))
       .catch(() => {});
   }, []);
+
+  // Active sessions change on their own — gentle 30s polling on top of the
+  // manual Refresh button.
+  const { refresh, refreshing, lastUpdated } = useAutoRefresh(fetchSessions, { interval: 30000 });
 
   const handleTabChange = (key) => {
     setActiveTab(key);
@@ -814,7 +821,11 @@ function Sessions() {
         icon={TerminalIcon}
         title="Sessions"
         subtitle="Active and historical SSH/RDP sessions."
-      helpKey="sessions" />
+        helpKey="sessions"
+        onRefresh={refresh}
+        refreshing={refreshing}
+        lastUpdated={lastUpdated}
+      />
 
       {/* Tabs */}
       <div className="flex items-center gap-1 border-b border-border">

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useImperativeHandle, useMemo, useState, forwardRef } from 'react';
+import { useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState, forwardRef } from 'react';
 import { Pencil, Trash2, PlugZap, Eye, KeyRound, Lock, Server } from 'lucide-react';
 import { authTypeTone } from '@/lib/badgeTones';
 import DataTable from '@/components/shared/DataTable';
@@ -32,8 +32,9 @@ const IdentitiesTab = forwardRef(function IdentitiesTab({ canManage, scope = 'or
   const [authTypeFilter, setAuthTypeFilter] = useState('');
   const [usageFilter, setUsageFilter] = useState('');
 
+  const loadedRef = useRef(false);
   const fetch = useCallback(async () => {
-    setLoading(true);
+    if (!loadedRef.current) setLoading(true);
     setError('');
     try {
       const data = await listCredentials({ scope });
@@ -44,6 +45,7 @@ const IdentitiesTab = forwardRef(function IdentitiesTab({ canManage, scope = 'or
       return [];
     } finally {
       setLoading(false);
+      loadedRef.current = true;
     }
   }, [scope]);
 
@@ -57,6 +59,7 @@ const IdentitiesTab = forwardRef(function IdentitiesTab({ canManage, scope = 'or
       setFormOpen(true);
     },
     highlight: (id) => setDetailId(id),
+    refresh: fetch,
   }));
 
   const handleDelete = async (force = false) => {
