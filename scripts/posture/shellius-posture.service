@@ -29,17 +29,45 @@ ExecStart=/usr/local/sbin/shellius-posture-report
 # §1 decision 4, §4).
 MemoryMax=128M
 CPUQuota=20%
-# Belt-and-braces alongside the narrow sudoers grant: even if the
-# collector were compromised, it cannot write outside its own scratch
-# dirs, cannot gain new privileges beyond the sudoers grant, and has no
-# access to the rest of the filesystem it doesn't explicitly need.
-NoNewPrivileges=true
+# Hardening alongside the narrow sudoers grant.
+#
+# The privilege model of this unit IS that sudoers grant: the collector is
+# unprivileged, and reaches root only through the fixed, argument-pinned
+# commands in /etc/sudoers.d/shellius-posture. That model needs `sudo` to
+# work — and sudo is a setuid binary. So this unit must NOT set anything that
+# stops a setuid binary gaining privilege:
+#
+#   - NoNewPrivileges=true sets the kernel's no_new_privs flag, under which
+#     setuid is ignored. It shipped here once, with a comment claiming it
+#     "cannot gain new privileges beyond the sudoers grant" — it in fact
+#     disabled the grant itself. Every `sudo -n` failed, the collector's
+#     run_priv() hid the reason, and every host reported "Collector
+#     degraded … sudo grant missing" with unknown owners and reachability.
+#   - ProtectKernelModules= and RestrictSUIDSGID= install seccomp filters,
+#     and older systemd releases implied NoNewPrivileges=yes for seccomp
+#     options in a unit with a non-root User=. The fleet runs a mix of
+#     distros, so they are out too.
+#   - DynamicUser= implies it on every release. Not used; keep it that way.
+#
+# backend/src/routes/__tests__/postureUnit.test.js fails the build if any of
+# these come back.
+#
+# What remains still matters: a private /tmp, /usr /boot /etc read-only, no
+# writes to /home, a read-only /proc/sys.
+#
+# ProtectSystem=full (not strict) leaves /run writable, because the root
+# commands sudo runs share this mount namespace — iptables-legacy takes
+# /run/xtables.lock, and a read-only /run fails it outright.
+#
+# ProtectHome=read-only (not true): the collector reads pm2's saved app list
+# from /root/.pm2 and /home/*/.pm2, and `true` makes those directories
+# empty, so pm2 apps were never reported from a host. read-only restores the
+# view; ordinary file permissions still decide what the unprivileged
+# collector can actually open, so a 0700 /root or 0750 home stays private.
 PrivateTmp=true
-ProtectSystem=strict
-ProtectHome=true
+ProtectSystem=full
+ProtectHome=read-only
 ProtectKernelTunables=true
-ProtectKernelModules=true
-RestrictSUIDSGID=true
 StandardOutput=journal
 StandardError=journal
 SyslogIdentifier=shellius-posture

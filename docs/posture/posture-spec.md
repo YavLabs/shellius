@@ -135,10 +135,27 @@ that relies on bash line-continuation.
   minute) is a follow-up for whoever owns `PostureSettings` — the unit is
   regenerated on every `--upgrade`, so that just becomes another templated
   value in `shellius-posture.timer` when the settings API exists.
-- `MemoryMax=128M` and `CPUQuota=20%` on the unit, plus `NoNewPrivileges`,
-  `ProtectSystem=strict`, `ProtectHome`, `PrivateTmp` and friends. A collector
-  that OOMs or is compromised is a reported degradation, never a broken host
-  and never a way to escalate past its own sudoers grant.
+- `MemoryMax=128M` and `CPUQuota=20%` on the unit, plus `PrivateTmp`,
+  `ProtectSystem=full`, `ProtectHome=read-only` and `ProtectKernelTunables`.
+  A collector that OOMs is a reported degradation, never a broken host; the
+  ceiling on what a compromised one can do is its sudoers grant.
+- **Never `NoNewPrivileges` on this unit** — or anything that implies it.
+  This spec originally prescribed it, and it shipped. It sets the kernel's
+  `no_new_privs` flag, under which setuid binaries cannot gain privilege, and
+  the collector's entire privilege model is `sudo` (setuid) through the
+  sudoers grant below. Every privileged read failed on every host, reported
+  only as "sudo grant missing?" because the collector discarded sudo's stderr.
+  `RestrictSUIDSGID=` and `ProtectKernelModules=` are excluded for the same
+  reason: they install seccomp filters, and older systemd releases imply
+  `NoNewPrivileges=yes` for seccomp options in a non-root `User=` unit.
+  `DynamicUser=` implies it always. `ProtectSystem` is `full` rather than
+  `strict` because sudo'd children share the unit's mount namespace and
+  iptables-legacy needs a writable `/run/xtables.lock`; `ProtectHome` is
+  `read-only` so the pm2 reader can see `/home/*/.pm2`.
+  `backend/src/routes/__tests__/postureUnit.test.js` fails the build if any
+  of these return. The collector now appends sudo's own words to each
+  privilege-related degraded reason, so a failure of this kind names its
+  cause.
 - **Collector privilege, precisely:** the unit runs as a dedicated,
   unprivileged, login-less system account (`shellius-posture`) — not root,
   not `nobody` (kept separate from `check-principals`'s account so the two
