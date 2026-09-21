@@ -66,6 +66,12 @@ const findingsQuerySchema = Joi.object({
   customerId: Joi.string(),
   environment: Joi.string().valid(...ENVIRONMENTS),
   serverId: Joi.string(),
+  // Finding type — the finding's `code` (PORT_EXPOSED, FIREWALL_INACTIVE, …).
+  code: Joi.string().max(100).allow(''),
+  lastSeenFrom: Joi.date().iso(),
+  lastSeenTo: Joi.date().iso(),
+  // Free text: message, code, ownerLabel, service, server hostname/displayName, port.
+  q: Joi.string().max(200).allow(''),
   page: Joi.number().integer().min(1).default(1),
   limit: Joi.number().integer().min(1).max(100).default(25),
 });
@@ -124,6 +130,13 @@ router.use(authenticate, tenant);
 const summaryQuerySchema = Joi.object({
   customerId: Joi.string(),
   environment: Joi.string().valid(...ENVIRONMENTS),
+  // Matching the findings page's own filters, so the section/severity tiles
+  // it sits above never disagree with the rows underneath them.
+  serverId: Joi.string(),
+  code: Joi.string().max(100).allow(''),
+  lastSeenFrom: Joi.date().iso(),
+  lastSeenTo: Joi.date().iso(),
+  q: Joi.string().max(200).allow(''),
 });
 
 router.get(
@@ -134,6 +147,11 @@ router.get(
     const data = await postureQueryService.getSummary(req.orgId, req.scope, {
       customerId: req.query.customerId,
       environment: req.query.environment,
+      serverId: req.query.serverId,
+      code: req.query.code,
+      lastSeenFrom: req.query.lastSeenFrom,
+      lastSeenTo: req.query.lastSeenTo,
+      q: req.query.q,
     });
     res.json({ success: true, data });
   })
@@ -313,13 +331,26 @@ const exportSchema = Joi.object({
     code: Joi.string().max(64),
     environment: Joi.string().max(32),
     customerId: Joi.string(),
+    // Findings-page filters (findings dataset). An export from that page has
+    // to carry the same filters the page is showing.
+    lastSeenFrom: Joi.date().iso(),
+    lastSeenTo: Joi.date().iso(),
     // Service-inventory filters (listeners dataset). Exporting from that page
     // has to carry the same filters the page is showing.
     proto: Joi.string().max(8),
     reachability: Joi.string().max(16),
     ownerKind: Joi.string().max(32),
+    ownerKinds: Joi.string().max(200),
     port: Joi.number().integer().min(0).max(65535),
+    portMin: Joi.number().integer().min(0).max(65535),
+    portMax: Joi.number().integer().min(0).max(65535),
     serviceKey: Joi.string().max(160),
+    // Missing here used to mean an export could never say "stopped services
+    // only" or "listening ports only" the way the page's State filter can —
+    // the file and the screen disagreed on rows, not just field names.
+    state: Joi.string().valid('running', 'stopped', 'internal', 'exposed'),
+    hasFindings: Joi.boolean(),
+    findingSeverity: Joi.string().uppercase().valid('CRITICAL', 'HIGH', 'MEDIUM', 'LOW', 'INFO'),
     q: Joi.string().max(200).allow(''),
   }).default({}),
 });
@@ -482,6 +513,10 @@ const inventoryQuerySchema = Joi.object({
   proto: Joi.string().max(8).allow(''),
   reachability: Joi.string().max(16).allow(''),
   ownerKind: Joi.string().max(32).allow(''),
+  // csv of ownerKind values — lets the Type filter group container +
+  // docker-proxy + docker under one "Docker" option without the backend
+  // needing to know the frontend's grouping.
+  ownerKinds: Joi.string().max(200).allow(''),
   port: Joi.number().integer().min(0).max(65535).allow(''),
   portMin: Joi.number().integer().min(0).max(65535),
   portMax: Joi.number().integer().min(0).max(65535),
@@ -493,6 +528,8 @@ const inventoryQuerySchema = Joi.object({
   // still declare ports and still have firewall rules.
   state: Joi.string().valid('running', 'stopped', 'internal', 'exposed').allow(''),
   hasFindings: Joi.boolean(),
+  // Rows with at least one OPEN finding of this severity.
+  findingSeverity: Joi.string().uppercase().valid(...SEVERITIES).allow(''),
   page: Joi.number().integer().min(1),
   limit: Joi.number().integer().min(1).max(200),
 }).unknown(false);

@@ -22,9 +22,9 @@ import AdmZip from 'adm-zip';
 import PDFDocument from 'pdfkit';
 
 import prisma from '../config/db.js';
-import { serviceKey as serviceKeyOf } from './postureInventoryService.js';
+import { listListeners as listInventoryListeners } from './postureInventoryService.js';
 import ApiError from '../utils/ApiError.js';
-import { serverScopeWhere, relationScopeWhere } from '../lib/scope.js';
+import { relationScopeWhere } from '../lib/scope.js';
 
 export const FORMATS = ['csv', 'json', 'pdf'];
 export const BUNDLES = ['single', 'zip'];
@@ -244,7 +244,11 @@ const SERVER_INCLUDE = {
 /** Hard ceiling so one export can never try to buffer an unbounded fleet. */
 const MAX_ROWS = 50000;
 
-async function loadFindings(orgId, scope, { serverId, serverIds, status, severity, code, environment, customerId }) {
+async function loadFindings(
+  orgId,
+  scope,
+  { serverId, serverIds, status, severity, code, environment, customerId, lastSeenFrom, lastSeenTo }
+) {
   const where = { orgId, ...relationScopeWhere(scope, 'server') };
   if (serverId) where.serverId = serverId;
   else if (serverIds?.length) where.serverId = { in: serverIds };
@@ -252,8 +256,15 @@ async function loadFindings(orgId, scope, { serverId, serverIds, status, severit
   if (code) where.code = code;
   if (environment || customerId) {
     where.server = {
+      ...(where.server || {}),
       ...(environment ? { environment } : {}),
       ...(customerId ? { customerId } : {}),
+    };
+  }
+  if (lastSeenFrom || lastSeenTo) {
+    where.lastSeenAt = {
+      ...(lastSeenFrom ? { gte: new Date(lastSeenFrom) } : {}),
+      ...(lastSeenTo ? { lte: new Date(lastSeenTo) } : {}),
     };
   }
 
@@ -277,65 +288,20 @@ async function loadFindings(orgId, scope, { serverId, serverIds, status, severit
 }
 
 /**
- * Listeners from each server's most recent snapshot. Older snapshots exist
- * for history, but "what is listening" means "right now" — exporting every
- * snapshot's rows would multiply the file by the retention window.
+ * Listeners across the fleet — delegates to postureInventoryService's own
+ * `listListeners`, the exact function the Services & ports page calls.
+ *
+ * This used to be a second, hand-rolled query against `hostListener` alone:
+ * it never saw a stopped service's declared ports, never produced a
+ * CONTAINER-reachability row (that value only ever exists in memory, built
+ * from HostService), and its free-text `q` matched a different, shorter list
+ * of fields than the page's own search box. Delegating means an export can
+ * never show different rows — or match a different `q` — than the screen it
+ * was exported from.
  */
-async function loadListeners(
-  orgId,
-  scope,
-  { serverId, serverIds, customerId, environment, proto, reachability, ownerKind, port, q, serviceKey: wantedService }
-) {
-  const serverWhere = { orgId, ...serverScopeWhere(scope) };
-  if (serverId) serverWhere.id = serverId;
-  else if (serverIds?.length) serverWhere.id = { in: serverIds };
-  // The service inventory filters on the fleet, not on a server selection —
-  // an export from that page has to be able to say the same thing the page
-  // is showing, or the file and the screen disagree.
-  if (customerId) serverWhere.customerId = customerId;
-  if (environment) serverWhere.environment = environment;
-
-  const servers = await prisma.server.findMany({ where: serverWhere, ...SERVER_INCLUDE });
-  if (servers.length === 0) return [];
-
-  const snapshots = await prisma.hostSnapshot.findMany({
-    where: { orgId, serverId: { in: servers.map((s) => s.id) } },
-    orderBy: { receivedAt: 'desc' },
-    select: { id: true, serverId: true },
-  });
-  const latestByServer = new Map();
-  for (const snap of snapshots) {
-    if (!latestByServer.has(snap.serverId)) latestByServer.set(snap.serverId, snap.id);
-  }
-  if (latestByServer.size === 0) return [];
-
-  const listenerWhere = { orgId, snapshotId: { in: [...latestByServer.values()] } };
-  if (proto) listenerWhere.proto = proto;
-  if (reachability) listenerWhere.reachability = reachability;
-  if (ownerKind) listenerWhere.ownerKind = ownerKind;
-  if (port !== undefined && port !== null && port !== '') listenerWhere.port = Number(port);
-
-  const rows = await prisma.hostListener.findMany({
-    where: listenerWhere,
-    orderBy: [{ port: 'asc' }, { proto: 'asc' }],
-    take: MAX_ROWS,
-  });
-
-  const byId = new Map(servers.map((s) => [s.id, s]));
-  let out = rows.map((r) => ({ ...r, server: byId.get(r.serverId) || null }));
-
-  // Free text and the computed service key are applied here for the same
-  // reason the inventory applies them in memory: neither is a column.
-  if (wantedService) out = out.filter((r) => serviceKeyOf(r).key === wantedService);
-  if (q) {
-    const needle = String(q).toLowerCase();
-    out = out.filter((r) =>
-      [r.service, r.ownerName, r.ownerRef, r.ownerDetail, r.ownerUser, r.sourcePath, r.bind, String(r.port), r.server?.hostname, r.server?.displayName]
-        .filter(Boolean)
-        .some((v) => String(v).toLowerCase().includes(needle))
-    );
-  }
-  return out;
+async function loadListeners(orgId, scope, filters = {}) {
+  const data = await listInventoryListeners(orgId, { ...filters, page: 1, limit: MAX_ROWS }, scope);
+  return data.items;
 }
 
 async function loadRows(dataset, orgId, scope, filters) {
