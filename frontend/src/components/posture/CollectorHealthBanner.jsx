@@ -56,12 +56,12 @@ function HostChecks() {
   );
 }
 
-function Shell({ tone, icon: Icon, title, children, action }) {
+function Shell({ tone, icon: Icon, iconClassName = '', title, children, action }) {
   return (
     <div role="status" className={`rounded-md border px-3 py-2.5 text-sm ${TONES[tone]}`}>
       <div className="flex flex-col gap-3 sm:flex-row sm:items-start">
         <div className="flex min-w-0 flex-1 items-start gap-2">
-          <Icon className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" />
+          <Icon className={`mt-0.5 h-4 w-4 shrink-0 ${iconClassName}`} aria-hidden="true" />
           <div className="min-w-0 flex-1">
             <p className="font-medium">{title}</p>
             <div className="mt-0.5 space-y-1 text-xs opacity-90">{children}</div>
@@ -80,7 +80,15 @@ function Shell({ tone, icon: Icon, title, children, action }) {
  * @param {object} props.snapshot     API `snapshot` block
  * @param {Function} [props.onReinstall]  opens the installer; omitted when the viewer cannot run it
  */
-export default function CollectorHealthBanner({ state, collector, snapshot, onReinstall }) {
+export default function CollectorHealthBanner({
+  state,
+  collector,
+  snapshot,
+  onReinstall,
+  onCheckNow,
+  checking = false,
+  lastChecked = null,
+}) {
   const reinstallButton = (label = 'Reinstall collector') =>
     onReinstall ? (
       <Button size="sm" variant="outline" onClick={onReinstall} className="bg-background">
@@ -105,10 +113,25 @@ export default function CollectorHealthBanner({ state, collector, snapshot, onRe
 
   if (state === 'awaiting_report') {
     return (
-      <Shell tone="info" icon={Loader2} title="Collector reinstalled — waiting for its first report">
+      <Shell
+        tone="info"
+        icon={Loader2}
+        iconClassName="animate-spin"
+        title="Collector reinstalled — waiting for its first report"
+        action={
+          onCheckNow ? (
+            <Button size="sm" variant="outline" onClick={onCheckNow} disabled={checking} className="bg-background">
+              <RefreshCw className={`mr-1.5 h-3.5 w-3.5 ${checking ? 'animate-spin' : ''}`} />
+              {checking ? 'Checking…' : 'Check now'}
+            </Button>
+          ) : null
+        }
+      >
         <p>
-          Installed {relativeTime(collector?.installedAt)}. The new collector reports within a minute or two; this page
-          updates when it does.
+          Installed {relativeTime(collector?.installedAt)}. The new collector reports within a minute or two.
+          {onCheckNow
+            ? ` This page checks every 15 seconds${lastChecked ? ` — last checked ${relativeTime(lastChecked)}` : ''}.`
+            : ' Refresh the page to see it.'}
         </p>
         {collector?.lastSeenAt && (
           <p>

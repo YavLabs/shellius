@@ -23,6 +23,7 @@ import {
   Radar,
 } from 'lucide-react';
 import { SshTrustBadge, CollectorBadge } from '@/components/servers/HostAgentStatus';
+import useAutoRefresh from '@/hooks/useAutoRefresh';
 import DataTable from '@/components/shared/DataTable';
 import { CardIcon, MobileCardSkeleton } from '@/components/mobile/MobileCard';
 import Modal from '@/components/shared/Modal';
@@ -191,8 +192,8 @@ function CustomerDetail() {
   const [envFilter, setEnvFilter] = useState('');
   const [posture, setPosture] = useState(null);
 
-  const loadData = useCallback(async () => {
-    setLoading(true);
+  const loadData = useCallback(async ({ quiet = false } = {}) => {
+    if (!quiet) setLoading(true);
     setError('');
     try {
       const [c, s, srv, sessions] = await Promise.all([
@@ -220,6 +221,13 @@ function CustomerDetail() {
   useEffect(() => {
     loadData();
   }, [loadData]);
+
+  // Same as the Servers list: poll quietly while a host here is mid-install.
+  const pendingHere = servers.some(
+    (sv) => sv.collector?.state === 'awaiting_report' || sv.sshTrust?.state === 'installing'
+  );
+  const quietLoad = useCallback(() => loadData({ quiet: true }), [loadData]);
+  const { refresh, refreshing, lastUpdated } = useAutoRefresh(quietLoad, { interval: 15000, enabled: pendingHere });
 
   const handleEdit = async (payload) => {
     await updateCustomer(id, payload);
@@ -531,6 +539,7 @@ function CustomerDetail() {
           subtitle={customer.description || <span className="font-mono">{customer.slug}</span>}
           actions={[
             { key: 'add-server', label: 'Add server', icon: Plus, onClick: () => setAddServerOpen(true), hidden: !canAddServer },
+            { key: 'refresh', label: refreshing ? 'Refreshing…' : 'Refresh', icon: RefreshCw, variant: 'outline', onClick: refresh, spin: refreshing, disabled: refreshing },
             { key: 'edit', label: 'Edit customer', icon: Pencil, variant: 'outline', onClick: () => setEditOpen(true), hidden: !canManage },
             { key: 'delete', label: 'Delete customer', icon: Trash2, variant: 'destructive', onClick: () => setConfirmDelete(true), hidden: !canDelete },
           ]}
@@ -570,6 +579,16 @@ function CustomerDetail() {
 
         {/* Action group */}
         <div className="flex shrink-0 items-center gap-2">
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={refresh}
+            disabled={refreshing}
+            title={lastUpdated ? `Updated ${relativeTime(lastUpdated)}` : 'Reload this customer’s data'}
+          >
+            <RefreshCw className={`mr-1.5 h-3.5 w-3.5 ${refreshing ? 'animate-spin' : ''}`} />
+            Refresh
+          </Button>
           {canAddServer && (
             <Button size="sm" onClick={() => setAddServerOpen(true)}>
               <Plus className="mr-1.5 h-3.5 w-3.5" />

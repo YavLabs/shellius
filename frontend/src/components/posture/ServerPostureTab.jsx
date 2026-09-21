@@ -222,6 +222,9 @@ function ServerPostureTab({
   onBootstrap,
   onViewFindings,
   onViewPorts,
+  onCheckNow,
+  checking = false,
+  lastChecked = null,
 }) {
   const navigate = useNavigate();
   const isPhone = useIsMobile();
@@ -341,6 +344,9 @@ function ServerPostureTab({
         collector={collector}
         snapshot={snapshot}
         onReinstall={canBootstrap && onBootstrap ? () => onBootstrap('posture') : undefined}
+        onCheckNow={onCheckNow}
+        checking={checking}
+        lastChecked={lastChecked}
       />
     );
   }
@@ -932,6 +938,9 @@ function ServerPostureTab({
         collector={collector}
         snapshot={snapshot}
         onReinstall={canBootstrap && onBootstrap ? () => onBootstrap('posture') : undefined}
+        onCheckNow={onCheckNow}
+        checking={checking}
+        lastChecked={lastChecked}
       />
 
       {view === 'overview' && (

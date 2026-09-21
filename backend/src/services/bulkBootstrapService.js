@@ -242,4 +242,27 @@ export async function planBulkInstall(
   };
 }
 
-export default { planBulkInstall, canInstallOn, isBootstrapped, SKIP_REASONS };
+/**
+ * The batch's fallback credentials when they were typed rather than picked
+ * from the Keystore. Returns null when nothing was typed.
+ */
+export function typedFallbackAuth({ sshUser, password, privateKey, passphrase } = {}) {
+  if (!password && !privateKey) return null;
+  return {
+    username: sshUser || undefined,
+    password: password || undefined,
+    privateKey: privateKey || undefined,
+    passphrase: passphrase || undefined,
+  };
+}
+
+/**
+ * After a host's own way in (a short-lived certificate, or its saved
+ * identity) failed: retry once with the batch's credentials — if there are
+ * any, and if they are not what just failed.
+ */
+export function shouldRetryWithFallback({ usedCertificate, usedOwnIdentity, fallbackAuth, attemptedAuth }) {
+  return !!((usedCertificate || usedOwnIdentity) && fallbackAuth && attemptedAuth !== fallbackAuth);
+}
+
+export default { planBulkInstall, canInstallOn, isBootstrapped, SKIP_REASONS, typedFallbackAuth, shouldRetryWithFallback };

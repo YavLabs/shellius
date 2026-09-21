@@ -680,3 +680,25 @@ describe('bulk plan — certificate-eligible hosts (DB)', () => {
     expect(plan.skipped.find((s) => s.id === bootstrapped.id)?.reason).toBe('already_provisioned');
   });
 });
+
+describe('bulk install fallback credentials', () => {
+  // Typed credentials used to produce no fallback at all, so every host that
+  // needed them failed with "No credentials available for this host".
+  it('turns typed credentials into a usable fallback', async () => {
+    const { typedFallbackAuth } = await import('../bulkBootstrapService.js');
+    expect(typedFallbackAuth({ sshUser: 'ubuntu', password: 'pw' })).toEqual({
+      username: 'ubuntu', password: 'pw', privateKey: undefined, passphrase: undefined,
+    });
+    expect(typedFallbackAuth({ sshUser: 'ubuntu' })).toBeNull();
+  });
+
+  it('retries with them after a certificate OR a saved identity fails — never with what just failed', async () => {
+    const { shouldRetryWithFallback } = await import('../bulkBootstrapService.js');
+    const fb = { password: 'x' };
+    expect(shouldRetryWithFallback({ usedCertificate: true, fallbackAuth: fb, attemptedAuth: {} })).toBe(true);
+    expect(shouldRetryWithFallback({ usedOwnIdentity: true, fallbackAuth: fb, attemptedAuth: {} })).toBe(true);
+    expect(shouldRetryWithFallback({ usedOwnIdentity: true, fallbackAuth: fb, attemptedAuth: fb })).toBe(false);
+    expect(shouldRetryWithFallback({ usedCertificate: true, fallbackAuth: null, attemptedAuth: {} })).toBe(false);
+    expect(shouldRetryWithFallback({ fallbackAuth: fb, attemptedAuth: {} })).toBe(false);
+  });
+});

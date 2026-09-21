@@ -29,6 +29,7 @@ import { envAccent } from '@/lib/mobileCard';
 import ServerForm from '@/components/servers/ServerForm';
 import BootstrapModal from '@/components/servers/BootstrapModal';
 import BootstrapWizard from '@/components/servers/BootstrapWizard';
+import useAutoRefresh from '@/hooks/useAutoRefresh';
 import {
   SshTrustBadge,
   CollectorBadge,
@@ -147,8 +148,8 @@ function Servers() {
     }
   }, []);
 
-  const fetch = useCallback(async () => {
-    setLoading(true);
+  const fetch = useCallback(async ({ quiet = false } = {}) => {
+    if (!quiet) setLoading(true);
     setError('');
     try {
       const params = { page, pageSize };
@@ -167,6 +168,15 @@ function Servers() {
       setLoading(false);
     }
   }, [page, pageSize, environment, healthStatus, customerFilter, sshTrustFilter, collectorFilter, search]);
+
+  // While any host on the page is mid-install — a collector waiting for its
+  // first report, a bootstrap running — re-read the page every 15 s, quietly,
+  // so the badges move on their own instead of looking stuck.
+  const pendingOnPage = servers.some(
+    (sv) => sv.collector?.state === 'awaiting_report' || sv.sshTrust?.state === 'installing'
+  );
+  const quietFetch = useCallback(() => fetch({ quiet: true }), [fetch]);
+  useAutoRefresh(quietFetch, { interval: 15000, enabled: pendingOnPage });
 
   // Server-side search — reset to page 1 and refetch when the query changes.
   const handleSearchChange = useCallback((q) => {

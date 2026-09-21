@@ -11,7 +11,12 @@ import * as healthCheckService from '../services/healthCheckService.js';
 import { provisionServer } from '../services/provisionService.js';
 import { resolveCredentialForActor } from '../services/keystoreService.js';
 import { signBootstrapToken, INSTALL_MODES } from './bootstrap.js';
-import { planBulkInstall, isBootstrapped } from '../services/bulkBootstrapService.js';
+import {
+  planBulkInstall,
+  isBootstrapped,
+  typedFallbackAuth,
+  shouldRetryWithFallback,
+} from '../services/bulkBootstrapService.js';
 import { serverScopeWhere } from '../lib/scope.js';
 import prisma from '../config/db.js';
 import { mintInstallCertificate } from '../services/installCertService.js';
@@ -596,6 +601,11 @@ router.post(
       const resolved = await resolveCredentialForActor(req.orgId, req.user, value.credentialId);
       fallbackAuth = resolved.auth;
       fallbackName = resolved.credential.name;
+    } else {
+      // Credentials typed into the form. These used to leave fallbackAuth
+      // null, so every host that needed them failed with "No credentials
+      // available for this host" — typed credentials never worked in bulk.
+      fallbackAuth = typedFallbackAuth(value);
     }
 
     const plan = await planBulkInstall(req.orgId, value.serverIds, {
@@ -658,6 +668,7 @@ router.post(
       let installCert = null;
       try {
         let auth = fallbackAuth;
+        let usedOwnMethod = false;
         let authLabel = fallbackName ? `identity "${fallbackName}"` : 'supplied credentials';
         let sshUser = value.sshUser || fallbackAuth?.username;
 
@@ -666,6 +677,7 @@ router.post(
           // bulk flow for an established fleet: nothing to type, N hosts.
           const resolved = await resolveCredentialForActor(req.orgId, req.user, target.credential.id);
           auth = resolved.auth;
+          usedOwnMethod = true;
           authLabel = `saved identity "${resolved.credential.name}"`;
           sshUser = target.sshUser || resolved.auth.username;
         } else if (target.credentialSource === 'certificate') {
@@ -726,10 +738,19 @@ router.post(
           // does not grant. Rather than fail a host the operator gave us a
           // working account for, try that account before giving up — one
           // retry, clearly announced, never silent.
-          const canRetry = installCert && fallbackAuth;
+          // …and the same for a host's own saved identity that no longer
+          // works (rotated password, removed key): that is exactly the host
+          // someone retries "with different credentials".
+          const suppliedAuth = fallbackAuth;
+          const canRetry = shouldRetryWithFallback({
+            usedCertificate: !!installCert,
+            usedOwnIdentity: usedOwnMethod,
+            fallbackAuth,
+            attemptedAuth: auth,
+          });
           if (!canRetry) throw err;
-          log(`[shellius] Certificate install failed (${err.message}) — retrying with ${fallbackName ? `identity "${fallbackName}"` : 'the supplied credentials'}`);
-          await runWith(fallbackAuth, { sshUser: value.sshUser || fallbackAuth.username || sshUser });
+          log(`[shellius] ${installCert ? 'Certificate' : 'Saved identity'} install failed (${err.message}) — retrying with ${fallbackName ? `identity "${fallbackName}"` : 'the supplied credentials'}`);
+          await runWith(suppliedAuth, { sshUser: value.sshUser || suppliedAuth.username || sshUser });
         }
 
         // Worked with the batch's sudo password — keep it for this host.

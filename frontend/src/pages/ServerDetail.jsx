@@ -19,6 +19,7 @@ import {
   Radar,
 } from 'lucide-react';
 import { SshTrustBadge, CollectorBadge } from '@/components/servers/HostAgentStatus';
+import useAutoRefresh from '@/hooks/useAutoRefresh';
 import Modal from '@/components/shared/Modal';
 import ConfirmDialog from '@/components/shared/ConfirmDialog';
 import EnvironmentBadge from '@/components/shared/EnvironmentBadge';
@@ -166,8 +167,10 @@ function ServerDetail() {
   const canResetHostKey = can(currentUser, 'servers.reset_host_key');
   const canBreakGlass = can(currentUser, 'access.break_glass');
 
-  const fetch = useCallback(async () => {
-    setLoading(true);
+  // `quiet`: a background refresh keeps the page on screen instead of
+  // swapping it for the loading state.
+  const fetch = useCallback(async ({ quiet = false } = {}) => {
+    if (!quiet) setLoading(true);
     setError('');
     try {
       const data = await getServer(id);
@@ -183,9 +186,9 @@ function ServerDetail() {
     fetch();
   }, [fetch]);
 
-  const loadPosture = useCallback(async () => {
+  const loadPosture = useCallback(async ({ quiet = false } = {}) => {
     if (!canViewPosture) return;
-    setPostureLoading(true);
+    if (!quiet) setPostureLoading(true);
     setPostureError('');
     try {
       setPosture(await getServerPosture(id));
@@ -199,6 +202,20 @@ function ServerDetail() {
   useEffect(() => {
     loadPosture();
   }, [loadPosture]);
+
+  // Refresh everything on the page without replacing it. Polls every 15 s
+  // while something is known to be about to change on its own — a collector
+  // that was just (re)installed and has not reported, or a bootstrap in
+  // progress — and stops as soon as it has.
+  const refreshAll = useCallback(
+    () => Promise.all([fetch({ quiet: true }), loadPosture({ quiet: true })]),
+    [fetch, loadPosture]
+  );
+  const inFlight =
+    posture?.collector?.state === 'awaiting_report' ||
+    server?.collector?.state === 'awaiting_report' ||
+    server?.sshTrust?.state === 'installing';
+  const { refresh, refreshing, lastUpdated } = useAutoRefresh(refreshAll, { interval: 15000, enabled: inFlight });
 
   // Resolved findings stay in the payload for history; the tab counts what is
   // still open. "Needs attention" is CRITICAL or HIGH only — badging every
@@ -331,6 +348,7 @@ function ServerDetail() {
           }
           primaryNode={<QuickConnectButton server={server} currentUser={currentUser} />}
           actions={[
+            { key: 'refresh', label: refreshing ? 'Refreshing…' : 'Refresh', icon: RotateCw, variant: 'outline', onClick: refresh, spin: refreshing, disabled: refreshing },
             { key: 'edit', label: 'Edit', icon: Pencil, variant: 'outline', onClick: () => setEditOpen(true), hidden: !canEdit },
             {
               key: 'host',
@@ -400,6 +418,15 @@ function ServerDetail() {
               or Request Access (when one doesn't) — same source of truth as
               the Servers list row, so the two views can never disagree. */}
           <QuickConnectButton server={server} currentUser={currentUser} />
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={refresh}
+            disabled={refreshing}
+            title={lastUpdated ? `Updated ${relativeTime(lastUpdated)}` : 'Reload this server’s data'}
+          >
+            <RotateCw className={cn('mr-2 h-4 w-4', refreshing && 'animate-spin')} /> Refresh
+          </Button>
           {canEdit && (
             <Button variant="outline" size="sm" onClick={() => setEditOpen(true)}>
               <Pencil className="mr-2 h-4 w-4" /> Edit
@@ -562,6 +589,9 @@ function ServerDetail() {
           loading={postureLoading}
           error={postureError}
           onReload={loadPosture}
+          onCheckNow={refresh}
+          checking={refreshing}
+          lastChecked={lastUpdated}
           canMute={canMutePosture}
           authMode={server.authMode}
           canBootstrap={canOnboard}
@@ -587,6 +617,9 @@ function ServerDetail() {
           loading={postureLoading}
           error={postureError}
           onReload={loadPosture}
+          onCheckNow={refresh}
+          checking={refreshing}
+          lastChecked={lastUpdated}
           canMute={canMutePosture}
           authMode={server.authMode}
           canBootstrap={canOnboard}
