@@ -317,18 +317,20 @@ function ProvisionModal({ server, onClose, installMode = 'full' }) {
             )}
           </div>
 
-          {/* Certificate auth carries no password, so there is nothing for
-              `sudo -S` to read. Offering the switch here would promise
-              something the mode cannot deliver; say the requirement plainly
-              instead. */}
-          {mode === 'certificate' ? (
+          {/* The certificate gets Shellius logged in; it cannot answer sudo.
+              On a host whose sudo prompts, `sudo -n` now fails fast instead
+              of hanging — and a password typed here is fed to `sudo -S`, so
+              certificate login plus a typed sudo password is a complete way
+              in. Hiding this field in certificate mode left exactly those
+              hosts with no way forward. */}
+          {mode === 'certificate' && (
             <p className="rounded-lg border border-border bg-muted/30 px-4 py-3 text-xs leading-relaxed text-muted-foreground">
-              Certificate installs need <span className="font-medium text-foreground">passwordless sudo</span>{' '}
-              for <span className="font-mono text-foreground">{sshUser.trim() || server?.sshUser || 'root'}</span>,
-              because there is no password to give <span className="font-mono">sudo</span>. If this host prompts
-              for one, use a saved identity or enter credentials instead.
+              The certificate logs in as{' '}
+              <span className="font-mono text-foreground">{sshUser.trim() || server?.sshUser || 'root'}</span>.
+              If that user needs a password for <span className="font-mono">sudo</span>, turn on the switch
+              below — otherwise the install stops and tells you, rather than hanging.
             </p>
-          ) : (
+          )}
           <div className="space-y-3">
             <SwitchField
               label={
@@ -354,7 +356,6 @@ function ProvisionModal({ server, onClose, installMode = 'full' }) {
               />
             )}
           </div>
-          )}
         </div>
       )}
 

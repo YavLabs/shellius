@@ -13,6 +13,13 @@ import { cn } from '@/lib/utils';
  * native input (appearance-none) using Tailwind's built-in `checked:` /
  * `indeterminate:` variants instead of the Radix primitive.
  *
+ * `className` is split: margin utilities go to the WRAPPER, everything else
+ * to the input. The tick and dash are absolutely positioned overlays centred
+ * on the wrapper, so a margin on the input alone slides the box out from
+ * under its own tick — a caller writing `<Checkbox className="ml-2" />` got a
+ * checkbox whose check sat off to one side of the filled square. Margins are
+ * a layout concern and belong to the whole control.
+ *
  * The focus ring is driven by local pointer/keyboard tracking rather than
  * CSS `:focus-visible` — browsers intentionally treat checkboxes/radios as
  * "always focus-visible" (unlike buttons/links), so `focus-visible:` classes
@@ -20,10 +27,23 @@ import { cn } from '@/lib/utils';
  * keeps the ring for keyboard users only, avoiding a double-border look
  * around an already-filled checked box.
  */
+// m-2 / mx-1 / -ml-px / sm:ml-2 … — any margin utility, responsive or
+// negative variants included.
+const MARGIN_CLASS = /^(?:[\w-]+:)*-?m[trblxy]?-/;
+
+export function splitCheckboxClasses(className) {
+  const all = String(className || '').split(/\s+/).filter(Boolean);
+  return {
+    wrapper: all.filter((c) => MARGIN_CLASS.test(c)).join(' '),
+    input: all.filter((c) => !MARGIN_CLASS.test(c)).join(' '),
+  };
+}
+
 const Checkbox = React.forwardRef(function Checkbox(
   { className, indeterminate = false, onMouseDown, onFocus, onBlur, ...props },
   ref
 ) {
+  const { wrapper: wrapperClass, input: inputClass } = splitCheckboxClasses(className);
   const innerRef = React.useRef(null);
   const usedPointerRef = React.useRef(false);
   const [showRing, setShowRing] = React.useState(false);
@@ -34,7 +54,12 @@ const Checkbox = React.forwardRef(function Checkbox(
   }, [indeterminate]);
 
   return (
-    <span className="relative inline-flex h-4 w-4 shrink-0 items-center justify-center leading-none">
+    <span
+      className={cn(
+        'relative inline-flex h-4 w-4 shrink-0 items-center justify-center leading-none',
+        wrapperClass
+      )}
+    >
       <input
         ref={innerRef}
         type="checkbox"
@@ -57,7 +82,7 @@ const Checkbox = React.forwardRef(function Checkbox(
           'checked:border-primary checked:bg-primary indeterminate:border-primary indeterminate:bg-primary',
           'disabled:cursor-not-allowed disabled:opacity-50',
           showRing && 'ring-2 ring-ring ring-offset-1 ring-offset-background',
-          className
+          inputClass
         )}
         {...props}
       />

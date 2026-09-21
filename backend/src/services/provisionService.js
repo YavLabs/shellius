@@ -22,16 +22,89 @@ import { UNSCOPED, serverScopeWhere } from '../lib/scope.js';
  *   outside the caller's scope must be as unreachable here as it is from
  *   GET /api/servers/:id (docs/rbac/customer-scope-spec.md §4.2 #23).
  * @param {function} opts.onOutput     - callback(line: string) for each output line
+ * @param {number} [opts.installTimeoutMs] - hard ceiling on the remote run. A
+ *   host that blocks with no output (a dpkg lock, an unexpected prompt) would
+ *   otherwise hold its worker slot forever.
  * @param {string} [opts.mode]         - 'full' (default) or 'posture'. See the
  *   provisionStatus note below — this only changes bookkeeping/log wording,
  *   the actual install content is entirely determined by what `bootstrapUrl`
  *   points at (the mode is baked into its signed token server-side).
  * @returns {Promise<void>}
  */
+/**
+ * The remote command, by privilege situation:
+ *   root user       → pipe curl output directly to bash
+ *   sudo + password → download, then `sudo -S` with the password on stdin
+ *   sudo (no pass)  → `sudo -n`, which FAILS rather than asks
+ *
+ * `sudo -n` is the one that matters. The command runs on a pty, so a plain
+ * `sudo` with no password prints "[sudo] password for user:" and then waits.
+ * Forever. Nothing errors, the stream never closes, the promise never
+ * settles: the host holds its worker slot and the UI spins under a heading
+ * that eventually says the install finished. That is exactly how a
+ * certificate install — which by definition has no password to offer — hung
+ * on a host whose sudo prompts.
+ *
+ * `-n` turns that infinite wait into an immediate, legible failure, which is
+ * also what lets the bulk runner fall back to the credentials it was given.
+ */
+export function buildInstallCommand({ sshUser, sudoPassword, bootstrapUrl }) {
+  if (sshUser === 'root') return `curl -fsSL '${bootstrapUrl}' | bash`;
+  if (sudoPassword) {
+    return [
+      `curl -fsSL '${bootstrapUrl}' -o /tmp/.shellius-install.sh`,
+      'sudo -S bash /tmp/.shellius-install.sh',
+      'ec=$?',
+      'rm -f /tmp/.shellius-install.sh',
+      'exit $ec',
+    ].join(' && ');
+  }
+  return `curl -fsSL '${bootstrapUrl}' | sudo -n bash`;
+}
+
+/**
+ * Does this output show a host asking for a password nobody will type?
+ * `sudo -n` makes it nearly unreachable, but a prompt can still come from
+ * elsewhere in the script, and on a channel with no typist it means the run
+ * is already dead.
+ */
+export function looksLikePasswordPrompt(text) {
+  return /\[sudo\] password for |^Password:/im.test(String(text || ''));
+}
+
+/** `sudo -n` refusing for want of a password, as it says it. */
+export function looksLikeSudoRefusal(text) {
+  return /sudo: a (?:password is required|terminal is required)|sudo: no tty present/i.test(
+    String(text || '')
+  );
+}
+
+/**
+ * The stable code the UI branches on to offer a sudo password box for this
+ * one host, instead of making the whole batch a failure.
+ */
+export const SUDO_PASSWORD_REQUIRED = 'SUDO_PASSWORD_REQUIRED';
+
+// Generous: a cold bootstrap installs packages over someone else's network.
+// This is a deadlock backstop, not a performance budget.
+const DEFAULT_INSTALL_TIMEOUT_MS = 15 * 60 * 1000;
+
 export async function provisionServer(
   orgId,
   serverId,
-  { privateKey, passphrase, password, certificate, sshUser, sudoPassword, bootstrapUrl, mode = 'full', onOutput, scope = UNSCOPED }
+  {
+    privateKey,
+    passphrase,
+    password,
+    certificate,
+    sshUser,
+    sudoPassword,
+    bootstrapUrl,
+    mode = 'full',
+    onOutput,
+    scope = UNSCOPED,
+    installTimeoutMs = DEFAULT_INSTALL_TIMEOUT_MS,
+  }
 ) {
   const server = await prisma.server.findFirst({
     where: { id: serverId, orgId, ...serverScopeWhere(scope) },
@@ -107,28 +180,28 @@ export async function provisionServer(
       : '[shellius] Installing posture collector only (no CA trust / sshd changes)'
   );
 
-  // Build the remote command based on the privilege situation:
-  //   root user       → pipe curl output directly to bash
-  //   sudo + password → download script, then run with sudo -S (password via stdin)
-  //   sudo (no pass)  → pipe curl output to sudo bash (assumes passwordless sudo)
-  let cmd;
-  if (sshUser === 'root') {
-    cmd = `curl -fsSL '${bootstrapUrl}' | bash`;
-  } else if (sudoPassword) {
-    cmd = [
-      `curl -fsSL '${bootstrapUrl}' -o /tmp/.shellius-install.sh`,
-      `sudo -S bash /tmp/.shellius-install.sh`,
-      'ec=$?',
-      'rm -f /tmp/.shellius-install.sh',
-      'exit $ec',
-    ].join(' && ');
-  } else {
-    cmd = `curl -fsSL '${bootstrapUrl}' | sudo bash`;
-  }
+  const cmd = buildInstallCommand({ sshUser, sudoPassword, bootstrapUrl });
 
   return new Promise((resolve, reject) => {
-    const settleOk = () => markProvisioned().finally(() => resolve());
-    const settleErr = (err) => markFailed(err?.message).finally(() => reject(err));
+    // Nothing here may wait forever. Every settle path goes through these so
+    // a late event after a timeout cannot resolve an already-rejected run.
+    let settled = false;
+    let timer = null;
+    const done = () => {
+      settled = true;
+      if (timer) clearTimeout(timer);
+      timer = null;
+    };
+    const settleOk = () => {
+      if (settled) return;
+      done();
+      markProvisioned().finally(() => resolve());
+    };
+    const settleErr = (err) => {
+      if (settled) return;
+      done();
+      markFailed(err?.message).finally(() => reject(err));
+    };
 
     client.exec(cmd, { pty: true }, (err, stream) => {
       if (err) {
@@ -136,21 +209,58 @@ export async function provisionServer(
         return settleErr(new ApiError(500, `SSH exec failed: ${err.message}`));
       }
 
+      // A backstop for anything that blocks with no output at all: a package
+      // manager waiting on a lock, a half-open connection, a prompt we did
+      // not anticipate. Without it a single wedged host holds a worker slot
+      // for the lifetime of the process.
+      const abort = (message, code) => {
+        emit(`[shellius] ${message}`);
+        try { stream.close(); } catch { /* the stream is already gone */ }
+        try { client.end(); } catch { /* ditto */ }
+        settleErr(new ApiError(code ? 400 : 504, message, code ? { code } : {}));
+      };
+      timer = setTimeout(
+        () => abort(`Install timed out after ${Math.round(installTimeoutMs / 1000)}s with no result`),
+        installTimeoutMs
+      );
+
       // sudo -S reads the password from the exec channel's stdin — never
       // placed on the command line, never logged.
       if (sudoPassword && sshUser !== 'root') {
         try { stream.write(`${sudoPassword}\n`); } catch { /* ignore */ }
       }
 
+      // Say so now rather than after the timeout.
+      const watchForPrompt = (text) => {
+        if (sudoPassword) return;
+        if (looksLikePasswordPrompt(text)) {
+          abort(
+            'This host needs a sudo password, and this run had none to give.',
+            SUDO_PASSWORD_REQUIRED
+          );
+        }
+      };
+
+      let sawSudoRefusal = false;
+      const noteRefusal = (text) => {
+        if (looksLikeSudoRefusal(text)) sawSudoRefusal = true;
+      };
+
       stream.on('data', (data) => {
-        const lines = data.toString().split(/\r?\n/);
+        const text = data.toString();
+        watchForPrompt(text);
+        noteRefusal(text);
+        const lines = text.split(/\r?\n/);
         for (const line of lines) {
           if (line.trim()) emit(line);
         }
       });
 
       stream.stderr.on('data', (data) => {
-        const lines = data.toString().split(/\r?\n/);
+        const text = data.toString();
+        watchForPrompt(text);
+        noteRefusal(text);
+        const lines = text.split(/\r?\n/);
         for (const line of lines) {
           if (line.trim()) emit(`[stderr] ${line}`);
         }
@@ -161,6 +271,14 @@ export async function provisionServer(
         if (code === 0 || code === null) {
           emit('[shellius] Provisioning completed successfully');
           settleOk();
+        } else if (sawSudoRefusal) {
+          // `sudo -n` did its job: it refused instead of hanging. Report it
+          // as the one thing the operator can actually fix.
+          settleErr(
+            new ApiError(400, 'This host needs a sudo password, and this run had none to give.', {
+              code: SUDO_PASSWORD_REQUIRED,
+            })
+          );
         } else {
           settleErr(new ApiError(500, `Bootstrap script exited with code ${code}`));
         }

@@ -4,7 +4,9 @@ import {
   CheckCircle2,
   Copy,
   Download,
+  KeyRound,
   Loader2,
+  MinusCircle,
   Radar,
   ShieldCheck,
   Terminal,
@@ -16,7 +18,12 @@ import { Checkbox } from '@/components/ui/checkbox';
 import PasswordInput from '@/components/ui/PasswordInput';
 import SearchableSelect from '@/components/ui/SearchableSelect';
 import { listCredentials } from '@/services/keystoreService';
-import { planBulkInstall, runBulkInstall, createBulkBootstrapTokens } from '@/services/serverService';
+import {
+  planBulkInstall,
+  provisionServer,
+  runBulkInstall,
+  createBulkBootstrapTokens,
+} from '@/services/serverService';
 import { saveBlob } from '@/utils/download';
 import InstallPlanGroups from '@/components/posture/InstallPlanGroups';
 import { cn } from '@/lib/utils';
@@ -54,9 +61,14 @@ const SCOPES = [
 ];
 
 
+// Mirrors backend provisionService.SUDO_PASSWORD_REQUIRED.
+const SUDO_PASSWORD_REQUIRED = 'SUDO_PASSWORD_REQUIRED';
+
 function StatusIcon({ status }) {
   if (status === 'ok') return <CheckCircle2 className="h-4 w-4 shrink-0 text-emerald-500" />;
   if (status === 'failed') return <XCircle className="h-4 w-4 shrink-0 text-destructive" />;
+  // Never installed, never failed — the run ended first.
+  if (status === 'stopped') return <MinusCircle className="h-4 w-4 shrink-0 text-muted-foreground" />;
   if (status === 'running') return <Loader2 className="h-4 w-4 shrink-0 animate-spin text-primary" />;
   return <span className="h-4 w-4 shrink-0 rounded-full border border-border" />;
 }
@@ -88,6 +100,14 @@ function BulkInstallModal({ open, serverIds = [], onClose, onDone }) {
   const [running, setRunning] = useState(false);
   const [summary, setSummary] = useState(null);
   const runRef = useRef(null);
+  // Set when the operator presses Stop, so the sweep below can say "stopped"
+  // rather than "no result" — different things, and the person who pressed
+  // the button knows which one they caused.
+  const stoppedRef = useRef(false);
+  // Per-host sudo passwords, typed after the run reported that this host
+  // wants one. Never sent anywhere but that host's own retry.
+  const [sudoFixes, setSudoFixes] = useState({}); // id -> password
+  const [retrying, setRetrying] = useState({}); // id -> bool
 
   // Manual
   const [manual, setManual] = useState(null);
@@ -157,6 +177,16 @@ function BulkInstallModal({ open, serverIds = [], onClose, onDone }) {
     (t) => t.credentialSource === 'supplied' || (!useServerIdentity && t.credentialSource === 'server')
   );
   const certCount = selectedTargets.filter((t) => t.credentialSource === 'certificate').length;
+  const tally = useMemo(() => {
+    const t = { ok: 0, failed: 0, needsSudo: 0, stopped: 0 };
+    for (const v of Object.values(statuses)) {
+      if (v.status === 'ok') t.ok += 1;
+      else if (v.status === 'stopped') t.stopped += 1;
+      else if (v.status === 'failed' && v.code === SUDO_PASSWORD_REQUIRED) t.needsSudo += 1;
+      else if (v.status === 'failed') t.failed += 1;
+    }
+    return t;
+  }, [statuses]);
   const fallbackReady = !!(credentialId || password);
 
   const toggle = (id) =>
@@ -164,6 +194,9 @@ function BulkInstallModal({ open, serverIds = [], onClose, onDone }) {
 
   const start = async () => {
     setStep('run');
+    stoppedRef.current = false;
+    setSudoFixes({});
+    setRetrying({});
     setRunning(true);
     setError('');
     setSummary(null);
@@ -187,8 +220,8 @@ function BulkInstallModal({ open, serverIds = [], onClose, onDone }) {
       {
         'server-start': ({ id }) => setStatuses((p) => ({ ...p, [id]: { status: 'running' } })),
         log: ({ id, message }) => append(id, message),
-        'server-done': ({ id, status, error: err }) =>
-          setStatuses((p) => ({ ...p, [id]: { status, error: err } })),
+        'server-done': ({ id, status, error: err, code }) =>
+          setStatuses((p) => ({ ...p, [id]: { status, error: err, code } })),
         done: (s) => setSummary(s),
         error: ({ message }) => setError(message || 'Bulk install failed'),
       }
@@ -203,6 +236,25 @@ function BulkInstallModal({ open, serverIds = [], onClose, onDone }) {
       }
     } finally {
       setRunning(false);
+      // Anything still queued or running when the stream ends never reported
+      // a result and never will — the request is gone. Leaving those rows
+      // spinning under a heading that says "Install finished" is the UI
+      // telling two contradictory stories about the same host, and it is
+      // what a stopped run used to look like forever.
+      setStatuses((prev) => {
+        const next = { ...prev };
+        for (const [id, entry] of Object.entries(next)) {
+          if (entry.status === 'queued' || entry.status === 'running') {
+            next[id] = {
+              status: 'stopped',
+              error: stoppedRef.current
+                ? 'Stopped before this host finished.'
+                : 'The run ended before this host reported a result.',
+            };
+          }
+        }
+        return next;
+      });
       runRef.current = null;
       onDone?.();
     }
@@ -230,11 +282,56 @@ function BulkInstallModal({ open, serverIds = [], onClose, onDone }) {
     [manual]
   );
 
+  /**
+   * Re-run one host with the sudo password just typed for it.
+   *
+   * Reuses the single-host provision endpoint rather than re-running the
+   * batch: the other hosts already succeeded, and a bulk re-run would
+   * reinstall on all of them to fix one.
+   */
+  const retryWithSudo = async (target) => {
+    const secret = sudoFixes[target.id];
+    if (!secret) return;
+    setRetrying((p) => ({ ...p, [target.id]: true }));
+    setStatuses((p) => ({ ...p, [target.id]: { status: 'running' } }));
+    setLogs((p) => ({ ...p, [target.id]: [...(p[target.id] || []), '[shellius] Retrying with the sudo password you supplied'] }));
+    try {
+      await provisionServer(target.id, {
+        mode,
+        sudoPassword: secret,
+        // Same way in as the batch used for this host.
+        useCertificate: target.credentialSource === 'certificate' || undefined,
+        credentialId: target.credentialSource === 'server' ? target.credential?.id : credentialId || undefined,
+        sshUser: target.sshUser || sshUser || undefined,
+        password: target.credentialSource === 'supplied' ? password || undefined : undefined,
+        onLog: (message) =>
+          setLogs((p) => ({ ...p, [target.id]: [...(p[target.id] || []), message] })),
+      });
+      setStatuses((p) => ({ ...p, [target.id]: { status: 'ok' } }));
+      // The password has done its job; do not keep it in component state.
+      setSudoFixes((p) => {
+        const next = { ...p };
+        delete next[target.id];
+        return next;
+      });
+      onDone?.();
+    } catch (err) {
+      setStatuses((p) => ({
+        ...p,
+        [target.id]: { status: 'failed', error: err?.message || 'Install failed', code: p[target.id]?.code },
+      }));
+    } finally {
+      setRetrying((p) => ({ ...p, [target.id]: false }));
+    }
+  };
+
   const title =
     step === 'run'
       ? running
         ? 'Installing…'
-        : 'Install finished'
+        : stoppedRef.current
+          ? 'Install stopped'
+          : 'Install finished'
       : step === 'manual'
         ? 'Install commands'
         : 'Install across multiple hosts';
@@ -282,7 +379,13 @@ function BulkInstallModal({ open, serverIds = [], onClose, onDone }) {
       return (
         <div className="flex items-center justify-end gap-2">
           {running ? (
-            <Button variant="outline" onClick={() => runRef.current?.abort()}>
+            <Button
+              variant="outline"
+              onClick={() => {
+                stoppedRef.current = true;
+                runRef.current?.abort();
+              }}
+            >
               Stop
             </Button>
           ) : (
@@ -567,18 +670,30 @@ function BulkInstallModal({ open, serverIds = [], onClose, onDone }) {
 
       {step === 'run' && (
         <div className="space-y-3">
-          {summary && (
+          {/* Counted from the live statuses, not the server's final tally:
+              a host fixed with a sudo password after the run must move out
+              of "needs attention" the moment its retry succeeds. */}
+          {!running && (summary || tally.stopped > 0) && (
             <div
               className={cn(
                 'rounded-md border px-3 py-2 text-sm',
-                summary.failed > 0
+                tally.failed > 0 || tally.needsSudo > 0 || tally.stopped > 0
                   ? 'border-amber-500/40 bg-amber-500/10 text-amber-800 dark:text-amber-200'
                   : 'border-emerald-500/40 bg-emerald-500/10 text-emerald-800 dark:text-emerald-200'
               )}
             >
-              {summary.ok} succeeded, {summary.failed} failed
-              {summary.aborted ? ' (stopped early)' : ''}.
-              {summary.failed > 0 && ' Open a failed host below to see why.'}
+              {[
+                `${tally.ok} succeeded`,
+                tally.needsSudo > 0 && `${tally.needsSudo} need a sudo password`,
+                tally.failed > 0 && `${tally.failed} failed`,
+                tally.stopped > 0 && `${tally.stopped} not run`,
+              ]
+                .filter(Boolean)
+                .join(', ')}
+              .
+              {tally.needsSudo > 0 &&
+                ' Open a host marked “Needs attention” to enter its password and retry just that one.'}
+              {tally.needsSudo === 0 && tally.failed > 0 && ' Open a failed host below to see why.'}
             </div>
           )}
           <div className="max-h-[22rem] space-y-1 overflow-y-auto rounded-lg border border-border p-2">
@@ -586,21 +701,48 @@ function BulkInstallModal({ open, serverIds = [], onClose, onDone }) {
               const st = statuses[t.id] || { status: 'queued' };
               const lines = logs[t.id] || [];
               const isOpen = openLog === t.id;
+              // Not a failure you debug — a password you type. It gets its
+              // own treatment so it does not hide among real errors.
+              const needsSudo = st.status === 'failed' && st.code === SUDO_PASSWORD_REQUIRED;
+              const isRetrying = !!retrying[t.id];
               return (
-                <div key={t.id} className="rounded border border-transparent">
+                <div
+                  key={t.id}
+                  className={cn(
+                    'rounded border',
+                    needsSudo ? 'border-amber-500/40 bg-amber-500/5' : 'border-transparent'
+                  )}
+                >
                   <button
                     type="button"
                     onClick={() => setOpenLog(isOpen ? null : t.id)}
+                    aria-expanded={isOpen}
                     className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left hover:bg-accent/50"
                   >
-                    <StatusIcon status={st.status} />
+                    {needsSudo ? (
+                      <KeyRound className="h-4 w-4 shrink-0 text-amber-600 dark:text-amber-400" />
+                    ) : (
+                      <StatusIcon status={st.status} />
+                    )}
                     <span className="min-w-0 flex-1 truncate text-sm text-foreground">
                       {t.displayName || t.hostname}
                     </span>
-                    {st.error && (
-                      <span className="max-w-[14rem] truncate text-xs text-destructive" title={st.error}>
-                        {st.error}
+                    {needsSudo ? (
+                      <span className="shrink-0 rounded-full bg-amber-500/15 px-2 py-0.5 text-[11px] font-medium text-amber-700 dark:text-amber-300">
+                        Needs attention
                       </span>
+                    ) : (
+                      st.error && (
+                        <span
+                          className={cn(
+                            'max-w-[14rem] truncate text-xs',
+                            st.status === 'stopped' ? 'text-muted-foreground' : 'text-destructive'
+                          )}
+                          title={st.error}
+                        >
+                          {st.error}
+                        </span>
+                      )
                     )}
                     {lines.length > 0 && (
                       <span className="shrink-0 text-[11px] text-muted-foreground">
@@ -608,6 +750,42 @@ function BulkInstallModal({ open, serverIds = [], onClose, onDone }) {
                       </span>
                     )}
                   </button>
+
+                  {isOpen && needsSudo && (
+                    <div className="mx-2 mb-2 space-y-2 rounded-md border border-amber-500/30 bg-background/60 p-3">
+                      <p className="text-xs leading-relaxed text-foreground">
+                        <span className="font-medium">{t.sshUser || 'This user'}</span> needs a
+                        password for <span className="font-mono">sudo</span> on this host. Enter it
+                        to retry just this host — it is used once for this install and not stored.
+                      </p>
+                      <form
+                        className="flex flex-wrap items-center gap-2"
+                        onSubmit={(e) => {
+                          e.preventDefault();
+                          retryWithSudo(t);
+                        }}
+                      >
+                        <PasswordInput
+                          value={sudoFixes[t.id] || ''}
+                          onChange={(e) => setSudoFixes((p) => ({ ...p, [t.id]: e.target.value }))}
+                          placeholder={`sudo password for ${t.sshUser || 'this user'}`}
+                          autoComplete="new-password"
+                          disabled={isRetrying}
+                          className="h-8 min-w-0 flex-1 rounded-md border border-input bg-background px-3 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
+                        />
+                        <Button type="submit" size="sm" className="h-8" disabled={!sudoFixes[t.id] || isRetrying}>
+                          {isRetrying ? (
+                            <>
+                              <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" /> Retrying…
+                            </>
+                          ) : (
+                            'Retry this host'
+                          )}
+                        </Button>
+                      </form>
+                    </div>
+                  )}
+
                   {isOpen && lines.length > 0 && (
                     <pre className="mx-2 mb-2 max-h-48 overflow-auto rounded bg-muted/60 p-2 font-mono text-[11px] leading-relaxed text-muted-foreground">
                       {lines.join('\n')}
