@@ -244,6 +244,11 @@ const REACHABILITY_MAP = {
   lan: { tone: 'warning', label: 'LAN' },
   firewalled: { tone: 'success', label: 'Firewalled' },
   loopback: { tone: 'neutral', label: 'Loopback' },
+  // A port a container EXPOSEs without publishing: genuinely listening, but
+  // inside its own network namespace, so the host cannot reach it and
+  // neither can anything else. Its own value rather than null, which the
+  // table would render as "Unknown" — the one reading that is wrong.
+  container: { tone: 'neutral', label: 'Container-internal' },
 };
 
 export function reachabilityTone(reachability) {

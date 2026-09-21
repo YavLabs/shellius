@@ -446,3 +446,148 @@ describe('severity filtering is case-insensitive at the edge', () => {
     expect(out.total).toBe(0);
   });
 });
+
+/**
+ * A host running forty containers commonly shows eighteen open ports,
+ * because most containers only ever talk to each other. Those containers
+ * are not exposed — and they are also not absent. The inventory used to
+ * load only `running: false` services, so every running container with no
+ * published port was collected, stored, and never shown anywhere.
+ */
+describe('running services with no host port', () => {
+  let org;
+  let customer;
+  let host;
+  let snapshot;
+
+  beforeAll(async () => {
+    if (!(await dbReachable())) return;
+    org = await createTestOrg();
+    customer = await prisma.customer.create({
+      data: { orgId: org.id, name: 'Acme', slug: `acme-${unique()}` },
+    });
+    host = await prisma.server.create({
+      data: {
+        orgId: org.id,
+        customerId: customer.id,
+        hostname: `svc-${unique()}`,
+        ipAddress: '10.0.0.20',
+        environment: 'prod',
+      },
+    });
+    snapshot = await prisma.hostSnapshot.create({
+      data: { orgId: org.id, serverId: host.id, collectedAt: new Date(), receivedAt: new Date() },
+    });
+    // One published port, visible as a host socket.
+    await prisma.hostListener.create({
+      data: {
+        orgId: org.id,
+        serverId: host.id,
+        snapshotId: snapshot.id,
+        proto: 'tcp',
+        bind: '0.0.0.0',
+        port: 8000,
+        bindClass: 'wildcard',
+        reachability: 'INTERNET',
+        ownerKind: 'docker',
+        ownerName: 'coolify',
+      },
+    });
+    await prisma.hostService.createMany({
+      data: [
+        {
+          orgId: org.id,
+          serverId: host.id,
+          snapshotId: snapshot.id,
+          kind: 'docker',
+          name: 'coolify',
+          state: 'running',
+          running: true,
+          ports: [{ proto: 'tcp', port: 8000, containerPort: 8080, bind: '0.0.0.0' }],
+        },
+        {
+          orgId: org.id,
+          serverId: host.id,
+          snapshotId: snapshot.id,
+          kind: 'docker',
+          name: 'coolify-db',
+          state: 'running',
+          running: true,
+          // EXPOSEd, never published: listening in its own namespace only.
+          ports: [{ proto: 'tcp', port: 5432, containerPort: 5432, bind: 'container' }],
+        },
+        {
+          orgId: org.id,
+          serverId: host.id,
+          snapshotId: snapshot.id,
+          kind: 'docker',
+          name: 'retired-api',
+          state: 'exited',
+          running: false,
+          ports: [{ proto: 'tcp', port: 9100, containerPort: 3000, bind: '0.0.0.0' }],
+        },
+      ],
+    });
+  });
+
+  afterAll(async () => {
+    if (!(await dbReachable()) || !org) return;
+    await prisma.hostService.deleteMany({ where: { orgId: org.id } });
+    await prisma.hostListener.deleteMany({ where: { orgId: org.id } });
+    await prisma.hostSnapshot.deleteMany({ where: { orgId: org.id } });
+    await prisma.server.deleteMany({ where: { orgId: org.id } });
+    await prisma.customer.deleteMany({ where: { orgId: org.id } });
+    await prisma.postureSettings.deleteMany({ where: { orgId: org.id } });
+    await prisma.postureAlertRule.deleteMany({ where: { orgId: org.id } });
+    await cleanupOrg(org.id);
+  });
+
+  it('shows a container that only listens inside itself', async () => {
+    if (!(await dbReachable())) return console.warn('DB unreachable — skipping');
+    const out = await inventory.listListeners(org.id, { serverId: host.id }, UNSCOPED);
+    const row = out.items.find((r) => r.port === 5432);
+    expect(row).toBeDefined();
+    expect(row.containerInternal).toBe(true);
+    // It IS listening — just nowhere the host can reach.
+    expect(row.listening).toBe(true);
+    expect(row.reachability).toBe('CONTAINER');
+  });
+
+  it('never double-counts a published port that already has a socket', async () => {
+    if (!(await dbReachable())) return console.warn('DB unreachable — skipping');
+    const out = await inventory.listListeners(org.id, { serverId: host.id }, UNSCOPED);
+    const rows = out.items.filter((r) => r.port === 8000);
+    expect(rows).toHaveLength(1);
+    // The socket wins: it is the better evidence for the same port.
+    expect(rows[0].reachability).toBe('INTERNET');
+  });
+
+  it('still shows a stopped container’s declared port', async () => {
+    if (!(await dbReachable())) return console.warn('DB unreachable — skipping');
+    const out = await inventory.listListeners(org.id, { serverId: host.id }, UNSCOPED);
+    const row = out.items.find((r) => r.port === 9100);
+    expect(row.listening).toBe(false);
+    expect(row.containerInternal).toBe(false);
+  });
+
+  it('separates "listening on the host" from "container-internal"', async () => {
+    if (!(await dbReachable())) return console.warn('DB unreachable — skipping');
+    const exposed = await inventory.listListeners(org.id, { serverId: host.id, state: 'exposed' }, UNSCOPED);
+    expect(exposed.items.map((r) => r.port)).toEqual([8000]);
+
+    const internal = await inventory.listListeners(org.id, { serverId: host.id, state: 'internal' }, UNSCOPED);
+    expect(internal.items.map((r) => r.port)).toEqual([5432]);
+  });
+
+  it('groups a running container into the services view even with no host port', async () => {
+    if (!(await dbReachable())) return console.warn('DB unreachable — skipping');
+    const out = await inventory.listServices(org.id, { serverId: host.id }, UNSCOPED);
+    const db = out.items.find((i) => i.name === 'coolify-db');
+    expect(db).toBeDefined();
+    expect(db.runningOn).toBe(1);
+    expect(db.stoppedOn).toBe(0);
+    expect(db.ports).toContain(5432);
+    // Declared, not observed on the host — it must not read as exposed.
+    expect(db.internetExposed).toBe(0);
+  });
+});

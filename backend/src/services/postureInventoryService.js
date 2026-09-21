@@ -138,19 +138,27 @@ async function attachFindings(orgId, rows) {
 }
 
 /**
- * Installed services that are NOT running, with the ports they declare.
+ * Installed services, with the ports they declare.
  *
- * These have no socket, so they are absent from HostListener entirely — yet
- * their firewall rules and published ports survive, and both re-open the
- * moment the service starts. An inventory that only counted sockets would
- * report a retired-looking host as clean while a stopped container sat
- * behind an open rule.
+ * Two kinds of row are invisible to a socket scan, and both belong in an
+ * inventory:
+ *
+ *   stopped   no process, no socket — yet the firewall rule and the
+ *             published port survive, and both come back the moment it
+ *             starts.
+ *   running, but listening only inside its own network namespace. A host
+ *             running forty containers commonly shows eighteen open ports,
+ *             because most containers only ever talk to each other. They
+ *             are not exposed and must never be counted as such — but
+ *             "what is running here" is exactly the question this page
+ *             exists to answer, and leaving them out answers it wrongly.
  */
-async function loadStoppedServices(orgId, scope, filters = {}) {
-  const { serverId, customerId, environment, ownerKind, port, proto } = filters;
+async function loadHostServices(orgId, scope, filters = {}) {
+  const { serverId, customerId, environment, ownerKind, port, proto, state } = filters;
   const where = {
     orgId,
-    running: false,
+    ...(state === 'stopped' ? { running: false } : {}),
+    ...(state === 'running' ? { running: true } : {}),
     ...relationScopeWhere(scope, 'server'),
   };
   const serverWhere = { isActive: true };
@@ -181,34 +189,50 @@ async function loadStoppedServices(orgId, scope, filters = {}) {
 }
 
 /**
- * A stopped service's declared ports, shaped like listeners so the flat port
- * view can show them in the same table. `listening: false` is the whole
- * difference, and every caller has to render it.
+ * A service's declared ports, shaped like listeners so the flat port view can
+ * show them in one table. What distinguishes them:
+ *
+ *   listening: false          nothing is on this port right now
+ *   reachability: 'CONTAINER' bound inside the container's namespace only —
+ *                             a real listening port that the host cannot
+ *                             reach, so it gets a reachability of its own
+ *                             rather than being left null and read as
+ *                             "unknown".
+ *
+ * The collector writes bind='container' for a port a container EXPOSEs
+ * without publishing (`3000/tcp` rather than `0.0.0.0:3000->3000/tcp`).
  */
 function declaredPortRows(service) {
   const ports = Array.isArray(service.ports) ? service.ports : [];
-  return ports.map((dp) => ({
-    id: `service-${service.id}-${dp.proto}-${dp.port}`,
-    serverId: service.serverId,
-    server: service.server,
-    proto: dp.proto,
-    port: Number(dp.port),
-    containerPort: dp.containerPort ?? null,
-    bind: dp.bind || null,
-    bindClass: null,
-    reachability: null,
-    listening: false,
-    service: null,
-    ownerKind: service.kind,
-    ownerName: service.name,
-    ownerRef: service.ref,
-    ownerDetail: service.detail,
-    ownerUser: null,
-    sourcePath: service.sourcePath,
-    serviceState: service.state,
-    serviceStatusText: service.statusText,
-    findings: [],
-  }));
+  return ports.map((dp) => {
+    const internal = dp.bind === 'container';
+    return {
+      id: `service-${service.id}-${dp.proto}-${dp.port}-${internal ? 'c' : 'h'}`,
+      serverId: service.serverId,
+      server: service.server,
+      proto: dp.proto,
+      port: Number(dp.port),
+      containerPort: dp.containerPort ?? null,
+      bind: internal ? null : dp.bind || null,
+      bindClass: null,
+      reachability: internal ? 'CONTAINER' : null,
+      // A running container's internal port IS listening — just not
+      // anywhere the host can reach.
+      listening: internal ? !!service.running : false,
+      containerInternal: internal,
+      service: null,
+      ownerKind: service.kind,
+      ownerName: service.name,
+      ownerRef: service.ref,
+      ownerDetail: service.detail,
+      ownerUser: null,
+      sourcePath: service.sourcePath,
+      serviceState: service.state,
+      serviceRunning: !!service.running,
+      serviceStatusText: service.statusText,
+      findings: [],
+    };
+  });
 }
 
 /**
@@ -224,32 +248,41 @@ export async function listListeners(orgId, query = {}, scope = UNSCOPED) {
 
   // Free text spans a computed label and several columns, so it is applied
   // after the indexed predicates rather than as a pile of ORed `contains`.
-  const [listenerRows, stopped] = await Promise.all([
+  const [listenerRows, services] = await Promise.all([
     prisma.hostListener.findMany({
       where,
       include: { server: { select: SERVER_SELECT } },
       orderBy: [{ port: 'asc' }, { proto: 'asc' }],
       take: MAX_ROWS,
     }),
-    // `reachability` is a property of an open socket, so a reachability
-    // filter is by definition asking only about listening ports.
-    query.reachability ? Promise.resolve([]) : loadStoppedServices(orgId, scope, query),
+    // A reachability filter for a HOST reachability is asking only about
+    // host sockets; CONTAINER is the one value that lives on declarations.
+    query.reachability && query.reachability !== 'CONTAINER'
+      ? Promise.resolve([])
+      : loadHostServices(orgId, scope, query),
   ]);
 
-  // Listening ports first, then the ports a stopped service still declares.
-  // A listener wins its (server, proto, port) — a service can be reported
-  // stopped while something else is already on its port.
+  // Host sockets first, then declarations. A listener wins its (server,
+  // proto, port) against a HOST-published declaration — the socket is the
+  // better evidence for the same port. A container-internal declaration is
+  // a different namespace entirely, so it never collides and is never
+  // dropped: 3000/tcp inside a container and 3000/tcp on the host are two
+  // facts, not one.
   const listeningKeys = new Set(listenerRows.map((r) => `${r.serverId}:${r.proto}:${r.port}`));
+  const declared = services
+    .flatMap(declaredPortRows)
+    .filter((r) => r.containerInternal || !listeningKeys.has(`${r.serverId}:${r.proto}:${r.port}`));
+
   const all = [
     ...listenerRows.map((r) => ({ ...r, listening: true })),
-    ...stopped
-      .flatMap(declaredPortRows)
-      .filter((r) => !listeningKeys.has(`${r.serverId}:${r.proto}:${r.port}`)),
+    ...(query.reachability === 'CONTAINER' ? declared.filter((r) => r.containerInternal) : declared),
   ].sort((a, b) => a.port - b.port || String(a.proto).localeCompare(String(b.proto)));
 
   let rows = query.q ? all.filter((r) => matchesQuery(r, query.q)) : all;
   if (query.state === 'stopped') rows = rows.filter((r) => !r.listening);
   else if (query.state === 'running') rows = rows.filter((r) => r.listening);
+  else if (query.state === 'internal') rows = rows.filter((r) => r.containerInternal);
+  else if (query.state === 'exposed') rows = rows.filter((r) => r.listening && !r.containerInternal);
   if (query.serviceKey) rows = rows.filter((r) => serviceKey(r).key === query.serviceKey);
   if (query.hasFindings === true || query.hasFindings === 'true') {
     const withFindings = await attachFindings(orgId, rows);
@@ -280,13 +313,15 @@ export async function listServices(orgId, query = {}, scope = UNSCOPED) {
   if (!orgId) throw new ApiError(400, 'orgId is required');
 
   const where = buildWhere(orgId, scope, query);
-  const [listenerRows, stopped] = await Promise.all([
+  const [listenerRows, services] = await Promise.all([
     prisma.hostListener.findMany({
       where,
       include: { server: { select: SERVER_SELECT } },
       take: MAX_ROWS,
     }),
-    query.reachability ? Promise.resolve([]) : loadStoppedServices(orgId, scope, query),
+    query.reachability && query.reachability !== 'CONTAINER'
+      ? Promise.resolve([])
+      : loadHostServices(orgId, scope, query),
   ]);
   const rows = await attachFindings(orgId, listenerRows.map((r) => ({ ...r, listening: true })));
 
@@ -339,13 +374,15 @@ export async function listServices(orgId, query = {}, scope = UNSCOPED) {
     }
   }
 
-  // Stopped services join the same groups. Their ports are DECLARED, not
-  // open, so they add to the service's footprint without inflating its
-  // exposure counts — a stopped container is not internet-facing today.
-  for (const svc of stopped) {
+  // Every service joins a group, running or not. Their ports are DECLARED
+  // rather than observed on the host, so they add to the service's
+  // footprint without inflating its exposure counts — neither a stopped
+  // container nor a container-internal port is internet-facing.
+  for (const svc of services) {
     const { key, name, kind } = serviceKey({ ownerKind: svc.kind, ownerName: svc.name, ownerRef: svc.ref });
     const g = ensureGroup(key, name, kind);
-    g.stoppedOn.add(svc.serverId);
+    if (svc.running) g.runningOn.add(svc.serverId);
+    else g.stoppedOn.add(svc.serverId);
     for (const dp of Array.isArray(svc.ports) ? svc.ports : []) {
       g.ports.add(Number(dp.port));
       if (dp.proto) g.protos.add(dp.proto);
@@ -410,8 +447,9 @@ export async function listServices(orgId, query = {}, scope = UNSCOPED) {
     meta: {
       total: items.length,
       listeners: rows.length,
-      stoppedServices: stopped.length,
-      servers: new Set([...rows.map((r) => r.serverId), ...stopped.map((s) => s.serverId)]).size,
+      services: services.length,
+      stoppedServices: services.filter((s) => !s.running).length,
+      servers: new Set([...rows.map((r) => r.serverId), ...services.map((s) => s.serverId)]).size,
       truncated: listenerRows.length >= MAX_ROWS,
     },
   };

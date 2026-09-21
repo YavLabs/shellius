@@ -201,6 +201,9 @@ function ServiceInventory() {
           value: r.value,
           label: `${reachabilityTone(r.value).label} (${r.count})`,
         })),
+        // Not a facet: facets are computed from host sockets, and this value
+        // only ever lives on a container's own declaration.
+        { value: 'CONTAINER', label: 'Container-internal' },
       ],
     },
     {
@@ -221,7 +224,9 @@ function ServiceInventory() {
       placeholder: 'Any state',
       options: [
         { value: '', label: 'Any state' },
-        { value: 'running', label: 'Running' },
+        { value: 'exposed', label: 'Listening on the host' },
+        { value: 'internal', label: 'Container-internal only' },
+        { value: 'running', label: 'Running (either)' },
         { value: 'stopped', label: 'Installed, stopped' },
       ],
     },
@@ -300,8 +305,14 @@ function ServiceInventory() {
       key: 'state',
       label: 'State',
       className: 'w-32',
-      sortAccessor: (r) => (r.listening === false ? 'stopped' : 'running'),
-      searchAccessor: (r) => (r.listening === false ? `stopped ${r.serviceState || ''}` : 'running listening'),
+      sortAccessor: (r) =>
+        r.listening === false ? 'stopped' : r.containerInternal ? 'internal' : 'running',
+      searchAccessor: (r) =>
+        r.listening === false
+          ? `stopped ${r.serviceState || ''}`
+          : r.containerInternal
+            ? 'internal container running'
+            : 'running listening exposed',
       // A port that is closed only because the service behind it is stopped
       // is a different thing from a port nobody serves — and the whole
       // reason the collector now looks past open sockets.
@@ -315,14 +326,23 @@ function ServiceInventory() {
             </Badge>
           ) : null,
       },
-      render: (r) =>
-        r.listening === false ? (
-          <Badge tone="warning" title={r.serviceStatusText || 'Installed but not running'}>
-            {r.serviceState || 'stopped'}
-          </Badge>
-        ) : (
-          <span className="text-xs text-muted-foreground">Listening</span>
-        ),
+      render: (r) => {
+        if (r.listening === false) {
+          return (
+            <Badge tone="warning" title={r.serviceStatusText || 'Installed but not running'}>
+              {r.serviceState || 'stopped'}
+            </Badge>
+          );
+        }
+        if (r.containerInternal) {
+          return (
+            <Badge tone="neutral" title="Listening inside the container only — not bound on the host">
+              internal
+            </Badge>
+          );
+        }
+        return <span className="text-xs text-muted-foreground">Listening</span>;
+      },
     },
     {
       key: 'server',
@@ -354,12 +374,14 @@ function ServiceInventory() {
         slot: 'meta',
         order: 1,
         render: (r) =>
-          r.listening === false ? null : (
+          r.listening === false && !r.reachability ? null : (
             <Badge tone={reachabilityTone(r.reachability).tone}>{reachabilityTone(r.reachability).label}</Badge>
           ),
       },
       render: (r) => {
-        if (r.listening === false) return <span className="text-xs text-muted-foreground">—</span>;
+        if (r.listening === false && !r.reachability) {
+          return <span className="text-xs text-muted-foreground">—</span>;
+        }
         const { tone, label } = reachabilityTone(r.reachability);
         return <Badge tone={tone}>{label}</Badge>;
       },

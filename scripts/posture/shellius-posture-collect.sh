@@ -953,6 +953,78 @@ collect_systemd_services() {
 # Parsed with grep/sed rather than a JSON tool because the collector may not
 # have one, and because the shape is fixed and tiny:
 #   {"3000/tcp":[{"HostIp":"0.0.0.0","HostPort":"8080"}],...}
+# The PORTS column of `docker ps`, flattened to the compact encoding.
+#
+# Two shapes, and the difference matters:
+#
+#   0.0.0.0:8000->8080/tcp   PUBLISHED — bound on the host, reachable
+#   3000/tcp                 EXPOSED only — listening inside the container's
+#                            own namespace, not bound on the host at all
+#
+# The second is why a host running forty containers can show eighteen open
+# ports: most containers only ever talk to each other. They are still part
+# of "what is running here", so they are recorded with bind=container, which
+# is what keeps them out of every reachability verdict — a container-internal
+# port is not exposed and must never be counted as such.
+#
+# IPv6 twins ([::]:80->80/tcp) are dropped: same published port, said twice.
+expand_port_range() {
+  local spec=$1 lo hi i
+  if [[ "$spec" == *-* ]]; then
+    lo=${spec%%-*}; hi=${spec##*-}
+    [[ "$lo" =~ ^[0-9]+$ && "$hi" =~ ^[0-9]+$ ]] || return 0
+    (( hi < lo )) && return 0
+    # A published range of any size is legal; enumerating a huge one would
+    # bury the report, so cap it and keep the ends.
+    (( hi - lo > 32 )) && hi=$((lo + 32))
+    for (( i = lo; i <= hi; i++ )); do printf '%s\n' "$i"; done
+  else
+    [[ "$spec" =~ ^[0-9]+$ ]] && printf '%s\n' "$spec"
+  fi
+}
+
+parse_ps_ports() {
+  local raw=${1-}
+  [[ -z "$raw" ]] && return 0
+  local out="" entry
+  while IFS= read -r entry; do
+    entry=$(sed 's/^ *//; s/ *$//' <<<"$entry")
+    [[ -z "$entry" ]] && continue
+
+    local proto hostbind hp cp hostports cports
+    if [[ "$entry" == *"->"* ]]; then
+      local hostpart contpart
+      hostpart=${entry%%->*}
+      contpart=${entry#*->}
+      proto=${contpart##*/}
+      cports=${contpart%%/*}
+      hostports=${hostpart##*:}
+      hostbind=${hostpart%:*}
+      # "[::]" is the IPv6 half of the same publish.
+      [[ "$hostbind" == "["* ]] && continue
+      [[ -z "$hostbind" ]] && hostbind="0.0.0.0"
+    else
+      proto=${entry##*/}
+      hostports=${entry%%/*}
+      cports=$hostports
+      hostbind="container"
+    fi
+    case "$proto" in tcp|udp) ;; *) continue ;; esac
+
+    # Ranges map one-to-one host->container, in order.
+    local -a hlist=() clist=()
+    while IFS= read -r hp; do hlist+=("$hp"); done < <(expand_port_range "$hostports")
+    while IFS= read -r cp; do clist+=("$cp"); done < <(expand_port_range "$cports")
+    local n=${#hlist[@]} i
+    (( n == 0 )) && continue
+    for (( i = 0; i < n; i++ )); do
+      local c=${clist[i]:-${clist[0]:-${hlist[i]}}}
+      out+="${proto}/${hlist[i]}>${c}@${hostbind};"
+    done
+  done < <(tr ',' '\n' <<<"$raw")
+  printf '%s' "${out%;}"
+}
+
 parse_port_bindings() {
   local json=${1-}
   [[ -z "$json" || "$json" == "null" || "$json" == "{}" ]] && return 0
@@ -1015,8 +1087,14 @@ collect_container_services() {
       # A running container's published ports already arrive through `ss`
       # (or the NAT table) with full attribution. The ones worth an extra
       # call are precisely the ones with no socket to find them by.
+      # A RUNNING container's ports are already in the ps output, published
+      # and container-internal alike — no extra call, and it is the only way
+      # to see the container-only ones at all. A STOPPED container's PORTS
+      # column is empty, so that one needs the inspect.
       local ports=""
-      if (( running == 0 )); then
+      if (( running == 1 )); then
+        ports=$(parse_ps_ports "${cports:-}")
+      else
         local bindings
         bindings=$(run_priv "$rt" inspect --format '{{json .HostConfig.PortBindings}}' "$cid" 2>/dev/null) || bindings=""
         ports=$(parse_port_bindings "$bindings")
