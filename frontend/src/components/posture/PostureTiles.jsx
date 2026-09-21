@@ -22,6 +22,7 @@ export function PostureTileGrid({ children, className }) {
 }
 
 /**
+ * @param {boolean} [props.inset]  tile sits inside a card — tint accordingly
  * @param {string} [props.to]       render as a link
  * @param {Function} [props.onClick] render as a filter toggle (with `active`)
  * otherwise a plain, inert tile.
@@ -34,6 +35,7 @@ export function PostureTile({
   suffix,
   active = false,
   disabled = false,
+  inset = false,
   onClick,
   to,
   title,
@@ -41,7 +43,10 @@ export function PostureTile({
   const interactive = (!!onClick && !disabled) || !!to;
   const className = cn(
     'min-w-0 rounded-lg border p-2.5 text-left transition-colors sm:p-3.5',
-    active ? 'border-primary bg-primary/5' : 'border-border bg-card',
+    // `inset` is for tiles sitting INSIDE a card: bg-card on bg-card is
+    // flat-on-flat and the tile disappears. Same treatment the Dashboard's
+    // widget stats use.
+    active ? 'border-primary bg-primary/5' : inset ? 'border-border bg-background/40' : 'border-border bg-card',
     interactive ? 'hover:border-primary/40 hover:bg-accent/40' : disabled && 'opacity-60'
   );
 

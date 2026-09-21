@@ -33,7 +33,6 @@ import { shouldPromptBootstrap } from '@/lib/bootstrapEligibility';
 import ProvisionModal from '@/components/servers/ProvisionModal';
 import UninstallHostModal from '@/components/servers/UninstallHostModal';
 import QuickConnectButton from '@/components/servers/QuickConnectButton';
-import QuickConnectHeaderButton from '@/components/quickConnect/QuickConnectButton';
 import DeployWizardModal from '@/components/keystore/DeployWizardModal';
 import BulkInstallModal from '@/components/servers/BulkInstallModal';
 import PageHeader from '@/components/common/PageHeader';
@@ -566,8 +565,11 @@ function Servers() {
         subtitle="Manage target servers across customers."
         helpKey="servers"
         actions={[
-          // Quick connect has its own entry in the mobile bottom-nav sheet.
-          { key: 'quick-connect', label: 'Quick connect', desktop: <QuickConnectHeaderButton />, mobile: false },
+          // No Quick connect here. The Topbar already renders the same
+          // component on `md` and up (Topbar.jsx), so this put two identical
+          // buttons on one screen fifty pixels apart, and neither did
+          // anything the other did not. On phones both are the bottom-nav
+          // sheet's entry, so nothing is lost by dropping this one.
           { key: 'refresh', label: 'Refresh', icon: RefreshCw, variant: 'outline', onClick: () => fetch(), disabled: loading, spin: loading },
           // No selection = the whole fleet in scope. That is the case this
           // exists for: an inventory that predates posture, where installing

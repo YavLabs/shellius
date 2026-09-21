@@ -20,9 +20,6 @@ import {
   RefreshCw,
   ExternalLink,
   Shield,
-  Radar,
-  ShieldAlert,
-  Info,
 } from 'lucide-react';
 import DataTable from '@/components/shared/DataTable';
 import { CardIcon, MobileCardSkeleton } from '@/components/mobile/MobileCard';
@@ -57,9 +54,9 @@ import MobilePageHeader from '@/components/mobile/MobilePageHeader';
 import { fromState } from '@/hooks/useBackTarget';
 import { getPostureSummary } from '@/services/postureService';
 import BulkInstallModal from '@/components/servers/BulkInstallModal';
+import CustomerPostureWidget from '@/components/posture/CustomerPostureWidget';
 import { useBreadcrumbs } from '@/context/BreadcrumbContext';
 import useIsMobile from '@/hooks/useIsMobile';
-import { PostureTile, PostureTileGrid } from '@/components/posture/PostureTiles';
 import SectionHeading from '@/components/common/SectionHeading';
 import { useAuth } from '@/context/AuthContext';
 import { can } from '@/lib/permissions';
@@ -167,17 +164,6 @@ const ENV_DOT_COLORS = {
 // Main page
 // ---------------------------------------------------------------------------
 
-/**
- * Severity tiles for the customer's posture panel. Each links into the fleet
- * Posture page pre-filtered to this customer, so the panel is a summary that
- * hands off rather than a second findings inbox to keep in sync.
- */
-const POSTURE_TILES = [
-  { key: 'critical', label: 'Critical', icon: ShieldAlert, tint: 'text-red-500' },
-  { key: 'high', label: 'High', icon: ShieldAlert, tint: 'text-orange-500' },
-  { key: 'medium', label: 'Medium', icon: Radar, tint: 'text-amber-500' },
-  { key: 'low', label: 'Low', icon: Info, tint: 'text-sky-500' },
-];
 
 function CustomerDetail() {
   const { id } = useParams();
@@ -623,102 +609,12 @@ function CustomerDetail() {
 
       {/* ---- ZONE 1b: POSTURE ---- */}
       {canViewPosture && posture && (
-        <section className="space-y-3">
-          <SectionHeading
-            title="Security posture"
-            action={
-              <span className="flex items-center gap-3">
-                {/* "Cover this one client's fleet" used to mean going to
-                    Servers and filtering by hand. The customer page knows
-                    which servers it means. */}
-                {canOnboard && servers.length > 0 && (
-                  <button
-                    type="button"
-                    onClick={() => setBulkInstallOpen(true)}
-                    className="text-xs text-primary hover:underline"
-                  >
-                    Install collectors
-                  </button>
-                )}
-                <Link to={`/posture?customerId=${id}`} className="text-xs text-primary hover:underline">
-                  Open in Posture
-                </Link>
-              </span>
-            }
-          />
-
-          {/* "No collector anywhere" is notInstalled === total, NOT
-              reporting === 0. A stale host still has a collector and still
-              has findings worth showing — treating it as uninstalled hid
-              real data behind an install prompt. */}
-          {posture.servers.total > 0 && posture.servers.notInstalled === posture.servers.total ? (
-            <div className="flex items-start gap-2 rounded-lg border border-border bg-muted/40 px-3 py-2.5 text-xs text-muted-foreground">
-              <Radar className="mt-0.5 h-3.5 w-3.5 shrink-0" />
-              <p>
-                No host for this customer is running the posture collector yet, so there is nothing
-                to report.{' '}
-                {canOnboard ? (
-                  <button
-                    type="button"
-                    onClick={() => setBulkInstallOpen(true)}
-                    className="font-medium text-[hsl(var(--brand))] underline-offset-2 hover:underline"
-                  >
-                    Install it on these hosts
-                  </button>
-                ) : (
-                  <span>
-                    Someone with onboarding rights can install it from a server&rsquo;s{' '}
-                    <span className="font-medium text-foreground">Bootstrap host</span> action.
-                  </span>
-                )}
-              </p>
-            </div>
-          ) : (
-            <>
-              <PostureTileGrid className="lg:grid-cols-5">
-                {POSTURE_TILES.map((t) => (
-                  <PostureTile
-                    key={t.key}
-                    icon={t.icon}
-                    tint={t.tint}
-                    label={t.label}
-                    value={posture.findings[t.key] ?? 0}
-                    to={`/posture?customerId=${id}&severity=${t.key.toUpperCase()}`}
-                  />
-                ))}
-                <PostureTile
-                  icon={Radar}
-                  label="Collector installed"
-                  value={posture.servers.reporting + posture.servers.stale}
-                  suffix={
-                    <span className="ml-1 text-sm font-normal text-muted-foreground">
-                      of {posture.servers.total}
-                    </span>
-                  }
-                />
-              </PostureTileGrid>
-              {(posture.servers.notInstalled > 0 || posture.servers.stale > 0) && (
-                <p className="text-xs text-muted-foreground">
-                  {posture.servers.notInstalled > 0 && (
-                    <>
-                      {posture.servers.notInstalled} of this customer&rsquo;s servers have no
-                      collector installed, so their exposure is unknown rather than clean.
-                    </>
-                  )}
-                  {posture.servers.stale > 0 && (
-                    <>
-                      {posture.servers.notInstalled > 0 ? ' ' : ''}
-                      <span className="text-amber-600 dark:text-amber-400">
-                        {posture.servers.stale} stopped reporting — their findings are held at the
-                        last known state, not cleared.
-                      </span>
-                    </>
-                  )}
-                </p>
-              )}
-            </>
-          )}
-        </section>
+        <CustomerPostureWidget
+          customerId={id}
+          posture={posture}
+          canOnboard={canOnboard && servers.length > 0}
+          onInstall={() => setBulkInstallOpen(true)}
+        />
       )}
 
       {/* ---- ZONE 2: SERVERS (full width) ---- */}
