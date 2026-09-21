@@ -28,6 +28,8 @@ export const triggerHealthCheck = (id) =>
   api.post(`/servers/${id}/health-check`).then(unwrapServer);
 export const resetHostKey = (id) =>
   api.post(`/servers/${id}/host-key/reset`).then((r) => r.data?.data?.server ?? r.data?.data);
+export const listOsTypes = () =>
+  api.get('/servers/meta/os-types').then((r) => r.data?.data?.osTypes ?? []);
 
 /**
  * Rejects with an Error carrying `code` when the backend sent one

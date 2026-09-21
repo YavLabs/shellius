@@ -5,6 +5,21 @@ import { encrypt } from '../utils/crypto.js';
 import * as terminalService from './terminalService.js';
 import { serverScopeWhere, assertCustomerInScope } from '../lib/scope.js';
 import { statusesFor, filterIdsByStatus, SSH_TRUST_STATES, COLLECTOR_STATES } from './serverAgentStatus.js';
+import { endOfDayInclusive } from '../utils/dateRange.js';
+
+// Whitelisted sort keys for listServers — never pass sortBy straight into
+// Prisma's orderBy, or a client could sort (and thereby probe existence of
+// columns) on anything. "hostname" sorts on the display name first since
+// that's what the Name column actually shows, falling back to hostname.
+const SERVER_SORTABLE = {
+  hostname: (dir) => [{ displayName: dir }, { hostname: dir }],
+  displayName: (dir) => [{ displayName: dir }, { hostname: dir }],
+  ipAddress: (dir) => [{ ipAddress: dir }],
+  environment: (dir) => [{ environment: dir }],
+  healthStatus: (dir) => [{ healthStatus: dir }],
+  lastHealthCheck: (dir) => [{ lastHealthCheck: dir }],
+  customer: (dir) => [{ customer: { name: dir } }],
+};
 
 const RDP_SENSITIVE_FIELDS = ['rdpPasswordEncrypted', 'rdpPasswordIv', 'rdpPasswordTag'];
 
@@ -116,6 +131,12 @@ export async function listServers(orgId, {
   isActive,
   sshTrust,
   collector,
+  protocol,
+  osType,
+  healthCheckFrom,
+  healthCheckTo,
+  sortBy,
+  sortDir,
 } = {}, scope) {
   page = parseInt(page, 10) || 1;
   pageSize = Math.min(parseInt(pageSize, 10) || 25, 100);
@@ -133,6 +154,13 @@ export async function listServers(orgId, {
   if (healthStatus) where.healthStatus = healthStatus;
   if (cloudProvider) where.cloudProvider = cloudProvider;
   if (isActive !== undefined) where.isActive = isActive === true || isActive === 'true';
+  if (protocol) where.protocol = protocol;
+  if (osType) where.osType = osType;
+  if (healthCheckFrom || healthCheckTo) {
+    where.lastHealthCheck = {};
+    if (healthCheckFrom) where.lastHealthCheck.gte = new Date(healthCheckFrom);
+    if (healthCheckTo) where.lastHealthCheck.lte = endOfDayInclusive(healthCheckTo);
+  }
   if (search) {
     where.OR = [
       { hostname: { contains: search, mode: 'insensitive' } },
@@ -150,12 +178,15 @@ export async function listServers(orgId, {
     where.id = { in: ids };
   }
 
+  const dir = sortDir === 'desc' ? 'desc' : 'asc';
+  const orderBy = SERVER_SORTABLE[sortBy] ? SERVER_SORTABLE[sortBy](dir) : { createdAt: 'desc' };
+
   const [items, total] = await Promise.all([
     prisma.server.findMany({
       where,
       skip: (page - 1) * pageSize,
       take: pageSize,
-      orderBy: { createdAt: 'desc' },
+      orderBy,
       include: SERVER_INCLUDE,
     }),
     prisma.server.count({ where }),
@@ -169,6 +200,24 @@ export async function listServers(orgId, {
     page,
     pageSize,
   };
+}
+
+/**
+ * Distinct OS types present in the org's (scoped) inventory, for the
+ * Servers "OS" filter — a static list would offer options nothing matches
+ * and hide ones that do.
+ */
+export async function listOsTypes(orgId, scope) {
+  const where = { orgId, osType: { not: null } };
+  const scopeFilter = serverScopeWhere(scope);
+  if (scopeFilter.customerId) where.AND = [scopeFilter];
+  const rows = await prisma.server.findMany({
+    where,
+    distinct: ['osType'],
+    select: { osType: true },
+    orderBy: { osType: 'asc' },
+  });
+  return rows.map((r) => r.osType).filter(Boolean);
 }
 
 export async function getServer(orgId, serverId, scope) {

@@ -98,10 +98,18 @@ const policyUpdateSchema = Joi.object({
   subjects: Joi.array().items(subjectSchema),
 }).min(1);
 
+const POLICY_SORT_KEYS = ['name', 'effect', 'priority', 'isActive', 'updatedAt'];
+
 const listQuerySchema = Joi.object({
   customerId: Joi.string(),
+  orgWide: Joi.boolean(),
   effect: Joi.string().valid(...EFFECTS),
   isActive: Joi.boolean(),
+  environment: Joi.string().valid(...ENVIRONMENTS),
+  subjectId: Joi.string(),
+  search: Joi.string().trim().max(200).allow(''),
+  sortBy: Joi.string().valid(...POLICY_SORT_KEYS),
+  sortDir: Joi.string().valid('asc', 'desc'),
   page: Joi.number().integer().min(1).default(1),
   pageSize: Joi.number().integer().min(1).max(100).default(25),
 });

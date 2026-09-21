@@ -505,22 +505,46 @@ export async function getAccessibleServers(orgId, userId, scope = UNSCOPED) {
  * @param {number}  [filters.pageSize=25]
  * @returns {Promise<{ items: object[], total: number, page: number, pageSize: number }>}
  */
+// Whitelisted sort keys — never pass sortBy straight into Prisma's orderBy.
+const POLICY_SORTABLE = {
+  name: (dir) => [{ name: dir }],
+  effect: (dir) => [{ effect: dir }],
+  priority: (dir) => [{ priority: dir }],
+  isActive: (dir) => [{ isActive: dir }],
+  updatedAt: (dir) => [{ updatedAt: dir }],
+};
+
 export async function list(orgId, filters = {}) {
-  const { customerId, effect, isActive, page = 1, pageSize = 25 } = filters;
+  const { customerId, orgWide, effect, isActive, environment, subjectId, search, sortBy, sortDir, page = 1, pageSize = 25 } = filters;
   const p = parseInt(page, 10) || 1;
   const ps = Math.min(parseInt(pageSize, 10) || 25, 100);
 
   const where = { orgId };
-  if (customerId !== undefined) where.customerId = customerId;
+  // orgWide=true narrows to policies with no customer (org-wide); it wins
+  // over a specific customerId since the two are mutually exclusive asks.
+  if (orgWide === true || orgWide === 'true') where.customerId = null;
+  else if (customerId !== undefined) where.customerId = customerId;
   if (effect !== undefined) where.effect = effect;
   if (isActive !== undefined) where.isActive = isActive === true || isActive === 'true';
+  if (environment) where.targetEnvironments = { has: environment };
+  if (subjectId) where.subjects = { some: { subjectId } };
+  if (search) {
+    where.OR = [
+      { name: { contains: search, mode: 'insensitive' } },
+      { description: { contains: search, mode: 'insensitive' } },
+    ];
+  }
+
+  const orderBy = POLICY_SORTABLE[sortBy]
+    ? POLICY_SORTABLE[sortBy](sortDir === 'desc' ? 'desc' : 'asc')
+    : [{ priority: 'asc' }, { createdAt: 'desc' }];
 
   const [items, total] = await Promise.all([
     prisma.accessPolicy.findMany({
       where,
       skip: (p - 1) * ps,
       take: ps,
-      orderBy: [{ priority: 'asc' }, { createdAt: 'desc' }],
+      orderBy,
       include: {
         subjects: true,
         customer: { select: { id: true, name: true, slug: true } },

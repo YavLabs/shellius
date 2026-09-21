@@ -52,15 +52,28 @@ import {
   updateServer,
   bulkUpdateServers,
   triggerHealthCheck,
+  listOsTypes,
 } from '@/services/serverService';
 import { listCustomers } from '@/services/customerService';
 import { useAuth } from '@/context/AuthContext';
 import { can } from '@/lib/permissions';
 import { relativeTime } from '@/utils/time';
 import { ENVIRONMENT_LABELS, HEALTH_STATUS_LABELS } from '@/lib/labels';
+import useUrlFilters from '@/hooks/useUrlFilters';
 
 const ENVIRONMENTS = ['demo', 'dev', 'staging', 'prod'];
 const HEALTH_STATUSES = ['healthy', 'unhealthy', 'unknown', 'maintenance'];
+const PROTOCOLS = ['ssh', 'rdp', 'both'];
+// Column key -> backend sortBy. The column keys read better in the table
+// ("health", "lastCheck") than the Prisma fields they sort on.
+const SORT_KEY_TO_BACKEND = {
+  hostname: 'hostname',
+  ipAddress: 'ipAddress',
+  customer: 'customer',
+  environment: 'environment',
+  health: 'healthStatus',
+  lastCheck: 'lastHealthCheck',
+};
 
 function Servers() {
   const navigate = useNavigate();
@@ -76,17 +89,35 @@ function Servers() {
 
   const [servers, setServers] = useState([]);
   const [total, setTotal] = useState(0);
-  const [page, setPage] = useState(1);
-  const [pageSize, setPageSize] = useState(20);
-  const [search, setSearch] = useState('');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  const [osTypes, setOsTypes] = useState([]);
 
-  const [environment, setEnvironment] = useState('');
-  const [healthStatus, setHealthStatus] = useState('');
-  const [customerFilter, setCustomerFilter] = useState('');
-  const [sshTrustFilter, setSshTrustFilter] = useState('');
-  const [collectorFilter, setCollectorFilter] = useState('');
+  // Every filter, search, sort and page value lives in the URL — a link in
+  // from Customer Details (`?customerId=`) opens filtered, and a refresh or
+  // Back never silently drops what was applied.
+  const [f, setF] = useUrlFilters({
+    q: '',
+    environment: '',
+    healthStatus: '',
+    customerId: '',
+    sshTrust: '',
+    collector: '',
+    protocol: '',
+    osType: '',
+    isActive: '',
+    healthCheckFrom: '',
+    healthCheckTo: '',
+    sortBy: '',
+    sortDir: 'asc',
+    page: '1',
+    pageSize: '20',
+  });
+  const page = parseInt(f.page, 10) || 1;
+  const pageSize = parseInt(f.pageSize, 10) || 20;
+  const setPage = (p) => setF({ page: String(p) });
+  const setPageSize = (size) => setF({ pageSize: String(size), page: '1' });
+
   const [customers, setCustomers] = useState([]);
 
   const [selected, setSelected] = useState([]);
@@ -153,12 +184,21 @@ function Servers() {
     setError('');
     try {
       const params = { page, pageSize };
-      if (environment) params.environment = environment;
-      if (healthStatus) params.healthStatus = healthStatus;
-      if (customerFilter) params.customerId = customerFilter;
-      if (sshTrustFilter) params.sshTrust = sshTrustFilter;
-      if (collectorFilter) params.collector = collectorFilter;
-      if (search) params.search = search;
+      if (f.environment) params.environment = f.environment;
+      if (f.healthStatus) params.healthStatus = f.healthStatus;
+      if (f.customerId) params.customerId = f.customerId;
+      if (f.sshTrust) params.sshTrust = f.sshTrust;
+      if (f.collector) params.collector = f.collector;
+      if (f.protocol) params.protocol = f.protocol;
+      if (f.osType) params.osType = f.osType;
+      if (f.isActive) params.isActive = f.isActive;
+      if (f.healthCheckFrom) params.healthCheckFrom = f.healthCheckFrom;
+      if (f.healthCheckTo) params.healthCheckTo = f.healthCheckTo;
+      if (f.sortBy) {
+        params.sortBy = SORT_KEY_TO_BACKEND[f.sortBy] || f.sortBy;
+        params.sortDir = f.sortDir;
+      }
+      if (f.q) params.search = f.q;
       const data = await listServers(params);
       setServers(data.items || []);
       setTotal(data.total || 0);
@@ -167,7 +207,7 @@ function Servers() {
     } finally {
       setLoading(false);
     }
-  }, [page, pageSize, environment, healthStatus, customerFilter, sshTrustFilter, collectorFilter, search]);
+  }, [page, pageSize, f.environment, f.healthStatus, f.customerId, f.sshTrust, f.collector, f.protocol, f.osType, f.isActive, f.healthCheckFrom, f.healthCheckTo, f.sortBy, f.sortDir, f.q]);
 
   // While any host on the page is mid-install — a collector waiting for its
   // first report, a bootstrap running — re-read the page every 15 s, quietly,
@@ -180,13 +220,22 @@ function Servers() {
 
   // Server-side search — reset to page 1 and refetch when the query changes.
   const handleSearchChange = useCallback((q) => {
-    setSearch(q);
-    setPage(1);
+    setF({ q, page: '1' });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const handleSortChange = useCallback((sortBy, sortDir) => {
+    setF({ sortBy, sortDir });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   useEffect(() => {
     fetchCustomers();
   }, [fetchCustomers]);
+
+  useEffect(() => {
+    listOsTypes().then(setOsTypes).catch(() => {});
+  }, []);
 
   useEffect(() => {
     fetch();
@@ -242,7 +291,7 @@ function Servers() {
     { value: 'osType', label: 'OS Type' },
     { value: 'isActive', label: 'Status' },
     { value: 'sshUser', label: 'SSH User' },
-  ].filter((f) => canEdit && (f.value !== 'environment' || can(user, 'servers.change_environment')));
+  ].filter((bf) => canEdit && (bf.value !== 'environment' || can(user, 'servers.change_environment')));
   const bulkValueOptions = {
     environment: ENVIRONMENTS.map((e) => ({ value: e, label: ENVIRONMENT_LABELS[e] || e })),
     customerId: customers.map((c) => ({ value: c.id, label: c.name })),
@@ -261,7 +310,7 @@ function Servers() {
       { value: 'false', label: 'Inactive' },
     ],
   };
-  const bulkFieldLabel = BULK_FIELDS.find((f) => f.value === bulkField)?.label || '';
+  const bulkFieldLabel = BULK_FIELDS.find((bf) => bf.value === bulkField)?.label || '';
 
   const filterDefs = [
     {
@@ -282,35 +331,66 @@ function Servers() {
         ...HEALTH_STATUSES.map((h) => ({ value: h, label: HEALTH_STATUS_LABELS[h] || h })),
       ],
     },
+    { key: 'customerId', label: 'Customer', placeholder: 'All customers', type: 'entity', entity: 'customers' },
     {
-      key: 'customerId',
-      label: 'Customer',
-      placeholder: 'All customers',
-      searchable: true,
+      key: 'protocol',
+      label: 'Protocol',
+      placeholder: 'All protocols',
       options: [
-        { value: '', label: 'All customers' },
-        ...customers.map((c) => ({ value: c.id, label: c.name })),
+        { value: '', label: 'All protocols' },
+        ...PROTOCOLS.map((p) => ({ value: p, label: p.toUpperCase() })),
       ],
     },
-  ];
-  filterDefs.push(
+    {
+      key: 'osType',
+      label: 'OS',
+      placeholder: 'All OS types',
+      options: [
+        { value: '', label: 'All OS types' },
+        ...osTypes.map((o) => ({ value: o, label: o })),
+      ],
+    },
+    {
+      key: 'isActive',
+      label: 'Status',
+      placeholder: 'Any status',
+      options: [
+        { value: '', label: 'Any status' },
+        { value: 'true', label: 'Active' },
+        { value: 'false', label: 'Inactive' },
+      ],
+    },
     { key: 'sshTrust', label: 'SSH trust', placeholder: 'Any SSH trust', options: SSH_TRUST_FILTER_OPTIONS },
-    { key: 'collector', label: 'Posture collector', placeholder: 'Any collector state', options: COLLECTOR_FILTER_OPTIONS }
-  );
+    { key: 'collector', label: 'Posture collector', placeholder: 'Any collector state', options: COLLECTOR_FILTER_OPTIONS },
+    { key: 'healthCheckFrom', label: 'Last health check from', type: 'date' },
+    { key: 'healthCheckTo', label: 'Last health check to', type: 'date' },
+  ];
   const filterValues = {
-    environment,
-    healthStatus,
-    customerId: customerFilter,
-    sshTrust: sshTrustFilter,
-    collector: collectorFilter,
+    environment: f.environment,
+    healthStatus: f.healthStatus,
+    customerId: f.customerId,
+    sshTrust: f.sshTrust,
+    collector: f.collector,
+    protocol: f.protocol,
+    osType: f.osType,
+    isActive: f.isActive,
+    healthCheckFrom: f.healthCheckFrom,
+    healthCheckTo: f.healthCheckTo,
   };
   const applyFilters = (next) => {
-    setEnvironment(next.environment ?? '');
-    setHealthStatus(next.healthStatus ?? '');
-    setCustomerFilter(next.customerId ?? '');
-    setSshTrustFilter(next.sshTrust ?? '');
-    setCollectorFilter(next.collector ?? '');
-    setPage(1);
+    setF({
+      environment: next.environment ?? '',
+      healthStatus: next.healthStatus ?? '',
+      customerId: next.customerId ?? '',
+      sshTrust: next.sshTrust ?? '',
+      collector: next.collector ?? '',
+      protocol: next.protocol ?? '',
+      osType: next.osType ?? '',
+      isActive: next.isActive ?? '',
+      healthCheckFrom: next.healthCheckFrom ?? '',
+      healthCheckTo: next.healthCheckTo ?? '',
+      page: '1',
+    });
   };
 
   const bulkActionsSlot =
@@ -496,7 +576,8 @@ function Servers() {
     {
       key: 'protocol',
       label: 'Protocol',
-      sortable: true,
+      // Not a whitelisted server-sort column (see SORT_KEY_TO_BACKEND).
+      sortable: false,
       mobile: {
         slot: 'leading',
         render: (r) => {
@@ -535,6 +616,7 @@ function Servers() {
       key: 'sshTrust',
       label: 'SSH trust',
       hideBelow: 'md',
+      sortable: false,
       searchAccessor: (r) => r.sshTrust?.label || '',
       mobile: {
         slot: 'meta',
@@ -549,6 +631,7 @@ function Servers() {
       key: 'collector',
       label: 'Collector',
       hideBelow: 'md',
+      sortable: false,
       searchAccessor: (r) => r.collector?.label || '',
       mobile: {
         slot: 'meta',
@@ -561,6 +644,7 @@ function Servers() {
       key: 'os',
       label: 'OS',
       hideBelow: 'lg',
+      sortable: false,
       render: (r) => <span className="text-muted-foreground">{r.osType || '-'}</span>,
     },
     {
@@ -577,6 +661,7 @@ function Servers() {
       key: 'quickConnect',
       label: '',
       className: 'w-36',
+      sortable: false,
       mobile: 'action',
       render: (r) => <QuickConnectButton server={r} currentUser={user} />,
     },
@@ -702,6 +787,7 @@ function Servers() {
             : 'No servers found'
         }
         searchPlaceholder="Search name, hostname or IP..."
+        initialSearch={f.q}
         onSearchChange={handleSearchChange}
         filterDefs={filterDefs}
         filterValues={filterValues}
@@ -712,6 +798,7 @@ function Servers() {
         bulkActions={bulkActionsSlot}
         onRowClick={(r) => navigate(`/servers/${r.id}`)}
         mobile={{ accent: (r) => envAccent(r.environment) }}
+        serverSort={{ sortKey: f.sortBy, sortDir: f.sortDir, onSortChange: handleSortChange }}
         serverPagination={{
           page,
           total,
