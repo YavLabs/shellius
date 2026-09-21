@@ -9,6 +9,8 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 Tracked here as work lands on `main`; moved into a dated section on release
 (`node scripts/version.mjs bump <major|minor|patch>`).
 
+## [1.7.4] - 2026-09-21
+
 ### Fixed
 
 - **The page kept showing the replaced collector's warnings after a reinstall.** The installer only enabled the timer, which does nothing to a timer that's already running, so the new collector first reported up to 5½ minutes later. The installer now starts a run immediately. Until the new collector reports, the page says **Collector reinstalled — waiting for its first report**.
