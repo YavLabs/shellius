@@ -66,12 +66,31 @@ have() { command -v "$1" >/dev/null 2>&1; }
 # operator chose to run this by hand as root) skip sudo entirely; otherwise
 # go through the narrow sudoers grant. -n (non-interactive) means a missing
 # grant fails fast instead of hanging on a password prompt.
+# sudo's own stderr from the most recent privileged call.
+#
+# It used to go to /dev/null, and that is what made the NoNewPrivileges bug
+# so expensive: sudo said exactly what was wrong ("The 'no new privileges'
+# flag is set, which prevents sudo from running as root") and every host
+# reported only "sudo grant missing?". run_priv runs inside $(…) subshells,
+# so a variable cannot carry the message back out — a file can. Set once the
+# temp dir exists; read with priv_err() straight after the failing call.
+PRIV_ERR=""
 run_priv() {
   if [ "$(id -u)" -eq 0 ]; then
     "$@"
+  elif [ -n "$PRIV_ERR" ]; then
+    sudo -n "$@" 2>"$PRIV_ERR"
   else
     sudo -n "$@" 2>/dev/null
   fi
+}
+
+# ": <what sudo said>", or nothing. Bounded, single-line, for a reason string.
+priv_err() {
+  [ -n "$PRIV_ERR" ] && [ -s "$PRIV_ERR" ] || return 0
+  local e
+  e=$(head -c 240 "$PRIV_ERR" | tr '\n\r\t' '   ' | sed 's/  */ /g; s/ *$//')
+  [ -n "$e" ] && printf ': %s' "$e"
 }
 
 DEGRADED=0
@@ -83,6 +102,7 @@ note_degraded() {
 
 TMP=$(mktemp -d) || { echo '{"error":"cannot create temp dir"}' >&2; exit 2; }
 trap 'rm -rf "$TMP"' EXIT
+PRIV_ERR="$TMP/priv.err"
 
 ENDPOINTS="$TMP/endpoints.tsv"  # proto bind port pids pname kind owner detail user cport oid src csrc
 ENRICHED="$TMP/enriched.tsv"    # ... + bindclass reach service dockerpub bypass source
@@ -315,7 +335,7 @@ collect_listeners() {
   raw=$(run_priv ss -H -tulpn 2>/dev/null) || raw=""
   if [[ -z "$raw" ]]; then
     SS_OK=0
-    note_degraded "could not run 'ss' with the privilege needed to see other users' sockets (sudo grant missing or ss not on sudoers path)"
+    note_degraded "could not run 'ss' with the privilege needed to see other users' sockets (sudo grant missing or ss not on sudoers path)$(priv_err)"
     # Still try unprivileged — partial (own-user-only) attribution beats none.
     raw=$(ss -H -tulpn 2>/dev/null) || raw=""
     [[ -n "$raw" ]] && note_degraded "listener owners limited to the collector's own user"
@@ -382,7 +402,7 @@ collect_firewall_ufw() {
   have ufw || return 1
   local status
   status=$(run_priv ufw status verbose 2>/dev/null) || status=""
-  [[ -n "$status" ]] || { note_degraded "ufw present but 'sudo ufw status verbose' failed (sudoers grant missing?)"; return 1; }
+  [[ -n "$status" ]] || { note_degraded "ufw present but 'sudo ufw status verbose' failed (sudoers grant missing?)$(priv_err)"; return 1; }
 
   FW_ENGINE="ufw"
   grep -q "^Status: active" <<<"$status" && FW_ACTIVE=1
@@ -420,7 +440,7 @@ collect_firewall_firewalld() {
   have firewall-cmd || return 1
   local out
   out=$(run_priv firewall-cmd --list-all 2>/dev/null) || out=""
-  [[ -n "$out" ]] || { note_degraded "firewalld present but 'sudo firewall-cmd --list-all' failed (sudoers grant missing?)"; return 1; }
+  [[ -n "$out" ]] || { note_degraded "firewalld present but 'sudo firewall-cmd --list-all' failed (sudoers grant missing?)$(priv_err)"; return 1; }
 
   FW_ENGINE="firewalld"
   local target
@@ -616,7 +636,7 @@ collect_nat_dnat() {
 
   if [[ -z "$raw" ]]; then
     if have iptables || have nft; then
-      note_degraded "could not read the NAT table ('sudo iptables -t nat -S' / 'sudo nft list table ip nat' both failed — sudoers grant missing, or nftables has no ip/nat table on this host); Docker userland-proxy=false published ports may be invisible"
+      note_degraded "could not read the NAT table ('sudo iptables -t nat -S' / 'sudo nft list table ip nat' both failed — sudoers grant missing, or nftables has no ip/nat table on this host); Docker userland-proxy=false published ports may be invisible$(priv_err)"
     fi
     return 1
   fi
