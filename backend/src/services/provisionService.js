@@ -171,6 +171,17 @@ export async function provisionServer(
       .catch((e) => logger.warn({ err: e.message, serverId }, 'failed to set provisioned state'));
   };
 
+  // The collector was (re)installed just now. A posture report older than
+  // this came from the collector that was replaced; the UI waits for the
+  // new one instead of presenting the old one's warnings as current.
+  // 'ssh' mode installs no collector, so it records nothing.
+  const markCollectorInstalled = () => {
+    if (mode !== 'posture' && mode !== 'full') return Promise.resolve();
+    return prisma.server
+      .update({ where: { id: serverId }, data: { postureInstalledAt: new Date() } })
+      .catch((e) => logger.warn({ err: e.message, serverId }, 'failed to record the collector install time'));
+  };
+
   const markFailed = (message) => {
     if (!trackFullAgentStatus) return Promise.resolve();
     return prisma.server
@@ -224,7 +235,7 @@ export async function provisionServer(
     const settleOk = () => {
       if (settled) return;
       done();
-      markProvisioned().finally(() => resolve());
+      Promise.all([markProvisioned(), markCollectorInstalled()]).finally(() => resolve());
     };
     const settleErr = (err) => {
       if (settled) return;

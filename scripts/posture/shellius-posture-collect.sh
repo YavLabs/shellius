@@ -58,12 +58,16 @@
 
 set -uo pipefail
 
+# 1.1.1: host limitations (containers by id, firewall rules it cannot
+# evaluate, truncated socket list) are `notes`, not degraded reasons;
+# systemctl show asked without sudo first and cached per unit; no stray
+# "/proc/<pid>/cmdline: No such file" on stderr.
 # 1.1.0: firewall rules sent inside `firewall` (they were beside it and the
 # API dropped them), ownerRef/process/agentVersion sent under the names the
 # API reads, every degraded reason sent, iptables/nftables INPUT parsed,
 # launcher-aware process attribution (pm2 via its God Daemon, secret
 # injectors such as `infisical run`, login-session processes).
-VERSION="1.1.0"
+VERSION="1.1.1"
 
 # Where /proc is. Only ever changed by the collector's own test harness,
 # which points it at a fixture tree; systemd runs this with no such variable.
@@ -109,6 +113,16 @@ note_degraded() {
   # Bounded: the API refuses (never truncates) an over-long reason, and one
   # refused field costs the whole snapshot.
   DEGRADED_REASONS+=("${1:0:500}")
+}
+
+# A limitation of THIS HOST, not a fault in the collector: containers named
+# by id (no Docker socket, by design), firewall rules it cannot evaluate, a
+# socket list too long for one snapshot. Reported, never degraded — a
+# reinstall cannot change any of them, and calling them "degraded" kept
+# every Docker host pre-selected for a reinstall that could never clear it.
+NOTES=()
+note_limitation() {
+  NOTES+=("${1:0:500}")
 }
 
 TMP=$(mktemp -d) || { echo '{"error":"cannot create temp dir"}' >&2; exit 2; }
@@ -197,7 +211,7 @@ service_identity() {
 read_env() {
   local pid=$1 var=$2
   [[ -r "$PROC/$pid/environ" ]] || return 1
-  tr '\0' '\n' < "$PROC/$pid/environ" 2>/dev/null | sed -n "s/^${var}=//p" | head -1
+  tr '\0' '\n' 2>/dev/null < "$PROC/$pid/environ" | sed -n "s/^${var}=//p" | head -1
 }
 
 proc_user() {
@@ -211,7 +225,7 @@ proc_user() {
 proc_cmdline() {
   local pid=$1
   [[ -r "$PROC/$pid/cmdline" ]] || return 1
-  tr '\0' ' ' < "$PROC/$pid/cmdline" 2>/dev/null | sed 's/ *$//'
+  tr '\0' ' ' 2>/dev/null < "$PROC/$pid/cmdline" | sed 's/ *$//'
 }
 
 proc_ppid() {
@@ -236,7 +250,11 @@ resolve_source() {
           # not sudo-able (sudoers only names the system-wide invocation).
           src=$(systemctl $uflag show -p FragmentPath --value "$unit" 2>/dev/null)
         else
-          src=$(run_priv systemctl show -p FragmentPath --value "$unit" 2>/dev/null)
+          # Unprivileged first: FragmentPath of a system unit is readable by
+          # anyone over D-Bus. Sudo only when that fails — every sudo call is
+          # three lines in the host's auth log, every run, per listener.
+          src=$(systemctl show -p FragmentPath --value "$unit" 2>/dev/null)
+          [[ -n "$src" ]] || src=$(run_priv systemctl show -p FragmentPath --value "$unit" 2>/dev/null)
         fi
       fi
       ;;
@@ -325,15 +343,18 @@ index_pm2() {
   # 20% CPU quota on hosts with thousands of processes.
   local f
   while IFS= read -r f; do
-    cmd=$(tr '\0' ' ' < "$f" 2>/dev/null) || continue
+    cmd=$( { tr '\0' ' ' < "$f"; } 2>/dev/null ) || continue
     home=$(sed -n 's/.*God Daemon (\(.*\)).*/\1/p' <<<"$cmd" | sed 's/ *$//')
     [[ -n "$home" && -d "$home" ]] && PM2_HOMES[$home]=1
-  done < <(grep -las 'God Daemon (' "$PROC"/[0-9]*/cmdline 2>/dev/null)
+  # "God Daemo[n]": grep's own command line contains its pattern, so a
+  # literal "God Daemon (" matched grep itself — whose /proc entry is gone
+  # by the time it is read ("line 328: /proc/<pid>/cmdline: No such file").
+  done < <(grep -las 'God Daemo[n] (' "$PROC"/[0-9]*/cmdline 2>/dev/null)
   local base name id pid
   for home in "${!PM2_HOMES[@]}"; do
     for f in "$home"/pids/*.pid; do
       [[ -r "$f" ]] || continue
-      pid=$(tr -dc '0-9' < "$f" 2>/dev/null)
+      pid=$( { tr -dc '0-9' < "$f"; } 2>/dev/null )
       [[ -n "$pid" ]] || continue
       base=$(basename "$f" .pid)
       id=${base##*-}
@@ -521,6 +542,7 @@ bind_class() {
 }
 
 SS_OK=1
+declare -A UNIT_SRC=()
 collect_listeners() {
   have ss || { SS_OK=0; note_degraded "'ss' not found"; return 1; }
 
@@ -576,7 +598,14 @@ collect_listeners() {
     if [[ -n "$first_pid" ]]; then
       local unit=""
       [[ "$kind" == systemd* ]] && unit=$oid
-      src=$(clean "$(resolve_source "$kind" "$first_pid" "$unit")")
+      # One lookup per unit, not per socket: clickhouse-server on four
+      # ports used to be four identical `systemctl show` calls.
+      if [[ "$kind" == "systemd" && -n "$unit" && -n "${UNIT_SRC[$unit]+x}" ]]; then
+        src=${UNIT_SRC[$unit]}
+      else
+        src=$(clean "$(resolve_source "$kind" "$first_pid" "$unit")")
+        [[ "$kind" == "systemd" && -n "$unit" ]] && UNIT_SRC[$unit]=$src
+      fi
     fi
 
     local proto=${netid%6}
@@ -777,7 +806,7 @@ parse_iptables_input() {
   (( any_rule == 0 )) && [[ "$FW_DEFAULT_IN" == "allow" ]] && FW_ACTIVE=0
   if [[ -n "$partial" ]]; then
     FW_PARSED=0
-    note_degraded "iptables INPUT has rules this collector cannot evaluate ($partial) — reachability of ports behind them is not verified"
+    note_limitation "iptables INPUT has rules this collector cannot evaluate ($partial) — reachability of ports behind them is not verified"
   else
     FW_PARSED=1
   fi
@@ -812,7 +841,7 @@ parse_nft_input() {
   fi
   if (( nchains > 1 )); then
     FW_PARSED=0
-    note_degraded "nftables has $nchains input chains; evaluating their combined verdict is not supported — reachability is not verified"
+    note_limitation "nftables has $nchains input chains; evaluating their combined verdict is not supported — reachability is not verified"
     return 0
   fi
   local pol; pol=$(grep -m1 $'^C\t' <<<"$chains" | cut -f4)
@@ -859,7 +888,7 @@ parse_nft_input() {
   (( any_rule == 0 )) && [[ "$FW_DEFAULT_IN" == "allow" ]] && FW_ACTIVE=0
   if [[ -n "$partial" ]]; then
     FW_PARSED=0
-    note_degraded "nftables input chain has rules this collector cannot evaluate ($partial) — reachability of ports behind them is not verified"
+    note_limitation "nftables input chain has rules this collector cannot evaluate ($partial) — reachability of ports behind them is not verified"
   else
     FW_PARSED=1
   fi
@@ -1564,8 +1593,12 @@ MAX_LISTENERS=500
 
 render_json() {
   local nlisteners; nlisteners=$(wc -l < "$ENRICHED" 2>/dev/null || echo 0)
-  (( nlisteners > MAX_LISTENERS )) && note_degraded "$nlisteners listening sockets; only the first $MAX_LISTENERS (lowest ports) are reported"
-  (( CONTAINERS_SEEN > 0 )) && note_degraded "container id could not be resolved to a name/image (no Docker socket access — see docs/posture/posture-spec.md §4); reported as docker:<id> / podman:<id>"
+  (( nlisteners > MAX_LISTENERS )) && note_limitation "$nlisteners listening sockets; only the first $MAX_LISTENERS (lowest ports) are reported"
+  # Counted from the finished table, not CONTAINERS_SEEN: resolve_owner runs
+  # in a $(…)/<(…) subshell per listener, so its increments never reached
+  # this shell and the note was never emitted.
+  CONTAINERS_SEEN=$(awk -F'\t' '$8 == "container" || ($8 == "docker" && $9 ~ /^runtime:/)' "$ENRICHED" 2>/dev/null | wc -l)
+  (( CONTAINERS_SEEN > 0 )) && note_limitation "container id could not be resolved to a name/image (no Docker socket access — see docs/posture/posture-spec.md §4); reported as docker:<id> / podman:<id>"
 
   local reasons_json="["
   local first=1 r
@@ -1660,6 +1693,15 @@ render_json() {
     "$([[ $SVC_CONTAINERS_BLOCKED -eq 1 ]] && echo true || echo false)" \
     "$([[ $SVC_PM2 -eq 1 ]] && echo true || echo false)"
 
+  local notes_json="[" firstn=1 nn=0 n
+  for n in "${NOTES[@]:-}"; do
+    [[ -z "$n" ]] && continue
+    nn=$((nn + 1)); (( nn > 20 )) && break
+    [[ $firstn -eq 0 ]] && notes_json+=","; firstn=0
+    notes_json+="\"$(json_esc "$n")\""
+  done
+  notes_json+="]"
+  printf '"notes":%s,' "$notes_json"
   printf '"agentVersion":"%s"' "$VERSION"
   printf '}\n'
 }

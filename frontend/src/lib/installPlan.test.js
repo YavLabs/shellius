@@ -124,6 +124,7 @@ describe('selection', () => {
     expect(reinstallReason({ rejected: true })).toBe('Reports refused');
     expect(reinstallReason({ collectorState: 'degraded' })).toBe('Degraded');
     expect(reinstallReason({ stale: true })).toBe('Stopped reporting');
+    expect(reinstallReason({ outdated: true })).toBe('Update available');
     expect(reinstallReason({})).toBeNull();
   });
 });

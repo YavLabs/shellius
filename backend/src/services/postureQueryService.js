@@ -21,7 +21,7 @@ import { serverScopeWhere, relationScopeWhere } from '../lib/scope.js';
 import * as postureSettingsService from './postureSettingsService.js';
 import { canInstallOn, isBootstrapped } from './bulkBootstrapService.js';
 import { latestSnapshots, classifyCollector, degradedReasonsOf } from './postureCollectorState.js';
-import { POSTURE_COLLECTOR_VERSION } from '../routes/bootstrap.js';
+import { POSTURE_COLLECTOR_VERSION } from '../utils/postureCollectorVersion.js';
 
 // ---------------------------------------------------------------------------
 // Shared shapes
@@ -135,6 +135,7 @@ export async function listServerCoverage(orgId, scope, { state, page = 1, limit 
       sudoCredentialId: true,
       postureRejectedAt: true,
       postureRejectReason: true,
+      postureInstalledAt: true,
       customer: { select: { id: true, name: true } },
     },
     orderBy: [{ hostname: 'asc' }],
@@ -156,6 +157,7 @@ export async function listServerCoverage(orgId, scope, { state, page = 1, limit 
       lastReceivedAt: snap?.receivedAt || null,
       collectorVersion: snap?.agentVersion || null,
       degradedReasons: collectorState === 'degraded' ? snap?.degradedReasons || [] : [],
+      notes: snap?.notes || [],
       hasSavedSudo: !!sudoCredentialId,
       // How a bulk install would authenticate here, so the coverage list and
       // the installer never disagree about what is actually actionable.
@@ -185,6 +187,7 @@ export async function listServerCoverage(orgId, scope, { state, page = 1, limit 
       healthy: count('reporting'),
       degraded: count('degraded'),
       rejected: count('rejected'),
+      awaitingReport: count('awaiting_report'),
       stale: count('stale'),
       notInstalled: count('not_installed'),
       notApplicable: count('not_applicable'),
@@ -223,7 +226,7 @@ export async function getSummary(orgId, scope, { customerId, environment } = {})
         ? { AND: [...(customerId ? [{ customerId }] : []), ...(environment ? [{ environment }] : [])] }
         : {}),
     },
-    select: { id: true, osType: true, protocol: true, postureRejectedAt: true },
+    select: { id: true, osType: true, protocol: true, postureRejectedAt: true, postureInstalledAt: true },
   });
   // A Windows box and an RDP-only host cannot run the collector at all.
   // Counting them as "not installed" made the fleet read as permanently
@@ -237,6 +240,7 @@ export async function getSummary(orgId, scope, { customerId, environment } = {})
   let reporting = 0;
   let degraded = 0;
   let rejected = 0;
+  let awaitingReport = 0;
   let stale = 0;
   let notInstalled = 0;
 
@@ -248,6 +252,7 @@ export async function getSummary(orgId, scope, { customerId, environment } = {})
       if (state === 'not_installed') notInstalled += 1;
       else if (state === 'stale') stale += 1;
       else if (state === 'rejected') rejected += 1;
+      else if (state === 'awaiting_report') awaitingReport += 1;
       else {
         // Degraded hosts ARE reporting — they are counted there, and
         // separately, so the tile can say "12 reporting · 3 degraded"
@@ -330,6 +335,7 @@ export async function getSummary(orgId, scope, { customerId, environment } = {})
       reporting,
       degraded,
       rejected,
+      awaitingReport,
       stale,
       notInstalled,
       notApplicable,
@@ -440,12 +446,13 @@ export async function getServerPosture(orgId, serverId, scope) {
       credentialId: true,
       postureRejectedAt: true,
       postureRejectReason: true,
+      postureInstalledAt: true,
       sudoCredential: { select: { id: true, name: true, username: true } },
     },
   });
   if (!serverRow) throw new ApiError(404, 'Server not found');
   const {
-    postureRejectedAt, postureRejectReason, sudoCredential, protocol, sshUser, provisionStatus, agentId, credentialId,
+    postureRejectedAt, postureRejectReason, postureInstalledAt, sudoCredential, protocol, sshUser, provisionStatus, agentId, credentialId,
     ...server
   } = serverRow;
 
@@ -492,7 +499,7 @@ export async function getServerPosture(orgId, serverId, scope) {
   });
 
   const state = classifyCollector(
-    { osType: server.osType, protocol, postureRejectedAt },
+    { osType: server.osType, protocol, postureRejectedAt, postureInstalledAt },
     latestSnapshot ? { receivedAt: latestSnapshot.receivedAt, collectorOk: latestSnapshot.collectorOk } : undefined,
     settings
   );
@@ -502,6 +509,7 @@ export async function getServerPosture(orgId, serverId, scope) {
     // What a reinstall would put there now.
     latestVersion: POSTURE_COLLECTOR_VERSION,
     lastSeenAt: latestSnapshot?.receivedAt || null,
+    installedAt: postureInstalledAt || null,
     stale: latestSnapshot ? isStale(latestSnapshot.receivedAt, settings) : false,
     // One word for "what should the page say about the collector", so the
     // Server page, the coverage list and the installer never disagree.
@@ -532,6 +540,7 @@ export async function getServerPosture(orgId, serverId, scope) {
           collectorOk: latestSnapshot.collectorOk,
           degradedReason: latestSnapshot.degradedReason,
           degradedReasons: degradedReasonsOf(latestSnapshot),
+          notes: Array.isArray(latestSnapshot.raw?.notes) ? latestSnapshot.raw.notes : [],
           firewall: latestSnapshot.firewall,
           // Which halves of the service scan ran on this host. "No stopped
           // containers" and "never looked for containers" must not render

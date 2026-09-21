@@ -18,8 +18,11 @@ import Avatar from '@/components/ui/Avatar';
 import { Badge } from '@/components/ui/badge';
 import PageHeader from '@/components/common/PageHeader';
 import { Button } from '@/components/ui/button';
-import SearchableSelect from '@/components/ui/SearchableSelect';
+import FilteredEmptyState from '@/components/shared/FilteredEmptyState';
+import { appliedFilterCount, clearedFilterValues } from '@/lib/filters';
 import { listCertificates, revokeCertificate } from '@/services/certificateService';
+import { listServers } from '@/services/serverService';
+import { listUsers } from '@/services/userService';
 import { useAuth } from '@/context/AuthContext';
 import { formatDateTime } from '@/utils/time';
 import { CERT_STATUS_LABELS } from '@/lib/labels';
@@ -163,6 +166,14 @@ function Certificates() {
   const [error, setError] = useState('');
 
   const [statusFilter, setStatusFilter] = useState('');
+  const [serverFilter, setServerFilter] = useState('');
+  const [userFilter, setUserFilter] = useState('');
+  const [environmentFilter, setEnvironmentFilter] = useState('');
+  const [certTypeFilter, setCertTypeFilter] = useState('');
+  const [startDate, setStartDate] = useState('');
+  const [endDate, setEndDate] = useState('');
+  const [servers, setServers] = useState([]);
+  const [issuers, setIssuers] = useState([]);
 
   const [detailCert, setDetailCert] = useState(null);
   const [revokeTarget, setRevokeTarget] = useState(null);
@@ -174,6 +185,12 @@ function Certificates() {
     try {
       const params = { page, limit: pageSize };
       if (statusFilter) params.status = statusFilter;
+      if (serverFilter) params.serverId = serverFilter;
+      if (userFilter) params.userId = userFilter;
+      if (environmentFilter) params.environment = environmentFilter;
+      if (certTypeFilter) params.certType = certTypeFilter;
+      if (startDate) params.startDate = startDate;
+      if (endDate) params.endDate = endDate;
       const resp = await listCertificates(params);
       const items = resp.data?.items || resp.data || [];
       const metaTotal = resp.meta?.total ?? resp.data?.total ?? items.length;
@@ -184,9 +201,19 @@ function Certificates() {
     } finally {
       setLoading(false);
     }
-  }, [page, pageSize, statusFilter]);
+  }, [page, pageSize, statusFilter, serverFilter, userFilter, environmentFilter, certTypeFilter, startDate, endDate]);
 
   useEffect(() => { fetchCerts(); }, [fetchCerts]);
+
+  // Lightweight option lists for the filter drawer.
+  useEffect(() => {
+    listServers({ page: 1, pageSize: 200 })
+      .then((d) => setServers(d.items || []))
+      .catch(() => {});
+    listUsers({ page: 1, pageSize: 200 })
+      .then((d) => setIssuers(d.items || []))
+      .catch(() => {});
+  }, []);
 
   // Count certs expiring within 24h
   const expiringSoonCount = certs.filter((c) => {
@@ -216,20 +243,80 @@ function Certificates() {
     }
   };
 
-  const filterSlot = (
-    <SearchableSelect
-      className="w-[160px]"
-      value={statusFilter}
-      onChange={(v) => { setStatusFilter(v); setPage(1); }}
-      options={[
+  const filterDefs = [
+    {
+      key: 'status',
+      label: 'Status',
+      placeholder: 'All statuses',
+      options: [
         { value: '', label: 'All statuses' },
         ...STATUSES.map((s) => ({ value: s, label: CERT_STATUS_LABELS[s] || s })),
-      ]}
-      placeholder="All statuses"
-      searchable={false}
-      clearable={false}
-    />
-  );
+      ],
+    },
+    {
+      key: 'server',
+      label: 'Server',
+      placeholder: 'All servers',
+      searchable: true,
+      options: [
+        { value: '', label: 'All servers' },
+        ...servers.map((s) => ({ value: s.id, label: s.displayName || s.hostname })),
+      ],
+    },
+    {
+      key: 'user',
+      label: 'Issued to',
+      placeholder: 'All users',
+      searchable: true,
+      options: [
+        { value: '', label: 'All users' },
+        ...issuers.map((u) => ({ value: u.id, label: u.name || u.email })),
+      ],
+    },
+    {
+      key: 'certType',
+      label: 'Type',
+      placeholder: 'All types',
+      options: [
+        { value: '', label: 'All types' },
+        { value: 'USER', label: 'User' },
+        { value: 'HOST', label: 'Host' },
+      ],
+    },
+    {
+      key: 'environment',
+      label: 'Environment',
+      placeholder: 'All environments',
+      options: [
+        { value: '', label: 'All environments' },
+        { value: 'demo', label: 'Demo' },
+        { value: 'dev', label: 'Dev' },
+        { value: 'staging', label: 'Staging' },
+        { value: 'prod', label: 'Prod' },
+      ],
+    },
+    { key: 'startDate', label: 'Valid until from', type: 'date' },
+    { key: 'endDate', label: 'Valid until to', type: 'date' },
+  ];
+  const filterValues = {
+    status: statusFilter,
+    server: serverFilter,
+    user: userFilter,
+    certType: certTypeFilter,
+    environment: environmentFilter,
+    startDate,
+    endDate,
+  };
+  const applyFilters = (next) => {
+    setStatusFilter(next.status ?? '');
+    setServerFilter(next.server ?? '');
+    setUserFilter(next.user ?? '');
+    setCertTypeFilter(next.certType ?? '');
+    setEnvironmentFilter(next.environment ?? '');
+    setStartDate(next.startDate ?? '');
+    setEndDate(next.endDate ?? '');
+    setPage(1);
+  };
 
   const columns = [
     {
@@ -363,8 +450,15 @@ function Certificates() {
         data={certs}
         loading={loading}
         emptyMessage="No certificates found"
+        emptyState={
+          appliedFilterCount(filterDefs, filterValues) > 0 ? (
+            <FilteredEmptyState onClear={() => applyFilters(clearedFilterValues(filterDefs))} />
+          ) : undefined
+        }
         searchPlaceholder="Search by user, server, or serial..."
-        filters={filterSlot}
+        filterDefs={filterDefs}
+        filterValues={filterValues}
+        onFilterChange={applyFilters}
         mobile={{
           onCardClick: (r) => setDetailCert(r),
           accent: (r) => envAccent(r.issuedFor?.environment),

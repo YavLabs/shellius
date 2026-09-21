@@ -454,6 +454,51 @@ that opened a wizard that could not work. Both now classify via
 same plan the installer runs from (`lib/installPlan.js groupPlan`), so
 "Ready to install: N" and "Install on N hosts" are the same N by construction.
 
+### Collector 1.1.1 — faults vs notes, and what a reinstall looks like
+
+Found on a real host after 1.7.3 (dev-demos-03), where the collector was in
+fact healthy and the UI still said otherwise:
+
+- **Faults and notes are separate.** `degradedReasons` is for faults a
+  reinstall can fix (a failing sudo grant, a firewall or NAT table it could
+  not read, `ss` missing). Limitations of the host — containers named by id
+  (no Docker socket, by design), firewall rules it cannot evaluate, a socket
+  list truncated at 500 — are `notes`. `collectorOk` means "no faults". The
+  ingest route reclassifies older collectors' reasons the same way
+  (`normalizePostureSnapshot` / `isLimitation`), so a Docker host is not
+  "degraded", nor pre-selected for a reinstall that could never clear it.
+  (The container note had in fact never been emitted: its counter was
+  incremented in a subshell. It is now counted from the finished table.)
+- **A reinstall reports at once.** The installer restarts the timer and
+  starts the service with `--no-block`; `enable --now` alone does nothing to
+  a timer that is already running, which left the replaced collector's report
+  on screen for up to 5.5 minutes. `Server.postureInstalledAt` is set when an
+  install that includes the collector succeeds, and a newer install than the
+  newest report is state `awaiting_report` ("waiting for its first report")
+  for up to three collect intervals — never the old report's warnings
+  presented as current. Warnings name the collector version that produced
+  them.
+- **Outdated collectors are flagged** (`isOlderCollector`, against the
+  version this deployment ships) and pre-selected in the installer.
+- **No sudo for `systemctl show`** unless the unprivileged call fails, and
+  one lookup per unit rather than per socket — each sudo call is three lines
+  in the host's auth log, every five minutes.
+- **No stray stderr.** Searching `/proc/*/cmdline` for pm2's God Daemon
+  matched grep's own command line; the pattern is now `God Daemo[n] (`, and
+  `/proc` reads silence a vanished entry.
+
+### Host status in server lists
+
+`services/serverAgentStatus.js` gives every server two computed statuses,
+returned by `GET /api/servers` and `GET /api/servers/:id` and filterable
+there (`sshTrust`, `collector`): **SSH trust** (CA + agent — judged by
+`provisionStatus` and the 60 s heartbeat: healthy, legacy token, agent
+silent after 10 min, no heartbeat, install failed, installing, not
+installed, identity auth, not applicable) and **Collector** (the
+classification above, plus `outdated`). Servers, Customer Details and the
+Server page show them as badges whose popover explains the state and offers
+the fix (bootstrap / reinstall collector).
+
 ### Collector 1.1.0 — firewall parsing and launcher-aware attribution
 
 **iptables / nftables INPUT is parsed.** It used to be reported as "raw

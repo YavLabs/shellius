@@ -180,7 +180,21 @@ export async function end(sessionId, { status = 'ENDED', metadataPatch } = {}) {
  *   surface *every* user's Quick Connect sessions to a scoped caller.
  * @returns {Promise<{ items: object[], total: number, page: number, limit: number }>}
  */
-export async function list({ orgId, userId, serverId, status, page = 1, limit = 25, scope = UNSCOPED, callerId }) {
+export async function list({
+  orgId,
+  userId,
+  serverId,
+  status,
+  authMethod,
+  protocol,
+  environment,
+  startDate,
+  endDate,
+  page = 1,
+  limit = 25,
+  scope = UNSCOPED,
+  callerId,
+}) {
   if (!orgId) throw new ApiError(400, 'orgId is required');
 
   page = parseInt(page, 10) || 1;
@@ -190,6 +204,14 @@ export async function list({ orgId, userId, serverId, status, page = 1, limit = 
   if (userId) where.userId = userId;
   if (serverId) where.serverId = serverId;
   if (status) where.status = status;
+  if (authMethod) where.authMethod = authMethod;
+  if (protocol) where.sessionType = protocol;
+  if (environment) where.server = { environment };
+  if (startDate || endDate) {
+    where.startedAt = {};
+    if (startDate) where.startedAt.gte = new Date(startDate);
+    if (endDate) where.startedAt.lte = new Date(endDate);
+  }
 
   const [items, total] = await Promise.all([
     prisma.session.findMany({

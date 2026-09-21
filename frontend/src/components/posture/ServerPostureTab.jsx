@@ -254,6 +254,7 @@ function ServerPostureTab({
   const [reachFilter, setReachFilter] = useState('');
   const [ownerKindFilter, setOwnerKindFilter] = useState('');
   const [portStateFilter, setPortStateFilter] = useState('');
+  const [protoFilter, setProtoFilter] = useState('');
   const { user } = useAuth();
   const canExport = can(user, 'posture.export');
   const canExpect = can(user, 'posture.expected_ports');
@@ -333,7 +334,7 @@ function ServerPostureTab({
   // when the real story is "nothing has ever reported".
   // A host whose every snapshot is refused has sent something, so it is not
   // "not installed" — say what is actually happening, and how to fix it.
-  if (collectorState === 'rejected' && !snapshot) {
+  if ((collectorState === 'rejected' || collectorState === 'awaiting_report') && !snapshot) {
     return (
       <CollectorHealthBanner
         state={collectorState}
@@ -478,12 +479,13 @@ function ServerPostureTab({
   const visiblePorts = portRows.filter((r) => {
     if (reachFilter && r.reachability !== reachFilter) return false;
     if (ownerKindFilter && r.ownerKind !== ownerKindFilter) return false;
+    if (protoFilter && (r.proto || '').toLowerCase() !== protoFilter) return false;
     if (portStateFilter === 'findings' && r.findings.length === 0) return false;
     if (portStateFilter === 'expected' && !r.expected) return false;
     if (portStateFilter === 'stale' && (r.listening || !r.expected)) return false;
     return true;
   });
-  const portFiltersActive = !!(reachFilter || ownerKindFilter || portStateFilter);
+  const portFiltersActive = !!(reachFilter || ownerKindFilter || protoFilter || portStateFilter);
 
   const handleBulkAcknowledge = async () => {
     setBusyId('bulk');
@@ -615,6 +617,16 @@ function ServerPostureTab({
       options: [{ value: '', label: 'All owners' }, ...ownerKinds.map((k) => ({ value: k, label: k }))],
     },
     {
+      key: 'proto',
+      label: 'Protocol',
+      placeholder: 'All protocols',
+      options: [
+        { value: '', label: 'All protocols' },
+        { value: 'tcp', label: 'TCP' },
+        { value: 'udp', label: 'UDP' },
+      ],
+    },
+    {
       key: 'portState',
       label: 'Port state',
       placeholder: 'All ports',
@@ -632,11 +644,13 @@ function ServerPostureTab({
   const portFilterValues = {
     reachability: reachFilter,
     ownerKind: ownerKindFilter,
+    proto: protoFilter,
     portState: portStateFilter,
   };
   const applyPortFilters = (next) => {
     setReachFilter(next.reachability ?? '');
     setOwnerKindFilter(next.ownerKind ?? '');
+    setProtoFilter(next.proto ?? '');
     setPortStateFilter(next.portState ?? '');
   };
 
@@ -930,6 +944,8 @@ function ServerPostureTab({
             <StatRow label="Status">
               {collectorState === 'rejected' ? (
                 <Badge tone="danger">Reports refused</Badge>
+              ) : collectorState === 'awaiting_report' ? (
+                <Badge tone="info">Waiting for first report</Badge>
               ) : collectorState === 'stale' ? (
                 <Badge tone="warning">Stale</Badge>
               ) : collectorState === 'degraded' ? (

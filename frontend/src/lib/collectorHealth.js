@@ -14,7 +14,23 @@
 /** Commands to run ON the host to see why the collector is unhappy. */
 export const HOST_CHECK_COMMANDS = [
   { label: 'Is the timer running?', command: 'systemctl status shellius-posture.timer --no-pager' },
-  { label: 'Run it now and read what it said', command: 'sudo systemctl start shellius-posture.service; sudo journalctl -u shellius-posture -n 30 --no-pager' },
+  {
+    // --no-block: the service is a one-shot capped at 20% CPU, so a blocking
+    // `start` sits silent for 20-30 s and looks hung. The report script logs
+    // under its tag, which `journalctl -u` often misses.
+    label: 'Run it now, then read the result (takes about 30 s)',
+    command: 'sudo systemctl start --no-block shellius-posture.service; sleep 40; sudo journalctl -t shellius-posture -n 3 --no-pager',
+  },
+  {
+    // Exactly what the service sees: its user, its sandbox. Running the
+    // collector as root skips sudo entirely and proves nothing.
+    label: 'Run the collector exactly as the service does, and print what it reports',
+    command: [
+      'sudo systemd-run --quiet --pipe --wait -p User=shellius-posture -p PrivateTmp=yes',
+      '-p ProtectSystem=full -p ProtectHome=read-only /usr/local/sbin/shellius-posture-collect',
+      `| python3 -c 'import json,sys;d=json.load(sys.stdin);print(d.get("agentVersion"),d["collectorOk"]);print(*d.get("degradedReasons",[]),sep=chr(10))'`,
+    ].join(' '),
+  },
   { label: 'Does its sudo grant work?', command: 'sudo -u shellius-posture sudo -n -l' },
 ];
 

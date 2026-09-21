@@ -1,10 +1,12 @@
-import { useCallback, useEffect, useImperativeHandle, useState, forwardRef } from 'react';
+import { useCallback, useEffect, useImperativeHandle, useMemo, useState, forwardRef } from 'react';
 import { Pencil, Trash2, PlugZap, Eye, KeyRound, Lock, Server } from 'lucide-react';
 import { authTypeTone } from '@/lib/badgeTones';
 import DataTable from '@/components/shared/DataTable';
 import { CardIcon } from '@/components/mobile/MobileCard';
 import ConfirmDialog from '@/components/shared/ConfirmDialog';
 import EmptyState from '@/components/ui/EmptyState';
+import FilteredEmptyState from '@/components/shared/FilteredEmptyState';
+import { appliedFilterCount, clearedFilterValues } from '@/lib/filters';
 import AuthTypeBadge from './AuthTypeBadge';
 import IdentityFormModal from './IdentityFormModal';
 import IdentityDetailModal from './IdentityDetailModal';
@@ -26,6 +28,9 @@ const IdentitiesTab = forwardRef(function IdentitiesTab({ canManage, scope = 'or
   const [deleteError, setDeleteError] = useState('');
   const [deleting, setDeleting] = useState(false);
   const [inUseInfo, setInUseInfo] = useState(null);
+
+  const [authTypeFilter, setAuthTypeFilter] = useState('');
+  const [usageFilter, setUsageFilter] = useState('');
 
   const fetch = useCallback(async () => {
     setLoading(true);
@@ -78,6 +83,44 @@ const IdentitiesTab = forwardRef(function IdentitiesTab({ canManage, scope = 'or
       setDeleting(false);
     }
   };
+
+  const filterDefs = [
+    {
+      key: 'authType',
+      label: 'Auth type',
+      placeholder: 'All types',
+      options: [
+        { value: '', label: 'All types' },
+        { value: 'password', label: 'Password' },
+        { value: 'key', label: 'Private key' },
+        { value: 'key_password', label: 'Key + password' },
+      ],
+    },
+    {
+      key: 'usage',
+      label: 'Last used',
+      placeholder: 'Any',
+      options: [
+        { value: '', label: 'Any' },
+        { value: 'used', label: 'Used at least once' },
+        { value: 'never', label: 'Never used' },
+      ],
+    },
+  ];
+  const filterValues = { authType: authTypeFilter, usage: usageFilter };
+  const applyFilters = (next) => {
+    setAuthTypeFilter(next.authType ?? '');
+    setUsageFilter(next.usage ?? '');
+  };
+
+  const filteredCredentials = useMemo(() => {
+    return credentials.filter((c) => {
+      if (authTypeFilter && (c.authType || '').toLowerCase() !== authTypeFilter) return false;
+      if (usageFilter === 'used' && !c.lastUsedAt) return false;
+      if (usageFilter === 'never' && c.lastUsedAt) return false;
+      return true;
+    });
+  }, [credentials, authTypeFilter, usageFilter]);
 
   const columns = [
     {
@@ -211,11 +254,19 @@ const IdentitiesTab = forwardRef(function IdentitiesTab({ canManage, scope = 'or
       ) : (
         <DataTable
           columns={columns}
-          data={credentials}
+          data={filteredCredentials}
           loading={loading}
           onRowClick={(r) => setDetailId(r.id)}
           searchPlaceholder="Search identities..."
           emptyMessage="No identities match your search"
+          emptyState={
+            appliedFilterCount(filterDefs, filterValues) > 0 ? (
+              <FilteredEmptyState onClear={() => applyFilters(clearedFilterValues(filterDefs))} />
+            ) : undefined
+          }
+          filterDefs={filterDefs}
+          filterValues={filterValues}
+          onFilterChange={applyFilters}
           mobile={{
             leading: () => <CardIcon icon={scope === 'personal' ? Lock : KeyRound} />,
             corner:

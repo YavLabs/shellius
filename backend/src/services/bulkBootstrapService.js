@@ -3,6 +3,7 @@ import ApiError from '../utils/ApiError.js';
 import { UNSCOPED, serverScopeWhere } from '../lib/scope.js';
 import * as postureSettingsService from './postureSettingsService.js';
 import { latestSnapshots, classifyCollector } from './postureCollectorState.js';
+import { isOlderCollector } from '../utils/postureCollectorVersion.js';
 
 /**
  * Bulk bootstrap / collector install.
@@ -75,6 +76,7 @@ const SERVER_SELECT = {
   provisionStatus: true,
   postureRejectedAt: true,
   postureRejectReason: true,
+  postureInstalledAt: true,
   customer: { select: { id: true, name: true } },
   credential: { select: { id: true, name: true, username: true } },
   sudoCredential: { select: { id: true, name: true, username: true } },
@@ -174,11 +176,13 @@ export async function planBulkInstall(
             : null,
       alreadyDone:
         mode === 'posture'
-          ? snapshots.has(server.id) || !!server.postureRejectedAt
+          ? snapshots.has(server.id) || !!server.postureRejectedAt || !!server.postureInstalledAt
           : server.provisionStatus === 'provisioned' || !!server.agentId,
       collectorState: mode === 'posture' ? classifyCollector(server, snapshots.get(server.id), settings, now) : null,
       lastSnapshotAt: snapshots.get(server.id)?.receivedAt || null,
       degradedReasons: snapshots.get(server.id)?.collectorOk === false ? snapshots.get(server.id).degradedReasons : [],
+      notes: snapshots.get(server.id)?.notes || [],
+      collectorVersion: snapshots.get(server.id)?.agentVersion || null,
       rejection: server.postureRejectedAt ? { at: server.postureRejectedAt, reason: server.postureRejectReason } : null,
       // A sudo password saved for this host (Keystore). Only matters for a
       // certificate install as a non-root user, which has no password of its
@@ -190,7 +194,13 @@ export async function planBulkInstall(
     entry.stale = entry.collectorState === 'stale';
     entry.degraded = entry.collectorState === 'degraded';
     entry.rejected = entry.collectorState === 'rejected';
-    entry.needsReinstall = entry.stale || entry.degraded || entry.rejected;
+    // Reporting fine, but on an older collector than this Shellius ships —
+    // the fixes in the newer one only arrive with a reinstall.
+    entry.outdated =
+      mode === 'posture' &&
+      (entry.collectorState === 'reporting' || entry.collectorState === 'degraded') &&
+      isOlderCollector(entry.collectorVersion);
+    entry.needsReinstall = entry.stale || entry.degraded || entry.rejected || entry.outdated;
     const hard = hardSkipReason(server);
     // Whether a re-run is possible at all, independent of whether this plan
     // made the host a target — the UI offers "reinstall" on already-done
@@ -227,6 +237,7 @@ export async function planBulkInstall(
       staleCollectors: skipped.filter((s) => s.stale).length,
       degradedCollectors: skipped.filter((s) => s.degraded).length,
       rejectedCollectors: skipped.filter((s) => s.rejected).length,
+      outdatedCollectors: skipped.filter((s) => s.outdated).length,
     },
   };
 }

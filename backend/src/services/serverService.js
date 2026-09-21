@@ -4,6 +4,7 @@ import ApiError from '../utils/ApiError.js';
 import { encrypt } from '../utils/crypto.js';
 import * as terminalService from './terminalService.js';
 import { serverScopeWhere, assertCustomerInScope } from '../lib/scope.js';
+import { statusesFor, filterIdsByStatus, SSH_TRUST_STATES, COLLECTOR_STATES } from './serverAgentStatus.js';
 
 const RDP_SENSITIVE_FIELDS = ['rdpPasswordEncrypted', 'rdpPasswordIv', 'rdpPasswordTag'];
 
@@ -113,6 +114,8 @@ export async function listServers(orgId, {
   cloudProvider,
   search,
   isActive,
+  sshTrust,
+  collector,
 } = {}, scope) {
   page = parseInt(page, 10) || 1;
   pageSize = Math.min(parseInt(pageSize, 10) || 25, 100);
@@ -138,6 +141,15 @@ export async function listServers(orgId, {
     ];
   }
 
+  // SSH trust / collector status are computed, not stored — narrow the
+  // (already org- and scope-filtered) candidates by them first, then page.
+  const wantTrust = SSH_TRUST_STATES.includes(sshTrust) ? sshTrust : null;
+  const wantCollector = COLLECTOR_STATES.includes(collector) ? collector : null;
+  if (wantTrust || wantCollector) {
+    const ids = await filterIdsByStatus(orgId, where, { sshTrust: wantTrust, collector: wantCollector });
+    where.id = { in: ids };
+  }
+
   const [items, total] = await Promise.all([
     prisma.server.findMany({
       where,
@@ -149,7 +161,14 @@ export async function listServers(orgId, {
     prisma.server.count({ where }),
   ]);
 
-  return { items: items.map(stripRdpSecrets), total, page, pageSize };
+  // Both statuses for the page, in two snapshot queries.
+  const statuses = await statusesFor(orgId, items);
+  return {
+    items: items.map((it) => ({ ...stripRdpSecrets(it), ...(statuses.get(it.id) || {}) })),
+    total,
+    page,
+    pageSize,
+  };
 }
 
 export async function getServer(orgId, serverId, scope) {
@@ -158,7 +177,8 @@ export async function getServer(orgId, serverId, scope) {
     include: SERVER_INCLUDE,
   });
   if (!server) throw new ApiError(404, 'Server not found');
-  return stripRdpSecrets(server);
+  const statuses = await statusesFor(orgId, [server]);
+  return { ...stripRdpSecrets(server), ...(statuses.get(server.id) || {}) };
 }
 
 export async function createServer(orgId, customerId, data = {}, scope) {

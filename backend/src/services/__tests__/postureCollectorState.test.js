@@ -181,7 +181,9 @@ describe('refused snapshots and collector state (live DB)', () => {
     const coverage = await listServerCoverage(org.id, scope, {});
     const item = coverage.items.find((i) => i.id === server.id);
     expect(item.collectorState).toBe('degraded');
-    expect(item.degradedReasons).toHaveLength(2);
+    // The firewall one is a limitation, so it is a note, not a fault.
+    expect(item.degradedReasons).toEqual(["could not run 'ss'"]);
+    expect(item.notes).toHaveLength(1);
     expect(item.collectorVersion).toBe('1.1.0');
     expect(coverage.counts.degraded).toBeGreaterThanOrEqual(1);
 
@@ -193,7 +195,7 @@ describe('refused snapshots and collector state (live DB)', () => {
     const plan = await planBulkInstall(org.id, [server.id], { mode: 'posture', scope });
     const entry = plan.skipped.find((s) => s.id === server.id);
     expect(entry).toMatchObject({ reason: 'collector_installed', degraded: true, needsReinstall: true, installable: true });
-    expect(entry.degradedReasons).toHaveLength(2);
+    expect(entry.degradedReasons).toHaveLength(1);
   });
 
   test('POST /posture/problem records what the host says went wrong, and nothing else', async () => {

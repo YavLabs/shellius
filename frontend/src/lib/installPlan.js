@@ -48,6 +48,7 @@ export function reinstallReason(host) {
   if (host?.collectorState === 'rejected' || host?.rejected) return 'Reports refused';
   if (host?.collectorState === 'degraded' || host?.degraded) return 'Degraded';
   if (host?.collectorState === 'stale' || host?.stale) return 'Stopped reporting';
+  if (host?.outdated) return 'Update available';
   return null;
 }
 
@@ -97,7 +98,7 @@ export function groupPlan(plan) {
       key: 'needs_reinstall',
       title: 'Installed, but needs a reinstall',
       description:
-        'The collector is there, but it is degraded, its reports are being refused, or it went quiet. What Shellius shows for these hosts is incomplete or out of date. Selected by default.',
+        'The collector is there, but it is degraded, its reports are being refused, it went quiet, or it is an older version than this Shellius ships. What Shellius shows for these hosts is incomplete or out of date. Selected by default.',
       tone: 'warning',
       selectable: true,
       rows: installed.filter((s) => s.needsReinstall),

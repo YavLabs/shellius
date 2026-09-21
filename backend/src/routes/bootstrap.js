@@ -113,15 +113,6 @@ if (Object.values(POSTURE_ASSETS).some((v) => v === null)) {
   });
 }
 
-/**
- * The collector version this deployment installs — the VERSION= line of the
- * collector script it ships. The Server page compares a host's reported
- * version with it, so an outdated collector says "reinstall to update"
- * instead of looking current.
- */
-export const POSTURE_COLLECTOR_VERSION =
-  (POSTURE_ASSETS.collect && /^VERSION="([^"]+)"/m.exec(POSTURE_ASSETS.collect)?.[1]) || null;
-
 const BOOTSTRAP_TTL_SECONDS = 30 * 60; // 30 min
 
 // Install modes:
@@ -627,6 +618,15 @@ if [ "$PLATFORM" = "linux" ] && command -v systemctl >/dev/null 2>&1 \\
     systemctl enable --now shellius-posture.timer 2>/dev/null \\
       && echo "[shellius]   Posture collector timer enabled (shellius-posture.timer, every 5 min)" \\
       || echo "[shellius]   ! could not enable shellius-posture.timer"
+    # Report now, with the collector just installed. "enable --now" does
+    # nothing to a timer that is already running, so a reinstall used to
+    # leave the previous collector's report on screen for up to 5.5 min.
+    # --no-block: the install does not wait for the collection (20-30 s
+    # under the unit's CPU quota).
+    systemctl restart shellius-posture.timer 2>/dev/null || true
+    systemctl start --no-block shellius-posture.service 2>/dev/null \\
+      && echo "[shellius]   First posture report started — it reaches Shellius within a minute" \\
+      || echo "[shellius]   ! could not start shellius-posture.service now; the timer runs it within 5 min"
   fi
 else
   echo "[shellius]   Skipping posture systemd units (not Linux, no systemd, or assets missing)"
@@ -1712,6 +1712,11 @@ if ! systemctl enable --now shellius-posture.timer 2>/dev/null; then
   exit 1
 fi
 echo "[shellius]   Posture collector timer enabled (shellius-posture.timer, every 5 min)"
+# Report now — see the full installer's step 11 for why.
+systemctl restart shellius-posture.timer 2>/dev/null || true
+systemctl start --no-block shellius-posture.service 2>/dev/null \\
+  && echo "[shellius]   First posture report started — it reaches Shellius within a minute" \\
+  || echo "[shellius]   ! could not start shellius-posture.service now; the timer runs it within 5 min"
 
 echo "[shellius] [5/5] Running self-test"
 SELF_TEST_FAIL=0

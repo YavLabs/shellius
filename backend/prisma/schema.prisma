@@ -302,6 +302,10 @@ model Server {
   // next accepted snapshot.
   postureRejectedAt    DateTime?      @map("posture_rejected_at")
   postureRejectReason  String?        @map("posture_reject_reason")
+  // When Shellius last installed the collector here successfully. A report
+  // older than this came from the collector that was replaced, so the page
+  // says "waiting for the first report" instead of showing its warnings.
+  postureInstalledAt   DateTime?      @map("posture_installed_at")
   createdAt            DateTime       @default(now()) @map("created_at")
   updatedAt            DateTime       @updatedAt @map("updated_at")
 

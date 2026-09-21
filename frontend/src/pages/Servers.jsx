@@ -29,6 +29,12 @@ import { envAccent } from '@/lib/mobileCard';
 import ServerForm from '@/components/servers/ServerForm';
 import BootstrapModal from '@/components/servers/BootstrapModal';
 import BootstrapWizard from '@/components/servers/BootstrapWizard';
+import {
+  SshTrustBadge,
+  CollectorBadge,
+  SSH_TRUST_FILTER_OPTIONS,
+  COLLECTOR_FILTER_OPTIONS,
+} from '@/components/servers/HostAgentStatus';
 import ExportDialog from '@/components/posture/ExportDialog';
 import { shouldPromptBootstrap } from '@/lib/bootstrapEligibility';
 import ProvisionModal from '@/components/servers/ProvisionModal';
@@ -78,6 +84,8 @@ function Servers() {
   const [environment, setEnvironment] = useState('');
   const [healthStatus, setHealthStatus] = useState('');
   const [customerFilter, setCustomerFilter] = useState('');
+  const [sshTrustFilter, setSshTrustFilter] = useState('');
+  const [collectorFilter, setCollectorFilter] = useState('');
   const [customers, setCustomers] = useState([]);
 
   const [selected, setSelected] = useState([]);
@@ -95,6 +103,13 @@ function Servers() {
   // ProvisionModal (automatic) — the same two modals as before, so the list
   // and the detail page can never drift into offering different installs.
   const [wizardServer, setWizardServer] = useState(null);
+  // Which install the wizard opens on: a collector badge's fix opens it on
+  // "posture only", an SSH-trust fix on the full bootstrap.
+  const [wizardScope, setWizardScope] = useState(undefined);
+  const openWizard = (server, scope) => {
+    setWizardScope(scope);
+    setWizardServer(server);
+  };
   // Bulk posture export for the checked servers. Dataset is chosen by which
   // bulk button was pressed; the dialog handles format, columns and whether a
   // multi-server export comes back as one file or a ZIP per host.
@@ -140,6 +155,8 @@ function Servers() {
       if (environment) params.environment = environment;
       if (healthStatus) params.healthStatus = healthStatus;
       if (customerFilter) params.customerId = customerFilter;
+      if (sshTrustFilter) params.sshTrust = sshTrustFilter;
+      if (collectorFilter) params.collector = collectorFilter;
       if (search) params.search = search;
       const data = await listServers(params);
       setServers(data.items || []);
@@ -149,7 +166,7 @@ function Servers() {
     } finally {
       setLoading(false);
     }
-  }, [page, pageSize, environment, healthStatus, customerFilter, search]);
+  }, [page, pageSize, environment, healthStatus, customerFilter, sshTrustFilter, collectorFilter, search]);
 
   // Server-side search — reset to page 1 and refetch when the query changes.
   const handleSearchChange = useCallback((q) => {
@@ -266,11 +283,23 @@ function Servers() {
       ],
     },
   ];
-  const filterValues = { environment, healthStatus, customerId: customerFilter };
+  filterDefs.push(
+    { key: 'sshTrust', label: 'SSH trust', placeholder: 'Any SSH trust', options: SSH_TRUST_FILTER_OPTIONS },
+    { key: 'collector', label: 'Posture collector', placeholder: 'Any collector state', options: COLLECTOR_FILTER_OPTIONS }
+  );
+  const filterValues = {
+    environment,
+    healthStatus,
+    customerId: customerFilter,
+    sshTrust: sshTrustFilter,
+    collector: collectorFilter,
+  };
   const applyFilters = (next) => {
     setEnvironment(next.environment ?? '');
     setHealthStatus(next.healthStatus ?? '');
     setCustomerFilter(next.customerId ?? '');
+    setSshTrustFilter(next.sshTrust ?? '');
+    setCollectorFilter(next.collector ?? '');
     setPage(1);
   };
 
@@ -493,6 +522,32 @@ function Servers() {
       render: (r) => <HealthStatusDot status={r.healthStatus} showLabel />,
     },
     {
+      key: 'sshTrust',
+      label: 'SSH trust',
+      hideBelow: 'md',
+      searchAccessor: (r) => r.sshTrust?.label || '',
+      mobile: {
+        slot: 'meta',
+        order: 3,
+        render: (r) => (r.sshTrust && r.sshTrust.tone !== 'success' && r.sshTrust.tone !== 'neutral' ? <SshTrustBadge server={r} /> : null),
+      },
+      render: (r) => (
+        <SshTrustBadge server={r} canFix={canOnboard} onFix={({ scope }) => openWizard(r, scope)} />
+      ),
+    },
+    {
+      key: 'collector',
+      label: 'Collector',
+      hideBelow: 'md',
+      searchAccessor: (r) => r.collector?.label || '',
+      mobile: {
+        slot: 'meta',
+        order: 4,
+        render: (r) => (r.collector && r.collector.tone !== 'success' && r.collector.tone !== 'neutral' ? <CollectorBadge server={r} /> : null),
+      },
+      render: (r) => <CollectorBadge server={r} canFix={canOnboard} onFix={() => openWizard(r, 'posture')} />,
+    },
+    {
       key: 'os',
       label: 'OS',
       hideBelow: 'lg',
@@ -542,7 +597,15 @@ function Servers() {
               {
                 label: 'Bootstrap host',
                 icon: Download,
-                onClick: (r) => setWizardServer(r),
+                onClick: (r) => openWizard(r, 'full'),
+              },
+              {
+                label: 'Reinstall posture collector',
+                icon: Radar,
+                // Windows / RDP-only hosts cannot run it; say nothing rather
+                // than offer an action that can only fail.
+                hidden: (r) => r.collector?.state === 'not_applicable',
+                onClick: (r) => openWizard(r, 'posture'),
               },
               {
                 label: 'Uninstall agent',
@@ -682,6 +745,7 @@ function Servers() {
       <BootstrapWizard
         open={!!wizardServer}
         server={wizardServer}
+        initialScope={wizardScope}
         onClose={() => setWizardServer(null)}
         onStart={({ method, scope }) => {
           const target = wizardServer;

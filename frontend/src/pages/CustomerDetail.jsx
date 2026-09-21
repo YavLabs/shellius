@@ -20,7 +20,9 @@ import {
   RefreshCw,
   ExternalLink,
   Shield,
+  Radar,
 } from 'lucide-react';
+import { SshTrustBadge, CollectorBadge } from '@/components/servers/HostAgentStatus';
 import DataTable from '@/components/shared/DataTable';
 import { CardIcon, MobileCardSkeleton } from '@/components/mobile/MobileCard';
 import Modal from '@/components/shared/Modal';
@@ -269,6 +271,9 @@ function CustomerDetail() {
   const canViewPosture = can(user, 'posture.read');
   const canOnboard = can(user, 'servers.onboard');
   const [bulkInstallOpen, setBulkInstallOpen] = useState(false);
+  // Set when the installer is opened from ONE host's status badge or row
+  // action: just that host, ticked, on the install it needs.
+  const [singleInstall, setSingleInstall] = useState(null); // { id, mode }
   useEffect(() => {
     if (!canViewPosture || !id) return;
     // Best-effort: this page is about the customer, and posture is one panel
@@ -372,6 +377,30 @@ function CustomerDetail() {
       render: (r) => <HealthStatusDot status={r.healthStatus} showLabel />,
     },
     {
+      key: 'sshTrust',
+      label: 'SSH trust',
+      hideBelow: 'md',
+      searchAccessor: (r) => r.sshTrust?.label || '',
+      mobile: 'hidden',
+      render: (r) => (
+        <SshTrustBadge server={r} canFix={canOnboard} onFix={() => setSingleInstall({ id: r.id, mode: 'full' })} />
+      ),
+    },
+    {
+      key: 'collector',
+      label: 'Collector',
+      hideBelow: 'md',
+      searchAccessor: (r) => r.collector?.label || '',
+      mobile: {
+        slot: 'meta',
+        order: 4,
+        render: (r) => (r.collector && r.collector.tone !== 'success' && r.collector.tone !== 'neutral' ? <CollectorBadge server={r} /> : null),
+      },
+      render: (r) => (
+        <CollectorBadge server={r} canFix={canOnboard} onFix={() => setSingleInstall({ id: r.id, mode: 'posture' })} />
+      ),
+    },
+    {
       key: 'lastCheck',
       label: 'Last check',
       hideBelow: 'md',
@@ -392,6 +421,16 @@ function CustomerDetail() {
           icon: Eye,
           onClick: (r) => navigate(`/servers/${r.id}`, { state: fromState(`/customers/${id}`, customer?.name || 'customer') }),
         },
+        ...(canOnboard
+          ? [
+              {
+                label: 'Reinstall posture collector',
+                icon: Radar,
+                hidden: (r) => r.collector?.state === 'not_applicable',
+                onClick: (r) => setSingleInstall({ id: r.id, mode: 'posture' }),
+              },
+            ]
+          : []),
       ],
     },
   ];
@@ -828,6 +867,16 @@ function CustomerDetail() {
           // customer page never quietly reaches the rest of the fleet.
           serverIds={servers.map((sv) => sv.id)}
           onClose={() => setBulkInstallOpen(false)}
+        />
+      )}
+      {canOnboard && (
+        <BulkInstallModal
+          open={!!singleInstall}
+          serverIds={singleInstall ? [singleInstall.id] : []}
+          preselectIds={singleInstall ? [singleInstall.id] : []}
+          initialMode={singleInstall?.mode || 'posture'}
+          onClose={() => setSingleInstall(null)}
+          onDone={loadData}
         />
       )}
     </div>
