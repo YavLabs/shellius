@@ -55,7 +55,10 @@ const ENVIRONMENTS = ['demo', 'dev', 'staging', 'prod'];
 const CHANNELS = ['inapp', 'email'];
 
 const findingsQuerySchema = Joi.object({
-  severity: Joi.string().valid(...SEVERITIES),
+  // The UI keys severities lowercase — that is how getSummary returns its
+  // counts — while the column stores them uppercase. Normalising here beats
+  // a 400 every time someone clicks a severity tile.
+  severity: Joi.string().uppercase().valid(...SEVERITIES),
   status: Joi.string().valid(...STATUSES),
   // The findings inbox's own partition — open / expected / acknowledged /
   // muted / resolved. Takes precedence over `status`.
@@ -306,7 +309,7 @@ const exportSchema = Joi.object({
     serverId: Joi.string(),
     serverIds: Joi.array().items(Joi.string()).max(2000),
     status: Joi.string().valid('open', 'muted', 'resolved', 'all'),
-    severity: Joi.string().valid('CRITICAL', 'HIGH', 'MEDIUM', 'LOW', 'INFO'),
+    severity: Joi.string().uppercase().valid('CRITICAL', 'HIGH', 'MEDIUM', 'LOW', 'INFO'),
     code: Joi.string().max(64),
     environment: Joi.string().max(32),
     customerId: Joi.string(),

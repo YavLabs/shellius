@@ -374,3 +374,75 @@ describe('summary and list describe the same findings', () => {
     expect(list.total).toBe(0);
   });
 });
+
+/**
+ * The severity filter took the UI's lowercase key and matched it against a
+ * column storing CRITICAL/HIGH/…, so every severity filter either 400'd at
+ * the route or matched nothing. Clicking a severity tile is the single most
+ * common thing anyone does on the Posture page.
+ */
+describe('severity filtering is case-insensitive at the edge', () => {
+  let org;
+  let customer;
+  let server;
+
+  beforeAll(async () => {
+    if (!(await dbReachable())) return;
+    const q = await import('../postureQueryService.js');
+    org = await createTestOrg();
+    customer = await prisma.customer.create({
+      data: { orgId: org.id, name: 'Acme', slug: `acme-${unique()}` },
+    });
+    server = await prisma.server.create({
+      data: {
+        orgId: org.id,
+        customerId: customer.id,
+        hostname: `sev-${unique()}`,
+        ipAddress: '10.0.0.9',
+        environment: 'prod',
+      },
+    });
+    await prisma.exposureFinding.create({
+      data: {
+        orgId: org.id,
+        serverId: server.id,
+        code: 'SENSITIVE_PORT_EXPOSED',
+        proto: 'tcp',
+        port: 5432,
+        severity: 'CRITICAL',
+        message: 'exposed',
+        firstSeenAt: new Date(),
+        lastSeenAt: new Date(),
+      },
+    });
+    global.__sevq = q;
+  });
+
+  afterAll(async () => {
+    if (!(await dbReachable()) || !org) return;
+    await prisma.exposureFinding.deleteMany({ where: { orgId: org.id } });
+    await prisma.server.deleteMany({ where: { orgId: org.id } });
+    await prisma.customer.deleteMany({ where: { orgId: org.id } });
+    await prisma.postureSettings.deleteMany({ where: { orgId: org.id } });
+    await prisma.postureAlertRule.deleteMany({ where: { orgId: org.id } });
+    await cleanupOrg(org.id);
+  });
+
+  it('matches a lowercase severity, as the UI sends it', async () => {
+    if (!(await dbReachable())) return console.warn('DB unreachable — skipping');
+    const out = await global.__sevq.listFindings(org.id, { severity: 'critical' }, UNSCOPED);
+    expect(out.total).toBe(1);
+  });
+
+  it('still matches the stored uppercase form', async () => {
+    if (!(await dbReachable())) return console.warn('DB unreachable — skipping');
+    const out = await global.__sevq.listFindings(org.id, { severity: 'CRITICAL' }, UNSCOPED);
+    expect(out.total).toBe(1);
+  });
+
+  it('does not match a severity nothing has', async () => {
+    if (!(await dbReachable())) return console.warn('DB unreachable — skipping');
+    const out = await global.__sevq.listFindings(org.id, { severity: 'low' }, UNSCOPED);
+    expect(out.total).toBe(0);
+  });
+});

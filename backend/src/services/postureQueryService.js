@@ -303,7 +303,11 @@ export async function listFindings(orgId, query = {}, scope) {
   const limit = Math.min(Math.max(parseInt(query.limit, 10) || 25, 1), 100);
 
   const where = { orgId };
-  if (severity) where.severity = severity;
+  // The column stores CRITICAL/HIGH/…; the UI keys its counts lowercase
+  // because that is the shape getSummary returns. Normalising here as well
+  // as at the route means any caller can pass either and a severity filter
+  // can never silently match nothing.
+  if (severity) where.severity = String(severity).toUpperCase();
   if (serverId) where.serverId = serverId;
 
   // Scope + caller-chosen server filters must be ANDed, never overwrite one
