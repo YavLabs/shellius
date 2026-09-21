@@ -69,8 +69,16 @@ export const moveKeyToOrg = (id) =>
 // Deployments — /keystore/deployments
 // ---------------------------------------------------------------------------
 
+// The route sends pagination as a top-level `meta`, not nested under `data`
+// (unlike most list endpoints) — flatten it here so callers get one object:
+// { deployments, total, page, pageSize }.
 export const listDeployments = (params) =>
-  api.get('/keystore/deployments', { params }).then((r) => r.data.data);
+  api.get('/keystore/deployments', { params }).then((r) => ({
+    deployments: r.data.data?.deployments ?? [],
+    total: r.data.meta?.total ?? 0,
+    page: r.data.meta?.page ?? 1,
+    pageSize: r.data.meta?.pageSize ?? 25,
+  }));
 
 export const listDeploymentBatches = (params) =>
   api.get('/keystore/deployments/batches', { params }).then((r) => r.data.data?.batches ?? []);

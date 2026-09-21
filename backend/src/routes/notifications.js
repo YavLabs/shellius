@@ -23,8 +23,22 @@ const validateQuery = (schema) => (req, res, next) => {
 // Joi schemas
 // ---------------------------------------------------------------------------
 
+const NOTIFICATION_TYPES = [
+  'ACCESS_REQUEST_SUBMITTED',
+  'ACCESS_REQUEST_APPROVED',
+  'ACCESS_REQUEST_DENIED',
+  'ACCESS_REQUEST_EXPIRING',
+  'ACCESS_REQUEST_EXPIRED',
+  'ACCESS_REQUEST_REVOKED',
+  'BREAK_GLASS_INVOKED',
+  'POSTURE_FINDING',
+];
+
 const listQuerySchema = Joi.object({
   isRead: Joi.boolean(),
+  type: Joi.string().valid(...NOTIFICATION_TYPES),
+  createdFrom: Joi.date().iso(),
+  createdTo: Joi.date().iso(),
   page: Joi.number().integer().min(1).default(1),
   limit: Joi.number().integer().min(1).max(100).default(25),
 });
@@ -60,6 +74,9 @@ router.get(
       notificationService.list({
         userId: req.user.userId,
         isRead: req.query.isRead,
+        type: req.query.type,
+        createdFrom: req.query.createdFrom,
+        createdTo: req.query.createdTo,
         page: req.query.page,
         limit: req.query.limit,
       }),
