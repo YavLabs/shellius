@@ -258,7 +258,9 @@ export async function list({
   if (userId) where.issuedToId = userId;
   if (serverId) where.issuedForId = serverId;
   if (status) where.status = status;
-  if (certType) where.certType = certType;
+  // Prisma field is `type` (CertType enum) — `certType` is only the param
+  // name the API/frontend use for it (see issue(): `type: certType`).
+  if (certType) where.type = certType;
   // Merge with (never replace) the scope predicate already on `issuedFor` —
   // replacing it would silently drop the customer-scope restriction.
   if (environment) where.issuedFor = { ...(where.issuedFor || {}), environment };
