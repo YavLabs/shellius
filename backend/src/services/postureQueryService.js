@@ -19,6 +19,7 @@ import prisma from '../config/db.js';
 import ApiError from '../utils/ApiError.js';
 import { serverScopeWhere, relationScopeWhere } from '../lib/scope.js';
 import * as postureSettingsService from './postureSettingsService.js';
+import { canInstallOn, isBootstrapped } from './bulkBootstrapService.js';
 
 // ---------------------------------------------------------------------------
 // Shared shapes
@@ -124,6 +125,11 @@ export async function listServerCoverage(orgId, scope, { state, page = 1, limit 
       displayName: true,
       environment: true,
       authMode: true,
+      osType: true,
+      protocol: true,
+      provisionStatus: true,
+      agentId: true,
+      credentialId: true,
       customer: { select: { id: true, name: true } },
     },
     orderBy: [{ hostname: 'asc' }],
@@ -142,9 +148,24 @@ export async function listServerCoverage(orgId, scope, { state, page = 1, limit 
   const rows = servers.map((server) => {
     const lastReceivedAt = latestMap.get(server.id) || null;
     let collectorState = 'reporting';
-    if (!lastReceivedAt) collectorState = 'not_installed';
+    // A host that cannot run the collector is not a gap to be closed. It gets
+    // its own state so the UI can exclude it from "not installed" instead of
+    // listing an Install button that could never work.
+    if (!canInstallOn(server)) collectorState = 'not_applicable';
+    else if (!lastReceivedAt) collectorState = 'not_installed';
     else if (isStale(lastReceivedAt, settings, now)) collectorState = 'stale';
-    return { ...server, collectorState, lastReceivedAt };
+    return {
+      ...server,
+      collectorState,
+      lastReceivedAt,
+      // How a bulk install would authenticate here, so the coverage list and
+      // the installer never disagree about what is actually actionable.
+      credentialSource: server.credentialId
+        ? 'server'
+        : isBootstrapped(server)
+          ? 'certificate'
+          : null,
+    };
   });
 
   const filtered = state ? rows.filter((r) => r.collectorState === state) : rows;
@@ -160,7 +181,9 @@ export async function listServerCoverage(orgId, scope, { state, page = 1, limit 
       reporting: rows.filter((r) => r.collectorState === 'reporting').length,
       stale: rows.filter((r) => r.collectorState === 'stale').length,
       notInstalled: rows.filter((r) => r.collectorState === 'not_installed').length,
-      total: rows.length,
+      notApplicable: rows.filter((r) => r.collectorState === 'not_applicable').length,
+      total: rows.filter((r) => r.collectorState !== 'not_applicable').length,
+      totalAll: rows.length,
     },
   };
 }
@@ -194,9 +217,16 @@ export async function getSummary(orgId, scope, { customerId, environment } = {})
         ? { AND: [...(customerId ? [{ customerId }] : []), ...(environment ? [{ environment }] : [])] }
         : {}),
     },
-    select: { id: true },
+    select: { id: true, osType: true, protocol: true },
   });
-  const serverIds = servers.map((s) => s.id);
+  // A Windows box and an RDP-only host cannot run the collector at all.
+  // Counting them as "not installed" made the fleet read as permanently
+  // short of covered, with no action that could ever close the gap — so
+  // they are reported as their own number, excluded from the coverage math
+  // rather than quietly folded into it.
+  const applicable = servers.filter((s) => canInstallOn(s));
+  const notApplicable = servers.length - applicable.length;
+  const serverIds = applicable.map((s) => s.id);
 
   let reporting = 0;
   let stale = 0;
@@ -285,7 +315,17 @@ export async function getSummary(orgId, scope, { customerId, environment } = {})
   };
 
   return {
-    servers: { total: serverIds.length, reporting, stale, notInstalled },
+    servers: {
+      // `total` is the population coverage is measured against: hosts that
+      // could run the collector. `totalAll` keeps the true fleet size so the
+      // UI can say "…and 12 hosts that cannot run it" without a second call.
+      total: serverIds.length,
+      totalAll: servers.length,
+      reporting,
+      stale,
+      notInstalled,
+      notApplicable,
+    },
     findings,
     sections,
   };

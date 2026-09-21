@@ -338,6 +338,15 @@ function Posture() {
             collector — exposure unknown, not clean
           </span>
         )}
+        {/* Counted separately, never as a gap: a Windows or RDP-only host
+            cannot run the collector, so folding it into "not installed"
+            produced a shortfall no action could ever close. */}
+        {coverage?.notApplicable > 0 && (
+          <span className="flex items-center gap-1.5 text-muted-foreground/80">
+            <span className="font-medium text-foreground">{coverage.notApplicable}</span> cannot run
+            the collector
+          </span>
+        )}
         <span className="ml-auto shrink-0 text-primary">Coverage →</span>
       </button>
     </div>

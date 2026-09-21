@@ -158,6 +158,18 @@ export async function generateCaKeyPair(orgId, name) {
 }
 
 /**
+ * Permits ssh-keygen understands natively. These take a bare `-O <name>`;
+ * only names outside this set are custom `-O extension=<name>` values.
+ */
+const STANDARD_PERMITS = new Set([
+  'permit-pty',
+  'permit-port-forwarding',
+  'permit-agent-forwarding',
+  'permit-X11-forwarding',
+  'permit-user-rc',
+]);
+
+/**
  * Sign a user or host public key with the org's active CA key.
  *
  * @param {object} params
@@ -230,9 +242,24 @@ export async function signCertificate({
       args.push('-h');
     }
 
-    // Extension flags (e.g. { 'permit-pty': '', 'permit-user-rc': '' })
+    // Extension flags (e.g. { 'permit-pty': '', 'permit-user-rc': '' }).
+    //
+    // The standard permits are ssh-keygen options in their own right — it
+    // rejects `-O extension=permit-pty` with "Unsupported certificate
+    // option", because `extension=` is for names it does not know. Passing a
+    // permit-* through here therefore failed the whole signing call. Latent
+    // until something actually asked for one (the issue route defaults to
+    // {}), which is the worst way for it to be wrong.
+    //
+    // `-O clear` first drops ssh-keygen's default grant of all five permits,
+    // so an explicit extension list means exactly what it says rather than
+    // "the defaults, plus these".
+    const standard = Object.keys(extensions).filter((k) => STANDARD_PERMITS.has(k));
+    if (standard.length > 0) args.push('-O', 'clear');
     for (const [extName, extVal] of Object.entries(extensions)) {
-      if (extVal === '' || extVal === true) {
+      if (STANDARD_PERMITS.has(extName)) {
+        args.push('-O', extName);
+      } else if (extVal === '' || extVal === true) {
         args.push('-O', `extension=${extName}`);
       } else {
         args.push('-O', `extension=${extName}=${extVal}`);

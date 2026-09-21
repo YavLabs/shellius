@@ -591,3 +591,92 @@ describe('running services with no host port', () => {
     expect(db.internetExposed).toBe(0);
   });
 });
+
+/**
+ * A bootstrapped host trusts the org CA, so it needs no stored identity to
+ * install on — it needs a certificate. The planner used to skip exactly
+ * these hosts for "no credentials", which is the inverse of the truth and
+ * the reason a long-established fleet could plan to zero targets.
+ *
+ * Its own org: the tests above assert over "every server in the org", and a
+ * bootstrapped host would change their counts.
+ */
+describe('bulk plan — certificate-eligible hosts (DB)', () => {
+  let org;
+  let customer;
+  let bootstrapped;
+  let plain;
+
+  beforeAll(async () => {
+    if (!(await dbReachable())) return;
+    org = await createTestOrg();
+    customer = await prisma.customer.create({
+      data: { orgId: org.id, name: `cust-${unique()}`, slug: `c-${unique()}` },
+    });
+    const mk = (data) =>
+      prisma.server.create({
+        data: {
+          orgId: org.id,
+          customerId: customer.id,
+          hostname: `${unique()}.example.com`,
+          ipAddress: '10.0.0.9',
+          environment: 'dev',
+          ...data,
+        },
+      });
+    bootstrapped = await mk({ provisionStatus: 'provisioned', sshUser: 'ubuntu' });
+    plain = await mk({});
+  });
+
+  afterAll(async () => {
+    if (org) await cleanupOrg(org.id);
+  });
+
+  it('plans a bootstrapped host with no identity as a certificate install', async () => {
+    if (!(await dbReachable())) return console.warn('DB unreachable — skipping');
+    const plan = await planBulkInstall(org.id, [], {
+      mode: 'posture',
+      hasFallbackCredentials: false,
+      scope: UNSCOPED,
+    });
+    const target = plan.targets.find((t) => t.id === bootstrapped.id);
+    expect(target).toBeDefined();
+    expect(target.credentialSource).toBe('certificate');
+    expect(target.bootstrapped).toBe(true);
+    expect(plan.counts.usingCertificate).toBe(1);
+  });
+
+  it('still skips a host that trusts nothing and was given nothing', async () => {
+    if (!(await dbReachable())) return console.warn('DB unreachable — skipping');
+    const plan = await planBulkInstall(org.id, [], {
+      mode: 'posture',
+      hasFallbackCredentials: false,
+      scope: UNSCOPED,
+    });
+    expect(plan.skipped.find((s) => s.id === plain.id)?.reason).toBe('no_credentials');
+  });
+
+  it('prefers a certificate over the batch fallback credentials', async () => {
+    if (!(await dbReachable())) return console.warn('DB unreachable — skipping');
+    const plan = await planBulkInstall(org.id, [], {
+      mode: 'posture',
+      hasFallbackCredentials: true,
+      scope: UNSCOPED,
+    });
+    // The fallback is one account typed once for hosts that have nothing;
+    // there is no reason to believe it exists on a host that never needed it.
+    expect(plan.targets.find((t) => t.id === bootstrapped.id).credentialSource).toBe('certificate');
+    // ...and a host that is not bootstrapped still uses it.
+    expect(plan.targets.find((t) => t.id === plain.id).credentialSource).toBe('supplied');
+  });
+
+  it('full-agent mode still treats a bootstrapped host as already done', async () => {
+    if (!(await dbReachable())) return console.warn('DB unreachable — skipping');
+    const plan = await planBulkInstall(org.id, [], {
+      mode: 'full',
+      hasFallbackCredentials: false,
+      scope: UNSCOPED,
+    });
+    expect(plan.skipped.find((s) => s.id === bootstrapped.id)?.reason).toBe('already_provisioned');
+  });
+});

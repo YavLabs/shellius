@@ -30,6 +30,18 @@ export const SKIP_REASONS = {
 };
 
 /**
+ * Is this host already bootstrapped with the full agent?
+ *
+ * A bootstrapped host trusts the org CA, which means we can mint a 300-second
+ * certificate and connect with no stored secret at all. It is the single most
+ * common reason a long-standing fleet has "no credentials": nobody ever
+ * needed to save any, because certificate access was the whole point.
+ */
+export function isBootstrapped(server) {
+  return server?.provisionStatus === 'provisioned' || !!server?.agentId;
+}
+
+/**
  * Can the installer run on this host at all? Mirrors
  * frontend/src/lib/bootstrapEligibility.js `canBootstrapHost`.
  */
@@ -125,6 +137,9 @@ export async function planBulkInstall(
   const skipped = [];
 
   for (const server of servers) {
+    // Server.sshUser is non-nullable (defaults to 'root'), so a bootstrapped
+    // host always has a principal to name in the certificate.
+    const certEligible = isBootstrapped(server);
     const entry = {
       id: server.id,
       hostname: server.hostname,
@@ -139,7 +154,24 @@ export async function planBulkInstall(
       credential: server.credential,
       // Which secret the run will use. 'server' needs nothing from the user;
       // 'supplied' consumes the one fallback identity for the whole batch.
-      credentialSource: server.credentialId ? 'server' : hasFallbackCredentials ? 'supplied' : null,
+      bootstrapped: certEligible,
+      // Precedence: the host's own saved identity, then a certificate if the
+      // host trusts our CA, then the one identity supplied for the batch.
+      //
+      // Certificate outranks the supplied fallback deliberately. The fallback
+      // is a blunt instrument — one account typed once, for hosts that have
+      // nothing — and there is no reason to believe it exists on a host that
+      // never needed it. A certificate is minted for THIS host and THIS
+      // principal, so it is both more likely to work and less to leak. The
+      // runner still falls back to the supplied credentials if the
+      // certificate connection fails.
+      credentialSource: server.credentialId
+        ? 'server'
+        : certEligible
+          ? 'certificate'
+          : hasFallbackCredentials
+            ? 'supplied'
+            : null,
       alreadyDone:
         mode === 'posture'
           ? snapshotAt.has(server.id)
@@ -179,10 +211,11 @@ export async function planBulkInstall(
       targets: targets.length,
       skipped: skipped.length,
       usingServerIdentity: targets.filter((t) => t.credentialSource === 'server').length,
+      usingCertificate: targets.filter((t) => t.credentialSource === 'certificate').length,
       usingSuppliedCredentials: targets.filter((t) => t.credentialSource === 'supplied').length,
       staleCollectors: skipped.filter((s) => s.stale).length,
     },
   };
 }
 
-export default { planBulkInstall, canInstallOn, SKIP_REASONS };
+export default { planBulkInstall, canInstallOn, isBootstrapped, SKIP_REASONS };

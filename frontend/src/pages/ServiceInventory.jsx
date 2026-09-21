@@ -32,6 +32,7 @@ import {
   listInventoryServices,
 } from '@/services/postureService';
 import { listCustomers } from '@/services/customerService';
+import BulkInstallModal from '@/components/servers/BulkInstallModal';
 import { ENVIRONMENT_LABELS } from '@/lib/labels';
 
 /**
@@ -72,6 +73,8 @@ function ServiceInventory() {
   const navigate = useNavigate();
   const { user } = useAuth();
   const canExport = can(user, 'posture.export');
+  const canOnboard = can(user, 'servers.onboard');
+  const [bulkInstallOpen, setBulkInstallOpen] = useState(false);
   const [params, setParams] = useSearchParams();
 
   const serviceKey = params.get('service') || '';
@@ -258,12 +261,18 @@ function ServiceInventory() {
       description={
         filtered
           ? 'Try a different runtime, protocol, environment or customer.'
-          : 'Services appear here once hosts run the posture collector. Install it from Servers → Install collectors.'
+          : canOnboard
+            ? 'Services appear here once hosts run the posture collector.'
+            : 'Services appear here once hosts run the posture collector. Someone with onboarding rights can install it from Servers.'
       }
       action={
         filtered
           ? { label: 'Reset filters', onClick: resetFilters }
-          : { label: 'Go to servers', onClick: () => navigate('/servers') }
+          : canOnboard
+            ? // A pointer to another page is not an action. The thing that
+              // fills this page is one button away.
+              { label: 'Install collectors', onClick: () => setBulkInstallOpen(true) }
+            : { label: 'Go to servers', onClick: () => navigate('/servers') }
       }
     />
   );
@@ -564,6 +573,14 @@ function ServiceInventory() {
         scopeLabel="the listening ports matching these filters"
         onClose={() => setExportOpen(false)}
       />
+
+      {canOnboard && (
+        <BulkInstallModal
+          open={bulkInstallOpen}
+          serverIds={[]}
+          onClose={() => setBulkInstallOpen(false)}
+        />
+      )}
     </div>
   );
 }

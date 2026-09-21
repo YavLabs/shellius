@@ -59,7 +59,7 @@ function Stat({ icon: Icon, label, value, tone, onClick, loading }) {
   );
 }
 
-function NeedsAttentionWidget() {
+function NeedsAttentionWidget({ onInstall }) {
   const navigate = useNavigate();
   const isMobile = useIsMobile();
   const [summary, setSummary] = useState(null);
@@ -107,6 +107,9 @@ function NeedsAttentionWidget() {
   const critical = summary?.findings?.critical ?? 0;
   const high = summary?.findings?.high ?? 0;
   const unmonitored = (summary?.servers?.notInstalled ?? 0) + (summary?.servers?.stale ?? 0);
+  // Hosts that CAN run the collector. Windows and RDP-only hosts are excluded
+  // by the API, because "3 of 32 reporting" on a fleet with twelve Windows
+  // boxes reads as a backlog and is really a ceiling.
   const totalServers = summary?.servers?.total ?? 0;
   const clean = !loading && critical === 0 && high === 0;
 
@@ -147,8 +150,20 @@ function NeedsAttentionWidget() {
       <Radar className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden="true" />
       <span>
         {unmonitored} of {totalServers} hosts are not reporting, so their exposure is{' '}
-        <span className="font-medium">unknown, not clean</span>. Install the collector from Servers
-        → Install collectors.
+        <span className="font-medium">unknown, not clean</span>.{' '}
+        {onInstall ? (
+          <button
+            type="button"
+            onClick={onInstall}
+            className="font-medium text-[hsl(var(--brand))] underline-offset-2 hover:underline"
+          >
+            Install collectors
+          </button>
+        ) : (
+          // No permission to onboard: name where it happens rather than
+          // offering a button that would only fail.
+          <span>Someone with onboarding rights can install the collector from Servers.</span>
+        )}
       </span>
     </p>
   );

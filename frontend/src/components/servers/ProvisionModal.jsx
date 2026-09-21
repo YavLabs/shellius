@@ -35,7 +35,11 @@ function ProvisionModal({ server, onClose, installMode = 'full' }) {
   const boundCredentialId = server?.credentialId || server?.credential?.id || '';
   const [credentialId, setCredentialId] = useState(boundCredentialId);
   const hasIdentities = identities.length > 0 || personalIdentities.length > 0;
-  const [authMode, setAuthMode] = useState('identity'); // 'identity' | 'manual' — flipped to 'manual' once we know there's nothing to pick
+  // 'certificate' | 'identity' | 'manual'. Falls back to 'manual' below when
+  // there is nothing to pick.
+  const [authMode, setAuthMode] = useState(
+    server?.provisionStatus === 'provisioned' || server?.agentId ? 'certificate' : 'identity'
+  );
 
   useEffect(() => {
     if (can('keystore.view')) {
@@ -75,9 +79,14 @@ function ProvisionModal({ server, onClose, installMode = 'full' }) {
   const selectedIdentity =
     [...personalIdentities, ...identities].find((c) => c.id === credentialId) ||
     (credentialId && credentialId === boundCredentialId ? server?.credential : null);
+  // A bootstrapped host already trusts the org CA, so Shellius can sign a
+  // five-minute certificate and needs no secret at all. This is the easiest
+  // and safest path when it is available, so it leads.
+  const canUseCertificate = server?.provisionStatus === 'provisioned' || !!server?.agentId;
   const showModeSwitch =
-    (can('keystore.view') || can('vault.use') || !!boundCredentialId) &&
-    (hasIdentities || !!boundCredentialId);
+    canUseCertificate ||
+    ((can('keystore.view') || can('vault.use') || !!boundCredentialId) &&
+      (hasIdentities || !!boundCredentialId));
   // Fall back to manual entry when there's nothing to pick, regardless of authMode's value.
   const mode = showModeSwitch ? authMode : 'manual';
 
@@ -91,7 +100,12 @@ function ProvisionModal({ server, onClose, installMode = 'full' }) {
 
   // Manual mode keeps its long-standing rule: a key or a password is enough,
   // and an empty user means the "root" shown in the placeholder.
-  const canSubmit = mode === 'identity' ? !!credentialId : !!(privateKey.trim() || password);
+  const canSubmit =
+    mode === 'certificate'
+      ? true
+      : mode === 'identity'
+        ? !!credentialId
+        : !!(privateKey.trim() || password);
 
   const handleStart = async () => {
     if (!canSubmit) return;
@@ -110,6 +124,9 @@ function ProvisionModal({ server, onClose, installMode = 'full' }) {
               sshUser.trim() || undefined,
         sudoPassword: needsSudo ? sudoPassword : '',
         credentialId: mode === 'identity' ? credentialId : undefined,
+        // Server-side this mints a 5-minute, this-host-only certificate and
+        // connects with it — no secret is sent, stored or needed.
+        useCertificate: mode === 'certificate' || undefined,
         // What to install: full (SSH + posture), ssh (SSH only), posture (collector only).
         mode: installMode,
         onLog: (msg) => {
@@ -132,13 +149,28 @@ function ProvisionModal({ server, onClose, installMode = 'full' }) {
             Shellius will SSH into{' '}
             <span className="font-mono text-foreground">{server?.ipAddress}</span> and install the
             agent automatically.{' '}
-            {mode === 'identity'
-              ? 'The identity\u2019s secret stays in the Keystore and is never sent to your browser.'
-              : 'What you enter here is used once in memory and never stored.'}
+            {mode === 'certificate'
+              ? 'This host is bootstrapped, so it already trusts your certificate authority \u2014 Shellius signs a 5-minute certificate for it. Nothing to enter, and no secret is stored.'
+              : mode === 'identity'
+                ? 'The identity\u2019s secret stays in the Keystore and is never sent to your browser.'
+                : 'What you enter here is used once in memory and never stored.'}
           </div>
 
           {showModeSwitch && (
             <div className="flex gap-1 rounded-md border border-input bg-muted/30 p-1">
+              {canUseCertificate && (
+                <button
+                  type="button"
+                  onClick={() => setAuthMode('certificate')}
+                  className={`flex-1 rounded px-3 py-1.5 text-sm font-medium transition-colors ${
+                    mode === 'certificate'
+                      ? 'bg-background text-foreground shadow-sm'
+                      : 'text-muted-foreground hover:text-foreground'
+                  }`}
+                >
+                  Certificate
+                </button>
+              )}
               <button
                 type="button"
                 onClick={() => setAuthMode('identity')}
@@ -259,7 +291,13 @@ function ProvisionModal({ server, onClose, installMode = 'full' }) {
                 className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring"
                 value={sshUser}
                 onChange={(e) => setSshUser(e.target.value)}
-                placeholder={mode === 'identity' ? selectedIdentity?.username || 'root' : 'root'}
+                placeholder={
+                  mode === 'identity'
+                    ? selectedIdentity?.username || 'root'
+                    : mode === 'certificate'
+                      ? server?.sshUser || 'root'
+                      : 'root'
+                }
               />
             </div>
             {mode === 'manual' && (
@@ -279,6 +317,18 @@ function ProvisionModal({ server, onClose, installMode = 'full' }) {
             )}
           </div>
 
+          {/* Certificate auth carries no password, so there is nothing for
+              `sudo -S` to read. Offering the switch here would promise
+              something the mode cannot deliver; say the requirement plainly
+              instead. */}
+          {mode === 'certificate' ? (
+            <p className="rounded-lg border border-border bg-muted/30 px-4 py-3 text-xs leading-relaxed text-muted-foreground">
+              Certificate installs need <span className="font-medium text-foreground">passwordless sudo</span>{' '}
+              for <span className="font-mono text-foreground">{sshUser.trim() || server?.sshUser || 'root'}</span>,
+              because there is no password to give <span className="font-mono">sudo</span>. If this host prompts
+              for one, use a saved identity or enter credentials instead.
+            </p>
+          ) : (
           <div className="space-y-3">
             <SwitchField
               label={
@@ -304,6 +354,7 @@ function ProvisionModal({ server, onClose, installMode = 'full' }) {
               />
             )}
           </div>
+          )}
         </div>
       )}
 

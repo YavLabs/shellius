@@ -11,7 +11,10 @@ import * as healthCheckService from '../services/healthCheckService.js';
 import { provisionServer } from '../services/provisionService.js';
 import { resolveCredentialForActor } from '../services/keystoreService.js';
 import { signBootstrapToken, INSTALL_MODES } from './bootstrap.js';
-import { planBulkInstall } from '../services/bulkBootstrapService.js';
+import { planBulkInstall, isBootstrapped } from '../services/bulkBootstrapService.js';
+import { serverScopeWhere } from '../lib/scope.js';
+import prisma from '../config/db.js';
+import { mintInstallCertificate } from '../services/installCertService.js';
 
 const router = express.Router();
 
@@ -333,14 +336,34 @@ router.post(
     const { error: modeError, value: modeValue } = provisionSchema.validate(req.body);
     if (modeError) throw new ApiError(400, modeError.message);
     const mode = modeValue.mode; // 'full' | 'posture' — rejected above if neither
-    const { privateKey, passphrase, password, sshUser, sudoPassword, credentialId } = req.body;
-    // Either a saved Keystore identity, or credentials typed into the form.
-    // With an identity, the username comes from it unless one is given, and
-    // its secret never reaches the browser.
-    if (!credentialId && !privateKey && !password) {
-      throw new ApiError(400, 'Provide a saved identity, an SSH private key, or a password');
+    const { privateKey, passphrase, password, sshUser, sudoPassword, credentialId, useCertificate } =
+      req.body;
+
+    // Three ways in: a saved Keystore identity, credentials typed into the
+    // form, or — for a host that is already bootstrapped and therefore
+    // trusts our CA — a short-lived certificate and no secret at all.
+    let certServer = null;
+    if (useCertificate) {
+      certServer = await prisma.server.findFirst({
+        where: { id: req.params.id, orgId: req.orgId, ...serverScopeWhere(req.scope) },
+        select: { id: true, sshUser: true, provisionStatus: true, agentId: true },
+      });
+      if (!certServer) throw new ApiError(404, 'Server not found');
+      if (!isBootstrapped(certServer)) {
+        throw new ApiError(
+          400,
+          'This host is not bootstrapped, so it does not trust the certificate authority yet. Use a saved identity or credentials.'
+        );
+      }
+      if (!(sshUser || certServer.sshUser)) {
+        throw new ApiError(400, 'Set an SSH user on this server to issue a certificate for it');
+      }
+    } else {
+      if (!credentialId && !privateKey && !password) {
+        throw new ApiError(400, 'Provide a saved identity, an SSH private key, or a password');
+      }
+      if (!credentialId && !sshUser) throw new ApiError(400, 'sshUser is required');
     }
-    if (!credentialId && !sshUser) throw new ApiError(400, 'sshUser is required');
 
     // Resolved BEFORE the SSE headers go out, so a missing identity or a
     // scope violation is a real 403/404 instead of an error event in a 200.
@@ -351,7 +374,7 @@ router.post(
       identityAuth = resolved.auth;
       identityName = resolved.credential.name;
     }
-    const effectiveUser = sshUser || identityAuth?.username;
+    const effectiveUser = sshUser || identityAuth?.username || certServer?.sshUser;
     if (!effectiveUser) throw new ApiError(400, 'sshUser is required');
 
     // Set SSE headers before any async work so the client starts receiving
@@ -364,6 +387,7 @@ router.post(
       res.write(`event: ${type}\ndata: ${JSON.stringify(data)}\n\n`);
     };
 
+    let installCert = null;
     try {
       // Mint the bootstrap token via bootstrap.js's own signBootstrapToken so
       // the `mode` claim it signs and the one verifyBootstrapToken later reads
@@ -383,10 +407,24 @@ router.post(
 
       if (identityName) send('log', { message: `[shellius] Using saved identity "${identityName}"` });
 
+      if (certServer) {
+        installCert = await mintInstallCertificate({
+          orgId: req.orgId,
+          server: certServer,
+          principal: effectiveUser,
+          actorId: req.user.userId,
+        });
+        send('log', {
+          message:
+            '[shellius] Using a short-lived certificate (5 min, this host only) — no stored secret',
+        });
+      }
+
       await provisionServer(req.orgId, req.params.id, {
-        privateKey: identityAuth?.privateKey || privateKey || undefined,
+        privateKey: installCert?.privateKey || identityAuth?.privateKey || privateKey || undefined,
         passphrase: identityAuth?.passphrase || passphrase || undefined,
-        password: identityAuth?.password || password || undefined,
+        password: installCert ? undefined : identityAuth?.password || password || undefined,
+        certificate: installCert?.certificate,
         sshUser: effectiveUser,
         // A password identity doubles as the sudo password, as key deployment
         // already does — otherwise `sudo -S` would have nothing to read.
@@ -401,6 +439,7 @@ router.post(
     } catch (err) {
       send('error', { message: err.message || 'Provisioning failed' });
     } finally {
+      if (installCert) await installCert.dispose();
       res.end();
     }
   })
@@ -530,6 +569,7 @@ router.post(
       send('server-start', { id: target.id, hostname: target.hostname });
       const log = (message) => send('log', { id: target.id, message });
 
+      let installCert = null;
       try {
         let auth = fallbackAuth;
         let authLabel = fallbackName ? `identity "${fallbackName}"` : 'supplied credentials';
@@ -542,6 +582,20 @@ router.post(
           auth = resolved.auth;
           authLabel = `saved identity "${resolved.credential.name}"`;
           sshUser = target.sshUser || resolved.auth.username;
+        } else if (target.credentialSource === 'certificate') {
+          // The host already trusts our CA — mint a 300s cert instead of
+          // asking anyone for a password. The cert is persisted and bound to
+          // this server because check-principals verifies it against the API
+          // on the way in; see installCertService.
+          installCert = await mintInstallCertificate({
+            orgId: req.orgId,
+            server: { id: target.id },
+            principal: target.sshUser,
+            actorId: req.user.userId,
+          });
+          auth = { certificate: installCert.certificate, privateKey: installCert.privateKey };
+          authLabel = 'a short-lived certificate (no stored secret)';
+          sshUser = target.sshUser;
         }
 
         if (!auth) throw new ApiError(400, 'No credentials available for this host');
@@ -554,18 +608,34 @@ router.post(
           orgId: req.orgId,
           mode: value.mode,
         });
+        const bootstrapUrl = `${backendUrl}/api/bootstrap/install.sh?token=${bootstrapToken}`;
 
-        await provisionServer(req.orgId, target.id, {
-          privateKey: auth.privateKey || value.privateKey || undefined,
-          passphrase: auth.passphrase || value.passphrase || undefined,
-          password: auth.password || value.password || undefined,
-          sshUser,
-          sudoPassword: value.sudoPassword || auth.password || '',
-          scope: req.scope,
-          bootstrapUrl: `${backendUrl}/api/bootstrap/install.sh?token=${bootstrapToken}`,
-          mode: value.mode,
-          onOutput: log,
-        });
+        const runWith = (a, extra = {}) =>
+          provisionServer(req.orgId, target.id, {
+            privateKey: a.privateKey || value.privateKey || undefined,
+            passphrase: a.passphrase || value.passphrase || undefined,
+            password: a.password || value.password || undefined,
+            certificate: a.certificate || undefined,
+            sshUser: extra.sshUser || sshUser,
+            sudoPassword: value.sudoPassword || a.password || '',
+            scope: req.scope,
+            bootstrapUrl,
+            mode: value.mode,
+            onOutput: log,
+          });
+
+        try {
+          await runWith(auth);
+        } catch (err) {
+          // A certificate install needs passwordless sudo, which bootstrap
+          // does not grant. Rather than fail a host the operator gave us a
+          // working account for, try that account before giving up — one
+          // retry, clearly announced, never silent.
+          const canRetry = installCert && fallbackAuth;
+          if (!canRetry) throw err;
+          log(`[shellius] Certificate install failed (${err.message}) — retrying with ${fallbackName ? `identity "${fallbackName}"` : 'the supplied credentials'}`);
+          await runWith(fallbackAuth, { sshUser: value.sshUser || fallbackAuth.username || sshUser });
+        }
 
         results.push({ id: target.id, hostname: target.hostname, status: 'ok' });
         send('server-done', { id: target.id, hostname: target.hostname, status: 'ok' });
@@ -575,6 +645,10 @@ router.post(
         const message = err?.message || 'Install failed';
         results.push({ id: target.id, hostname: target.hostname, status: 'failed', error: message });
         send('server-done', { id: target.id, hostname: target.hostname, status: 'failed', error: message });
+      } finally {
+        // Close the certificate's window as soon as the install is over
+        // instead of leaving it valid for the rest of its five minutes.
+        if (installCert) await installCert.dispose();
       }
     };
 

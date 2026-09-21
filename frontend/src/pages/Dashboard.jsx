@@ -15,6 +15,7 @@ import MetricCard from '@/components/dashboard/MetricCard';
 import RecentConnectionsWidget from '@/components/dashboard/RecentConnectionsWidget';
 import NeedsAttentionWidget from '@/components/dashboard/NeedsAttentionWidget';
 import QuickActionsWidget from '@/components/dashboard/QuickActionsWidget';
+import BulkInstallModal from '@/components/servers/BulkInstallModal';
 import { useAuth } from '@/context/AuthContext';
 import { getServerStats } from '@/services/serverService';
 import { listSessions } from '@/services/sessionService';
@@ -113,6 +114,8 @@ function Dashboard() {
   const { user } = useAuth();
   const isAdmin = can(user, 'audit.view');
   const canViewPosture = can(user, 'posture.read');
+  const canOnboard = can(user, 'servers.onboard');
+  const [bulkInstallOpen, setBulkInstallOpen] = useState(false);
   // Org-wide numbers need org-wide permissions; everyone else sees their own
   // (instead of a misleading 0 from a refused request).
   const allSessions = can(user, 'sessions.view_all');
@@ -320,7 +323,21 @@ function Dashboard() {
       {/* Posture, full width, above the connection widgets: it is the only
           thing on this page that can be urgent, and a row of its own is what
           lets it name the findings instead of counting them. */}
-      {showPosture && <NeedsAttentionWidget />}
+      {/* The widget used to say "install the collector from Servers →
+          Install collectors" as prose. The dashboard is the most-seen page
+          in the app; handing out directions from it instead of a button is
+          how coverage stays where it is. */}
+      {showPosture && (
+        <NeedsAttentionWidget onInstall={canOnboard ? () => setBulkInstallOpen(true) : undefined} />
+      )}
+
+      {canOnboard && (
+        <BulkInstallModal
+          open={bulkInstallOpen}
+          serverIds={[]}
+          onClose={() => setBulkInstallOpen(false)}
+        />
+      )}
 
       {/* Recent connections (wide) + Quick actions (narrow). Without any
           quick action for this role, Recent connections takes the row. */}

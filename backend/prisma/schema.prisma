@@ -955,6 +955,16 @@ model OnboardingCredential {
   sudoPasswordEncrypted String?  @map("sudo_password_encrypted") @db.Text
   status                String   @default("pending") // pending | running | done | failed
   attempts              Int      @default(0)
+  // Opt-in: keep this secret in the org Keystore as a reusable identity and
+  // bind it to the server, instead of wiping it once onboarding finishes.
+  // Without it an import leaves every host it just bootstrapped with nothing
+  // stored — which is precisely the "no credentials" population the bulk
+  // installer then has to skip.
+  storeAsIdentity       Boolean  @default(false) @map("store_as_identity")
+  // Name of the Keystore identity to create or reuse. Rows sharing a name
+  // collapse into ONE identity, so fifty hosts behind one bastion key do not
+  // become fifty Keystore entries.
+  identityName          String?  @map("identity_name")
   expiresAt             DateTime @map("expires_at")
   createdAt             DateTime @default(now()) @map("created_at")
 

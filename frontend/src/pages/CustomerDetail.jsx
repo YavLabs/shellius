@@ -56,6 +56,7 @@ import Skeleton from '@/components/ui/Skeleton';
 import MobilePageHeader from '@/components/mobile/MobilePageHeader';
 import { fromState } from '@/hooks/useBackTarget';
 import { getPostureSummary } from '@/services/postureService';
+import BulkInstallModal from '@/components/servers/BulkInstallModal';
 import { useBreadcrumbs } from '@/context/BreadcrumbContext';
 import useIsMobile from '@/hooks/useIsMobile';
 import { PostureTile, PostureTileGrid } from '@/components/posture/PostureTiles';
@@ -280,6 +281,8 @@ function CustomerDetail() {
   ]);
 
   const canViewPosture = can(user, 'posture.read');
+  const canOnboard = can(user, 'servers.onboard');
+  const [bulkInstallOpen, setBulkInstallOpen] = useState(false);
   useEffect(() => {
     if (!canViewPosture || !id) return;
     // Best-effort: this page is about the customer, and posture is one panel
@@ -624,9 +627,23 @@ function CustomerDetail() {
           <SectionHeading
             title="Security posture"
             action={
-              <Link to={`/posture?customerId=${id}`} className="text-xs text-primary hover:underline">
-                Open in Posture
-              </Link>
+              <span className="flex items-center gap-3">
+                {/* "Cover this one client's fleet" used to mean going to
+                    Servers and filtering by hand. The customer page knows
+                    which servers it means. */}
+                {canOnboard && servers.length > 0 && (
+                  <button
+                    type="button"
+                    onClick={() => setBulkInstallOpen(true)}
+                    className="text-xs text-primary hover:underline"
+                  >
+                    Install collectors
+                  </button>
+                )}
+                <Link to={`/posture?customerId=${id}`} className="text-xs text-primary hover:underline">
+                  Open in Posture
+                </Link>
+              </span>
             }
           />
 
@@ -639,8 +656,21 @@ function CustomerDetail() {
               <Radar className="mt-0.5 h-3.5 w-3.5 shrink-0" />
               <p>
                 No host for this customer is running the posture collector yet, so there is nothing
-                to report. Open a server and use <span className="font-medium text-foreground">Bootstrap host</span>{' '}
-                to install it.
+                to report.{' '}
+                {canOnboard ? (
+                  <button
+                    type="button"
+                    onClick={() => setBulkInstallOpen(true)}
+                    className="font-medium text-[hsl(var(--brand))] underline-offset-2 hover:underline"
+                  >
+                    Install it on these hosts
+                  </button>
+                ) : (
+                  <span>
+                    Someone with onboarding rights can install it from a server&rsquo;s{' '}
+                    <span className="font-medium text-foreground">Bootstrap host</span> action.
+                  </span>
+                )}
               </p>
             </div>
           ) : (
@@ -894,6 +924,16 @@ function CustomerDetail() {
         onClose={() => setConfirmDelete(false)}
         onDeleted={() => navigate('/customers')}
       />
+
+      {canOnboard && (
+        <BulkInstallModal
+          open={bulkInstallOpen}
+          // Scoped to this customer's hosts, so "install collectors" from a
+          // customer page never quietly reaches the rest of the fleet.
+          serverIds={servers.map((sv) => sv.id)}
+          onClose={() => setBulkInstallOpen(false)}
+        />
+      )}
     </div>
   );
 }

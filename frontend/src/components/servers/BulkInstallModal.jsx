@@ -12,13 +12,13 @@ import {
 } from 'lucide-react';
 import Modal from '@/components/shared/Modal';
 import { Button } from '@/components/ui/button';
-import { Badge } from '@/components/ui/badge';
 import { Checkbox } from '@/components/ui/checkbox';
 import PasswordInput from '@/components/ui/PasswordInput';
 import SearchableSelect from '@/components/ui/SearchableSelect';
 import { listCredentials } from '@/services/keystoreService';
 import { planBulkInstall, runBulkInstall, createBulkBootstrapTokens } from '@/services/serverService';
 import { saveBlob } from '@/utils/download';
+import InstallPlanGroups from '@/components/posture/InstallPlanGroups';
 import { cn } from '@/lib/utils';
 
 /**
@@ -53,14 +53,6 @@ const SCOPES = [
   },
 ];
 
-const SKIP_TONE = {
-  windows: 'neutral',
-  rdp_only: 'neutral',
-  inactive: 'neutral',
-  already_provisioned: 'success',
-  collector_installed: 'success',
-  no_credentials: 'warning',
-};
 
 function StatusIcon({ status }) {
   if (status === 'ok') return <CheckCircle2 className="h-4 w-4 shrink-0 text-emerald-500" />;
@@ -157,8 +149,14 @@ function BulkInstallModal({ open, serverIds = [], onClose, onDone }) {
 
   const targets = plan?.targets || [];
   const selectedTargets = targets.filter((t) => chosen.includes(t.id));
-  // Hosts that will need the fallback identity, because they have none bound.
-  const needingFallback = selectedTargets.filter((t) => !t.credential?.id || !useServerIdentity);
+  // Hosts that will need the fallback identity — i.e. the ones the plan
+  // could not authenticate on its own. A certificate host never does: it is
+  // already bootstrapped, so Shellius signs its way in. Getting this wrong
+  // is what made the wizard demand a password for a fleet that needed none.
+  const needingFallback = selectedTargets.filter(
+    (t) => t.credentialSource === 'supplied' || (!useServerIdentity && t.credentialSource === 'server')
+  );
+  const certCount = selectedTargets.filter((t) => t.credentialSource === 'certificate').length;
   const fallbackReady = !!(credentialId || password);
 
   const toggle = (id) =>
@@ -231,15 +229,6 @@ function BulkInstallModal({ open, serverIds = [], onClose, onDone }) {
         .join('\n\n'),
     [manual]
   );
-
-  const skippedByReason = useMemo(() => {
-    const by = new Map();
-    for (const s of plan?.skipped || []) {
-      if (!by.has(s.reason)) by.set(s.reason, { reason: s.reason, message: s.message, rows: [] });
-      by.get(s.reason).rows.push(s);
-    }
-    return [...by.values()];
-  }, [plan]);
 
   const title =
     step === 'run'
@@ -352,93 +341,54 @@ function BulkInstallModal({ open, serverIds = [], onClose, onDone }) {
           ) : (
             <>
               <section className="space-y-2">
-                <div className="flex items-center justify-between gap-3">
+                <div className="flex flex-wrap items-center justify-between gap-2">
                   <h4 className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground/70">
                     Will install on {selectedTargets.length} of {targets.length}
                   </h4>
-                  {targets.length > 0 && (
-                    <button
-                      type="button"
-                      className="text-xs text-primary hover:underline"
-                      onClick={() =>
-                        setChosen(chosen.length === targets.length ? [] : targets.map((t) => t.id))
-                      }
-                    >
-                      {chosen.length === targets.length ? 'Clear all' : 'Select all'}
-                    </button>
+                  {plan?.counts?.total > 0 && (
+                    <span className="text-[11px] text-muted-foreground">
+                      {plan.counts.total} host{plan.counts.total === 1 ? '' : 's'} in scope
+                    </span>
                   )}
                 </div>
-                {targets.length === 0 ? (
-                  <p className="rounded-lg border border-dashed border-border px-3 py-6 text-center text-sm text-muted-foreground">
-                    Nothing to install on. Every selected host is already done, or cannot run the
-                    installer — see below.
-                  </p>
-                ) : (
-                  <div className="max-h-56 space-y-1 overflow-y-auto rounded-lg border border-border p-2">
-                    {targets.map((t) => (
-                      <label
-                        key={t.id}
-                        className="flex cursor-pointer items-center gap-2 rounded px-2 py-1.5 hover:bg-accent/50"
-                      >
-                        <Checkbox checked={chosen.includes(t.id)} onChange={() => toggle(t.id)} />
-                        <span className="min-w-0 flex-1 truncate text-sm text-foreground">
-                          {t.displayName || t.hostname}
-                        </span>
-                        {t.credential?.id ? (
-                          <Badge tone="success" variant="outline">
-                            {t.credential.name}
-                          </Badge>
-                        ) : (
-                          <Badge tone="warning" variant="outline">
-                            needs credentials
-                          </Badge>
-                        )}
-                      </label>
-                    ))}
-                  </div>
-                )}
-              </section>
 
-              {/* The skipped list is the point of showing a plan at all. A
-                  silent skip is how you end up believing a fleet is covered. */}
-              {skippedByReason.length > 0 && (
-                <section className="space-y-2">
-                  <h4 className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground/70">
-                    Skipping {plan.skipped.length}
-                  </h4>
-                  <div className="space-y-2">
-                    {skippedByReason.map((group) => (
-                      <div key={group.reason} className="rounded-lg border border-border px-3 py-2">
-                        <div className="flex items-center gap-2">
-                          <Badge tone={SKIP_TONE[group.reason] || 'neutral'} variant="outline">
-                            {group.rows.length}
-                          </Badge>
-                          <span className="min-w-0 text-xs text-muted-foreground">{group.message}</span>
-                        </div>
-                        <p className="mt-1 truncate text-[11px] text-muted-foreground/80">
-                          {group.rows.map((r) => r.hostname).join(', ')}
-                        </p>
-                      </div>
-                    ))}
-                  </div>
-                  {(plan.counts?.staleCollectors > 0 ||
-                    plan.skipped.some((s) => s.reason === 'already_provisioned' || s.reason === 'collector_installed')) && (
-                    <label className="flex cursor-pointer items-start gap-2 text-xs text-muted-foreground">
-                      <Checkbox checked={includeDone} onChange={() => setIncludeDone((v) => !v)} />
-                      <span>
-                        Re-run on hosts that are already done.
-                        {plan.counts?.staleCollectors > 0 && (
-                          <span className="text-amber-600 dark:text-amber-400">
-                            {' '}
-                            {plan.counts.staleCollectors} of them stopped reporting — reinstalling is
-                            one way to find out why.
-                          </span>
-                        )}
-                      </span>
-                    </label>
-                  )}
-                </section>
-              )}
+                {/* Grouped by what can be done about each host, not by a
+                    single flat "not installed" number that mixes a missing
+                    password with a Windows box. Same grouping as the
+                    coverage list, from the same plan. */}
+                <InstallPlanGroups
+                  plan={plan}
+                  selectable
+                  selectedIds={chosen}
+                  onToggle={toggle}
+                  onSelectAll={() =>
+                    setChosen(chosen.length === targets.length ? [] : targets.map((t) => t.id))
+                  }
+                  footerFor={(group) =>
+                    group.key === 'needs_credentials' && group.rows.length > 0 ? (
+                      <p className="mt-3 rounded-md bg-muted/50 px-3 py-2 text-[11px] leading-relaxed text-muted-foreground">
+                        Two ways to fix this permanently: bind an identity to each host from its
+                        Server Details page, or re-run a bulk import with{' '}
+                        <code className="font-mono">storeAsIdentity</code> set, which saves the
+                        credentials it was given to the Keystore instead of discarding them.
+                      </p>
+                    ) : group.key === 'stale' && group.rows.length > 0 ? (
+                      <label className="mt-3 flex cursor-pointer items-start gap-2 text-xs text-muted-foreground">
+                        <Checkbox checked={includeDone} onChange={() => setIncludeDone((v) => !v)} />
+                        <span>
+                          Re-run on hosts that are already done — including the{' '}
+                          {group.rows.length} that stopped reporting.
+                        </span>
+                      </label>
+                    ) : group.key === 'installed' && group.rows.length > 0 ? (
+                      <label className="mt-3 flex cursor-pointer items-start gap-2 text-xs text-muted-foreground">
+                        <Checkbox checked={includeDone} onChange={() => setIncludeDone((v) => !v)} />
+                        <span>Re-run on hosts that are already done.</span>
+                      </label>
+                    ) : null
+                  }
+                />
+              </section>
             </>
           )}
         </div>
@@ -483,6 +433,48 @@ function BulkInstallModal({ open, serverIds = [], onClose, onDone }) {
 
           {method === 'auto' && (
             <>
+              {/* Say up front what, if anything, is actually needed. The
+                  wizard used to ask for a password on every run, including
+                  runs where not one host would have used it. */}
+              <div
+                className={cn(
+                  'rounded-lg border px-3 py-2.5 text-xs leading-relaxed',
+                  needingFallback.length === 0
+                    ? 'border-emerald-500/30 bg-emerald-500/5 text-foreground'
+                    : 'border-border bg-muted/40 text-muted-foreground'
+                )}
+              >
+                {needingFallback.length === 0 ? (
+                  <span className="flex items-start gap-2">
+                    <ShieldCheck
+                      className="mt-0.5 h-3.5 w-3.5 shrink-0 text-emerald-600 dark:text-emerald-400"
+                      aria-hidden="true"
+                    />
+                    <span>
+                      <span className="font-medium">Nothing needed from you.</span> All{' '}
+                      {selectedTargets.length} selected host
+                      {selectedTargets.length === 1 ? '' : 's'} can be reached with what Shellius
+                      already has
+                      {certCount > 0 && (
+                        <>
+                          {' '}
+                          — {certCount} of them via a short-lived certificate, because they are
+                          already bootstrapped and trust the certificate authority
+                        </>
+                      )}
+                      .
+                    </span>
+                  </span>
+                ) : (
+                  <span>
+                    {selectedTargets.length - needingFallback.length} of {selectedTargets.length}{' '}
+                    selected host{selectedTargets.length === 1 ? '' : 's'} need nothing from you
+                    {certCount > 0 && ` (${certCount} via a short-lived certificate)`}. The
+                    remaining {needingFallback.length} need credentials below.
+                  </span>
+                )}
+              </div>
+
               <label className="flex cursor-pointer items-start gap-2 rounded-lg border border-border p-3">
                 <Checkbox checked={useServerIdentity} onChange={() => setUseServerIdentity((v) => !v)} />
                 <span className="min-w-0">
@@ -490,8 +482,9 @@ function BulkInstallModal({ open, serverIds = [], onClose, onDone }) {
                     Use each host&rsquo;s own saved identity where it has one
                   </span>
                   <span className="mt-0.5 block text-xs text-muted-foreground">
-                    {plan?.counts?.usingServerIdentity ?? 0} of the selected hosts already carry the
-                    identity that reaches them — that identity is exactly what gets us in.
+                    {plan?.counts?.usingServerIdentity ?? 0} of the hosts in this plan already carry
+                    the identity that reaches them. Turning this off uses the credentials below on
+                    every host instead — certificate hosts are unaffected either way.
                   </span>
                 </span>
               </label>

@@ -11,6 +11,9 @@ import { UNSCOPED, serverScopeWhere } from '../lib/scope.js';
  * @param {string} serverId
  * @param {object} opts
  * @param {string} opts.privateKey     - PEM-format SSH private key (never stored)
+ * @param {string} [opts.certificate]  - OpenSSH cert text paired with privateKey.
+ *   Used for hosts that are already bootstrapped and therefore trust the org
+ *   CA, so no stored identity is needed. See services/installCertService.js.
  * @param {string} opts.sshUser        - SSH username to connect as
  * @param {string} [opts.sudoPassword] - sudo password if needed (never stored)
  * @param {string} opts.bootstrapUrl   - full URL to the bootstrap install.sh
@@ -28,7 +31,7 @@ import { UNSCOPED, serverScopeWhere } from '../lib/scope.js';
 export async function provisionServer(
   orgId,
   serverId,
-  { privateKey, passphrase, password, sshUser, sudoPassword, bootstrapUrl, mode = 'full', onOutput, scope = UNSCOPED }
+  { privateKey, passphrase, password, certificate, sshUser, sudoPassword, bootstrapUrl, mode = 'full', onOutput, scope = UNSCOPED }
 ) {
   const server = await prisma.server.findFirst({
     where: { id: serverId, orgId, ...serverScopeWhere(scope) },
@@ -86,6 +89,7 @@ export async function provisionServer(
       privateKey,
       passphrase,
       password,
+      certificate,
       readyTimeout: 20000,
       pinContext: serverId,
     });
