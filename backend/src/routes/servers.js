@@ -643,8 +643,17 @@ router.post(
         // One host's failure is not the batch's. Twenty-nine successes and
         // one unreachable box is a good outcome that must not be thrown away.
         const message = err?.message || 'Install failed';
-        results.push({ id: target.id, hostname: target.hostname, status: 'failed', error: message });
-        send('server-done', { id: target.id, hostname: target.hostname, status: 'failed', error: message });
+        // `code` is what lets the UI offer a sudo password box for this one
+        // host instead of presenting the whole batch as a dead end.
+        const code = err?.code;
+        results.push({ id: target.id, hostname: target.hostname, status: 'failed', error: message, code });
+        send('server-done', {
+          id: target.id,
+          hostname: target.hostname,
+          status: 'failed',
+          error: message,
+          code,
+        });
       } finally {
         // Close the certificate's window as soon as the install is over
         // instead of leaving it valid for the rest of its five minutes.

@@ -301,14 +301,31 @@ installed on were the only ones being refused.
   `REVOKED` in the DB as soon as the install returns — so the window is the
   install, not the TTL. The ephemeral private key lives in a 0700 temp dir
   removed in a `finally`, and its buffer is zeroed.
-- **Known limit:** certificate auth carries no password, so `sudo -S` has
-  nothing to read. A certificate install needs **passwordless sudo**, which
-  bootstrap does not grant. Typical on cloud images (`ubuntu`, `ec2-user`);
-  not guaranteed. The bulk runner therefore retries once with the supplied
-  fallback credentials when a certificate install fails and a fallback
-  exists, announcing the retry in the log rather than doing it silently. The
-  single-host modal states the requirement instead of offering a sudo-password
-  field the mode cannot use.
+- **Sudo.** A certificate logs the installer in; it cannot answer `sudo`.
+  Bootstrap does not grant passwordless sudo, so on some hosts `sudo` will
+  ask for a password. That originally **hung forever**: the command was
+  `curl … | sudo bash` on a pty, sudo printed its prompt and waited, the SSH
+  stream never closed, and the bulk-install UI spun under a heading that
+  eventually said "Install finished". Three changes:
+  - With no sudo password the command is now `sudo -n`, which fails
+    immediately with "a password is required" instead of prompting
+    (`provisionService.buildInstallCommand`).
+  - That failure carries the stable code `SUDO_PASSWORD_REQUIRED`, sent on the
+    bulk SSE `server-done` event. The run UI shows the host as **Needs
+    attention** rather than failed, and expanding it offers a sudo password
+    box that retries **just that host** over the single-host provision route —
+    the certificate still logs in, the typed password is fed to `sudo -S`, and
+    it is used once and not stored. The single-host modal offers the same
+    field in certificate mode.
+  - Every install has a hard timeout (15 min) and the stream is watched for a
+    password prompt, so nothing can hold a worker slot forever regardless of
+    cause. When a run ends — including when the operator presses Stop — any
+    host still queued or running is marked as not run, never left spinning.
+
+  The bulk runner still retries once with the batch's fallback credentials
+  when a certificate install fails and a fallback exists, announcing it in
+  the log. That retry used to be unreachable in exactly this case, because a
+  hang is not a failure; `sudo -n` is what makes it fire.
 - **Latent bug found and fixed on the way:** `caService.signCertificate`
   emitted `-O extension=permit-pty`, which ssh-keygen rejects with
   "Unsupported certificate option" — `extension=` is for names it does not
