@@ -9,6 +9,7 @@ import { useAuth } from '@/context/AuthContext';
 import { useNotifications } from '@/context/NotificationContext';
 import { useTerminalWorkspace } from '@/context/TerminalWorkspaceContext';
 import usePendingReviewCount from '@/hooks/usePendingReviewCount';
+import useAutoRefresh from '@/hooks/useAutoRefresh';
 import { listAccessRequests } from '@/services/accessRequestService';
 import { canAccessRoute } from '@/lib/commands';
 import { can } from '@/lib/permissions';
@@ -19,7 +20,7 @@ import { cn } from '@/lib/utils';
 const LATEST = 8;
 
 /** Your requests still waiting for a decision. */
-function useMyPendingCount() {
+function useMyPendingCount(refreshKey = 0) {
   const [count, setCount] = useState(0);
   useEffect(() => {
     let cancelled = false;
@@ -29,7 +30,7 @@ function useMyPendingCount() {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [refreshKey]);
   return count;
 }
 
@@ -71,10 +72,16 @@ function Stat({ label, value, to, tone = 'neutral' }) {
 function ActivityHub() {
   const navigate = useNavigate();
   const { user } = useAuth();
-  const { notifications = [], unreadCount = 0, markRead, markAllRead } = useNotifications();
+  const { notifications = [], unreadCount = 0, markRead, markAllRead, refresh: refreshNotifications } = useNotifications();
   const { liveCount = 0 } = useTerminalWorkspace();
-  const pendingReviews = usePendingReviewCount(unreadCount);
-  const myPending = useMyPendingCount();
+  const [refreshKey, setRefreshKey] = useState(0);
+  // Re-reads whenever its key changes: on new notifications, and on Refresh.
+  const pendingReviews = usePendingReviewCount(`${unreadCount}:${refreshKey}`);
+  const myPending = useMyPendingCount(refreshKey);
+  const { refresh, refreshing, lastUpdated } = useAutoRefresh(async () => {
+    setRefreshKey((k) => k + 1);
+    await refreshNotifications?.();
+  });
 
   // Reviewers see the review tile; everyone else only once something is waiting.
   const showReviews = pendingReviews > 0 || can(user, 'access_requests.view_all');
@@ -94,7 +101,14 @@ function ActivityHub() {
 
   return (
     <div className="space-y-6 p-6">
-      <PageHeader icon={Inbox} title="Activity" subtitle="Requests, sessions and notifications in one place." />
+      <PageHeader
+        icon={Inbox}
+        title="Activity"
+        subtitle="Requests, sessions and notifications in one place."
+        onRefresh={refresh}
+        refreshing={refreshing}
+        lastUpdated={lastUpdated}
+      />
 
       {/* One summary card, split into equal columns (3 or 4), so nothing sits alone. */}
       <div className="flex divide-x divide-border overflow-hidden rounded-lg border border-border bg-card">
