@@ -58,6 +58,8 @@
 
 set -uo pipefail
 
+# 1.1.2: resource metrics (CPU, memory, root disk, 1-min load) — the API
+# and the Server page had room for them all along; nothing collected them.
 # 1.1.1: host limitations (containers by id, firewall rules it cannot
 # evaluate, truncated socket list) are `notes`, not degraded reasons;
 # systemctl show asked without sudo first and cached per unit; no stray
@@ -67,7 +69,7 @@ set -uo pipefail
 # API reads, every degraded reason sent, iptables/nftables INPUT parsed,
 # launcher-aware process attribution (pm2 via its God Daemon, secret
 # injectors such as `infisical run`, login-session processes).
-VERSION="1.1.1"
+VERSION="1.1.2"
 
 # Where /proc is. Only ever changed by the collector's own test harness,
 # which points it at a fixture tree; systemd runs this with no such variable.
@@ -1571,6 +1573,46 @@ collect_container_services() {
 }
 
 # ---------------------------------------------------------------------------
+# Resource metrics — all unprivileged reads
+# ---------------------------------------------------------------------------
+#
+# CPU is a percentage over a one-second window between two /proc/stat
+# samples (the counters are cumulative since boot, so a single read says
+# nothing about now). Memory is (MemTotal - MemAvailable) / MemTotal —
+# MemAvailable, not MemFree, or page cache reads as "used". Disk is the root
+# filesystem. Anything unreadable is null, never a guess.
+METRIC_CPU="null"; METRIC_MEM="null"; METRIC_DISK="null"; METRIC_LOAD="null"
+
+cpu_sample() {
+  awk '/^cpu /{ idle = $5 + $6; total = 0; for (i = 2; i <= NF; i++) total += $i; print idle, total; exit }' \
+    "$PROC/stat" 2>/dev/null
+}
+
+collect_metrics() {
+  local a b
+  a=$(cpu_sample)
+  if [[ -n "$a" ]]; then
+    sleep 1
+    b=$(cpu_sample)
+    if [[ -n "$b" ]]; then
+      METRIC_CPU=$(awk -v a="$a" -v b="$b" 'BEGIN {
+        split(a, x, " "); split(b, y, " ");
+        dt = y[2] - x[2]; di = y[1] - x[1];
+        if (dt > 0) printf "%.1f", 100 * (1 - di / dt); else print "null" }')
+    fi
+  fi
+  METRIC_MEM=$(awk '/^MemTotal:/{t=$2} /^MemAvailable:/{a=$2}
+    END { if (t > 0 && a != "") printf "%.1f", 100 * (t - a) / t; else print "null" }' "$PROC/meminfo" 2>/dev/null)
+  [[ -n "$METRIC_MEM" ]] || METRIC_MEM="null"
+  if have df; then
+    METRIC_DISK=$(df -P / 2>/dev/null | awk 'NR == 2 { gsub("%", "", $5); if ($5 ~ /^[0-9]+$/) print $5; else print "null" }')
+  fi
+  [[ -n "$METRIC_DISK" ]] || METRIC_DISK="null"
+  METRIC_LOAD=$(awk '{ if ($1 ~ /^[0-9.]+$/) print $1; else print "null" }' "$PROC/loadavg" 2>/dev/null)
+  [[ -n "$METRIC_LOAD" ]] || METRIC_LOAD="null"
+}
+
+# ---------------------------------------------------------------------------
 # JSON output
 # ---------------------------------------------------------------------------
 
@@ -1702,6 +1744,8 @@ render_json() {
   done
   notes_json+="]"
   printf '"notes":%s,' "$notes_json"
+  printf '"metrics":{"cpuPct":%s,"memPct":%s,"diskPct":%s,"load1":%s},' \
+    "$METRIC_CPU" "$METRIC_MEM" "$METRIC_DISK" "$METRIC_LOAD"
   printf '"agentVersion":"%s"' "$VERSION"
   printf '}\n'
 }
@@ -1713,6 +1757,7 @@ collect_nat_listeners
 collect_systemd_services
 collect_container_services
 collect_pm2_services
+collect_metrics
 analyze
 render_json
 [[ $SS_OK -eq 1 ]] || exit 2
