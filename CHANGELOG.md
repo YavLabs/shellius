@@ -9,6 +9,8 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 Tracked here as work lands on `main`; moved into a dated section on release
 (`node scripts/version.mjs bump <major|minor|patch>`).
 
+## [1.7.3] - 2026-09-21
+
 ### Fixed
 
 - **Hosts kept showing "Collector degraded" after a reinstall, and then "stopped reporting".** Once 1.7.2 made the collector's sudo grant work, it started reporting Docker ports it found in the NAT table as `source: "nat"`. The API's schema did not allow that value, so it refused the whole snapshot. The host looked dead, the last (degraded) snapshot stayed on screen, and reinstalling changed nothing. The API now accepts it. It also accepts two other shapes the collector has always sent and the API silently dropped: firewall rules placed beside `firewall` instead of inside it (so no firewall rule ever reached the reachability logic), and `ownerId` instead of `ownerRef`. Collectors already on hosts start reporting again as soon as the server is upgraded, with no reinstall needed.
