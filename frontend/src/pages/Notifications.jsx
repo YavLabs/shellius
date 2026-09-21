@@ -2,8 +2,6 @@ import { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Bell, CheckCheck } from 'lucide-react';
 import DataTable from '@/components/shared/DataTable';
-import { Badge } from '@/components/ui/badge';
-import { formatLabel } from '@/utils/format';
 import PageHeader from '@/components/common/PageHeader';
 import { Button } from '@/components/ui/button';
 import SearchableSelect from '@/components/ui/SearchableSelect';
@@ -14,7 +12,26 @@ import {
 } from '@/services/notificationService';
 import { relativeTime } from '@/utils/time';
 import { RELATED_ROUTE } from '@/lib/notificationRoutes';
+import { notificationMeta } from '@/lib/notificationMeta';
+import { cn } from '@/lib/utils';
 
+
+/** The type's icon, dimmed once read — the same cue the dropdown uses. */
+function NotificationIcon({ n }) {
+  const { Icon, color, label } = notificationMeta(n.type);
+  return (
+    <span
+      className={cn(
+        'mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-md bg-muted/60',
+        n.isRead && 'opacity-60'
+      )}
+      title={label}
+    >
+      <Icon className={cn('h-4 w-4', color)} aria-hidden="true" />
+      <span className="sr-only">{label}</span>
+    </span>
+  );
+}
 
 function Notifications() {
   const navigate = useNavigate();
@@ -78,66 +95,60 @@ function Notifications() {
     />
   );
 
+  // Same row anatomy as the top-bar dropdown: a coloured icon for the type,
+  // the title, the body underneath. The page used to show a blue "info"
+  // badge for every type and only the body text, so an approval and a
+  // break-glass invocation looked identical here while looking different in
+  // the dropdown a few pixels above it.
   const columns = [
     {
-      key: 'status',
+      key: 'type',
       label: '',
-      className: 'w-8',
+      className: 'w-10',
+      sortable: true,
+      sortAccessor: (n) => n.type || '',
+      searchAccessor: (n) => notificationMeta(n.type).label,
       mobile: {
         slot: 'leading',
-        render: (n) => (
-          <span
-            className={`mt-1.5 inline-block h-2.5 w-2.5 rounded-full ${n.isRead ? 'bg-muted-foreground/20' : 'bg-primary'}`}
-            title={n.isRead ? 'Read' : 'Unread'}
-          />
-        ),
+        render: (n) => <NotificationIcon n={n} />,
       },
-      render: (n) =>
-        n.isRead ? (
-          <span className="h-2 w-2 rounded-full bg-transparent" />
-        ) : (
-          <span className="inline-block h-2 w-2 rounded-full bg-primary" title="Unread" />
-        ),
-    },
-    {
-      key: 'type',
-      label: 'Type',
-      sortable: true,
-      searchAccessor: (n) => n.type || '',
-      mobile: 'hidden',
-      render: (n) => (
-        <Badge tone="info" variant="outline">
-          {formatLabel(n.type || 'info')}
-        </Badge>
-      ),
+      render: (n) => <NotificationIcon n={n} />,
     },
     {
       key: 'body',
-      label: 'Message',
+      label: 'Notification',
+      searchAccessor: (n) => `${n.title || ''} ${n.body || ''}`,
       mobile: {
         slot: 'title',
         render: (n) => (
-          <span className={n.isRead ? 'font-normal text-muted-foreground' : undefined}>{n.body || n.title || '—'}</span>
+          <span className={n.isRead ? 'font-normal text-muted-foreground' : undefined}>
+            {n.title || n.body || '—'}
+          </span>
         ),
       },
       render: (n) => (
         <button
+          type="button"
           onClick={() => openNotification(n)}
-          className="text-left text-sm text-foreground hover:text-primary"
+          className="group block min-w-0 text-left"
         >
-          {n.body || n.title || '—'}
+          <span className="flex min-w-0 items-center gap-2">
+            <span
+              className={cn(
+                'truncate text-sm group-hover:text-primary',
+                n.isRead ? 'text-foreground/80' : 'font-medium text-foreground'
+              )}
+            >
+              {n.title || n.body || '—'}
+            </span>
+            {!n.isRead && (
+              <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-primary" aria-label="Unread" />
+            )}
+          </span>
+          {n.title && n.body && (
+            <span className="mt-0.5 block text-xs text-muted-foreground line-clamp-2">{n.body}</span>
+          )}
         </button>
-      ),
-    },
-    {
-      key: 'related',
-      label: 'Related',
-      hideBelow: 'md',
-      mobile: 'hidden',
-      render: (n) => (
-        <span className="text-xs text-muted-foreground">
-          {n.relatedType ? `${n.relatedType}` : '—'}
-        </span>
       ),
     },
     {
@@ -188,7 +199,7 @@ function Notifications() {
         emptyMessage={filter === 'unread' ? 'No unread notifications.' : 'No notifications yet.'}
         searchPlaceholder="Search notifications..."
         filters={filterSlot}
-        mobile={{ onCardClick: (n) => openNotification(n) }}
+        mobile={{ onCardClick: (n) => openNotification(n), titleClamp: 2 }}
       />
     </div>
   );

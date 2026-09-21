@@ -1,26 +1,13 @@
 import { useState, useRef, useEffect } from 'react';
-import { Bell, BellRing, CheckCheck, CheckCircle, XCircle, Clock, Ban, Radar, ShieldAlert } from 'lucide-react';
+import { Bell, BellRing, CheckCheck } from 'lucide-react';
+import { notificationMeta } from '@/lib/notificationMeta';
 import { useNotifications } from '@/context/NotificationContext';
 import { relativeTime } from '@/utils/time';
 import { cn } from '@/lib/utils';
 
-// Keys are the NotificationType enum values (backend prisma/schema.prisma).
-// The short REQUEST_* spellings below had drifted from the enum, so every row
-// fell through to the generic bell.
-const TYPE_META = {
-  ACCESS_REQUEST_SUBMITTED: { Icon: Clock, color: 'text-amber-500' },
-  ACCESS_REQUEST_APPROVED: { Icon: CheckCircle, color: 'text-emerald-500' },
-  ACCESS_REQUEST_DENIED: { Icon: XCircle, color: 'text-red-500' },
-  ACCESS_REQUEST_EXPIRING: { Icon: Clock, color: 'text-amber-500' },
-  ACCESS_REQUEST_EXPIRED: { Icon: Clock, color: 'text-muted-foreground' },
-  ACCESS_REQUEST_REVOKED: { Icon: Ban, color: 'text-muted-foreground' },
-  BREAK_GLASS_INVOKED: { Icon: ShieldAlert, color: 'text-red-500' },
-  POSTURE_FINDING: { Icon: Radar, color: 'text-amber-500' },
-};
 
 function NotificationRow({ notification, onMarkRead }) {
-  const meta = TYPE_META[notification.type] || { Icon: Bell, color: 'text-muted-foreground' };
-  const { Icon, color } = meta;
+  const { Icon, color } = notificationMeta(notification.type);
 
   const handleClick = () => {
     if (!notification.isRead) {
