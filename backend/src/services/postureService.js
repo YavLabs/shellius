@@ -80,6 +80,10 @@ const SEVERITY = {
   SENSITIVE_PORT_WILDCARD_BIND: 'MEDIUM',
   SENSITIVE_PORT_LAN: 'LOW',
   STALE_FIREWALL_RULE: 'LOW',
+  // A port that is closed only because the thing behind it happens to be
+  // stopped. MEDIUM, not HIGH: it is not reachable right now — but nothing
+  // stands between it and being reachable except a `docker start`.
+  STOPPED_SERVICE_PORT_OPEN: 'MEDIUM',
   UNATTRIBUTED_LISTENER: 'LOW',
   EXPECTED_PUBLIC: 'INFO',
   FIREWALL_STATE_UNKNOWN: 'INFO',
@@ -295,13 +299,26 @@ function reachabilityFor(listener, fwCtx) {
   return { reachability, bindClass: bc, bind, dockerBypass: false };
 }
 
+/**
+ * Is this port expected to be public?
+ *
+ * Three sources, most specific first. A per-server entry is checked before
+ * the org list so "8080 is expected on this demo box" never has to be
+ * expressed as "8080 is expected everywhere" — which is what the org list
+ * alone forced, and why a database host could be silenced by a decision
+ * someone made about a web server.
+ */
 function isExpectedPublic(port, proto, expectedPublicPorts) {
   for (const rule of expectedPublicPorts || []) {
     if (!rule) continue;
     if (Number(rule.port) !== port) continue;
     const ruleProto = rule.proto || 'any';
     if (ruleProto !== 'any' && ruleProto !== proto) continue;
-    return { matched: true, source: 'setting', label: rule.label || EXPECTED_PUBLIC_BUILTIN[port] || `port ${port}` };
+    return {
+      matched: true,
+      source: rule.scope === 'server' ? 'server' : 'setting',
+      label: rule.label || rule.note || EXPECTED_PUBLIC_BUILTIN[port] || `port ${port}`,
+    };
   }
   if (EXPECTED_PUBLIC_BUILTIN[port]) {
     return { matched: true, source: 'builtin', label: EXPECTED_PUBLIC_BUILTIN[port] };
@@ -342,7 +359,35 @@ function mkFinding(code, proto, port, ownerLabel, service, message, detail) {
 export function computeFindings(snapshot, settings = {}) {
   const firewall = snapshot?.firewall || { engine: 'unknown', active: false, defaultIncoming: 'unknown', rules: [] };
   const rawListeners = Array.isArray(snapshot?.listeners) ? snapshot.listeners : [];
-  const expectedPublicPorts = Array.isArray(settings?.expectedPublicPorts) ? settings.expectedPublicPorts : [];
+  // Installed-but-not-running services. `ss` cannot see these at all, so
+  // without them a firewall rule for a stopped container's port looks like
+  // an abandoned rule rather than a service waiting to re-open it.
+  const stoppedServices = (Array.isArray(snapshot?.services) ? snapshot.services : []).filter(
+    (svc) => svc && svc.running === false
+  );
+
+  /** The stopped service that declares this port, if any. */
+  const stoppedOwnerOf = (proto, port) =>
+    stoppedServices.find((svc) =>
+      (Array.isArray(svc.ports) ? svc.ports : []).some(
+        (dp) => Number(dp.port) === Number(port) && (!proto || proto === 'any' || dp.proto === proto)
+      )
+    ) || null;
+
+  /** How to name a service in a finding message. */
+  const svcLabel = (svc) => {
+    if (!svc) return 'a service';
+    if (svc.kind === 'docker' || svc.kind === 'podman') return `the ${svc.kind} container “${svc.name}”`;
+    if (svc.kind === 'systemd') return `the unit ${svc.name}`;
+    if (svc.kind === 'pm2') return `the pm2 app “${svc.name}”`;
+    return `“${svc.name}”`;
+  };
+  // Per-server entries first so the most specific rule wins the match.
+  const serverExpected = Array.isArray(settings?.serverExpectedPorts) ? settings.serverExpectedPorts : [];
+  const expectedPublicPorts = [
+    ...serverExpected.map((r) => ({ ...r, scope: 'server' })),
+    ...(Array.isArray(settings?.expectedPublicPorts) ? settings.expectedPublicPorts : []),
+  ];
 
   const fwCtx = buildFirewallContext(firewall);
 
@@ -492,13 +537,36 @@ export function computeFindings(snapshot, settings = {}) {
       const ports = spec.split(',').map(Number).filter(Number.isFinite);
       for (const p of ports) {
         const hit = seenPorts.has(`tcp:${p}`) || seenPorts.has(`udp:${p}`);
-        if (!hit) {
+        if (hit) continue;
+
+        // "Nothing is listening" and "the thing that listens here is
+        // stopped" look identical from a socket table and mean opposite
+        // things: one rule should be deleted, the other is a service that
+        // re-opens this port the moment it starts.
+        const owner = stoppedOwnerOf(rule.proto, p);
+        if (owner) {
           findings.push(mkFinding(
-            'STALE_FIREWALL_RULE', rule.proto || 'any', p, null, null,
-            `The firewall allows this port from ${rule.from || 'Anywhere'}, but nothing is listening on it. The rule can likely be removed.`,
-            { from: rule.from || 'Anywhere' },
+            'STOPPED_SERVICE_PORT_OPEN', rule.proto || 'any', p,
+            `${owner.kind}/${owner.name}`, null,
+            `${svcLabel(owner)} is ${owner.state} but the firewall still allows this port from ${rule.from || 'Anywhere'}. ` +
+              'It becomes reachable again the moment the service starts — either start it deliberately or remove the rule.',
+            {
+              from: rule.from || 'Anywhere',
+              serviceKind: owner.kind,
+              serviceName: owner.name,
+              serviceState: owner.state,
+              serviceStatus: owner.statusText || null,
+              exitCode: Number.isInteger(owner.exitCode) ? owner.exitCode : null,
+            },
           ));
+          continue;
         }
+
+        findings.push(mkFinding(
+          'STALE_FIREWALL_RULE', rule.proto || 'any', p, null, null,
+          `The firewall allows this port from ${rule.from || 'Anywhere'}, but nothing is listening on it. The rule can likely be removed.`,
+          { from: rule.from || 'Anywhere' },
+        ));
       }
     }
   }
@@ -551,7 +619,13 @@ async function getSettings(orgId) {
  * `payload` is the Joi-validated posture snapshot from routes/hosts.js.
  */
 export async function ingest(orgId, serverId, payload) {
-  const settings = await getSettings(orgId);
+  const [settings, serverExpectedPorts] = await Promise.all([
+    getSettings(orgId),
+    prisma.serverExpectedPort.findMany({
+      where: { orgId, serverId },
+      select: { port: true, proto: true, note: true },
+    }),
+  ]);
   const collectedAt = payload.collectedAt instanceof Date ? payload.collectedAt : new Date(payload.collectedAt);
 
   const latest = await prisma.hostSnapshot.findFirst({
@@ -610,13 +684,16 @@ export async function ingest(orgId, serverId, payload) {
       snapshotId: snapshot.id,
       outOfOrder: true,
       listenersReplaced: false,
+      servicesReplaced: false,
       findings: { opened: 0, continuing: 0, reopened: 0, resolved: 0 },
     };
   }
 
+  const services = Array.isArray(payload.services) ? payload.services : [];
+
   const { listeners, findings } = computeFindings(
-    { firewall: payload.firewall, listeners: payload.listeners },
-    settings,
+    { firewall: payload.firewall, listeners: payload.listeners, services },
+    { ...settings, serverExpectedPorts },
   );
 
   // The (org, server, code, proto, port) unique constraint has no "open vs
@@ -638,6 +715,29 @@ export async function ingest(orgId, serverId, payload) {
 
   await prisma.$transaction(async (tx) => {
     await tx.hostListener.deleteMany({ where: { serverId } });
+    // Same replace-wholesale contract as listeners: this table is the host's
+    // CURRENT state, never its history. postureInventoryService reads it
+    // directly on that basis.
+    await tx.hostService.deleteMany({ where: { serverId } });
+    if (services.length) {
+      await tx.hostService.createMany({
+        data: services.map((svc) => ({
+          orgId,
+          serverId,
+          snapshotId: snapshot.id,
+          kind: svc.kind || 'unknown',
+          name: svc.name || svc.ref || 'unknown',
+          ref: svc.ref || null,
+          state: svc.state || 'unknown',
+          running: !!svc.running,
+          statusText: svc.statusText || null,
+          detail: svc.detail || null,
+          sourcePath: svc.sourcePath || null,
+          ports: Array.isArray(svc.ports) ? svc.ports : [],
+          exitCode: Number.isInteger(svc.exitCode) ? svc.exitCode : null,
+        })),
+      });
+    }
     if (listeners.length) {
       await tx.hostListener.createMany({
         data: listeners.map((l) => ({

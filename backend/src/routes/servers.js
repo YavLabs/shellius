@@ -11,8 +11,32 @@ import * as healthCheckService from '../services/healthCheckService.js';
 import { provisionServer } from '../services/provisionService.js';
 import { resolveCredentialForActor } from '../services/keystoreService.js';
 import { signBootstrapToken, INSTALL_MODES } from './bootstrap.js';
+import { planBulkInstall, isBootstrapped } from '../services/bulkBootstrapService.js';
+import { serverScopeWhere } from '../lib/scope.js';
+import prisma from '../config/db.js';
+import { mintInstallCertificate } from '../services/installCertService.js';
 
 const router = express.Router();
+
+/**
+ * The URL the TARGET HOST will use to fetch install.sh — not the URL the
+ * browser used. In prod TRAEFIK_HOST is always set; the request headers are
+ * the last resort because a host behind a proxy may not be able to reach
+ * whatever the admin's browser called us.
+ */
+function resolveBackendUrl(req) {
+  if (process.env.TRAEFIK_HOST) return `https://${process.env.TRAEFIK_HOST}`;
+  if (process.env.PUBLIC_API_URL) {
+    return String(process.env.PUBLIC_API_URL).replace(/\/$/, '').replace(/\/api$/, '');
+  }
+  if (process.env.VITE_API_URL) {
+    return String(process.env.VITE_API_URL).replace(/\/$/, '').replace(/\/api$/, '');
+  }
+  const proto = (req.headers['x-forwarded-proto'] || req.protocol || 'http').split(',')[0];
+  const host = req.headers['x-forwarded-host'] || req.get('host');
+  return `${proto}://${host}`;
+}
+
 
 const validate = (schema) => (req, res, next) => {
   const { error, value } = schema.validate(req.body, { abortEarly: false, stripUnknown: true });
@@ -20,6 +44,10 @@ const validate = (schema) => (req, res, next) => {
   req.body = value;
   next();
 };
+
+// Upper bound on one bulk run. Not a technical limit — a blast-radius one:
+// past this, "install on everything" stops being a reviewable action.
+const MAX_BULK_INSTALL = 200;
 
 const ENVIRONMENTS = ['demo', 'dev', 'staging', 'prod'];
 const PROTOCOLS = ['ssh', 'rdp', 'both'];
@@ -308,14 +336,34 @@ router.post(
     const { error: modeError, value: modeValue } = provisionSchema.validate(req.body);
     if (modeError) throw new ApiError(400, modeError.message);
     const mode = modeValue.mode; // 'full' | 'posture' — rejected above if neither
-    const { privateKey, passphrase, password, sshUser, sudoPassword, credentialId } = req.body;
-    // Either a saved Keystore identity, or credentials typed into the form.
-    // With an identity, the username comes from it unless one is given, and
-    // its secret never reaches the browser.
-    if (!credentialId && !privateKey && !password) {
-      throw new ApiError(400, 'Provide a saved identity, an SSH private key, or a password');
+    const { privateKey, passphrase, password, sshUser, sudoPassword, credentialId, useCertificate } =
+      req.body;
+
+    // Three ways in: a saved Keystore identity, credentials typed into the
+    // form, or — for a host that is already bootstrapped and therefore
+    // trusts our CA — a short-lived certificate and no secret at all.
+    let certServer = null;
+    if (useCertificate) {
+      certServer = await prisma.server.findFirst({
+        where: { id: req.params.id, orgId: req.orgId, ...serverScopeWhere(req.scope) },
+        select: { id: true, sshUser: true, provisionStatus: true, agentId: true },
+      });
+      if (!certServer) throw new ApiError(404, 'Server not found');
+      if (!isBootstrapped(certServer)) {
+        throw new ApiError(
+          400,
+          'This host is not bootstrapped, so it does not trust the certificate authority yet. Use a saved identity or credentials.'
+        );
+      }
+      if (!(sshUser || certServer.sshUser)) {
+        throw new ApiError(400, 'Set an SSH user on this server to issue a certificate for it');
+      }
+    } else {
+      if (!credentialId && !privateKey && !password) {
+        throw new ApiError(400, 'Provide a saved identity, an SSH private key, or a password');
+      }
+      if (!credentialId && !sshUser) throw new ApiError(400, 'sshUser is required');
     }
-    if (!credentialId && !sshUser) throw new ApiError(400, 'sshUser is required');
 
     // Resolved BEFORE the SSE headers go out, so a missing identity or a
     // scope violation is a real 403/404 instead of an error event in a 200.
@@ -326,7 +374,7 @@ router.post(
       identityAuth = resolved.auth;
       identityName = resolved.credential.name;
     }
-    const effectiveUser = sshUser || identityAuth?.username;
+    const effectiveUser = sshUser || identityAuth?.username || certServer?.sshUser;
     if (!effectiveUser) throw new ApiError(400, 'sshUser is required');
 
     // Set SSE headers before any async work so the client starts receiving
@@ -339,29 +387,14 @@ router.post(
       res.write(`event: ${type}\ndata: ${JSON.stringify(data)}\n\n`);
     };
 
+    let installCert = null;
     try {
       // Mint the bootstrap token via bootstrap.js's own signBootstrapToken so
       // the `mode` claim it signs and the one verifyBootstrapToken later reads
       // (GET /api/bootstrap/install.sh) can never drift apart.
       const bootstrapToken = signBootstrapToken({ serverId: req.params.id, orgId: req.orgId, mode });
 
-      // Resolve the backend URL the target host will reach to fetch install.sh.
-      // In prod the TRAEFIK_HOST env var is always set; fall back to PUBLIC_API_URL,
-      // VITE_API_URL, then the incoming request headers.
-      let backendUrl;
-      if (process.env.TRAEFIK_HOST) {
-        backendUrl = `https://${process.env.TRAEFIK_HOST}`;
-      } else if (process.env.PUBLIC_API_URL) {
-        backendUrl = String(process.env.PUBLIC_API_URL).replace(/\/$/, '').replace(/\/api$/, '');
-      } else if (process.env.VITE_API_URL) {
-        backendUrl = String(process.env.VITE_API_URL).replace(/\/$/, '').replace(/\/api$/, '');
-      } else {
-        const proto = (req.headers['x-forwarded-proto'] || req.protocol || 'http').split(',')[0];
-        const host = req.headers['x-forwarded-host'] || req.get('host');
-        backendUrl = `${proto}://${host}`;
-      }
-
-      const bootstrapUrl = `${backendUrl}/api/bootstrap/install.sh?token=${bootstrapToken}`;
+      const bootstrapUrl = `${resolveBackendUrl(req)}/api/bootstrap/install.sh?token=${bootstrapToken}`;
 
       send('log', { message: `[shellius] Starting provisioning for server ${req.params.id}` });
       send('log', {
@@ -374,10 +407,24 @@ router.post(
 
       if (identityName) send('log', { message: `[shellius] Using saved identity "${identityName}"` });
 
+      if (certServer) {
+        installCert = await mintInstallCertificate({
+          orgId: req.orgId,
+          server: certServer,
+          principal: effectiveUser,
+          actorId: req.user.userId,
+        });
+        send('log', {
+          message:
+            '[shellius] Using a short-lived certificate (5 min, this host only) — no stored secret',
+        });
+      }
+
       await provisionServer(req.orgId, req.params.id, {
-        privateKey: identityAuth?.privateKey || privateKey || undefined,
+        privateKey: installCert?.privateKey || identityAuth?.privateKey || privateKey || undefined,
         passphrase: identityAuth?.passphrase || passphrase || undefined,
-        password: identityAuth?.password || password || undefined,
+        password: installCert ? undefined : identityAuth?.password || password || undefined,
+        certificate: installCert?.certificate,
         sshUser: effectiveUser,
         // A password identity doubles as the sudo password, as key deployment
         // already does — otherwise `sudo -S` would have nothing to read.
@@ -391,6 +438,239 @@ router.post(
       send('done', { success: true });
     } catch (err) {
       send('error', { message: err.message || 'Provisioning failed' });
+    } finally {
+      if (installCert) await installCert.dispose();
+      res.end();
+    }
+  })
+);
+
+
+// ---------------------------------------------------------------------------
+// Bulk bootstrap / collector install
+// ---------------------------------------------------------------------------
+
+const bulkPlanSchema = Joi.object({
+  serverIds: Joi.array().items(Joi.string()).default([]),
+  mode: Joi.string().valid(...INSTALL_MODES).default('posture'),
+  hasFallbackCredentials: Joi.boolean().default(false),
+  includeDone: Joi.boolean().default(false),
+});
+
+// POST /api/servers/bulk-install/plan
+// What a run would do, before it does any of it. Read-only.
+router.post(
+  '/bulk-install/plan',
+  requirePermission('servers.onboard'),
+  asyncHandler(async (req, res) => {
+    const { error, value } = bulkPlanSchema.validate(req.body || {});
+    if (error) throw new ApiError(400, error.message);
+    const plan = await planBulkInstall(req.orgId, value.serverIds, {
+      mode: value.mode,
+      hasFallbackCredentials: value.hasFallbackCredentials,
+      includeDone: value.includeDone,
+      scope: req.scope,
+    });
+    res.json({ success: true, data: plan });
+  })
+);
+
+const bulkInstallSchema = Joi.object({
+  serverIds: Joi.array().items(Joi.string()).min(1).max(MAX_BULK_INSTALL).required(),
+  mode: Joi.string().valid(...INSTALL_MODES).default('posture'),
+  concurrency: Joi.number().integer().min(1).max(8).default(3),
+  // Fallback identity for hosts with none of their own. Either a saved
+  // Keystore identity or credentials typed into the form — the same two
+  // options the single-host provision route takes.
+  credentialId: Joi.string().allow('', null),
+  sshUser: Joi.string().allow('', null),
+  privateKey: Joi.string().allow('', null),
+  passphrase: Joi.string().allow('', null),
+  password: Joi.string().allow('', null),
+  sudoPassword: Joi.string().allow('', null),
+  // Prefer each server's own bound identity where it has one. Off means "use
+  // the supplied credentials everywhere", which is what you want for a fleet
+  // that shares one break-in account.
+  useServerIdentity: Joi.boolean().default(true),
+}).unknown(false);
+
+// POST /api/servers/bulk-install
+// SSE. Runs the installer across many hosts, bounded concurrency, one event
+// stream. Secrets are resolved in memory per host and never stored.
+router.post(
+  '/bulk-install',
+  requirePermission('servers.onboard'),
+  audit('server.bulk_install', 'Server'),
+  asyncHandler(async (req, res) => {
+    const { error, value } = bulkInstallSchema.validate(req.body || {});
+    if (error) throw new ApiError(400, error.message);
+
+    const hasSupplied = !!(value.credentialId || value.privateKey || value.password);
+
+    // Everything that can 4xx happens BEFORE the SSE headers go out —
+    // otherwise a missing identity or a scope violation arrives as an error
+    // event inside a 200 and looks like a host that failed to install.
+    let fallbackAuth = null;
+    let fallbackName = null;
+    if (value.credentialId) {
+      const resolved = await resolveCredentialForActor(req.orgId, req.user, value.credentialId);
+      fallbackAuth = resolved.auth;
+      fallbackName = resolved.credential.name;
+    }
+
+    const plan = await planBulkInstall(req.orgId, value.serverIds, {
+      mode: value.mode,
+      hasFallbackCredentials: hasSupplied,
+      // The caller already chose these hosts from a plan; re-filtering
+      // "already done" here would silently drop a deliberate re-run.
+      includeDone: true,
+      scope: req.scope,
+    });
+
+    // Hosts the caller asked for that the plan refuses (out of scope, Windows,
+    // RDP-only, nothing to authenticate with) are reported, never attempted.
+    const targets = plan.targets;
+    if (targets.length === 0) {
+      throw new ApiError(
+        400,
+        'None of the selected servers can be installed on. ' +
+          (plan.skipped[0]?.message || 'Check the plan for why.')
+      );
+    }
+
+    res.setHeader('Content-Type', 'text/event-stream');
+    res.setHeader('Cache-Control', 'no-cache');
+    res.setHeader('Connection', 'keep-alive');
+    res.flushHeaders();
+
+    const send = (type, data) => {
+      res.write(`event: ${type}\ndata: ${JSON.stringify(data)}\n\n`);
+    };
+
+    // A client that navigates away must stop the run, not leave N SSH
+    // sessions installing software with nobody watching the output.
+    let aborted = false;
+    req.on('close', () => {
+      aborted = true;
+    });
+
+    send('start', {
+      mode: value.mode,
+      total: targets.length,
+      concurrency: value.concurrency,
+      skipped: plan.skipped.map((s) => ({ id: s.id, hostname: s.hostname, reason: s.reason, message: s.message })),
+    });
+
+    const backendUrl = resolveBackendUrl(req);
+    const results = [];
+
+    const runOne = async (target) => {
+      if (aborted) return;
+      send('server-start', { id: target.id, hostname: target.hostname });
+      const log = (message) => send('log', { id: target.id, message });
+
+      let installCert = null;
+      try {
+        let auth = fallbackAuth;
+        let authLabel = fallbackName ? `identity "${fallbackName}"` : 'supplied credentials';
+        let sshUser = value.sshUser || fallbackAuth?.username;
+
+        if (value.useServerIdentity && target.credential?.id) {
+          // Each host's own bound identity. This is the whole point of the
+          // bulk flow for an established fleet: nothing to type, N hosts.
+          const resolved = await resolveCredentialForActor(req.orgId, req.user, target.credential.id);
+          auth = resolved.auth;
+          authLabel = `saved identity "${resolved.credential.name}"`;
+          sshUser = target.sshUser || resolved.auth.username;
+        } else if (target.credentialSource === 'certificate') {
+          // The host already trusts our CA — mint a 300s cert instead of
+          // asking anyone for a password. The cert is persisted and bound to
+          // this server because check-principals verifies it against the API
+          // on the way in; see installCertService.
+          installCert = await mintInstallCertificate({
+            orgId: req.orgId,
+            server: { id: target.id },
+            principal: target.sshUser,
+            actorId: req.user.userId,
+          });
+          auth = { certificate: installCert.certificate, privateKey: installCert.privateKey };
+          authLabel = 'a short-lived certificate (no stored secret)';
+          sshUser = target.sshUser;
+        }
+
+        if (!auth) throw new ApiError(400, 'No credentials available for this host');
+        if (!sshUser) throw new ApiError(400, 'No SSH user for this host');
+
+        log(`[shellius] Connecting as ${sshUser} using ${authLabel}`);
+
+        const bootstrapToken = signBootstrapToken({
+          serverId: target.id,
+          orgId: req.orgId,
+          mode: value.mode,
+        });
+        const bootstrapUrl = `${backendUrl}/api/bootstrap/install.sh?token=${bootstrapToken}`;
+
+        const runWith = (a, extra = {}) =>
+          provisionServer(req.orgId, target.id, {
+            privateKey: a.privateKey || value.privateKey || undefined,
+            passphrase: a.passphrase || value.passphrase || undefined,
+            password: a.password || value.password || undefined,
+            certificate: a.certificate || undefined,
+            sshUser: extra.sshUser || sshUser,
+            sudoPassword: value.sudoPassword || a.password || '',
+            scope: req.scope,
+            bootstrapUrl,
+            mode: value.mode,
+            onOutput: log,
+          });
+
+        try {
+          await runWith(auth);
+        } catch (err) {
+          // A certificate install needs passwordless sudo, which bootstrap
+          // does not grant. Rather than fail a host the operator gave us a
+          // working account for, try that account before giving up — one
+          // retry, clearly announced, never silent.
+          const canRetry = installCert && fallbackAuth;
+          if (!canRetry) throw err;
+          log(`[shellius] Certificate install failed (${err.message}) — retrying with ${fallbackName ? `identity "${fallbackName}"` : 'the supplied credentials'}`);
+          await runWith(fallbackAuth, { sshUser: value.sshUser || fallbackAuth.username || sshUser });
+        }
+
+        results.push({ id: target.id, hostname: target.hostname, status: 'ok' });
+        send('server-done', { id: target.id, hostname: target.hostname, status: 'ok' });
+      } catch (err) {
+        // One host's failure is not the batch's. Twenty-nine successes and
+        // one unreachable box is a good outcome that must not be thrown away.
+        const message = err?.message || 'Install failed';
+        results.push({ id: target.id, hostname: target.hostname, status: 'failed', error: message });
+        send('server-done', { id: target.id, hostname: target.hostname, status: 'failed', error: message });
+      } finally {
+        // Close the certificate's window as soon as the install is over
+        // instead of leaving it valid for the rest of its five minutes.
+        if (installCert) await installCert.dispose();
+      }
+    };
+
+    try {
+      // Bounded concurrency: a fleet run should not open ninety simultaneous
+      // SSH sessions, and it should not take an hour either.
+      const queue = [...targets];
+      const workers = Array.from({ length: Math.min(value.concurrency, queue.length) }, async () => {
+        while (queue.length > 0 && !aborted) {
+          await runOne(queue.shift());
+        }
+      });
+      await Promise.all(workers);
+
+      send('done', {
+        aborted,
+        ok: results.filter((r) => r.status === 'ok').length,
+        failed: results.filter((r) => r.status === 'failed').length,
+        results,
+      });
+    } catch (err) {
+      send('error', { message: err.message || 'Bulk install failed' });
     } finally {
       res.end();
     }

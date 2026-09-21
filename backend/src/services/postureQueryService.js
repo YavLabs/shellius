@@ -19,6 +19,7 @@ import prisma from '../config/db.js';
 import ApiError from '../utils/ApiError.js';
 import { serverScopeWhere, relationScopeWhere } from '../lib/scope.js';
 import * as postureSettingsService from './postureSettingsService.js';
+import { canInstallOn, isBootstrapped } from './bulkBootstrapService.js';
 
 // ---------------------------------------------------------------------------
 // Shared shapes
@@ -124,6 +125,11 @@ export async function listServerCoverage(orgId, scope, { state, page = 1, limit 
       displayName: true,
       environment: true,
       authMode: true,
+      osType: true,
+      protocol: true,
+      provisionStatus: true,
+      agentId: true,
+      credentialId: true,
       customer: { select: { id: true, name: true } },
     },
     orderBy: [{ hostname: 'asc' }],
@@ -142,9 +148,24 @@ export async function listServerCoverage(orgId, scope, { state, page = 1, limit 
   const rows = servers.map((server) => {
     const lastReceivedAt = latestMap.get(server.id) || null;
     let collectorState = 'reporting';
-    if (!lastReceivedAt) collectorState = 'not_installed';
+    // A host that cannot run the collector is not a gap to be closed. It gets
+    // its own state so the UI can exclude it from "not installed" instead of
+    // listing an Install button that could never work.
+    if (!canInstallOn(server)) collectorState = 'not_applicable';
+    else if (!lastReceivedAt) collectorState = 'not_installed';
     else if (isStale(lastReceivedAt, settings, now)) collectorState = 'stale';
-    return { ...server, collectorState, lastReceivedAt };
+    return {
+      ...server,
+      collectorState,
+      lastReceivedAt,
+      // How a bulk install would authenticate here, so the coverage list and
+      // the installer never disagree about what is actually actionable.
+      credentialSource: server.credentialId
+        ? 'server'
+        : isBootstrapped(server)
+          ? 'certificate'
+          : null,
+    };
   });
 
   const filtered = state ? rows.filter((r) => r.collectorState === state) : rows;
@@ -160,7 +181,9 @@ export async function listServerCoverage(orgId, scope, { state, page = 1, limit 
       reporting: rows.filter((r) => r.collectorState === 'reporting').length,
       stale: rows.filter((r) => r.collectorState === 'stale').length,
       notInstalled: rows.filter((r) => r.collectorState === 'not_installed').length,
-      total: rows.length,
+      notApplicable: rows.filter((r) => r.collectorState === 'not_applicable').length,
+      total: rows.filter((r) => r.collectorState !== 'not_applicable').length,
+      totalAll: rows.length,
     },
   };
 }
@@ -169,7 +192,14 @@ export async function listServerCoverage(orgId, scope, { state, page = 1, limit 
 // GET /api/posture/summary
 // ---------------------------------------------------------------------------
 
-export async function getSummary(orgId, scope) {
+/**
+ * Fleet posture summary, optionally narrowed to one customer.
+ *
+ * `customerId` is a filter ON TOP of the caller's scope, never instead of
+ * it — asking for a customer you cannot see returns that customer's empty
+ * summary rather than its real one.
+ */
+export async function getSummary(orgId, scope, { customerId, environment } = {}) {
   if (!orgId) throw new ApiError(400, 'orgId is required');
 
   const settings = await postureSettingsService.getSettings(orgId);
@@ -177,10 +207,26 @@ export async function getSummary(orgId, scope) {
   // Servers bucket — scoped, active servers only (a terminated/inactive
   // server isn't part of the fleet a posture summary is reporting on).
   const servers = await prisma.server.findMany({
-    where: { orgId, isActive: true, ...serverScopeWhere(scope) },
-    select: { id: true },
+    where: {
+      orgId,
+      isActive: true,
+      ...serverScopeWhere(scope),
+      // ANDed, never merged into the scope predicate — a scoped caller
+      // passing an out-of-scope customerId must still see nothing.
+      ...(customerId || environment
+        ? { AND: [...(customerId ? [{ customerId }] : []), ...(environment ? [{ environment }] : [])] }
+        : {}),
+    },
+    select: { id: true, osType: true, protocol: true },
   });
-  const serverIds = servers.map((s) => s.id);
+  // A Windows box and an RDP-only host cannot run the collector at all.
+  // Counting them as "not installed" made the fleet read as permanently
+  // short of covered, with no action that could ever close the gap — so
+  // they are reported as their own number, excluded from the coverage math
+  // rather than quietly folded into it.
+  const applicable = servers.filter((s) => canInstallOn(s));
+  const notApplicable = servers.length - applicable.length;
+  const serverIds = applicable.map((s) => s.id);
 
   let reporting = 0;
   let stale = 0;
@@ -209,15 +255,45 @@ export async function getSummary(orgId, scope) {
   // Findings bucket — computed AFTER the scope filter (customer-scope-spec
   // §6.3: aggregates are the easiest place for a leak to slip through).
   const now = new Date();
-  const findingWhere = { orgId, resolvedAt: null, ...relationScopeWhere(scope, 'server') };
+  // Built as ONE `server` predicate rather than a scope spread plus an
+  // optional serverId list. The old shape only narrowed the findings when a
+  // customer or environment filter was set, so with no filters the servers
+  // bucket counted active hosts while the findings bucket counted every
+  // host in the org — the tiles and the table under them were describing
+  // different populations, and only a deactivated server made it visible.
+  const serverPredicate = { isActive: true };
+  const relFilter = relationScopeWhere(scope, 'server');
+  if (relFilter.server) Object.assign(serverPredicate, relFilter.server);
+  if (customerId) serverPredicate.customerId = customerId;
+  if (environment) serverPredicate.environment = environment;
 
-  const [severityGroups, mutedCount] = await Promise.all([
+  const findingWhere = {
+    orgId,
+    resolvedAt: null,
+    server: serverPredicate,
+  };
+
+  // The findings inbox is sections now, not tabs, so every section needs its
+  // count before it is expanded — a collapsed section with no number is a
+  // door with nothing written on it.
+  const live = { ...findingWhere, OR: [{ mutedUntil: null }, { mutedUntil: { lte: now } }] };
+  const [severityGroups, mutedCount, acknowledgedCount, expectedCount, resolvedCount] = await Promise.all([
     prisma.exposureFinding.groupBy({
       by: ['severity'],
-      where: { ...findingWhere, OR: [{ mutedUntil: null }, { mutedUntil: { lte: now } }] },
+      where: live,
       _count: { _all: true },
     }),
     prisma.exposureFinding.count({ where: { ...findingWhere, mutedUntil: { gt: now } } }),
+    // Precedence, so the sections partition rather than overlap:
+    // muted > expected > acknowledged > open. An EXPECTED_PUBLIC finding
+    // that is also acknowledged belongs to Expected, counted once.
+    prisma.exposureFinding.count({
+      where: { ...live, acknowledgedAt: { not: null }, NOT: { code: 'EXPECTED_PUBLIC' } },
+    }),
+    prisma.exposureFinding.count({ where: { ...live, code: 'EXPECTED_PUBLIC' } }),
+    prisma.exposureFinding.count({
+      where: { orgId, server: serverPredicate, NOT: { resolvedAt: null } },
+    }),
   ]);
 
   const findings = { critical: 0, high: 0, medium: 0, low: 0, info: 0, muted: mutedCount };
@@ -225,10 +301,33 @@ export async function getSummary(orgId, scope) {
     const key = SEVERITY_KEYS[g.severity] || String(g.severity).toLowerCase();
     findings[key] = (findings[key] || 0) + g._count._all;
   }
+  const liveTotal = findings.critical + findings.high + findings.medium + findings.low + findings.info;
+  // `open` is what is left once the sections that have their own home are
+  // taken out — an acknowledged or expected finding is not sitting in the
+  // inbox waiting for someone.
+  const sections = {
+    open: Math.max(0, liveTotal - acknowledgedCount - expectedCount),
+    expected: expectedCount,
+    acknowledged: acknowledgedCount,
+    muted: mutedCount,
+    resolved: resolvedCount,
+    total: liveTotal,
+  };
 
   return {
-    servers: { total: serverIds.length, reporting, stale, notInstalled },
+    servers: {
+      // `total` is the population coverage is measured against: hosts that
+      // could run the collector. `totalAll` keeps the true fleet size so the
+      // UI can say "…and 12 hosts that cannot run it" without a second call.
+      total: serverIds.length,
+      totalAll: servers.length,
+      reporting,
+      stale,
+      notInstalled,
+      notApplicable,
+    },
     findings,
+    sections,
   };
 }
 
@@ -239,12 +338,16 @@ export async function getSummary(orgId, scope) {
 export async function listFindings(orgId, query = {}, scope) {
   if (!orgId) throw new ApiError(400, 'orgId is required');
 
-  const { severity, status, customerId, environment, serverId } = query;
+  const { severity, status, section, customerId, environment, serverId } = query;
   const page = Math.max(parseInt(query.page, 10) || 1, 1);
   const limit = Math.min(Math.max(parseInt(query.limit, 10) || 25, 1), 100);
 
   const where = { orgId };
-  if (severity) where.severity = severity;
+  // The column stores CRITICAL/HIGH/…; the UI keys its counts lowercase
+  // because that is the shape getSummary returns. Normalising here as well
+  // as at the route means any caller can pass either and a severity filter
+  // can never silently match nothing.
+  if (severity) where.severity = String(severity).toUpperCase();
   if (serverId) where.serverId = serverId;
 
   // Scope + caller-chosen server filters must be ANDed, never overwrite one
@@ -253,20 +356,47 @@ export async function listFindings(orgId, query = {}, scope) {
   const serverFilters = [];
   const relFilter = relationScopeWhere(scope, 'server');
   if (relFilter.server) serverFilters.push(relFilter.server);
+  // getSummary counts active servers only. Without the same predicate here,
+  // a finding on a deactivated host is in the list but not in the tiles
+  // above it, and the two disagree for no reason a reader can see.
+  serverFilters.push({ isActive: true });
   if (customerId) serverFilters.push({ customerId });
   if (environment) serverFilters.push({ environment });
   if (serverFilters.length === 1) where.server = serverFilters[0];
   else if (serverFilters.length > 1) where.server = { AND: serverFilters };
 
   const now = new Date();
-  if (status === 'resolved') {
+  // `section` is the inbox's partition (see getSummary's `sections` and
+  // frontend/src/lib/postureLabels.js findingSection) — the same precedence,
+  // expressed once here so a section's rows and its count can never
+  // disagree. `status` stays for callers that want the coarser buckets.
+  const live = () => {
+    where.resolvedAt = null;
+    where.OR = [{ mutedUntil: null }, { mutedUntil: { lte: now } }];
+  };
+  if (section === 'resolved') {
+    where.resolvedAt = { not: null };
+  } else if (section === 'muted') {
+    where.resolvedAt = null;
+    where.mutedUntil = { gt: now };
+  } else if (section === 'expected') {
+    live();
+    where.code = 'EXPECTED_PUBLIC';
+  } else if (section === 'acknowledged') {
+    live();
+    where.acknowledgedAt = { not: null };
+    where.NOT = { code: 'EXPECTED_PUBLIC' };
+  } else if (section === 'open') {
+    live();
+    where.acknowledgedAt = null;
+    where.NOT = { code: 'EXPECTED_PUBLIC' };
+  } else if (status === 'resolved') {
     where.resolvedAt = { not: null };
   } else if (status === 'muted') {
     where.resolvedAt = null;
     where.mutedUntil = { gt: now };
   } else if (status === 'open') {
-    where.resolvedAt = null;
-    where.OR = [{ mutedUntil: null }, { mutedUntil: { lte: now } }];
+    live();
   }
 
   const [items, total] = await Promise.all([
@@ -313,6 +443,17 @@ export async function getServerPosture(orgId, serverId, scope) {
       })
     : [];
 
+  // Installed services and their state. Listeners only cover what is
+  // LISTENING; a stopped container's published port and its firewall rule
+  // both outlive the socket, so the ports view needs this to show the port
+  // at all — and to say why nothing is on it.
+  const services = latestSnapshot
+    ? await prisma.hostService.findMany({
+        where: { orgId, serverId, snapshotId: latestSnapshot.id },
+        orderBy: [{ running: 'desc' }, { kind: 'asc' }, { name: 'asc' }],
+      })
+    : [];
+
   const findingRows = await prisma.exposureFinding.findMany({
     where: { orgId, serverId },
     include: FINDING_INCLUDE,
@@ -346,9 +487,14 @@ export async function getServerPosture(orgId, serverId, scope) {
           collectorOk: latestSnapshot.collectorOk,
           degradedReason: latestSnapshot.degradedReason,
           firewall: latestSnapshot.firewall,
+          // Which halves of the service scan ran on this host. "No stopped
+          // containers" and "never looked for containers" must not render
+          // the same way.
+          serviceScan: latestSnapshot.raw?.serviceScan || null,
         }
       : null,
     listeners,
+    services,
     findings: findingRows.map(findingDto),
     metrics: metricRows
       .slice()
@@ -435,3 +581,151 @@ export default {
   unmuteFinding,
   acknowledgeFinding,
 };
+
+// ---------------------------------------------------------------------------
+// Resource history — the drill-down behind the sparklines
+// ---------------------------------------------------------------------------
+
+/** Bucket sizes offered to the client, smallest first. */
+export const METRIC_BUCKETS = {
+  raw: 0,
+  '5m': 5 * 60 * 1000,
+  '15m': 15 * 60 * 1000,
+  '1h': 60 * 60 * 1000,
+  '6h': 6 * 60 * 60 * 1000,
+  '1d': 24 * 60 * 60 * 1000,
+};
+
+const METRIC_FIELDS = ['cpuPct', 'memPct', 'diskPct', 'load1'];
+
+/**
+ * Pick a bucket that keeps a range under ~500 points when the caller said
+ * "auto". A chart with 20k points is slower to draw and no more informative
+ * than one with 500, and the raw rows still exist for anyone who asks.
+ */
+function autoBucket(rangeMs, intervalSeconds) {
+  const sampleMs = Math.max((intervalSeconds || 300) * 1000, 60 * 1000);
+  const target = 500;
+  const needed = (rangeMs / sampleMs) / target;
+  if (needed <= 1) return 'raw';
+  const ordered = ['5m', '15m', '1h', '6h', '1d'];
+  for (const key of ordered) {
+    if (rangeMs / METRIC_BUCKETS[key] <= target) return key;
+  }
+  return '1d';
+}
+
+function summarize(values) {
+  if (values.length === 0) return null;
+  const sorted = [...values].sort((a, b) => a - b);
+  const sum = values.reduce((a, b) => a + b, 0);
+  const at = (q) => sorted[Math.min(sorted.length - 1, Math.floor(q * sorted.length))];
+  return {
+    min: sorted[0],
+    max: sorted[sorted.length - 1],
+    avg: sum / values.length,
+    p50: at(0.5),
+    p95: at(0.95),
+    samples: values.length,
+  };
+}
+
+/**
+ * Resource samples for one server over a window, bucketed for charting.
+ *
+ * Returns the aggregate for the whole window alongside the series, because
+ * "was this host at 95% for an hour or for a week" is the question the
+ * sparkline cannot answer — and the answer must come from the same rows the
+ * chart draws, not a second query that could disagree with it.
+ *
+ * @param {string} orgId
+ * @param {string} serverId
+ * @param {object} scope   caller's customer scope — the server lookup applies it
+ * @param {{from?: Date, to?: Date, bucket?: string}} opts
+ */
+export async function getServerMetrics(orgId, serverId, scope, { from, to, bucket = 'auto' } = {}) {
+  const server = await prisma.server.findFirst({
+    where: { id: serverId, orgId, ...serverScopeWhere(scope) },
+    select: SERVER_SELECT,
+  });
+  if (!server) throw new ApiError(404, 'Server not found');
+
+  const settings = await postureSettingsService.getSettings(orgId);
+  const until = to || new Date();
+  const since = from || new Date(until.getTime() - 24 * 60 * 60 * 1000);
+  if (since >= until) throw new ApiError(400, '`from` must be before `to`');
+
+  const rows = await prisma.hostMetricSample.findMany({
+    where: { orgId, serverId, at: { gte: since, lte: until } },
+    orderBy: { at: 'asc' },
+    select: { at: true, cpuPct: true, memPct: true, diskPct: true, load1: true },
+  });
+
+  const chosen =
+    bucket === 'auto' ? autoBucket(until.getTime() - since.getTime(), settings.collectIntervalSeconds) : bucket;
+  const width = METRIC_BUCKETS[chosen] ?? 0;
+
+  let series;
+  if (width === 0) {
+    series = rows.map((r) => ({
+      at: r.at,
+      cpuPct: r.cpuPct,
+      memPct: r.memPct,
+      diskPct: r.diskPct,
+      load1: r.load1,
+      samples: 1,
+    }));
+  } else {
+    // Floor each row into a fixed bucket and average within it. Buckets with
+    // no rows are simply absent — inventing zeroes for a window when the
+    // collector was down would read as "idle host" instead of "no data".
+    const buckets = new Map();
+    for (const r of rows) {
+      const key = Math.floor(new Date(r.at).getTime() / width) * width;
+      let b = buckets.get(key);
+      if (!b) {
+        b = { at: new Date(key), cpuPct: [], memPct: [], diskPct: [], load1: [] };
+        buckets.set(key, b);
+      }
+      for (const f of METRIC_FIELDS) {
+        if (r[f] !== null && r[f] !== undefined) b[f].push(r[f]);
+      }
+    }
+    series = [...buckets.values()]
+      .sort((a, b) => a.at - b.at)
+      .map((b) => {
+        const out = { at: b.at, samples: Math.max(...METRIC_FIELDS.map((f) => b[f].length)) };
+        for (const f of METRIC_FIELDS) {
+          out[f] = b[f].length ? b[f].reduce((x, y) => x + y, 0) / b[f].length : null;
+        }
+        return out;
+      });
+  }
+
+  const summary = {};
+  for (const f of METRIC_FIELDS) {
+    summary[f] = summarize(rows.map((r) => r[f]).filter((v) => v !== null && v !== undefined));
+  }
+
+  // The oldest row we actually hold, so the UI can say "retention is 24h"
+  // rather than drawing an empty chart for a range nobody can satisfy.
+  const oldest = await prisma.hostMetricSample.findFirst({
+    where: { orgId, serverId },
+    orderBy: { at: 'asc' },
+    select: { at: true },
+  });
+
+  return {
+    server,
+    range: { from: since, to: until },
+    bucket: chosen,
+    bucketMs: width,
+    series,
+    summary,
+    retention: {
+      hours: settings.metricRetentionHours,
+      oldestSampleAt: oldest?.at || null,
+      collectIntervalSeconds: settings.collectIntervalSeconds,
+    },
+  };
+}

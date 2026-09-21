@@ -7,6 +7,7 @@ import {
   pagedRows,
   storePage,
   mobileSpec,
+  mobileSpecs,
   mobileWindow,
   resolveCardLayout,
   sortOptions,
@@ -23,6 +24,38 @@ describe('mobileSpec', () => {
     expect(mobileSpec({ mobile: 'title' })).toEqual({ slot: 'title' });
     expect(mobileSpec({ mobile: 'bogus' })).toEqual({ slot: 'hidden' });
     expect(mobileSpec({ mobile: { slot: 'meta', showLabel: true } })).toEqual({ slot: 'meta', showLabel: true });
+  });
+});
+
+describe('mobileSpecs — a column feeding several slots', () => {
+  it('returns one spec for the scalar forms', () => {
+    expect(mobileSpecs({})).toEqual([]);
+    expect(mobileSpecs({ mobile: 'title' })).toEqual([{ slot: 'title' }]);
+    expect(mobileSpecs({ mobile: false })).toEqual([{ slot: 'hidden' }]);
+  });
+
+  it('returns every spec of an array, normalised', () => {
+    expect(
+      mobileSpecs({ mobile: [{ slot: 'title' }, { slot: 'secondary', key: 'x' }, { slot: 'bogus' }] })
+    ).toEqual([{ slot: 'title' }, { slot: 'secondary', key: 'x' }, { slot: 'hidden' }]);
+  });
+
+  it('places one column in both the title and the secondary line', () => {
+    const layout = resolveCardLayout([
+      {
+        key: 'finding',
+        label: 'Finding',
+        mobile: [
+          { slot: 'title', render: (r) => r.message },
+          { slot: 'secondary', key: 'finding-code', render: (r) => r.code },
+        ],
+      },
+      { key: 'status', label: 'Status', mobile: 'meta' },
+    ]);
+    expect(layout.title.render({ message: 'Port open' })).toBe('Port open');
+    expect(keys(layout.secondary)).toEqual(['finding-code']);
+    expect(layout.secondary[0].render({ code: 'PORT_EXPOSED' })).toBe('PORT_EXPOSED');
+    expect(keys(layout.meta)).toEqual(['status']);
   });
 });
 

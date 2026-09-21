@@ -22,6 +22,7 @@ import * as groupService from './groupService.js';
 import * as policyService from './policyService.js';
 import * as userInviteService from './userInviteService.js';
 import { resolveRole } from './roleService.js';
+import * as keystoreService from './keystoreService.js';
 
 // Dependency order for both planning and committing.
 const ORDER = ['groups', 'customers', 'users', 'servers', 'policies', 'memberships'];
@@ -243,9 +244,18 @@ async function planServer(orgId, row, inImport, files) {
   const keyFile = str(row.keyFile);
   const keyMissing = keyFile && !resolveFile(files, keyFile);
 
-  const note = keyMissing
-    ? `Imported without onboarding — key file "${keyFile}" not found in the archive`
-    : null;
+  const notes = [];
+  if (keyMissing) {
+    notes.push(`Imported without onboarding — key file "${keyFile}" not found in the archive`);
+  }
+  // storeAsIdentity with nothing to store is almost always a filled-in
+  // column on a row whose credentials were forgotten. Saying so at preview
+  // is the difference between noticing now and noticing when a bulk install
+  // skips the host weeks later.
+  if (bool(row.storeAsIdentity ?? row.saveAsIdentity) && !str(row.password) && !keyFile && !row.privateKey) {
+    notes.push('storeAsIdentity is set but this row has no password or key — nothing will be saved to the Keystore');
+  }
+  const note = notes.length > 0 ? notes.join('. ') : null;
 
   const existing = await prisma.server.findFirst({ where: { orgId, hostname } });
   if (existing) {
@@ -312,7 +322,7 @@ export async function commitImportJob({ orgId, jobId, actorId, actor = null, req
   const byEntity = (singular) => rows.filter((r) => r.entity === singular);
 
   // Caches mapping natural key -> id (DB + just-created).
-  const cache = { customers: new Map(), groups: new Map(), users: new Map(), servers: new Map() };
+  const cache = { customers: new Map(), groups: new Map(), users: new Map(), servers: new Map(), identities: new Map() };
   const result = { imported: 0, skipped: 0, failed: 0, onboarding: 0 };
 
   try {
@@ -538,6 +548,102 @@ async function commitServer(orgId, job, row, raw, overwrite, cache) {
     where: { jobId: job.id, serverRef: hostname, status: 'staged' },
     data: { serverId: server.id, status: 'pending' },
   });
+
+  // ...and, if the row asked for it, keep those credentials as a real
+  // Keystore identity bound to this server.
+  await materializeIdentity({ orgId, job, hostname, server, cache });
+}
+
+/**
+ * Turn a row's staged bootstrap credentials into a Keystore identity.
+ *
+ * Import secrets are destroyed the moment onboarding reaches a terminal
+ * state (jobs/serverOnboarding.js finalize()), and `server.credentialId` was
+ * never set. The result: a fleet that has just been imported and
+ * bootstrapped has nothing stored for any of its hosts, so every later bulk
+ * action has to skip them for "no credentials". `storeAsIdentity` is the
+ * opt-out of that.
+ *
+ * Deduplication is by `identityName`. Fifty servers behind one bastion key
+ * name the same identity and get ONE Keystore entry between them; without
+ * that the only other option is a name derived from the hostname, and fifty
+ * near-identical entries is not a Keystore, it is a mess.
+ *
+ * `authMode` is deliberately untouched. A bootstrapped host should keep
+ * authenticating by certificate for ordinary access — the stored identity is
+ * there for installs and recovery, not as a downgrade of how people connect.
+ */
+async function materializeIdentity({ orgId, job, hostname, server, cache }) {
+  const staged = await prisma.onboardingCredential.findFirst({
+    where: { jobId: job.id, serverRef: hostname, storeAsIdentity: true },
+  });
+  if (!staged) return;
+
+  const name = staged.identityName || `Imported — ${hostname}`;
+  const username = staged.sshUser || 'root';
+  const key = lower(name);
+
+  // Already built in this same commit (another row named the same identity).
+  let credentialId = cache.identities.get(key);
+
+  if (!credentialId) {
+    const existing = await prisma.credential.findFirst({
+      where: { orgId, ownerId: null, name },
+      select: { id: true, username: true },
+    });
+    if (existing) {
+      // Reuse only when it is plausibly the same account. Silently pointing
+      // a server at an identity that differs from the one the file
+      // described is worse than refusing.
+      if (lower(existing.username) !== lower(username)) {
+        throw new Error(
+          `Identity "${name}" already exists for user "${existing.username}", but this row is for "${username}". ` +
+            'Use a different identityName, or remove the conflict in the Keystore.'
+        );
+      }
+      credentialId = existing.id;
+    }
+  }
+
+  if (!credentialId) {
+    const privateKey =
+      staged.secretEncrypted && staged.authMethod !== 'password'
+        ? decrypt(staged.secretEncrypted)
+        : null;
+    const password = staged.passwordEncrypted ? decrypt(staged.passwordEncrypted) : null;
+    const passphrase = staged.passphraseEncrypted ? decrypt(staged.passphraseEncrypted) : null;
+    if (!privateKey && !password) return;
+
+    let sshKeyId = null;
+    if (privateKey) {
+      const { key: created } = await keystoreService.importKey(
+        orgId,
+        { name, description: `Imported by bulk import job ${job.id}`, privateKey, passphrase },
+        job.actorId || null
+      );
+      sshKeyId = created.id;
+    }
+
+    const authType = privateKey && password ? 'key_password' : privateKey ? 'key' : 'password';
+    const { credential } = await keystoreService.createCredential(
+      orgId,
+      {
+        name,
+        description: `Imported by bulk import job ${job.id}`,
+        username,
+        authType,
+        password: password || undefined,
+        sshKeyId,
+        tags: ['imported'],
+      },
+      job.actorId || null
+    );
+    credentialId = credential.id;
+  }
+
+  cache.identities.set(key, credentialId);
+  // Bind it, without touching authMode — see the note above.
+  await prisma.server.update({ where: { id: server.id }, data: { credentialId } });
 }
 
 /**
@@ -569,6 +675,12 @@ async function stageCredentialAtUpload(jobId, raw, files) {
   const authMethod = privateKey && password ? 'key+password' : privateKey ? 'key' : 'password';
   const ttlMs = 6 * 60 * 60 * 1000; // 6h to complete onboarding
 
+  // Opt-in, per row: keep this secret as a reusable Keystore identity rather
+  // than wiping it when onboarding finishes. Default stays off — an import
+  // must not quietly turn one-shot bootstrap material into stored access.
+  const storeAsIdentity = bool(raw.storeAsIdentity ?? raw.saveAsIdentity);
+  const identityName = str(raw.identityName);
+
   await prisma.onboardingCredential.create({
     data: {
       jobId,
@@ -576,6 +688,8 @@ async function stageCredentialAtUpload(jobId, raw, files) {
       serverId: null,
       sshUser: str(raw.sshUser) || 'root',
       authMethod,
+      storeAsIdentity,
+      identityName: identityName || null,
       secretEncrypted: privateKey ? encrypt(String(privateKey)) : null,
       passwordEncrypted: password ? encrypt(password) : null,
       passphraseEncrypted: passphrase ? encrypt(passphrase) : null,

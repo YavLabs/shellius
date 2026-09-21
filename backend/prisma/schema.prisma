@@ -72,8 +72,10 @@ model Organization {
 
   postureSnapshots  HostSnapshot[]
   postureListeners  HostListener[]
+  postureServices   HostService[]
   postureFindings   ExposureFinding[]
   metricSamples     HostMetricSample[]
+  expectedPorts     ServerExpectedPort[]
   postureAlertRules PostureAlertRule[]
   postureSettings   PostureSettings?
 
@@ -293,17 +295,19 @@ model Server {
   createdAt            DateTime       @default(now()) @map("created_at")
   updatedAt            DateTime       @updatedAt @map("updated_at")
 
-  organization     Organization       @relation(fields: [orgId], references: [id], onDelete: Cascade)
-  customer         Customer           @relation(fields: [customerId], references: [id], onDelete: Cascade)
-  credential       Credential?        @relation(fields: [credentialId], references: [id], onDelete: SetNull)
+  organization     Organization         @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  customer         Customer             @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  credential       Credential?          @relation(fields: [credentialId], references: [id], onDelete: SetNull)
   keyDeployments   KeyDeployment[]
   certificates     Certificate[]
   accessRequests   AccessRequest[]
   sessions         Session[]
   postureSnapshots HostSnapshot[]
   postureListeners HostListener[]
+  postureServices  HostService[]
   postureFindings  ExposureFinding[]
   metricSamples    HostMetricSample[]
+  expectedPorts    ServerExpectedPort[]
 
   @@index([orgId, customerId])
   @@index([orgId, environment])
@@ -360,8 +364,8 @@ model AuditLog {
 }
 
 model Group {
-  id          String   @id @default(cuid())
-  orgId       String   @map("org_id")
+  id          String      @id @default(cuid())
+  orgId       String      @map("org_id")
   name        String
   description String?
   // How much of the org every CUSTOMERS-scoped member sees while in this
@@ -371,8 +375,8 @@ model Group {
   // an ALL group becomes effectively unscoped (lib/scope.js resolveScope).
   // See docs/rbac/customer-scope-spec.md.
   accessScope AccessScope @default(CUSTOMERS) @map("access_scope")
-  createdAt   DateTime @default(now()) @map("created_at")
-  updatedAt   DateTime @updatedAt @map("updated_at")
+  createdAt   DateTime    @default(now()) @map("created_at")
+  updatedAt   DateTime    @updatedAt @map("updated_at")
 
   organization   Organization         @relation(fields: [orgId], references: [id], onDelete: Cascade)
   memberships    GroupMembership[]
@@ -951,6 +955,16 @@ model OnboardingCredential {
   sudoPasswordEncrypted String?  @map("sudo_password_encrypted") @db.Text
   status                String   @default("pending") // pending | running | done | failed
   attempts              Int      @default(0)
+  // Opt-in: keep this secret in the org Keystore as a reusable identity and
+  // bind it to the server, instead of wiping it once onboarding finishes.
+  // Without it an import leaves every host it just bootstrapped with nothing
+  // stored — which is precisely the "no credentials" population the bulk
+  // installer then has to skip.
+  storeAsIdentity       Boolean  @default(false) @map("store_as_identity")
+  // Name of the Keystore identity to create or reuse. Rows sharing a name
+  // collapse into ONE identity, so fifty hosts behind one bastion key do not
+  // become fifty Keystore entries.
+  identityName          String?  @map("identity_name")
   expiresAt             DateTime @map("expires_at")
   createdAt             DateTime @default(now()) @map("created_at")
 
@@ -1185,6 +1199,7 @@ model HostSnapshot {
   organization Organization   @relation(fields: [orgId], references: [id], onDelete: Cascade)
   server       Server         @relation(fields: [serverId], references: [id], onDelete: Cascade)
   listeners    HostListener[]
+  services     HostService[]
 
   @@index([orgId, serverId, collectedAt])
   @@index([orgId, receivedAt])
@@ -1223,6 +1238,51 @@ model HostListener {
   @@map("host_listeners")
 }
 
+/// What is INSTALLED on the host, and whether it is actually running.
+///
+/// HostListener only sees open sockets, so a stopped container, a failed
+/// unit or a disabled service is invisible there — while its firewall rule
+/// survives, its published port is still declared, and it re-opens the
+/// moment the thing starts again. That blind spot is what this closes: a
+/// STALE_FIREWALL_RULE could say "nothing is listening on tcp/8080" but
+/// never "because the container `api` is stopped", which is the half that
+/// tells you whether to delete the rule or restart the service.
+///
+/// Replaced wholesale on every ingest, like HostListener — this table is
+/// the host's current state, never its history.
+model HostService {
+  id         String    @id @default(cuid())
+  orgId      String    @map("org_id")
+  serverId   String    @map("server_id")
+  snapshotId String    @map("snapshot_id")
+  kind       String // docker | podman | pm2 | systemd
+  name       String
+  ref        String? // container id / unit name / pm2 id
+  /// running | exited | created | paused | restarting | failed | inactive | stopped | unknown
+  state      String
+  /// Denormalised from `state` so "is it up" is an index, not a string list
+  /// every caller has to keep in sync.
+  running    Boolean   @default(false)
+  statusText String?   @map("status_text") // "Exited (1) 2 days ago"
+  detail     String? // image / exec path
+  sourcePath String?   @map("source_path") // unit file / compose file
+  /// Ports the service DECLARES, whether or not anything is listening on
+  /// them right now: [{ proto, port, containerPort, bind }]. This is what
+  /// makes a stopped container's firewall rule attributable.
+  ports      Json      @default("[]")
+  exitCode   Int?      @map("exit_code")
+  since      DateTime?
+
+  organization Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  server       Server       @relation(fields: [serverId], references: [id], onDelete: Cascade)
+  snapshot     HostSnapshot @relation(fields: [snapshotId], references: [id], onDelete: Cascade)
+
+  @@index([orgId, serverId])
+  @@index([orgId, running])
+  @@index([snapshotId])
+  @@map("host_services")
+}
+
 /// An open exposure problem. Unique per (server, code, proto, port) so a
 /// finding that persists across scans stays ONE row with a first-seen date.
 model ExposureFinding {
@@ -1253,6 +1313,35 @@ model ExposureFinding {
   @@index([orgId, severity, resolvedAt])
   @@index([orgId, serverId])
   @@map("exposure_findings")
+}
+
+/// Ports a specific host is *expected* to publish.
+///
+/// The org-wide list on PostureSettings says "port 8080 is fine everywhere",
+/// which is too blunt: 8080 on a demo box is routine, 8080 on a database host
+/// is worth knowing about. This is the per-server answer, so silencing one
+/// host never silences the fleet. Both lists are consulted; either match
+/// downgrades a finding to EXPECTED_PUBLIC.
+model ServerExpectedPort {
+  id          String   @id @default(cuid())
+  orgId       String   @map("org_id")
+  serverId    String   @map("server_id")
+  port        Int
+  /// tcp | udp | any — "any" covers a service that listens on both.
+  proto       String   @default("any")
+  /// Why this is expected. Required by the API for the same reason a mute
+  /// reason is: a suppression with no stated cause is indistinguishable from
+  /// a mistake six months later.
+  note        String?
+  createdById String?  @map("created_by_id")
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  organization Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  server       Server       @relation(fields: [serverId], references: [id], onDelete: Cascade)
+
+  @@unique([serverId, port, proto])
+  @@index([orgId, serverId])
+  @@map("server_expected_ports")
 }
 
 /// Resource gauges — ~24h of 1-minute samples, pruned by a job. Deliberately

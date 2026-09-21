@@ -20,6 +20,7 @@ import {
   MobileCardSkeleton,
   MobileEmptyCard,
 } from '@/components/mobile/MobileCard';
+import FilterControl from '@/components/shared/FilterControl';
 import {
   MobileBulkBar,
   MobileFiltersButton,
@@ -47,6 +48,10 @@ export default function MobileDataList({
   onSearch,
   searchPlaceholder,
   filters,
+  filterDefs,
+  filterValues,
+  onFilterChange,
+  toolbarActions,
   activeFilterCount,
   onResetFilters,
   sortKey,
@@ -106,7 +111,8 @@ export default function MobileDataList({
   // Optional headed sections (e.g. Active / Inactive customers).
   const groups = options?.group ? groupRows(shown, options.group, options.groupOrder) : null;
 
-  const hasControls = filters || sorts.length > 0 || selectable;
+  const hasFilterDefs = Array.isArray(filterDefs) && filterDefs.length > 0;
+  const hasControls = filters || hasFilterDefs || toolbarActions || sorts.length > 0 || selectable;
   // Any card on screen with buttons → every card keeps the action row.
   const reserveActions =
     layout.extras.length > 0 ||
@@ -156,6 +162,7 @@ export default function MobileDataList({
         actions={actionNodes.length > 0 ? actionNodes : null}
         menu={menu.length > 0 ? <CardActionMenu actions={menu} row={row} /> : null}
         accent={accent}
+        titleClamp={options?.titleClamp}
         corner={options?.corner ? options.corner(row) : null}
         reserveActions={reserveActions}
         onClick={cardClick ? () => cardClick(row) : undefined}
@@ -175,7 +182,13 @@ export default function MobileDataList({
         {showSearch && <MobileSearch value={search} onChange={onSearch} placeholder={searchPlaceholder} />}
         {hasControls && (
           <div className="flex min-w-0 items-center gap-2">
-            <MobileFiltersButton filters={filters} activeCount={filterCount} onReset={onResetFilters} />
+            {hasFilterDefs ? (
+              // Same control as desktop; FilterDrawer renders as the app's
+              // bottom sheet below `md`, so the two cannot drift apart.
+              <FilterControl defs={filterDefs} values={filterValues || {}} onChange={onFilterChange} />
+            ) : (
+              <MobileFiltersButton filters={filters} activeCount={filterCount} onReset={onResetFilters} />
+            )}
             <MobileSortMenu
               options={sorts}
               sortKey={sortKey}
@@ -183,6 +196,12 @@ export default function MobileDataList({
               onSelect={onSortSelect}
               onClear={onSortClear}
             />
+            {/* Table-level buttons (Export, …) used to be desktop-only: the
+                toolbar slot simply was not forwarded here, so the action
+                disappeared below `md` with nothing to say it had. */}
+            {toolbarActions && (
+              <div className="flex min-w-0 items-center gap-2 [&_button]:h-9">{toolbarActions}</div>
+            )}
             {selectable && (
               <div className="ml-auto">
                 <MobileSelectAll

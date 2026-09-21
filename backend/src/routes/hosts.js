@@ -154,11 +154,50 @@ const listenerSchema = Joi.object({
   source: Joi.string().valid('ss', 'docker').default('ss'),
 });
 
+/**
+ * What is installed on the host and whether it is running.
+ *
+ * This field existed and was silently dropped — accepted by the schema,
+ * stored nowhere, emitted by nothing. It is real now: the collector reports
+ * stopped/failed units and (where the operator granted it) containers in
+ * every state, because a stopped service's firewall rule and published port
+ * outlive the socket that `ss` can see.
+ */
+const SERVICE_STATES = [
+  'running', 'exited', 'created', 'paused', 'restarting', 'dead',
+  'failed', 'inactive', 'stopped', 'unknown',
+];
+
+const declaredPortSchema = Joi.object({
+  proto: Joi.string().valid('tcp', 'udp').required(),
+  port: Joi.number().integer().min(1).max(65535).required(),
+  containerPort: Joi.number().integer().min(1).max(65535).allow(null),
+  bind: Joi.string().max(128).allow('', null),
+});
+
 const serviceInventorySchema = Joi.object({
   kind: Joi.string().max(64).allow('', null),
   name: STR512,
+  ref: STR512,
+  state: Joi.string().valid(...SERVICE_STATES).default('unknown'),
+  running: Joi.boolean().default(false),
+  statusText: STR512,
   detail: STR512,
   sourcePath: STR512,
+  exitCode: Joi.number().integer().min(-1).max(255).allow(null),
+  ports: Joi.array().items(declaredPortSchema).max(64).default([]),
+});
+
+/**
+ * Which halves of the service scan actually ran. A host that never looked
+ * for containers must not be indistinguishable from one that looked and
+ * found none — that difference is the whole value of the field.
+ */
+const serviceScanSchema = Joi.object({
+  systemd: Joi.boolean().default(false),
+  containers: Joi.boolean().default(false),
+  containersBlocked: Joi.boolean().default(false),
+  pm2: Joi.boolean().default(false),
 });
 
 const metricsSchema = Joi.object({
@@ -179,6 +218,7 @@ const postureSchema = Joi.object({
   firewall: firewallSchema,
   listeners: Joi.array().items(listenerSchema).max(500).default([]),
   services: Joi.array().items(serviceInventorySchema).max(300).default([]),
+  serviceScan: serviceScanSchema.default({}),
   metrics: metricsSchema.allow(null),
 });
 

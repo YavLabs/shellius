@@ -9,6 +9,48 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 Tracked here as work lands on `main`; moved into a dated section on release
 (`node scripts/version.mjs bump <major|minor|patch>`).
 
+## [1.7.0] - 2026-09-20
+
+### Added
+
+- **Install collectors across the fleet in one run.** Installing one host at a time is fine for a host you just added and hopeless for an inventory that predates posture — so the collector never got installed anywhere and the posture pages stayed empty while reporting nothing wrong. **Install collectors** plans the whole run first and shows what it will *not* touch and why, because a silent skip is how you end up believing a fleet is covered. Bounded concurrency, one live log per host, and one host's failure never throws away the rest of the batch. A manual path hands back one command per host for a change window or config management.
+- **Hosts that are already bootstrapped need no stored password.** A bootstrapped host already trusts your certificate authority — that is the point of bootstrapping it — yet the installer used to skip exactly those hosts for "no credentials", so a fleet bootstrapped before posture existed could plan to *zero* targets. Shellius now signs a five-minute, this-host-only certificate and installs with no secret at all. Available in the single-host wizard as well, where it leads. Certificate installs need passwordless sudo; where that is not available the bulk run retries once with the credentials you supplied and says so in the log.
+- **Services & ports**, a fleet-wide inventory in the sidebar. Answers "where is nginx deployed", "what is listening on 6379 anywhere", and "which of these is reachable from the internet" without opening each server in turn. Exportable.
+- **Services that are installed but not running are inventory too.** The collector now reports stopped systemd units, stopped containers and stopped pm2 apps, along with container ports that are published only inside the container network. A stopped service with a firewall rule still open is its own finding (`STOPPED_SERVICE_PORT_OPEN`) rather than a generic stale rule, because "nginx is down but 443 is still open" and "nobody knows what this rule is for" call for different actions.
+- **Bulk import can keep the credentials it is given.** Import secrets are destroyed once a host is bootstrapped, which is a safe default and a surprising one: it left a freshly imported fleet with nothing stored, which is precisely the population a later bulk install has to skip. Set `storeAsIdentity` on a row to save its password or key to the Keystore and bind it to the server; `identityName` names it, and rows sharing a name share one entry, so fifty servers behind one bastion key produce one identity rather than fifty.
+- **Needs attention on the Dashboard.** A full-width widget naming the worst findings and the hosts they are on, instead of a metric card whose one number could only tell you to go and look somewhere else. Collector coverage sits in the same widget, because "0 critical" across a fleet where most hosts are not reporting is the one number on that page that reads as good news while meaning the opposite. **Posture** in the sidebar now carries a badge count.
+- **Resource history** per server, named services on every listening port, and row detail modals throughout posture.
+- Per-server **expected public ports**, **bulk acknowledge / mute**, and posture **exports** (findings, listeners, services).
+
+### Changed
+
+- **One Filters button and a drawer, everywhere.** Lists with several dropdowns above them put six controls and a search box on one row, which wrapped to two rows on a laptop and grew every time a filter was added. The search box stays; everything else moved into a drawer behind a **Filters** button, with a count of what is applied, a one-click clear, and Apply/Cancel — so changing four filters on a server-paginated list is one request instead of four, and a filter opened by mistake can be backed out of. Applied across seven lists, and the same drawer becomes the app's bottom sheet on a phone.
+- **The findings inbox is sections, not tabs.** Tabs made three of the four views invisible: nothing on the page said a muted, acknowledged or expected finding existed, so the only way to remember them was to already know. Every count is now on screen at once, with the open queue expanded and the rest closed. The same change on the Posture page and the server's Open findings tab; Services and Ports lost their duplicate tabs and are one table again.
+- **Collector coverage is grouped by what you can do about it.** A flat list of hosts with no collector mixed one needing a password with a Windows box that can never run one, and offered "Install on all of them" — which handed every one of them to a planner that immediately refused half, so the number you clicked was never the number that ran. Coverage now reads the same plan the installer runs from, grouped into ready to install, needs credentials, stopped reporting, already done, and cannot run it.
+- **Hosts that cannot run the collector are no longer counted as a gap.** Windows and RDP-only hosts were counted as "not installed", making the fleet read as permanently short of covered with no action that could ever close it. They are now reported separately and excluded from the coverage count. **On upgrade this will look like your numbers changed** — an org with Windows hosts will see its "X of Y reporting" denominator drop.
+- **Security posture on Customer Details is a Dashboard-style widget**, with one "View all" affordance and the install action attached to the coverage warning it remedies, rather than two identical text links in the corner.
+- **The whole 1.6 posture surface at phone width**: compact tiles, mobile cards for findings and ports, shared section titles, and table-level actions such as Export no longer disappearing below `md`.
+- Sortable columns across the app, real breadcrumbs, and context-aware back links.
+
+### Fixed
+
+- **The Posture tiles now count what the table shows.** The summary counted active servers while the findings half counted every server in the organization, so the tiles and the list under them described different populations — visible only when a server was deactivated. The tiles also covered Critical and High alone, so four rows could sit under tiles totalling one.
+- **Firewall rules were reported twice.** `ufw` lists an IPv4 and an IPv6 rule per entry; the collector deduplicated on the port spec but not on the source column, so `Anywhere` and `Anywhere (v6)` survived as two rules and roughly forty entries produced eighty findings.
+- **Running containers were collected and then shown nowhere.** The inventory loaded stopped services only, so a host running forty containers wrote all of them to the database and displayed none — the data existed, the UI looked complete, and nothing said otherwise.
+- **Severity filters returned 400 on every click.** The API expects uppercase severities and the UI sent lowercase.
+- Every enabled-but-inactive `oneshot` systemd unit was reported as a stopped service, burying real ones under fifteen rows of `snapd.*`, `apparmor` and `e2scrub`.
+- A second **Quick connect** button on the Servers page: the top bar already renders the same one.
+- Double empty states and double metric rows on the Posture and Services pages; the expected-port dialog now closes on save.
+
+### Security
+
+- **Install certificates are minted, bound and revoked.** Certificates issued for an install are persisted and bound to the host they were issued for — which is also what makes them work, since `check-principals` verifies every certificate against the API on the way in. They last 300 seconds, name one principal, carry `permit-pty` and nothing else, and are revoked the moment the install returns rather than being left valid for the rest of their lifetime. The ephemeral private key never leaves memory and a temp directory that is removed in a `finally`.
+- **Certificate signing was silently broken for standard permits.** `ssh-keygen` rejects `-O extension=permit-pty` — `extension=` is for names it does not recognise, and the five standard permits are options in their own right — so any certificate requesting one would have failed to sign at all. Dormant only because the direct-issuance route defaults to requesting none.
+- Identities created by `storeAsIdentity` are organization-scope only and never personal-vault items, and a name collision with a different username fails the import row loudly rather than binding a server to someone else's identity.
+
+### Migration notes
+
+
 ## [1.6.0] - 2026-09-20
 
 ### Added

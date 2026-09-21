@@ -149,9 +149,28 @@ function BootstrapWizard({ open, server, onStart, onClose, initialScope }) {
     onStart?.({ method, scope });
   };
 
+  const footer = (
+    <div className="flex items-center justify-between gap-2" data-sheet-footer>
+      <button
+        type="button"
+        onClick={step === 1 ? onClose : () => setStep(1)}
+        className="inline-flex h-9 items-center gap-1.5 rounded-md border border-border px-3 text-sm text-foreground hover:bg-accent"
+      >
+        {step === 1 ? 'Cancel' : (<><ArrowLeft className="h-4 w-4" /> Back</>)}
+      </button>
+      <button
+        type="button"
+        onClick={step === 1 ? () => setStep(2) : finish}
+        className="inline-flex h-9 items-center gap-1.5 rounded-md bg-primary px-3 text-sm font-medium text-primary-foreground hover:bg-primary/90"
+      >
+        {step === 1 ? (<>Next <ArrowRight className="h-4 w-4" /></>) : method === 'auto' ? 'Choose credentials' : 'Get command'}
+      </button>
+    </div>
+  );
+
   return (
-    <Modal open={open} onClose={onClose} title="Bootstrap host" size="lg">
-      <div className="space-y-5 p-5 max-md:p-4">
+    <Modal open={open} onClose={onClose} title="Bootstrap host" size="lg" footer={footer}>
+      <div className="space-y-5">
         <div className="flex items-center justify-between gap-3">
           <p className="min-w-0 truncate text-xs text-muted-foreground">
             {server?.displayName || server?.hostname}
@@ -208,22 +227,6 @@ function BootstrapWizard({ open, server, onStart, onClose, initialScope }) {
         )}
       </div>
 
-      <div className="flex items-center justify-between gap-2 border-t border-border px-5 py-4 max-md:px-4">
-        <button
-          type="button"
-          onClick={step === 1 ? onClose : () => setStep(1)}
-          className="inline-flex h-9 items-center gap-1.5 rounded-md border border-border px-3 text-sm text-foreground hover:bg-accent"
-        >
-          {step === 1 ? 'Cancel' : (<><ArrowLeft className="h-4 w-4" /> Back</>)}
-        </button>
-        <button
-          type="button"
-          onClick={step === 1 ? () => setStep(2) : finish}
-          className="inline-flex h-9 items-center gap-1.5 rounded-md bg-primary px-3 text-sm font-medium text-primary-foreground hover:bg-primary/90"
-        >
-          {step === 1 ? (<>Next <ArrowRight className="h-4 w-4" /></>) : method === 'auto' ? 'Choose credentials' : 'Get command'}
-        </button>
-      </div>
     </Modal>
   );
 }

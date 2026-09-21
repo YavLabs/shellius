@@ -264,6 +264,96 @@ that adds *only* the posture collector — see below.
   unaffected: it already removes the posture collector unconditionally (§4
   above), which is correct for "remove Shellius entirely from this host."
 
+**Resolved gap — hosts with no stored credentials.** The bulk installer
+planned every host into one of two buckets: it had a bound Keystore identity,
+or the operator supplied one for the batch. Anything else was skipped as
+`no_credentials`. That is the inverse of the truth for the most common case
+in an established fleet: a **bootstrapped** host already trusts the org CA,
+which is the entire point of bootstrapping it, so it needs no stored secret
+at all. A fleet that was fully bootstrapped before posture existed could
+therefore plan to **zero** automatic targets — the hosts most ready to be
+installed on were the only ones being refused.
+
+- **`credentialSource`** (`bulkBootstrapService.planBulkInstall`) is now
+  `'server' | 'certificate' | 'supplied' | null`, in that precedence.
+  `'certificate'` applies when `isBootstrapped(server)` — `provisionStatus
+  === 'provisioned'` or an `agentId` is set. It outranks `'supplied'`
+  deliberately: the batch fallback is one account typed once for hosts that
+  have nothing, and there is no reason to believe it exists on a host that
+  never needed it.
+- **Signing is not enough.** A bootstrapped host runs `check-principals` as
+  sshd's `AuthorizedPrincipalsCommand`, which calls
+  `POST /api/certificates/verify`; `certificateService.verify()` looks the
+  serial up in the DB and, under a per-host agent token, requires
+  `issuedForId` to be that host. A certificate from
+  `caService.signCertificate()` alone has no row, so verify answers
+  "certificate not found" and sshd rejects the login. **Every install
+  certificate must be persisted and bound to its server** —
+  `installCertService.mintInstallCertificate()` does both, and
+  `installCert.test.js` pins it against the real `verify()`.
+- **Not `certificateService.issue()`**: that is the human access path, which
+  evaluates policy per principal and refuses prod outright. This is the
+  platform running an installer on a host the caller already administers —
+  the same act bulk install already performs with a stored password, under
+  the same `servers.onboard` permission and the same route audit.
+- **Narrow by construction:** 300 seconds, one principal (the host's
+  `sshUser`, non-nullable and defaulting to `root`), `permit-pty` only, and
+  `REVOKED` in the DB as soon as the install returns — so the window is the
+  install, not the TTL. The ephemeral private key lives in a 0700 temp dir
+  removed in a `finally`, and its buffer is zeroed.
+- **Known limit:** certificate auth carries no password, so `sudo -S` has
+  nothing to read. A certificate install needs **passwordless sudo**, which
+  bootstrap does not grant. Typical on cloud images (`ubuntu`, `ec2-user`);
+  not guaranteed. The bulk runner therefore retries once with the supplied
+  fallback credentials when a certificate install fails and a fallback
+  exists, announcing the retry in the log rather than doing it silently. The
+  single-host modal states the requirement instead of offering a sudo-password
+  field the mode cannot use.
+- **Latent bug found and fixed on the way:** `caService.signCertificate`
+  emitted `-O extension=permit-pty`, which ssh-keygen rejects with
+  "Unsupported certificate option" — `extension=` is for names it does not
+  know, and the five standard permits are options in their own right. Every
+  `permit-*` in `certificateService.ALLOWED_EXTENSIONS` would have failed the
+  whole signing call. Dormant only because the issue route defaults
+  `extensions` to `{}`. `signCertificate` now emits standard permits as bare
+  `-O <name>`, preceded by `-O clear` so an explicit list means exactly what
+  it says rather than "the defaults, plus these".
+
+**Resolved gap — imported hosts.** Bulk import destroys the credentials it
+was given: `stageCredentialAtUpload` encrypts them into an
+`OnboardingCredential`, and `jobs/serverOnboarding.js finalize()` nulls every
+secret column once onboarding reaches a terminal state (success *and*
+failure), with a 6 h TTL reaper for anything left behind. `server.credentialId`
+was never set. So a fleet that had just been imported and bootstrapped had
+nothing stored for any of its hosts — manufacturing the very `no_credentials`
+population the bulk installer then had to skip.
+
+- **`storeAsIdentity`** (boolean, default **false**) and **`identityName`**
+  are new columns on the servers import, carried on `OnboardingCredential`
+  and applied by `materializeIdentity()` at commit. Opt-in only: an import
+  must never quietly turn one-shot bootstrap material into standing access.
+- **Dedupe is by `identityName`.** Rows sharing a name collapse into one
+  Keystore entry, so fifty servers behind one bastion key produce one
+  identity rather than fifty. Unnamed rows fall back to `Imported — <hostname>`.
+- **A name collision with a different username fails the row loudly** rather
+  than binding the server to someone else's identity.
+- **`authMode` is untouched.** The stored identity is for installs and
+  recovery; a bootstrapped host keeps authenticating by certificate for
+  ordinary access.
+- **`sudoPassword` is not stored** — `Credential` has no field for it, and the
+  Keystore is deliberately not a password manager. Stated in the template
+  rather than dropped silently.
+
+**Coverage counts exclude what cannot run the collector.** `listServerCoverage`
+and `getSummary` filtered on `isActive` only, so Windows and RDP-only hosts
+were counted as `notInstalled` — a shortfall no action could ever close, shown
+on the Posture page and the Dashboard widget, with a per-row Install button
+that opened a wizard that could not work. Both now classify via
+`canInstallOn()` into a separate `notApplicable` bucket, excluded from
+`total`; `totalAll` keeps the true fleet size. The coverage modal reads the
+same plan the installer runs from (`lib/installPlan.js groupPlan`), so
+"Ready to install: N" and "Install on N hosts" are the same N by construction.
+
 ---
 
 ## 5. Findings

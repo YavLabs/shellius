@@ -104,7 +104,9 @@ export function SectionTitle({ title, count, action, className }) {
     <div className={cn('flex min-h-9 items-center gap-2 pb-1.5 pt-3', className)}>
       <span className="bg-brand-gradient h-4 w-1 shrink-0 rounded-full" aria-hidden="true" />
       <h2 className="min-w-0 truncate text-[15px] font-semibold tracking-tight text-foreground">{title}</h2>
-      {typeof count === 'number' && <span className="text-xs tabular-nums text-muted-foreground">{count}</span>}
+      {count !== null && count !== undefined && count !== false && (
+        <span className="text-xs tabular-nums text-muted-foreground">{count}</span>
+      )}
       {action && <span className="ml-auto flex shrink-0 items-center gap-1">{action}</span>}
     </div>
   );

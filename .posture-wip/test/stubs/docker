@@ -1,0 +1,37 @@
+#!/usr/bin/env bash
+# fixture stub.
+#   FX_DOCKER_PS    `docker ps` rows (running containers, TAB separated)
+#   FX_DOCKER_WD    "<name> <workdir>" lines for inspect's compose path
+#   FX_DOCKER_PS_A  `docker ps -a --format '{{.ID}}|...'` rows, pipe separated.
+#                   This is the stopped-container view: ss cannot see these,
+#                   so they are how STOPPED_SERVICE_PORT_OPEN gets tested.
+#   FX_DOCKER_BINDINGS  "<cid> <PortBindings json>" lines, for the
+#                   fixed-format inspect the collector uses to recover a
+#                   stopped container's published ports.
+case "${1:-}" in
+  info)
+    [[ -n "${FX_DOCKER_PS:-}${FX_DOCKER_PS_A:-}" ]] || exit 1
+    exit 0 ;;
+  ps)
+    # `ps -a --format ...` (stopped view) vs plain `ps` (running view).
+    for a in "$@"; do [[ "$a" == "-a" ]] && { printf '%s\n' "${FX_DOCKER_PS_A:-}"; exit 0; }; done
+    printf '%s\n' "${FX_DOCKER_PS:-}" ;;
+  inspect)
+    cid="${!#}"
+    # Fixed-format PortBindings lookup — the only inspect the collector is
+    # granted, and the only one that matters for a stopped container.
+    for a in "$@"; do
+      if [[ "$a" == *"HostConfig.PortBindings"* ]]; then
+        awk -v c="$cid" '$1==c{ $1=""; sub(/^ /,""); print; found=1 } END{ if(!found) print "{}" }' \
+          <<<"${FX_DOCKER_BINDINGS:-}"
+        exit 0
+      fi
+    done
+    line=$(grep -F "$cid" <<<"${FX_DOCKER_PS:-}" | head -1)
+    [[ -z "$line" ]] && { echo "/stub|stub:latest|0|<no value>|<no value>"; exit 0; }
+    name=$(cut -f2 <<<"$line"); img=$(cut -f3 <<<"$line")
+    wd=$(awk -v n="$name" '$1==n{print $2}' <<<"${FX_DOCKER_WD:-}")
+    [[ -z "$wd" ]] && { echo "/$name|$img|0|<no value>|<no value>"; exit 0; }
+    echo "/$name|$img|0|$wd|$wd/docker-compose.yml" ;;
+  *) exit 1 ;;
+esac

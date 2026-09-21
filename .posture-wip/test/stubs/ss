@@ -1,0 +1,3 @@
+#!/usr/bin/env bash
+# fixture stub: emits FX_SS regardless of flags (header already stripped)
+printf '%s\n' "${FX_SS:-}"

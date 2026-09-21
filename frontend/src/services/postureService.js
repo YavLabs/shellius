@@ -1,4 +1,5 @@
 import api from './api';
+import { downloadPost } from '@/utils/download';
 
 /**
  * Posture — exposure findings, per-server snapshots and org settings/alert
@@ -10,14 +11,22 @@ import api from './api';
 // Fleet summary + findings inbox
 // ---------------------------------------------------------------------------
 
-export const getPostureSummary = () =>
-  api.get('/posture/summary').then((r) => r.data?.data ?? r.data);
+/** `params.customerId` narrows the summary to one customer. */
+export const getPostureSummary = (params) =>
+  api.get('/posture/summary', { params }).then((r) => r.data?.data ?? r.data);
 
 export const listFindings = (params) =>
   api.get('/posture/findings', { params }).then((r) => r.data?.data ?? r.data);
 
 export const getServerPosture = (serverId) =>
   api.get(`/posture/servers/${serverId}`).then((r) => r.data?.data ?? r.data);
+
+/**
+ * Resource history for the drill-down page.
+ * `params`: { from?: ISO, to?: ISO, bucket?: 'auto'|'raw'|'5m'|'15m'|'1h'|'6h'|'1d' }
+ */
+export const getServerMetrics = (serverId, params) =>
+  api.get(`/posture/servers/${serverId}/metrics`, { params }).then((r) => r.data?.data ?? r.data);
 
 // ---------------------------------------------------------------------------
 // Finding actions
@@ -32,6 +41,34 @@ export const unmuteFinding = (id) =>
 
 export const acknowledgeFinding = (id) =>
   api.post(`/posture/findings/${id}/acknowledge`).then((r) => r.data?.data ?? r.data);
+
+// ---------------------------------------------------------------------------
+// Per-server expected-public ports
+// ---------------------------------------------------------------------------
+
+export const listExpectedPorts = (serverId) =>
+  api.get(`/posture/servers/${serverId}/expected-ports`).then((r) => r.data?.data?.items ?? []);
+
+/** `entries`: [{ port, proto?, note }] — note is required by the API. */
+export const addExpectedPorts = (serverId, entries) =>
+  api.post(`/posture/servers/${serverId}/expected-ports`, { entries }).then((r) => r.data?.data ?? r.data);
+
+export const removeExpectedPort = (serverId, entryId) =>
+  api.delete(`/posture/servers/${serverId}/expected-ports/${entryId}`).then((r) => r.data?.data ?? r.data);
+
+// ---------------------------------------------------------------------------
+// Export
+// ---------------------------------------------------------------------------
+
+export const getExportFields = () =>
+  api.get('/posture/export/fields').then((r) => r.data?.data ?? r.data);
+
+/**
+ * Builds the file server-side and saves it.
+ * `{ dataset, format, bundle, fields, filters }` — see the API's exportSchema.
+ */
+export const exportPosture = (body) =>
+  downloadPost('/posture/export', body, `shellius-${body.dataset}.${body.format}`);
 
 // ---------------------------------------------------------------------------
 // Settings
@@ -66,3 +103,16 @@ export const deleteAlertRule = (id) =>
  */
 export const getPostureServers = (params = {}) =>
   api.get('/posture/servers', { params }).then((r) => r.data?.data ?? r.data);
+
+// ---------------------------------------------------------------------------
+// Service inventory — what is running across the fleet (not what is wrong)
+// ---------------------------------------------------------------------------
+
+export const listInventoryServices = (params) =>
+  api.get('/posture/inventory/services', { params }).then((r) => r.data?.data ?? r.data);
+
+export const listInventoryListeners = (params) =>
+  api.get('/posture/inventory/listeners', { params }).then((r) => r.data?.data ?? r.data);
+
+export const getInventoryFacets = () =>
+  api.get('/posture/inventory/facets').then((r) => r.data?.data ?? r.data);

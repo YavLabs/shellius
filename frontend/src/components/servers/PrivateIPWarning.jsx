@@ -11,6 +11,7 @@ import { isPrivateIP } from '@/utils/network';
  *
  * variants:
  *   "banner" — full-width amber alert (default; for forms / modals / detail headers)
+ *   "card"   — amber card sized to sit in a detail-page card grid
  *   "pill"   — small inline badge (for tables / dense rows)
  *   "note"   — soft compact line (for create/edit forms under the IP field)
  */
@@ -34,6 +35,25 @@ function PrivateIPWarning({ ipAddress, variant = 'banner' }) {
           Shellius backend can reach this network.
         </span>
       </p>
+    );
+  }
+
+  if (variant === 'card') {
+    return (
+      <div className="rounded-lg border border-amber-500/40 bg-amber-500/5">
+        <div className="flex items-center gap-2 border-b border-amber-500/30 px-5 py-3">
+          <Wifi className="h-4 w-4 text-amber-600 dark:text-amber-400" />
+          <h3 className="text-sm font-semibold text-amber-800 dark:text-amber-200">
+            Private network address
+          </h3>
+        </div>
+        <div className="px-5 py-4 text-xs leading-relaxed text-amber-800/90 dark:text-amber-200/90">
+          <code className="font-mono">{ipAddress}</code> is a private address.{' '}
+          <span className="font-medium">Browser terminals connect from the Shellius backend</span>,
+          so they work only if the backend can reach this network. To connect from your own machine
+          (the CLI or a downloaded key), your machine needs to be on it too — over VPN, for example.
+        </div>
+      </div>
     );
   }
 

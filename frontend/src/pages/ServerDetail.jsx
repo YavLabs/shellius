@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import {
   ArrowLeft,
@@ -26,15 +26,20 @@ import ServerForm from '@/components/servers/ServerForm';
 import BootstrapModal from '@/components/servers/BootstrapModal';
 import ProvisionModal from '@/components/servers/ProvisionModal';
 import BootstrapWizard from '@/components/servers/BootstrapWizard';
+import { shouldPromptBootstrap, bootstrapIneligibleReason } from '@/lib/bootstrapEligibility';
 import UninstallHostModal from '@/components/servers/UninstallHostModal';
 import QuickConnectButton from '@/components/servers/QuickConnectButton';
 import PrivateIPWarning from '@/components/servers/PrivateIPWarning';
+import useBackTarget from '@/hooks/useBackTarget';
+import { useBreadcrumbs } from '@/context/BreadcrumbContext';
+import SectionHeading from '@/components/common/SectionHeading';
 import BreakGlassModal from '@/components/access-requests/BreakGlassModal';
 import MobilePageHeader from '@/components/mobile/MobilePageHeader';
 import useIsMobile from '@/hooks/useIsMobile';
 import DeployWizardModal from '@/components/keystore/DeployWizardModal';
 import TestConnectionModal from '@/components/keystore/TestConnectionModal';
 import ServerPostureTab from '@/components/posture/ServerPostureTab';
+import { getServerPosture } from '@/services/postureService';
 import { Button } from '@/components/ui/button';
 import {
   DropdownMenu,
@@ -59,23 +64,32 @@ import { PROVISION_STATUS_LABELS } from '@/lib/labels';
 function Card({ title, children }) {
   return (
     <div className="rounded-lg border border-border bg-card">
-      <div className="border-b border-border px-5 py-3">
+      <div className="border-b border-border px-4 py-3 sm:px-5">
         <h3 className="text-sm font-semibold text-foreground">{title}</h3>
       </div>
-      <div className="px-5 py-4">{children}</div>
+      <div className="px-4 py-3 sm:px-5 sm:py-4">{children}</div>
     </div>
   );
 }
 
+/**
+ * A label/value row.
+ *
+ * It used to be `justify-between` with the value pushed right, which works
+ * only while every value is short: "Not yet pinned" sat flush right while
+ * "Identity: OnPrem Penta (ithadmin)" wrapped and left-aligned its own inner
+ * flex, so consecutive rows started and ended at different places. A fixed
+ * label column and a left-aligned value give every row the same two edges,
+ * and on a phone — where a 7rem label plus a value is too narrow for either
+ * — the value moves onto its own line instead.
+ */
 function Field({ label, value, mono }) {
   return (
-    <div className="flex items-start justify-between gap-4 py-1.5">
-      <span className="text-xs text-muted-foreground">{label}</span>
-      <span
-        className={`text-sm text-foreground ${mono ? 'font-mono' : ''}`}
-      >
+    <div className="border-b border-border/50 py-2 last:border-0 sm:flex sm:items-start sm:gap-4">
+      <span className="block text-xs text-muted-foreground sm:w-32 sm:shrink-0 sm:pt-0.5">{label}</span>
+      <div className={`mt-0.5 min-w-0 break-words text-sm text-foreground sm:mt-0 sm:flex-1 ${mono ? 'font-mono' : ''}`}>
         {value ?? '-'}
-      </span>
+      </div>
     </div>
   );
 }
@@ -95,9 +109,19 @@ function ServerDetail() {
   const [searchParams, setSearchParams] = useSearchParams();
   const canViewPosture = can(currentUser, 'posture.read');
   const canMutePosture = can(currentUser, 'posture.mute');
+  // 'posture' is the pre-split tab key and still arrives from older links,
+  // notifications and the fleet page's "View server posture" action.
+  const TAB_KEYS = ['overview', 'findings', 'ports'];
+  const requestedTab = searchParams.get('tab') === 'posture' ? 'findings' : searchParams.get('tab');
   const [activeTab, setActiveTab] = useState(
-    searchParams.get('tab') === 'posture' && canViewPosture ? 'posture' : 'overview'
+    TAB_KEYS.includes(requestedTab) && canViewPosture ? requestedTab : 'overview'
   );
+
+  // Posture lives here, not in the tab component, so the tab labels can carry
+  // counts without each tab refetching the same payload on every switch.
+  const [posture, setPosture] = useState(null);
+  const [postureLoading, setPostureLoading] = useState(false);
+  const [postureError, setPostureError] = useState('');
   const handleTabChange = (key) => {
     setActiveTab(key);
     const next = new URLSearchParams(searchParams);
@@ -120,6 +144,8 @@ function ServerDetail() {
   // The install wizard (method + scope). On finish it opens BootstrapModal
   // (manual) or ProvisionModal (automatic) with the scope the user picked.
   const [wizardOpen, setWizardOpen] = useState(false);
+  const promptedRef = useRef(null);
+  const [bootstrapPrompt, setBootstrapPrompt] = useState(false);
   const [wizardScope, setWizardScope] = useState(null);
   const [installScope, setInstallScope] = useState('full');
   const [deployWizardOpen, setDeployWizardOpen] = useState(false);
@@ -127,6 +153,15 @@ function ServerDetail() {
   const [resetHostKeyConfirm, setResetHostKeyConfirm] = useState(false);
   const [resettingHostKey, setResettingHostKey] = useState(false);
   const [breakGlassOpen, setBreakGlassOpen] = useState(false);
+
+  // Same permission keys the API checks for each action.
+  const canEdit = can(currentUser, 'servers.update');
+  const canOnboard = can(currentUser, 'servers.onboard');
+  const canManage = canEdit || canOnboard;
+  const canDelete = can(currentUser, 'servers.delete');
+  const canDeployKeys = can(currentUser, 'keystore.deploy');
+  const canResetHostKey = can(currentUser, 'servers.reset_host_key');
+  const canBreakGlass = can(currentUser, 'access.break_glass');
 
   const fetch = useCallback(async () => {
     setLoading(true);
@@ -144,6 +179,63 @@ function ServerDetail() {
   useEffect(() => {
     fetch();
   }, [fetch]);
+
+  const loadPosture = useCallback(async () => {
+    if (!canViewPosture) return;
+    setPostureLoading(true);
+    setPostureError('');
+    try {
+      setPosture(await getServerPosture(id));
+    } catch (err) {
+      setPostureError(err.response?.data?.error?.message || err.message || 'Failed to load posture data');
+    } finally {
+      setPostureLoading(false);
+    }
+  }, [id, canViewPosture]);
+
+  useEffect(() => {
+    loadPosture();
+  }, [loadPosture]);
+
+  // Resolved findings stay in the payload for history; the tab counts what is
+  // still open. "Needs attention" is CRITICAL or HIGH only — badging every
+  // severity would train people to ignore the badge.
+  // Where Back goes: whatever linked here said, else the servers list.
+  const back = useBackTarget({ to: '/servers', label: 'Back to servers' });
+
+  // Trail uses the customer's name when the server carries one, so arriving
+  // from Customer Details keeps that context visible. Never an id.
+  useBreadcrumbs([
+    { label: 'Servers', to: '/servers' },
+    server?.customer?.name
+      ? { label: server.customer.name, to: `/customers/${server.customer.id}` }
+      : null,
+    server ? { label: server.displayName || server.hostname } : null,
+  ]);
+
+  const openFindings = (posture?.findings || []).filter((f) => f.status !== 'resolved');
+  const needsAttention = openFindings.some((f) => f.severity === 'CRITICAL' || f.severity === 'HIGH');
+
+  // Prompt to bootstrap on every visit until the host is done.
+  //
+  // `promptedRef` keys on the server id, not a boolean, so navigating between
+  // two un-bootstrapped servers prompts for each — while a refetch (after a
+  // health check, an edit, or the bootstrap itself) does not reopen the
+  // wizard the user just closed. Eligibility is shouldPromptBootstrap, so a
+  // Windows or RDP-only host is never nagged about an agent it cannot run,
+  // and a credential host — which already works — is offered it rather than
+  // interrupted by it.
+  useEffect(() => {
+    if (!server) return;
+    if (promptedRef.current === server.id) return;
+    if (!shouldPromptBootstrap(server, { canOnboard })) return;
+    promptedRef.current = server.id;
+    // Ask before taking over the page. Opening a multi-step wizard
+    // unprompted on every visit is the version of this that people learn to
+    // dismiss without reading; a one-line question they can answer with No
+    // is not.
+    setBootstrapPrompt(true);
+  }, [server, canOnboard]);
 
   const handleEdit = async (payload) => {
     await updateServer(id, payload);
@@ -168,14 +260,6 @@ function ServerDetail() {
     }
   };
 
-  // Same permission keys the API checks for each action.
-  const canEdit = can(currentUser, 'servers.update');
-  const canOnboard = can(currentUser, 'servers.onboard');
-  const canManage = canEdit || canOnboard;
-  const canDelete = can(currentUser, 'servers.delete');
-  const canDeployKeys = can(currentUser, 'keystore.deploy');
-  const canResetHostKey = can(currentUser, 'servers.reset_host_key');
-  const canBreakGlass = can(currentUser, 'access.break_glass');
   const isCredentialMode = server?.authMode === 'credential';
   // Credential-mode hosts can be bootstrapped too: the stored identity is
   // precisely what gets us in for the first connect, and the wizard's scope
@@ -211,10 +295,10 @@ function ServerDetail() {
     return (
       <div className="p-6">
         <button
-          onClick={() => navigate('/servers')}
+          onClick={() => navigate(back.to)}
           className="flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground"
         >
-          <ArrowLeft className="h-4 w-4" /> Back to servers
+          <ArrowLeft className="h-4 w-4" /> {back.label}
         </button>
         <div className="mt-4 rounded-md border border-destructive/50 bg-destructive/10 px-3 py-2 text-sm text-destructive">
           {error || 'Server not found'}
@@ -224,10 +308,10 @@ function ServerDetail() {
   }
 
   return (
-    <div className="space-y-5 p-6">
+    <div className="space-y-5 p-6 max-md:p-4">
       {isMobile ? (
         <MobilePageHeader
-          back={{ onClick: () => navigate('/servers'), label: 'Back to servers' }}
+          back={{ onClick: () => navigate(back.to), label: back.label }}
           title={server.displayName || server.hostname}
           // Phones: one line — health dot, the environment code (as on the
           // cards) and the address.
@@ -279,10 +363,10 @@ function ServerDetail() {
       ) : (
       <>
       <button
-        onClick={() => navigate('/servers')}
+        onClick={() => navigate(back.to)}
         className="flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground"
       >
-        <ArrowLeft className="h-4 w-4" /> Back to servers
+        <ArrowLeft className="h-4 w-4" /> {back.label}
       </button>
 
       <div className="flex items-start justify-between">
@@ -393,33 +477,76 @@ function ServerDetail() {
       </>
       )}
 
-      <PrivateIPWarning ipAddress={server.ipAddress} />
+      {/* Phones: no tab strip. Three tabs with counts on a 360px screen are
+          three truncated labels and a horizontal scroll gesture nobody
+          discovers, so Overview carries short previews of each list with
+          "View all" — the Dashboard's shape — and this is the way back. */}
+      {canViewPosture && isMobile && activeTab !== 'overview' && (
+        <button
+          onClick={() => handleTabChange('overview')}
+          className="flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground"
+        >
+          <ArrowLeft className="h-4 w-4" />
+          Back to overview
+        </button>
+      )}
 
-      {canViewPosture && (
+      {canViewPosture && !isMobile && (
         <div className="flex items-center gap-1 overflow-x-auto border-b border-border md:overflow-visible">
           {[
             { key: 'overview', label: 'Overview' },
-            { key: 'posture', label: 'Posture' },
+            { key: 'findings', label: 'Open findings', count: openFindings.length, alert: needsAttention },
+            { key: 'ports', label: 'Ports & services', count: posture?.listeners?.length ?? null },
           ].map((tab) => (
             <button
               key={tab.key}
               onClick={() => handleTabChange(tab.key)}
+              title={tab.alert ? `${tab.label} — includes critical or high severity findings` : undefined}
+              aria-label={tab.alert ? `${tab.label}, ${tab.count}, needs attention` : undefined}
               className={[
-                'relative shrink-0 whitespace-nowrap px-2.5 py-2.5 text-sm font-medium transition-colors md:px-4',
+                'relative inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap px-2.5 py-2.5 text-sm font-medium transition-colors md:px-4',
                 activeTab === tab.key
                   ? 'border-b-2 border-primary text-foreground'
                   : 'text-muted-foreground hover:text-foreground',
               ].join(' ')}
             >
-              {tab.label}
+              {/* A dot, not a chip. "Needs attention" spelled out competed
+                  with the tab's own label for the same few pixels; the count
+                  already says how much, so the colour only has to say how
+                  urgent. The words live in the title for anyone hovering,
+                  and in the aria-label for anyone who cannot. */}
+              {tab.alert && (
+                <span
+                  className="h-1.5 w-1.5 shrink-0 rounded-full bg-red-500"
+                  aria-hidden="true"
+                />
+              )}
+              <span>{tab.label}</span>
+              {tab.count > 0 && (
+                <span
+                  className={[
+                    'rounded-full px-1.5 py-0.5 text-[10px] font-medium tabular-nums',
+                    tab.alert
+                      ? 'bg-red-500/15 text-red-600 dark:text-red-400'
+                      : 'bg-muted text-muted-foreground',
+                  ].join(' ')}
+                >
+                  {tab.count}
+                </span>
+              )}
             </button>
           ))}
         </div>
       )}
 
-      {canViewPosture && activeTab === 'posture' ? (
+      {canViewPosture && (activeTab === 'findings' || activeTab === 'ports') ? (
         <ServerPostureTab
           serverId={id}
+          view={activeTab}
+          data={posture}
+          loading={postureLoading}
+          error={postureError}
+          onReload={loadPosture}
           canMute={canMutePosture}
           authMode={server.authMode}
           canBootstrap={canOnboard}
@@ -429,7 +556,36 @@ function ServerDetail() {
           }}
         />
       ) : (
-      <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+      <div className="space-y-6">
+      {/* Collector, firewall and the resource gauges: the host's current
+          state belongs on Overview beside Connection and Health, not behind
+          a tab you have to remember to open. */}
+      {canViewPosture && (
+        <section className="space-y-3">
+          <SectionHeading>Security posture</SectionHeading>
+        <ServerPostureTab
+          serverId={id}
+          view="overview"
+          onViewFindings={() => handleTabChange('findings')}
+          onViewPorts={() => handleTabChange('ports')}
+          data={posture}
+          loading={postureLoading}
+          error={postureError}
+          onReload={loadPosture}
+          canMute={canMutePosture}
+          authMode={server.authMode}
+          canBootstrap={canOnboard}
+          onBootstrap={(scope) => {
+            setWizardScope(scope || 'full');
+            setWizardOpen(true);
+          }}
+        />
+        </section>
+      )}
+
+      <section className="space-y-3">
+        <SectionHeading>Configuration</SectionHeading>
+        <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
         <Card title="Connection">
           <Field label="IP Address" value={server.ipAddress} mono />
           <Field label="Port" value={server.port} mono />
@@ -458,8 +614,8 @@ function ServerDetail() {
                 label="Host key"
                 value={
                   server.hostKeyFingerprint ? (
-                    <span className="flex min-w-0 flex-col items-end gap-0.5">
-                      <span className="break-all text-right font-mono text-xs">{server.hostKeyFingerprint}</span>
+                    <span className="flex min-w-0 flex-col items-start gap-0.5">
+                      <span className="break-all font-mono text-xs">{server.hostKeyFingerprint}</span>
                       {server.hostKeyPinnedAt && (
                         <span className="text-[11px] text-muted-foreground">
                           pinned {formatDateTime(server.hostKeyPinnedAt)}
@@ -490,6 +646,12 @@ function ServerDetail() {
           />
         </Card>
 
+        </div>
+      </section>
+
+      <section className="space-y-3">
+        <SectionHeading>Status</SectionHeading>
+        <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
         <Card title="Health">
           <Field label="Status" value={server.healthStatus} />
           <Field label="Last Check" value={formatDateTime(server.lastHealthCheck)} />
@@ -588,6 +750,12 @@ function ServerDetail() {
           </Card>
         )}
 
+        </div>
+      </section>
+
+      <section className="space-y-3">
+        <SectionHeading>Metadata</SectionHeading>
+        <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
         <Card title="Labels">
           {server.labels && server.labels.length > 0 ? (
             <div className="flex flex-wrap gap-2">
@@ -604,6 +772,12 @@ function ServerDetail() {
             <p className="text-xs text-muted-foreground">No labels</p>
           )}
         </Card>
+
+        {/* Last in the grid: it is a caveat about reaching the host, not a
+            fact about it, and it renders nothing for a public address. */}
+        <PrivateIPWarning ipAddress={server.ipAddress} variant="card" />
+        </div>
+      </section>
       </div>
       )}
 
@@ -619,6 +793,24 @@ function ServerDetail() {
           onCancel={() => setEditOpen(false)}
         />
       </Modal>
+
+      <ConfirmDialog
+        open={bootstrapPrompt}
+        title="Finish setting up this host?"
+        message={
+          server?.authMode === 'credential'
+            ? 'This host connects with a stored identity but has no Shellius agent yet. Bootstrapping installs the posture collector and can upgrade it to certificate authentication.'
+            : 'This host has not been bootstrapped, so Shellius cannot issue certificates for it or collect its exposure posture yet. Setting it up takes one command.'
+        }
+        confirmLabel="Set up now"
+        cancelLabel="Not now"
+        onConfirm={() => {
+          setBootstrapPrompt(false);
+          setWizardScope(null);
+          setWizardOpen(true);
+        }}
+        onCancel={() => setBootstrapPrompt(false)}
+      />
 
       <BootstrapWizard
         open={wizardOpen}

@@ -1,5 +1,6 @@
 import { Routes, Route } from 'react-router-dom';
 import { AuthProvider } from './context/AuthContext';
+import { BreadcrumbProvider } from './context/BreadcrumbContext';
 import { ThemeProvider } from './context/ThemeContext';
 import { NotificationProvider } from './context/NotificationContext';
 import ProtectedRoute from './components/ProtectedRoute';
@@ -15,8 +16,10 @@ import Customers from './pages/Customers';
 import CustomerDetail from './pages/CustomerDetail';
 import Servers from './pages/Servers';
 import ServerDetail from './pages/ServerDetail';
+import ServerResources from './pages/ServerResources';
 import Certificates from './pages/Certificates';
 import Posture from './pages/Posture';
+import ServiceInventory from './pages/ServiceInventory';
 import Administration from './pages/Administration';
 import LegacyAdminRedirect from './components/admin/LegacyAdminRedirect';
 import AccessRequests from './pages/AccessRequests';
@@ -48,6 +51,7 @@ function App() {
     <AuthProvider>
       <ThemeProvider>
         <NotificationProvider>
+          <BreadcrumbProvider>
           <ErrorBoundary>
             <Routes>
               <Route path="/login" element={<Login />} />
@@ -105,12 +109,14 @@ function App() {
                     <Route path="/customers/:id" element={<CustomerDetail />} />
                     <Route path="/servers" element={<Servers />} />
                     <Route path="/servers/:id" element={<ServerDetail />} />
+                    <Route path="/servers/:id/resources" element={<ServerResources />} />
                     <Route path="/sessions" element={<Sessions />} />
                     <Route path="/keystore" element={<Keystore />} />
                     <Route path="/my-hosts" element={<MyHosts />} />
                     <Route path="/bulk-import" element={<BulkImport />} />
                     <Route path="/certificates" element={<Certificates />} />
                     <Route path="/posture" element={<Posture />} />
+                    <Route path="/services" element={<ServiceInventory />} />
                     <Route path="/audit-log" element={<AuditLog />} />
                   </Route>
                 </Route>
@@ -119,6 +125,7 @@ function App() {
               <Route path="*" element={<NotFound />} />
             </Routes>
           </ErrorBoundary>
+          </BreadcrumbProvider>
         </NotificationProvider>
       </ThemeProvider>
     </AuthProvider>

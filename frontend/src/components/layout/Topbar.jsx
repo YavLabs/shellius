@@ -1,6 +1,7 @@
-import { useLocation } from 'react-router-dom';
-import { Menu, Search } from 'lucide-react';
+import { Link, useLocation } from 'react-router-dom';
+import { Home, Menu, Search } from 'lucide-react';
 import { useAuth } from '@/context/AuthContext';
+import { useBreadcrumbContext } from '@/context/BreadcrumbContext';
 import { useCommandPalette } from '@/context/CommandPaletteContext';
 import NotificationBell from '@/components/layout/NotificationBell';
 import ThemeMenu from '@/components/layout/ThemeMenu';
@@ -89,6 +90,10 @@ function Topbar({ onOpenNav }) {
   const isMobile = useIsMobile();
 
   const pageName = pageNameFor(location.pathname);
+  // Pages publish their own trail (names, never ids). Without one we fall
+  // back to the section name, which is what the bar always showed.
+  const { crumbs } = useBreadcrumbContext();
+  const trail = crumbs.length > 0 ? crumbs : [{ label: pageName }];
 
   if (isMobile) return null;
 
@@ -104,9 +109,43 @@ function Topbar({ onOpenNav }) {
         >
           <Menu className="h-5 w-5" />
         </button>
-        <span className="hidden text-muted-foreground md:inline">Shellius</span>
-        <span className="hidden text-muted-foreground/50 md:inline">/</span>
-        <span className="truncate text-base font-semibold text-foreground md:text-sm md:font-medium">{pageName}</span>
+        <nav aria-label="Breadcrumb" className="flex min-w-0 items-center gap-1 md:gap-2">
+          <Link
+            to="/"
+            aria-label="Dashboard"
+            title="Dashboard"
+            className="hidden shrink-0 rounded p-0.5 text-muted-foreground transition-colors hover:text-foreground md:inline-flex"
+          >
+            <Home className="h-4 w-4" />
+          </Link>
+          {trail.map((crumb, i) => {
+            const last = i === trail.length - 1;
+            return (
+              <span key={`${crumb.label}-${i}`} className="flex min-w-0 items-center gap-1 md:gap-2">
+                <span className="hidden text-muted-foreground/50 md:inline">/</span>
+                {last || !crumb.to ? (
+                  <span
+                    aria-current={last ? 'page' : undefined}
+                    className={
+                      last
+                        ? 'truncate text-base font-semibold text-foreground md:text-sm md:font-medium'
+                        : 'hidden truncate text-muted-foreground md:inline'
+                    }
+                  >
+                    {crumb.label}
+                  </span>
+                ) : (
+                  <Link
+                    to={crumb.to}
+                    className="hidden max-w-[12rem] truncate text-muted-foreground transition-colors hover:text-foreground md:inline"
+                  >
+                    {crumb.label}
+                  </Link>
+                )}
+              </span>
+            );
+          })}
+        </nav>
       </div>
 
       {/* Actions */}

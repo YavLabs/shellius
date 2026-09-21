@@ -24,6 +24,7 @@ import {
 } from '@/components/ui/dropdown-menu';
 import useIsMobile from '@/hooks/useIsMobile';
 import MobileDataList from '@/components/mobile/MobileDataList';
+import FilterControl from '@/components/shared/FilterControl';
 
 const PAGE_SIZE_OPTIONS = [10, 20, 50, 100];
 
@@ -121,7 +122,8 @@ function useDebounced(value, delay) {
  *
  * New features:
  *   - Built-in debounced search (200ms)
- *   - `filters` slot for page-level Selects rendered above the search
+ *   - `filters` slot for page-level Selects, and `toolbarActions` for
+ *     right-aligned buttons — both share the toolbar row with the search
  *   - Sortable column headers (client-side or server-side via `serverSort`)
  *   - Pagination footer: "Showing X-Y of Z" + page-size select + prev/next + direct input
  *   - `serverPagination={{page, total, onPageChange}}` for server-driven pagination
@@ -132,15 +134,22 @@ function useDebounced(value, delay) {
  *   - Row selection: `selectable`, `selectedIds`, `onSelectionChange`, `bulkActions` slot
  *   - Sticky header
  *   - Responsive: `hideBelow:'md'|'lg'` on column hides it on narrow viewports
+ *   - Sorting is ON by default for every column except `actions` and the
+ *     selection column. A column sorts on `sortAccessor(row)` if given, else
+ *     the row's own scalar field, else `searchAccessor(row)` — so a rendered
+ *     column sorts on what it displays. Opt out with `sortable: false`, or
+ *     take full control with `sortFn(a, b)`.
  *
  * Mobile (< md, docs/plans/1.5.1-mobile.md §5): no table — a card list with a
  * full-width search, a "Filters" sheet (the `filters` slot), a "Sort" menu,
  * "Load more" / compact paging and a bulk bar above the bottom navigation.
  * Card fields come from each column's `mobile` config (see lib/mobileCard.js);
  * actions with `primary: true` become buttons on the card. Table-level
- * options go in the `mobile` prop: { leading(row), maxMeta, maxPrimary,
+ * options go in the `mobile` prop: { leading(row), accent(row), maxMeta,
+ * maxPrimary, titleClamp (2 for card titles that are sentences, not names),
  * cardClassName(row), onCardClick(row) (tap target when there's no onRowClick) }. `activeFilterCount` / `onResetFilters` drive the
- * Filters badge and the sheet's Reset button.
+ * Filters badge and the sheet's Reset button. `toolbarActions` renders beside
+ * the Filters/Sort controls there.
  */
 function DataTable({
   // Core
@@ -155,8 +164,27 @@ function DataTable({
   // Search
   searchPlaceholder = 'Search...',
 
-  // Filters slot (JSX rendered above the search)
+  // Filters slot (legacy: live controls rendered inline beside the search).
+  // Prefer `filterDefs` — see below.
   filters,
+
+  // Declarative filters: [{ key, label, placeholder, options, type }] plus
+  // the current `filterValues` and an `onFilterChange(values)` that receives
+  // the whole object at once.
+  //
+  // This replaces the inline row of selects with one "Filters" button and a
+  // drawer. A row that grew a control every time someone added a filter had
+  // already reached six on Services & ports, wrapping onto two lines and
+  // reading as chrome rather than controls. The drawer also makes filters a
+  // draft until Apply, so changing four of them on a server-paginated list
+  // is one request instead of four.
+  filterDefs,
+  filterValues,
+  onFilterChange,
+  // Rendered at the far right of the toolbar row, after the search. For
+  // per-table actions (Export, and the like) that belong beside the filters
+  // rather than in a page header the table may not have.
+  toolbarActions,
 
   // Bulk actions slot (rendered when selection is non-empty)
   bulkActions,
@@ -202,6 +230,7 @@ function DataTable({
   showSearch = true,
 }) {
   const isMobile = useIsMobile();
+  const hasFilterDefs = Array.isArray(filterDefs) && filterDefs.length > 0;
 
   // -------------------------------------------------------------------
   // Search
@@ -302,6 +331,24 @@ function DataTable({
     [columns]
   );
 
+  /**
+   * The value a column sorts on.
+   *
+   * `row[col.key]` alone only works for columns whose key happens to be a
+   * scalar field, which is why sorting used to be opt-in per column — a
+   * rendered column like "owner" or "status" would have compared undefined
+   * and silently done nothing. Falling back to the column's own accessors
+   * means almost every column can sort on what it actually displays.
+   */
+  const sortValue = useCallback((col, row) => {
+    if (!col) return null;
+    if (col.sortAccessor) return col.sortAccessor(row);
+    const raw = col.key ? row[col.key] : undefined;
+    if (raw !== undefined && raw !== null && typeof raw !== 'object') return raw;
+    if (col.searchAccessor) return col.searchAccessor(row);
+    return raw ?? null;
+  }, []);
+
   const processedData = useMemo(() => {
     let result = data;
 
@@ -316,19 +363,28 @@ function DataTable({
       const col = columns.find((c) => c.key === sortKey);
       const sorted = [...result].sort((a, b) => {
         if (col?.sortFn) return col.sortFn(a, b);
-        const aVal = a[sortKey];
-        const bVal = b[sortKey];
-        if (aVal == null && bVal == null) return 0;
-        if (aVal == null) return 1;
-        if (bVal == null) return -1;
-        if (typeof aVal === 'string') return aVal.localeCompare(bVal);
-        return aVal > bVal ? 1 : aVal < bVal ? -1 : 0;
+        const aVal = sortValue(col, a);
+        const bVal = sortValue(col, b);
+        // Empty values sort last in both directions, so a column of mostly
+        // blanks does not bury the rows you asked to see.
+        const aEmpty = aVal === null || aVal === undefined || aVal === '';
+        const bEmpty = bVal === null || bVal === undefined || bVal === '';
+        if (aEmpty && bEmpty) return 0;
+        if (aEmpty) return 1;
+        if (bEmpty) return -1;
+        if (typeof aVal === 'number' && typeof bVal === 'number') return aVal - bVal;
+        if (aVal instanceof Date || bVal instanceof Date) {
+          return new Date(aVal).getTime() - new Date(bVal).getTime();
+        }
+        // `numeric` so "port 9" sorts before "port 10", and so a column of
+        // numeric strings behaves the way it looks.
+        return String(aVal).localeCompare(String(bVal), undefined, { numeric: true, sensitivity: 'base' });
       });
       result = sortDir === 'desc' ? sorted.reverse() : sorted;
     }
 
     return result;
-  }, [data, search, isServerPagination, isServerSort, sortKey, sortDir, columns, getSearchString]);
+  }, [data, search, isServerPagination, isServerSort, sortKey, sortDir, columns, getSearchString, sortValue]);
 
   const total = isServerPagination ? (serverTotal ?? 0) : processedData.length;
   const totalPages = Math.max(1, Math.ceil(total / pageSize));
@@ -456,6 +512,10 @@ function DataTable({
         onSearch={setSearchRaw}
         searchPlaceholder={searchPlaceholder}
         filters={filters}
+        filterDefs={filterDefs}
+        filterValues={filterValues}
+        onFilterChange={onFilterChange}
+        toolbarActions={toolbarActions}
         activeFilterCount={activeFilterCount}
         onResetFilters={onResetFilters}
         sortKey={sortKey}
@@ -489,9 +549,10 @@ function DataTable({
     // table → pagination) instead of each section owning its own margin —
     // that used to let the bulk-actions bar end up flush against the table.
     <div className={cn('space-y-3', className)}>
-      {/* Toolbar: filters slot + search */}
+      {/* Toolbar: search, then the Filters button and its applied-count chip.
+          Search stays on the row because it is the control people reach for
+          without thinking; everything else moved behind the button. */}
       <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:flex-wrap">
-        {filters && <div className="flex flex-wrap items-center gap-2">{filters}</div>}
         {showSearch && (
           <div className="relative min-w-0 flex-1 max-w-sm">
             <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
@@ -504,6 +565,14 @@ function DataTable({
               type="search"
             />
           </div>
+        )}
+        {hasFilterDefs ? (
+          <FilterControl defs={filterDefs} values={filterValues || {}} onChange={onFilterChange} />
+        ) : (
+          filters && <div className="flex flex-wrap items-center gap-2">{filters}</div>
+        )}
+        {toolbarActions && (
+          <div className="flex items-center gap-2 sm:ml-auto">{toolbarActions}</div>
         )}
       </div>
 
@@ -533,7 +602,13 @@ function DataTable({
                     );
                   }
 
-                  const isSortable = col.sortable && col.key !== 'actions';
+                  // Sortable by default: a column header that looks
+                  // clickable everywhere except where someone forgot the flag
+                  // is worse than one that always works. Action and selection
+                  // columns have nothing to sort; anything else opts out with
+                  // `sortable: false`.
+                  const isSortable =
+                    col.sortable !== false && col.key !== 'actions' && col.key !== '__select__';
                   const isSorted = sortKey === col.key;
 
                   // Sortable headers must be keyboard-operable (Task 15R-B):

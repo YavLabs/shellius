@@ -51,7 +51,13 @@ import { listSessions } from '@/services/sessionService';
 import { relativeTime, formatDateTime } from '@/utils/time';
 import Skeleton from '@/components/ui/Skeleton';
 import MobilePageHeader from '@/components/mobile/MobilePageHeader';
+import { fromState } from '@/hooks/useBackTarget';
+import { getPostureSummary } from '@/services/postureService';
+import BulkInstallModal from '@/components/servers/BulkInstallModal';
+import CustomerPostureWidget from '@/components/posture/CustomerPostureWidget';
+import { useBreadcrumbs } from '@/context/BreadcrumbContext';
 import useIsMobile from '@/hooks/useIsMobile';
+import SectionHeading from '@/components/common/SectionHeading';
 import { useAuth } from '@/context/AuthContext';
 import { can } from '@/lib/permissions';
 import { ENVIRONMENT_LABELS } from '@/lib/labels';
@@ -158,6 +164,7 @@ const ENV_DOT_COLORS = {
 // Main page
 // ---------------------------------------------------------------------------
 
+
 function CustomerDetail() {
   const { id } = useParams();
   const navigate = useNavigate();
@@ -180,6 +187,7 @@ function CustomerDetail() {
 
   // server table filters
   const [envFilter, setEnvFilter] = useState('');
+  const [posture, setPosture] = useState(null);
 
   const loadData = useCallback(async () => {
     setLoading(true);
@@ -253,13 +261,20 @@ function CustomerDetail() {
     return dates.length ? Math.max(...dates) : null;
   }, [servers]);
 
-  // Env breakdown string — "prod 3 · staging 2 · dev 5"
-  const envSummary = useMemo(() => {
-    const parts = ENVIRONMENTS.filter((e) => (byEnv[e] || 0) > 0).map(
-      (e) => `${e} ${byEnv[e]}`
-    );
-    return parts.join(' · ') || 'No servers';
-  }, [byEnv]);
+  useBreadcrumbs([
+    { label: 'Customers', to: '/customers' },
+    customer ? { label: customer.name } : null,
+  ]);
+
+  const canViewPosture = can(user, 'posture.read');
+  const canOnboard = can(user, 'servers.onboard');
+  const [bulkInstallOpen, setBulkInstallOpen] = useState(false);
+  useEffect(() => {
+    if (!canViewPosture || !id) return;
+    // Best-effort: this page is about the customer, and posture is one panel
+    // on it — a posture outage should not take the page with it.
+    getPostureSummary({ customerId: id }).then(setPosture).catch(() => setPosture(null));
+  }, [id, canViewPosture]);
 
   // Filtered servers for table
   const filteredServers = useMemo(() => {
@@ -282,7 +297,7 @@ function CustomerDetail() {
         const showHost = r.displayName && r.hostname && r.displayName !== r.hostname;
         return (
           <button
-            onClick={() => navigate(`/servers/${r.id}`)}
+            onClick={() => navigate(`/servers/${r.id}`, { state: fromState(`/customers/${id}`, customer?.name || 'customer') })}
             className="flex items-center gap-2 text-left hover:text-primary"
           >
             <ProtoIcon className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
@@ -375,7 +390,7 @@ function CustomerDetail() {
         {
           label: 'View details',
           icon: Eye,
-          onClick: (r) => navigate(`/servers/${r.id}`),
+          onClick: (r) => navigate(`/servers/${r.id}`, { state: fromState(`/customers/${id}`, customer?.name || 'customer') }),
         },
       ],
     },
@@ -402,7 +417,7 @@ function CustomerDetail() {
   // ---------------------------------------------------------------------------
   if (loading) {
     return (
-      <div className="space-y-6 p-6">
+      <div className="space-y-6 p-6 max-md:p-4">
         <HeroSkeleton />
         {/* table skeleton */}
         <div className="rounded-lg border border-border bg-card">
@@ -437,7 +452,7 @@ function CustomerDetail() {
   // ---------------------------------------------------------------------------
   if (error || !customer) {
     return (
-      <div className="space-y-4 p-6">
+      <div className="space-y-4 p-6 max-md:p-4">
         <Link
           to="/customers"
           className="inline-flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground"
@@ -463,7 +478,7 @@ function CustomerDetail() {
   // Main render
   // ---------------------------------------------------------------------------
   return (
-    <div className="space-y-6 p-6">
+    <div className="space-y-6 p-6 max-md:p-4">
 
       {/* ---- ZONE 1: HERO ---- */}
 
@@ -499,23 +514,19 @@ function CustomerDetail() {
             <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg border border-border bg-card">
               <Building2 className="h-5 w-5 text-primary" />
             </div>
-            <div>
-              <h1 className="text-2xl font-bold tracking-tight text-foreground">
+            <div className="min-w-0">
+              <h1 className="truncate text-2xl font-bold tracking-tight text-foreground">
                 {customer.name}
               </h1>
-              <p className="text-sm text-muted-foreground">
-                <span className="font-mono">{customer.slug}</span>
-                {envSummary && envSummary !== 'No servers' && (
-                  <span className="ml-2 text-muted-foreground/60">&mdash; {envSummary}</span>
-                )}
-              </p>
+              {/* The slug and the per-environment counts both have a home
+                  further down the page — the slug in Details, the counts in
+                  their own tiles. Repeating them here made the header the
+                  densest thing on a page whose job is to orient you. */}
+              {customer.description && (
+                <p className="truncate text-sm text-muted-foreground">{customer.description}</p>
+              )}
             </div>
           </div>
-          {customer.description && (
-            <p className="max-w-2xl text-sm text-muted-foreground pl-[3.25rem]">
-              {customer.description}
-            </p>
-          )}
         </div>
 
         {/* Action group */}
@@ -560,7 +571,9 @@ function CustomerDetail() {
       </>
       )}
 
-      {/* Stat tiles */}
+      {/* ---- ZONE 1a: AT A GLANCE ---- */}
+      <section className="space-y-3">
+        <SectionHeading>At a glance</SectionHeading>
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
         <StatTile
           icon={Server}
@@ -592,51 +605,54 @@ function CustomerDetail() {
           iconClass="bg-muted-foreground/10 text-muted-foreground"
         />
       </div>
+      </section>
 
-      {/* ---- ZONE 2: TWO-COLUMN MAIN CONTENT ---- */}
-      <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
+      {/* ---- ZONE 1b: POSTURE ---- */}
+      {canViewPosture && posture && (
+        <CustomerPostureWidget
+          customerId={id}
+          posture={posture}
+          canOnboard={canOnboard && servers.length > 0}
+          onInstall={() => setBulkInstallOpen(true)}
+        />
+      )}
 
-        {/* LEFT: servers table (2/3) */}
-        <div className="lg:col-span-2">
-          {/* Mobile: the cards sit directly on the page (no card-in-card). */}
-          <div className="md:overflow-hidden md:rounded-lg md:border md:border-border md:bg-card">
-            <div className="flex items-center justify-between pb-3 md:border-b md:border-border md:px-5 md:py-3">
-              <h3 className="text-sm font-semibold text-foreground">
-                Servers
-                <span className="ml-2 text-muted-foreground font-normal">
-                  ({filteredServers.length}{envFilter ? ` of ${servers.length}` : ''})
-                </span>
-              </h3>
-              {canAddServer && (
-                <Button size="sm" variant="outline" onClick={() => setAddServerOpen(true)}>
-                  <Plus className="mr-1.5 h-3.5 w-3.5" />
-                  Add server
-                </Button>
-              )}
-            </div>
-            {/* Padding around the DataTable so the inner content (search,
-                filters, rows, pagination) never butts up against the card
-                borders. */}
-            <div className="md:p-4">
-              <DataTable
-                columns={serverColumns}
-                data={filteredServers}
-                emptyMessage={
-                  envFilter
-                    ? `No ${envFilter} servers for this customer.`
-                    : 'No servers yet. Add one to get started.'
-                }
-                searchPlaceholder="Search hostname or IP..."
-                filters={filterSlot}
-                onRowClick={(r) => navigate(`/servers/${r.id}`)}
-                mobile={{ accent: (r) => envAccent(r.environment) }}
-              />
-            </div>
-          </div>
-        </div>
+      {/* ---- ZONE 2: SERVERS (full width) ---- */}
+      {/* Not in a card: the grid already has a border, a header row and its
+          own pagination, so wrapping it in another bordered box was a box
+          inside a box that only narrowed the table. */}
+      <section className="space-y-3">
+        <SectionHeading
+          title="Servers"
+          count={`${filteredServers.length}${envFilter ? ` of ${servers.length}` : ''}`}
+          action={
+            canAddServer ? (
+              <Button size="sm" variant="outline" onClick={() => setAddServerOpen(true)}>
+                <Plus className="mr-1.5 h-3.5 w-3.5" />
+                Add server
+              </Button>
+            ) : null
+          }
+        />
+        <DataTable
+          columns={serverColumns}
+          data={filteredServers}
+          emptyMessage={
+            envFilter
+              ? `No ${envFilter} servers for this customer.`
+              : 'No servers yet. Add one to get started.'
+          }
+          searchPlaceholder="Search hostname or IP..."
+          filters={filterSlot}
+          onRowClick={(r) => navigate(`/servers/${r.id}`, { state: fromState(`/customers/${id}`, customer?.name || 'customer') })}
+          mobile={{ accent: (r) => envAccent(r.environment) }}
+        />
+      </section>
 
-        {/* RIGHT: info sidebar (1/3) */}
-        <div className="flex flex-col gap-5">
+      {/* ---- ZONE 3: DETAILS ---- */}
+      <section className="space-y-3">
+        <SectionHeading>Details</SectionHeading>
+        <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
 
           {/* Customer Info card */}
           <SectionCard title="Customer info">
@@ -772,9 +788,8 @@ function CustomerDetail() {
               )}
             </div>
           </SectionCard>
-
         </div>
-      </div>
+      </section>
 
       {/* ---- MODALS ---- */}
 
@@ -805,6 +820,16 @@ function CustomerDetail() {
         onClose={() => setConfirmDelete(false)}
         onDeleted={() => navigate('/customers')}
       />
+
+      {canOnboard && (
+        <BulkInstallModal
+          open={bulkInstallOpen}
+          // Scoped to this customer's hosts, so "install collectors" from a
+          // customer page never quietly reaches the rest of the fleet.
+          serverIds={servers.map((sv) => sv.id)}
+          onClose={() => setBulkInstallOpen(false)}
+        />
+      )}
     </div>
   );
 }

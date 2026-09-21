@@ -1,0 +1,33 @@
+# Managed by Shellius bootstrap — DO NOT EDIT MANUALLY
+#
+# OPTIONAL container-state grant for the posture collector. Installed only
+# when the bootstrap is run with --with-container-scan, and absent by
+# default, because it is a real (if narrow) privilege increase over the base
+# grant in shellius-posture.sudoers.
+#
+# Why it exists: `ss` only shows LISTENING sockets, so a stopped container is
+# invisible to the collector — while its published port and its firewall
+# rule both survive and re-open the moment it starts. Without this, a stopped
+# container behind an open ufw rule reports as "a rule with nothing behind
+# it" instead of "a service one `docker start` away from being reachable".
+#
+# What is granted, and what deliberately is NOT:
+#
+#   ps -a --format <fixed>   id, name, image, status and ports. Read-only,
+#                            and the format string is FIXED here — the
+#                            collector cannot ask for other fields.
+#   inspect --format <fixed> ONLY .HostConfig.PortBindings, so a stopped
+#                            container's published ports are recoverable.
+#                            The fixed format is what keeps this from being
+#                            a way to read Config.Env, which routinely holds
+#                            database passwords and API keys.
+#
+#   NOT granted: the docker group (root-equivalent), /var/run/docker.sock,
+#   run, exec, cp, logs, or `inspect` with a caller-chosen format.
+#
+# The trailing wildcard on the inspect lines is the container id, which the
+# collector obtained from its own `ps` output on this same host.
+shellius-posture ALL=(root) NOPASSWD: /usr/bin/docker ps -a --format {{.ID}}|{{.Names}}|{{.Image}}|{{.Status}}|{{.Ports}}, /bin/docker ps -a --format {{.ID}}|{{.Names}}|{{.Image}}|{{.Status}}|{{.Ports}}
+shellius-posture ALL=(root) NOPASSWD: /usr/bin/docker inspect --format {{json\ .HostConfig.PortBindings}} *, /bin/docker inspect --format {{json\ .HostConfig.PortBindings}} *
+shellius-posture ALL=(root) NOPASSWD: /usr/bin/podman ps -a --format {{.ID}}|{{.Names}}|{{.Image}}|{{.Status}}|{{.Ports}}, /bin/podman ps -a --format {{.ID}}|{{.Names}}|{{.Image}}|{{.Status}}|{{.Ports}}
+shellius-posture ALL=(root) NOPASSWD: /usr/bin/podman inspect --format {{json\ .HostConfig.PortBindings}} *, /bin/podman inspect --format {{json\ .HostConfig.PortBindings}} *

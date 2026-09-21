@@ -8,6 +8,7 @@ import {
   AlertTriangle,
   Download,
   RotateCcw,
+  KeyRound,
 } from 'lucide-react';
 import PageHeader from '@/components/common/PageHeader';
 import { Button } from '@/components/ui/button';
@@ -186,6 +187,30 @@ function BulkImport() {
               className="hidden"
               onChange={(e) => setFile(e.target.files?.[0] || null)}
             />
+          </div>
+
+          {/* Credentials in an import are one-shot by default: they bootstrap
+              the host and are then destroyed. That is a safe default and a
+              surprising one — it leaves a freshly imported fleet with nothing
+              stored, which is exactly the population a later bulk install has
+              to skip. Say so where the file is chosen, not only in a CSV
+              comment nobody opens. */}
+          <div className="flex items-start gap-2 rounded-lg border border-border bg-muted/30 px-3 py-2.5 text-xs leading-relaxed text-muted-foreground">
+            <KeyRound className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+            <p>
+              Passwords and keys in the file are used once to bootstrap each host and then{' '}
+              <span className="font-medium text-foreground">permanently deleted</span>. To keep them
+              as a reusable identity instead, set{' '}
+              <code className="rounded bg-background px-1 py-0.5 font-mono text-[11px] text-foreground">
+                storeAsIdentity
+              </code>{' '}
+              to <span className="font-mono">true</span> on those rows, and name it with{' '}
+              <code className="rounded bg-background px-1 py-0.5 font-mono text-[11px] text-foreground">
+                identityName
+              </code>{' '}
+              — rows sharing a name share one Keystore entry. See the{' '}
+              <span className="font-medium text-foreground">servers</span> template below.
+            </p>
           </div>
 
           <div className="flex flex-wrap items-center gap-2">

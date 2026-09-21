@@ -12,6 +12,7 @@ import {
   Download,
   Eye,
   Eraser,
+  Radar,
   RefreshCw,
   KeyRound,
   Send,
@@ -27,11 +28,13 @@ import { envAccent } from '@/lib/mobileCard';
 import ServerForm from '@/components/servers/ServerForm';
 import BootstrapModal from '@/components/servers/BootstrapModal';
 import BootstrapWizard from '@/components/servers/BootstrapWizard';
+import ExportDialog from '@/components/posture/ExportDialog';
+import { shouldPromptBootstrap } from '@/lib/bootstrapEligibility';
 import ProvisionModal from '@/components/servers/ProvisionModal';
 import UninstallHostModal from '@/components/servers/UninstallHostModal';
 import QuickConnectButton from '@/components/servers/QuickConnectButton';
-import QuickConnectHeaderButton from '@/components/quickConnect/QuickConnectButton';
 import DeployWizardModal from '@/components/keystore/DeployWizardModal';
+import BulkInstallModal from '@/components/servers/BulkInstallModal';
 import PageHeader from '@/components/common/PageHeader';
 import { Button } from '@/components/ui/button';
 import SearchableSelect from '@/components/ui/SearchableSelect';
@@ -60,7 +63,8 @@ function Servers() {
   const canOnboard = can(user, 'servers.onboard');
   const canDelete = can(user, 'servers.delete');
   const canDeployKeys = can(user, 'keystore.deploy');
-  const canBulk = canEdit || can(user, 'servers.change_environment') || canDeployKeys;
+  const canExportPosture = can(user, 'posture.export');
+  const canBulk = canEdit || can(user, 'servers.change_environment') || canDeployKeys || canExportPosture;
 
   const [servers, setServers] = useState([]);
   const [total, setTotal] = useState(0);
@@ -90,11 +94,16 @@ function Servers() {
   // ProvisionModal (automatic) — the same two modals as before, so the list
   // and the detail page can never drift into offering different installs.
   const [wizardServer, setWizardServer] = useState(null);
+  // Bulk posture export for the checked servers. Dataset is chosen by which
+  // bulk button was pressed; the dialog handles format, columns and whether a
+  // multi-server export comes back as one file or a ZIP per host.
+  const [exportDataset, setExportDataset] = useState(null);
   const [provisionServerTarget, setProvisionServerTarget] = useState(null);
   const [installScope, setInstallScope] = useState('full');
   const [bootstrapScope, setBootstrapScope] = useState('full');
   const [uninstallServer, setUninstallServer] = useState(null);
   const [deployWizardOpen, setDeployWizardOpen] = useState(false);
+  const [bulkInstallOpen, setBulkInstallOpen] = useState(false);
   const [newServerCustomerId, setNewServerCustomerId] = useState('');
   const [searchParams, setSearchParams] = useSearchParams();
 
@@ -166,8 +175,12 @@ function Servers() {
     setFormOpen(false);
     setEditing(null);
     fetch();
-    if (created?.id) {
-      setBootstrapServer(created);
+    // Open the install wizard for a host that actually needs it. This used to
+    // jump straight to the manual one-liner with no eligibility check at all,
+    // so a Windows or RDP-only host — which can never run the agent — was
+    // handed a script it could not use.
+    if (created?.id && shouldPromptBootstrap(created, { canOnboard })) {
+      setWizardServer(created);
     }
   };
 
@@ -222,47 +235,43 @@ function Servers() {
   };
   const bulkFieldLabel = BULK_FIELDS.find((f) => f.value === bulkField)?.label || '';
 
-  const filterSlot = (
-    <>
-      <SearchableSelect
-        className="w-[160px]"
-        value={environment}
-        onChange={(v) => { setEnvironment(v); setPage(1); }}
-        options={[
-          { value: '', label: 'All environments' },
-          ...ENVIRONMENTS.map((e) => ({ value: e, label: ENVIRONMENT_LABELS[e] || e })),
-        ]}
-        placeholder="All environments"
-        searchable={false}
-        clearable={false}
-      />
-      <SearchableSelect
-        className="w-[150px]"
-        value={healthStatus}
-        onChange={(v) => { setHealthStatus(v); setPage(1); }}
-        options={[
-          { value: '', label: 'All health' },
-          ...HEALTH_STATUSES.map((h) => ({ value: h, label: HEALTH_STATUS_LABELS[h] || h })),
-        ]}
-        placeholder="All health"
-        searchable={false}
-        clearable={false}
-      />
-      <SearchableSelect
-        className="w-[180px]"
-        value={customerFilter}
-        onChange={(v) => { setCustomerFilter(v); setPage(1); }}
-        options={[
-          { value: '', label: 'All customers' },
-          ...customers.map((c) => ({ value: c.id, label: c.name })),
-        ]}
-        placeholder="All customers"
-        searchable={true}
-        clearable={false}
-        emptyMessage={isScoped ? 'No customers in your assigned scope' : 'No matches'}
-      />
-    </>
-  );
+  const filterDefs = [
+    {
+      key: 'environment',
+      label: 'Environment',
+      placeholder: 'All environments',
+      options: [
+        { value: '', label: 'All environments' },
+        ...ENVIRONMENTS.map((e) => ({ value: e, label: ENVIRONMENT_LABELS[e] || e })),
+      ],
+    },
+    {
+      key: 'healthStatus',
+      label: 'Health',
+      placeholder: 'All health',
+      options: [
+        { value: '', label: 'All health' },
+        ...HEALTH_STATUSES.map((h) => ({ value: h, label: HEALTH_STATUS_LABELS[h] || h })),
+      ],
+    },
+    {
+      key: 'customerId',
+      label: 'Customer',
+      placeholder: 'All customers',
+      searchable: true,
+      options: [
+        { value: '', label: 'All customers' },
+        ...customers.map((c) => ({ value: c.id, label: c.name })),
+      ],
+    },
+  ];
+  const filterValues = { environment, healthStatus, customerId: customerFilter };
+  const applyFilters = (next) => {
+    setEnvironment(next.environment ?? '');
+    setHealthStatus(next.healthStatus ?? '');
+    setCustomerFilter(next.customerId ?? '');
+    setPage(1);
+  };
 
   const bulkActionsSlot =
     selected.length > 0 ? (
@@ -311,10 +320,25 @@ function Servers() {
               Apply
             </Button>
           )}
+          {canOnboard && (
+            <Button variant="outline" size="sm" onClick={() => setBulkInstallOpen(true)}>
+              <Download className="mr-1 h-4 w-4" /> Install collector
+            </Button>
+          )}
           {canDeployKeys && (
             <Button variant="outline" size="sm" onClick={() => setDeployWizardOpen(true)}>
               <Send className="mr-1 h-4 w-4" /> Export key to servers
             </Button>
+          )}
+          {canExportPosture && (
+            <>
+              <Button variant="outline" size="sm" onClick={() => setExportDataset('findings')}>
+                <Download className="mr-1 h-4 w-4" /> Findings
+              </Button>
+              <Button variant="outline" size="sm" onClick={() => setExportDataset('listeners')}>
+                <Download className="mr-1 h-4 w-4" /> Listeners
+              </Button>
+            </>
           )}
           <Button
             variant="outline"
@@ -541,9 +565,26 @@ function Servers() {
         subtitle="Manage target servers across customers."
         helpKey="servers"
         actions={[
-          // Quick connect has its own entry in the mobile bottom-nav sheet.
-          { key: 'quick-connect', label: 'Quick connect', desktop: <QuickConnectHeaderButton />, mobile: false },
+          // No Quick connect here. The Topbar already renders the same
+          // component on `md` and up (Topbar.jsx), so this put two identical
+          // buttons on one screen fifty pixels apart, and neither did
+          // anything the other did not. On phones both are the bottom-nav
+          // sheet's entry, so nothing is lost by dropping this one.
           { key: 'refresh', label: 'Refresh', icon: RefreshCw, variant: 'outline', onClick: () => fetch(), disabled: loading, spin: loading },
+          // No selection = the whole fleet in scope. That is the case this
+          // exists for: an inventory that predates posture, where installing
+          // one host at a time means it never happens.
+          {
+            key: 'bulk-install',
+            label: 'Install collectors',
+            icon: Radar,
+            variant: 'outline',
+            hidden: !canOnboard,
+            onClick: () => {
+              setSelected([]);
+              setBulkInstallOpen(true);
+            },
+          },
           {
             key: 'add',
             label: 'Add Server',
@@ -575,8 +616,9 @@ function Servers() {
         }
         searchPlaceholder="Search name, hostname or IP..."
         onSearchChange={handleSearchChange}
-        filters={filterSlot}
-        onResetFilters={() => { setEnvironment(''); setHealthStatus(''); setCustomerFilter(''); setPage(1); }}
+        filterDefs={filterDefs}
+        filterValues={filterValues}
+        onFilterChange={applyFilters}
         selectable={canBulk}
         selectedIds={selected}
         onSelectionChange={setSelected}
@@ -613,6 +655,15 @@ function Servers() {
           }}
         />
       </Modal>
+
+      <ExportDialog
+        open={!!exportDataset}
+        dataset={exportDataset || 'findings'}
+        filters={{ serverIds: selected, ...(exportDataset === 'findings' ? { status: 'open' } : {}) }}
+        serverCount={selected.length}
+        scopeLabel={`${selected.length} selected server${selected.length === 1 ? '' : 's'}`}
+        onClose={() => setExportDataset(null)}
+      />
 
       <BootstrapWizard
         open={!!wizardServer}
@@ -653,6 +704,13 @@ function Servers() {
         open={!!uninstallServer}
         server={uninstallServer}
         onClose={() => setUninstallServer(null)}
+      />
+
+      <BulkInstallModal
+        open={bulkInstallOpen}
+        serverIds={selected}
+        onClose={() => setBulkInstallOpen(false)}
+        onDone={fetch}
       />
 
       {deployWizardOpen && (

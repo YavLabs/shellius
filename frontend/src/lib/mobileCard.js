@@ -40,9 +40,7 @@ function hasLabel(col) {
   return true;
 }
 
-/** Normalises a column's `mobile` field to `{ slot, render?, label?, order? }` or null. */
-export function mobileSpec(col) {
-  const m = col?.mobile;
+function normaliseSpec(m) {
   if (m === undefined || m === null) return null;
   if (m === false) return { slot: 'hidden' };
   if (typeof m === 'string') return { slot: CARD_SLOTS.includes(m) ? m : 'hidden' };
@@ -53,10 +51,31 @@ export function mobileSpec(col) {
   return null;
 }
 
+/** Normalises a column's `mobile` field to `{ slot, render?, label?, order? }` or null. */
+export function mobileSpec(col) {
+  const m = col?.mobile;
+  if (Array.isArray(m)) return normaliseSpec(m[0]);
+  return normaliseSpec(m);
+}
+
+/**
+ * Every slot a column feeds. A column may pass an array to fill more than
+ * one — the findings list puts its message in the title and the code + port
+ * on the line beneath, which is one column's worth of information split the
+ * way the desktop cell already splits it. Each entry then needs its own
+ * `key`, since several fields would otherwise share the column's.
+ */
+export function mobileSpecs(col) {
+  const m = col?.mobile;
+  if (Array.isArray(m)) return m.map(normaliseSpec).filter(Boolean);
+  const one = normaliseSpec(m);
+  return one ? [one] : [];
+}
+
 /** A card field: the column plus how to render it on the card. */
 function field(col, spec) {
   return {
-    key: col.key,
+    key: spec?.key ?? col.key,
     label: spec?.label ?? (typeof col.label === 'string' ? col.label : col.key),
     column: col,
     render: (row) => {
@@ -79,16 +98,17 @@ export function resolveCardLayout(columns = [], { maxMeta = DEFAULT_MAX_META } =
   const cols = (columns || []).filter(Boolean);
   const actionsColumn = cols.find(isActionsColumn) || null;
   const dataCols = cols.filter((c) => !isActionsColumn(c) && c.key !== '__select__');
-  const explicit = dataCols.some((c) => mobileSpec(c) !== null);
+  const explicit = dataCols.some((c) => mobileSpecs(c).length > 0);
 
   const layout = { leading: null, title: null, secondary: [], meta: [], extras: [], actionsColumn, explicit };
 
   if (explicit) {
     const bySlot = { leading: [], title: [], secondary: [], meta: [], action: [] };
     dataCols.forEach((col, idx) => {
-      const spec = mobileSpec(col);
-      if (!spec || spec.slot === 'hidden') return;
-      bySlot[spec.slot].push({ order: spec.order ?? idx, f: field(col, spec) });
+      for (const spec of mobileSpecs(col)) {
+        if (spec.slot === 'hidden') continue;
+        bySlot[spec.slot].push({ order: spec.order ?? idx, f: field(col, spec) });
+      }
     });
     const pick = (slot) => bySlot[slot].sort(byOrder).map((x) => x.f);
     layout.leading = pick('leading')[0] || null;
