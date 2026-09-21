@@ -65,7 +65,12 @@ const MUTABLE_FIELDS = [
 
 const CUSTOMER_SELECT = { select: { id: true, name: true, slug: true } };
 const CREDENTIAL_SELECT = { select: { id: true, name: true, username: true, authType: true } };
-const SERVER_INCLUDE = { customer: CUSTOMER_SELECT, credential: CREDENTIAL_SELECT };
+// The saved sudo password's identity — name only; its secret never leaves the Keystore.
+const SERVER_INCLUDE = {
+  customer: CUSTOMER_SELECT,
+  credential: CREDENTIAL_SELECT,
+  sudoCredential: { select: { id: true, name: true, username: true } },
+};
 
 function validateIp(ip) {
   if (!ip || typeof ip !== 'string') return false;

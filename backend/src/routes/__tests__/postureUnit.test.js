@@ -113,3 +113,42 @@ describe('collector privilege failure is reported in sudo’s own words', () => 
     expect(json.collectorOk).toBe(false);
   });
 });
+
+/**
+ * The sudoers drop-ins must parse under EVERY sudo the fleet runs — classic
+ * sudo and sudo-rs (the default from Ubuntu 25.10). Bootstrap runs
+ * `visudo -c` and deletes a file that fails it, so one unsupported line
+ * (`Defaults:… !requiretty` is rejected by sudo-rs) silently removes every
+ * grant in it and every host goes degraded. Validated with whichever visudo
+ * this machine has; skipped when there is none.
+ */
+describe('sudoers drop-ins', () => {
+  const visudo = ['/usr/sbin/visudo', '/sbin/visudo', '/usr/bin/visudo'].find((p) => {
+    try {
+      readFileSync(p);
+      return true;
+    } catch {
+      return false;
+    }
+  });
+  const files = ['shellius-posture.sudoers', 'shellius-posture-containers.sudoers'];
+
+  it.each(files)('%s has no Defaults lines (not portable across sudo implementations)', (f) => {
+    const active = readFileSync(path.join(POSTURE, f), 'utf8')
+      .split('\n')
+      .filter((l) => l.trim() && !l.trim().startsWith('#'));
+    expect(active.some((l) => /^Defaults/.test(l.trim()))).toBe(false);
+  });
+
+  (visudo ? it.each(files) : it.skip.each(files))('%s passes visudo -c', (f) => {
+    const run = spawnSync(visudo, ['-c', '-f', path.join(POSTURE, f)], { encoding: 'utf8' });
+    expect(`${run.stdout}${run.stderr}`).not.toMatch(/invalid|error/i);
+    expect(run.status).toBe(0);
+  });
+
+  it('grants the INPUT and ruleset reads the firewall parser needs', () => {
+    const grant = readFileSync(path.join(POSTURE, 'shellius-posture.sudoers'), 'utf8');
+    expect(grant).toMatch(/\/usr\/sbin\/iptables -S INPUT/);
+    expect(grant).toMatch(/\/usr\/sbin\/nft list ruleset/);
+  });
+});

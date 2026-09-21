@@ -2,6 +2,7 @@ import prisma from '../config/db.js';
 import ApiError from '../utils/ApiError.js';
 import { UNSCOPED, serverScopeWhere } from '../lib/scope.js';
 import * as postureSettingsService from './postureSettingsService.js';
+import { latestSnapshots, classifyCollector } from './postureCollectorState.js';
 
 /**
  * Bulk bootstrap / collector install.
@@ -72,8 +73,11 @@ const SERVER_SELECT = {
   environment: true,
   agentId: true,
   provisionStatus: true,
+  postureRejectedAt: true,
+  postureRejectReason: true,
   customer: { select: { id: true, name: true } },
   credential: { select: { id: true, name: true, username: true } },
+  sudoCredential: { select: { id: true, name: true, username: true } },
 };
 
 /**
@@ -116,20 +120,16 @@ export async function planBulkInstall(
   //
   // Staleness is still reported per host so the caller can offer "reinstall
   // the ones that stopped reporting" deliberately, via `includeDone`.
-  const snapshotAt = new Map();
-  let staleThresholdMs = Infinity;
+  //
+  // The collector's state — degraded, refused, stale — is reported per host
+  // for the same reason: those are the hosts a person most wants to re-run
+  // on, and "already done" must not hide them.
+  const snapshots = new Map();
+  let settings = null;
   if (mode === 'posture' && servers.length > 0) {
-    const settings = await postureSettingsService.getSettings(orgId);
-    // Same threshold as postureQueryService: ~3 collect intervals.
-    staleThresholdMs = 3 * (settings?.collectIntervalSeconds || 300) * 1000;
-    const latest = await prisma.hostSnapshot.groupBy({
-      by: ['serverId'],
-      where: { orgId, serverId: { in: servers.map((s) => s.id) } },
-      _max: { receivedAt: true },
-    });
-    for (const row of latest) {
-      if (row._max.receivedAt) snapshotAt.set(row.serverId, row._max.receivedAt);
-    }
+    settings = await postureSettingsService.getSettings(orgId);
+    const latest = await latestSnapshots(orgId, servers.map((s) => s.id));
+    for (const [id, snap] of latest) snapshots.set(id, snap);
   }
   const now = Date.now();
 
@@ -174,18 +174,29 @@ export async function planBulkInstall(
             : null,
       alreadyDone:
         mode === 'posture'
-          ? snapshotAt.has(server.id)
+          ? snapshots.has(server.id) || !!server.postureRejectedAt
           : server.provisionStatus === 'provisioned' || !!server.agentId,
-      // Installed but silent. Not a skip reason on its own — a hint that this
-      // is a host worth re-running on.
-      stale:
-        mode === 'posture' &&
-        snapshotAt.has(server.id) &&
-        now - new Date(snapshotAt.get(server.id)).getTime() > staleThresholdMs,
-      lastSnapshotAt: snapshotAt.get(server.id) || null,
+      collectorState: mode === 'posture' ? classifyCollector(server, snapshots.get(server.id), settings, now) : null,
+      lastSnapshotAt: snapshots.get(server.id)?.receivedAt || null,
+      degradedReasons: snapshots.get(server.id)?.collectorOk === false ? snapshots.get(server.id).degradedReasons : [],
+      rejection: server.postureRejectedAt ? { at: server.postureRejectedAt, reason: server.postureRejectReason } : null,
+      // A sudo password saved for this host (Keystore). Only matters for a
+      // certificate install as a non-root user, which has no password of its
+      // own to answer sudo with.
+      savedSudo: server.sudoCredential ? { id: server.sudoCredential.id, name: server.sudoCredential.name } : null,
     };
-
+    // Installed but silent / degraded / refused. Not skip reasons on their
+    // own — hints that this is a host worth re-running on.
+    entry.stale = entry.collectorState === 'stale';
+    entry.degraded = entry.collectorState === 'degraded';
+    entry.rejected = entry.collectorState === 'rejected';
+    entry.needsReinstall = entry.stale || entry.degraded || entry.rejected;
     const hard = hardSkipReason(server);
+    // Whether a re-run is possible at all, independent of whether this plan
+    // made the host a target — the UI offers "reinstall" on already-done
+    // hosts, and must not offer it where nothing could connect.
+    entry.installable = !hard && !!entry.credentialSource;
+
     if (hard) {
       skipped.push({ ...entry, reason: hard, message: SKIP_REASONS[hard] });
       continue;
@@ -214,6 +225,8 @@ export async function planBulkInstall(
       usingCertificate: targets.filter((t) => t.credentialSource === 'certificate').length,
       usingSuppliedCredentials: targets.filter((t) => t.credentialSource === 'supplied').length,
       staleCollectors: skipped.filter((s) => s.stale).length,
+      degradedCollectors: skipped.filter((s) => s.degraded).length,
+      rejectedCollectors: skipped.filter((s) => s.rejected).length,
     },
   };
 }

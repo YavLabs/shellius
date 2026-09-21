@@ -145,7 +145,7 @@ router.get(
 // ---------------------------------------------------------------------------
 
 const coverageQuerySchema = Joi.object({
-  state: Joi.string().valid('reporting', 'stale', 'not_installed', 'not_applicable'),
+  state: Joi.string().valid('reporting', 'degraded', 'rejected', 'stale', 'not_installed', 'not_applicable'),
   page: Joi.number().integer().min(1).default(1),
   limit: Joi.number().integer().min(1).max(100).default(25),
 });

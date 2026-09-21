@@ -43,13 +43,44 @@ export function credentialSourceLabel(target) {
 const NOT_APPLICABLE = new Set(['windows', 'rdp_only', 'inactive']);
 const INSTALLED = new Set(['collector_installed', 'already_provisioned']);
 
+/** Why an installed host is worth re-running on, in a few words. */
+export function reinstallReason(host) {
+  if (host?.collectorState === 'rejected' || host?.rejected) return 'Reports refused';
+  if (host?.collectorState === 'degraded' || host?.degraded) return 'Degraded';
+  if (host?.collectorState === 'stale' || host?.stale) return 'Stopped reporting';
+  return null;
+}
+
+/**
+ * Every host a person can put in this run: the ready ones, and every
+ * already-done host that could be re-run on. The ids the installer submits
+ * are chosen from these.
+ */
+export function selectableHosts(plan) {
+  const targets = plan?.targets || [];
+  const done = (plan?.skipped || []).filter((s) => INSTALLED.has(s.reason) && s.installable !== false);
+  return [...targets, ...done];
+}
+
+/**
+ * What to tick when the plan opens: everything ready, plus every installed
+ * host that needs a reinstall (degraded, refused, stopped reporting) and
+ * can be reached. Healthy hosts are offered, never pre-ticked.
+ */
+export function defaultSelection(plan) {
+  return selectableHosts(plan)
+    .filter((h) => !INSTALLED.has(h.reason) || h.needsReinstall)
+    .map((h) => h.id);
+}
+
 /**
  * @param {object} plan  the response of POST /api/servers/bulk-install/plan
- * @returns {Array<{key, title, description, tone, rows, actionable}>}
+ * @returns {Array<{key, title, description, tone, rows, selectable}>}
  */
 export function groupPlan(plan) {
   const targets = plan?.targets || [];
   const skipped = plan?.skipped || [];
+  const posture = (plan?.mode || 'posture') === 'posture';
 
   const installed = skipped.filter((s) => INSTALLED.has(s.reason));
 
@@ -59,8 +90,17 @@ export function groupPlan(plan) {
       title: 'Ready to install',
       description: 'Shellius can reach these and knows how to authenticate.',
       tone: 'success',
-      actionable: true,
+      selectable: true,
       rows: targets,
+    },
+    {
+      key: 'needs_reinstall',
+      title: 'Installed, but needs a reinstall',
+      description:
+        'The collector is there, but it is degraded, its reports are being refused, or it went quiet. What Shellius shows for these hosts is incomplete or out of date. Selected by default.',
+      tone: 'warning',
+      selectable: true,
+      rows: installed.filter((s) => s.needsReinstall),
     },
     {
       key: 'needs_credentials',
@@ -68,25 +108,18 @@ export function groupPlan(plan) {
       description:
         'No saved identity, and not bootstrapped — so there is nothing to connect with yet. Supply one identity for the batch on the next step, or store one per host.',
       tone: 'warning',
-      actionable: false,
+      selectable: false,
       rows: skipped.filter((s) => s.reason === 'no_credentials'),
     },
     {
-      key: 'stale',
-      title: 'Installed, but stopped reporting',
-      description:
-        'The collector is there and has gone quiet. Their exposure is unknown, not clean. Turn on “include hosts already done” to reinstall.',
-      tone: 'warning',
-      actionable: false,
-      rows: installed.filter((s) => s.stale),
-    },
-    {
       key: 'installed',
-      title: 'Already done',
-      description: 'Nothing to do — these are reporting.',
+      title: posture ? 'Healthy — already reporting' : 'Already bootstrapped',
+      description: posture
+        ? 'Nothing needs doing. Tick any you want to reinstall anyway — to update the collector, or after changing something on the host.'
+        : 'Nothing needs doing. Tick any you want to run the installer on again.',
       tone: 'success',
-      actionable: false,
-      rows: installed.filter((s) => !s.stale),
+      selectable: true,
+      rows: installed.filter((s) => !s.needsReinstall),
     },
     {
       key: 'not_applicable',
@@ -94,7 +127,7 @@ export function groupPlan(plan) {
       description:
         'Windows, RDP-only and inactive hosts. This is a correct end state, not a gap — they are left out of the coverage count rather than counted as missing.',
       tone: 'neutral',
-      actionable: false,
+      selectable: false,
       rows: skipped.filter((s) => NOT_APPLICABLE.has(s.reason)),
     },
   ];

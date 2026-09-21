@@ -1,6 +1,10 @@
 import { useCallback, useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { AlertTriangle, Check, Cpu, Database, Download, Gauge, HardDrive, Info, Radar, ShieldAlert, ShieldCheck, ShieldOff, Volume1, VolumeX, Wifi } from 'lucide-react';
+import { ArrowUpCircle, Check, Cpu, Database, Download, Gauge, HardDrive, Info, Radar, ShieldAlert, ShieldCheck, Volume1, VolumeX, Wifi } from 'lucide-react';
+import CollectorHealthBanner from '@/components/posture/CollectorHealthBanner';
+import SudoPasswordRow from '@/components/posture/SudoPasswordRow';
+import { collectorStateOf, isOlderVersion } from '@/lib/collectorHealth';
+import { groupListeners, bindNote } from '@/lib/listenerGroups';
 import DataTable from '@/components/shared/DataTable';
 import { PostureTile, PostureTileGrid } from '@/components/posture/PostureTiles';
 import { severityAccent } from '@/lib/mobileCard';
@@ -322,9 +326,24 @@ function ServerPostureTab({
 
   const collector = data?.collector;
   const snapshot = data?.snapshot;
+  const collectorState = collectorStateOf(collector, snapshot);
+  const outdated = !!collector?.installed && isOlderVersion(collector.version, collector.latestVersion);
 
   // Three distinct empty states (spec §9.14) — never a blank "no findings"
   // when the real story is "nothing has ever reported".
+  // A host whose every snapshot is refused has sent something, so it is not
+  // "not installed" — say what is actually happening, and how to fix it.
+  if (collectorState === 'rejected' && !snapshot) {
+    return (
+      <CollectorHealthBanner
+        state={collectorState}
+        collector={collector}
+        snapshot={snapshot}
+        onReinstall={canBootstrap && onBootstrap ? () => onBootstrap('posture') : undefined}
+      />
+    );
+  }
+
   if (!collector?.installed) {
     // Overview shows the shape of what posture would add, behind a blur.
     // The findings and ports tabs keep the plain empty state: there is no
@@ -383,7 +402,9 @@ function ServerPostureTab({
     );
   }
 
-  const listeners = data.listeners || [];
+  // One row per socket-as-a-person-sees-it: the IPv4 and IPv6 halves of a
+  // dual-stack listener are one row with both binds, not two identical rows.
+  const listeners = groupListeners(data.listeners || []);
   // Every finding, resolved included — the sections below need history too.
   const allFindings = data.findings || [];
   const findings = allFindings.filter((f) => f.status !== 'resolved');
@@ -638,7 +659,18 @@ function ServerPostureTab({
       label: 'Bind',
       hideBelow: 'md',
       mobile: { slot: 'meta', order: 2, showLabel: true, render: (r) => (r.bind ? <span className="font-mono">{r.bind}</span> : null) },
-      render: (r) => <span className="font-mono text-xs text-muted-foreground">{r.bind}</span>,
+      render: (r) => {
+        if (!r.binds?.length) return <span className="font-mono text-xs text-muted-foreground">{r.bind || '-'}</span>;
+        const note = bindNote(r.binds);
+        return (
+          <div className="space-y-0.5" title={note ? `${r.bind} — ${note}` : r.bind}>
+            {r.binds.map((b) => (
+              <span key={b} className="block font-mono text-xs text-muted-foreground">{b}</span>
+            ))}
+            {r.binds.length > 1 && note && <span className="block text-[10px] text-muted-foreground/80">{note}</span>}
+          </div>
+        );
+      },
     },
     {
       key: 'reachability',
@@ -878,31 +910,15 @@ function ServerPostureTab({
 
   return (
     <div className="space-y-5">
-      {/* Collector / snapshot status — a degraded or stale collector must be
-          visible, never a silent "all clean". */}
-      {collector.stale && (
-        <div className="flex items-start gap-2 rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2.5 text-sm text-amber-800 dark:text-amber-200">
-          <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
-          <div>
-            <p className="font-medium">This host stopped reporting</p>
-            <p className="mt-0.5 text-xs text-amber-700/90 dark:text-amber-300/90">
-              Last snapshot {relativeTime(collector.lastSeenAt)} ({formatDateTime(collector.lastSeenAt)}). Findings below
-              are held at their last known state, not cleared — verify the collector timer / connectivity on the host.
-            </p>
-          </div>
-        </div>
-      )}
-      {snapshot.collectorOk === false && (
-        <div className="flex items-start gap-2 rounded-md border border-destructive/50 bg-destructive/10 px-3 py-2.5 text-sm text-destructive">
-          <ShieldOff className="mt-0.5 h-4 w-4 shrink-0" />
-          <div>
-            <p className="font-medium">Collector degraded</p>
-            <p className="mt-0.5 text-xs opacity-90">
-              {snapshot.degradedReason || 'The collector ran but could not fully inspect this host — treat this report as incomplete, not clean.'}
-            </p>
-          </div>
-        </div>
-      )}
+      {/* Collector / snapshot status — a degraded, refused or stale collector
+          must be visible, explained, and fixable from right here — never a
+          silent "all clean", and never a warning with nothing to click. */}
+      <CollectorHealthBanner
+        state={collectorState}
+        collector={collector}
+        snapshot={snapshot}
+        onReinstall={canBootstrap && onBootstrap ? () => onBootstrap('posture') : undefined}
+      />
 
       {view === 'overview' && (
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
@@ -912,9 +928,11 @@ function ServerPostureTab({
           </div>
           <div className="px-5 py-4">
             <StatRow label="Status">
-              {collector.stale ? (
+              {collectorState === 'rejected' ? (
+                <Badge tone="danger">Reports refused</Badge>
+              ) : collectorState === 'stale' ? (
                 <Badge tone="warning">Stale</Badge>
-              ) : snapshot.collectorOk === false ? (
+              ) : collectorState === 'degraded' ? (
                 <Badge tone="danger">Degraded</Badge>
               ) : (
                 <Badge tone="success" icon={ShieldCheck}>
@@ -922,7 +940,31 @@ function ServerPostureTab({
                 </Badge>
               )}
             </StatRow>
-            <StatRow label="Version">{collector.version || 'Unknown'}</StatRow>
+            <StatRow label="Version">
+              <span className="inline-flex flex-wrap items-center justify-end gap-2">
+                <span>{collector.version || 'Unknown'}</span>
+                {outdated && (
+                  canBootstrap && onBootstrap ? (
+                    <button
+                      type="button"
+                      onClick={() => onBootstrap('posture')}
+                      className="inline-flex items-center gap-1 rounded-full border border-primary/40 bg-primary/10 px-2 py-0.5 text-[11px] font-medium text-primary hover:bg-primary/15 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                      title={`Reinstall the collector to update it to ${collector.latestVersion}`}
+                    >
+                      <ArrowUpCircle className="h-3 w-3" />
+                      Update to {collector.latestVersion}
+                    </button>
+                  ) : (
+                    <span className="text-[11px] text-muted-foreground">{collector.latestVersion} available</span>
+                  )
+                )}
+              </span>
+            </StatRow>
+            <SudoPasswordRow
+              serverId={serverId}
+              install={collector.install}
+              onChanged={onReload}
+            />
             <StatRow label="Last snapshot">
               {collector.lastSeenAt ? `${relativeTime(collector.lastSeenAt)} · ${formatDateTime(collector.lastSeenAt)}` : '-'}
             </StatRow>

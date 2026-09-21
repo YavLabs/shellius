@@ -69,15 +69,44 @@ export function buildInstallCommand({ sshUser, sudoPassword, bootstrapUrl }) {
  * is already dead.
  */
 export function looksLikePasswordPrompt(text) {
-  return /\[sudo\] password for |^Password:/im.test(String(text || ''));
+  // Classic sudo: "[sudo] password for ubuntu:". sudo-rs (Ubuntu 25.10+):
+  // "[sudo: authenticate] Password:".
+  return /\[sudo\] password for |\[sudo: authenticate\] Password:|^Password:/im.test(String(text || ''));
 }
 
 /** `sudo -n` refusing for want of a password, as it says it. */
 export function looksLikeSudoRefusal(text) {
-  return /sudo: a (?:password is required|terminal is required)|sudo: no tty present/i.test(
+  // The second alternative is sudo-rs's wording for the same refusal.
+  return /sudo: a (?:password is required|terminal is required)|sudo: no tty present|interactive authentication is required/i.test(
     String(text || '')
   );
 }
+
+/** sudo rejecting the password it was given ("Sorry, try again."). */
+export function looksLikeWrongSudoPassword(text) {
+  // Classic sudo, then sudo-rs.
+  return /Sorry, try again\.|\d+ incorrect password attempts?|Authentication failed, try again|incorrect authentication attempts?/i.test(
+    String(text || '')
+  );
+}
+
+/**
+ * Remove a secret from a line of installer output.
+ *
+ * The install runs on a pty, and a pty's line discipline echoes whatever is
+ * written to it — including the sudo password written to stdin for
+ * `sudo -S`, which arrives before sudo (or anything else) could turn echo
+ * off. Every line is shown to the operator and may be logged, so it is
+ * scrubbed here, at the one place output leaves this module.
+ */
+export function redactSecret(text, secret) {
+  const s = String(text ?? '');
+  if (!secret) return s;
+  return s.split(secret).join('••••••••');
+}
+
+/** The sudo password given was refused. Distinct from "none was given". */
+export const SUDO_PASSWORD_INCORRECT = 'SUDO_PASSWORD_INCORRECT';
 
 /**
  * The stable code the UI branches on to offer a sudo password box for this
@@ -150,7 +179,7 @@ export async function provisionServer(
   };
 
   const emit = (line) => {
-    if (onOutput) onOutput(line);
+    if (onOutput) onOutput(redactSecret(line, sudoPassword));
   };
 
   let client;
@@ -232,7 +261,15 @@ export async function provisionServer(
 
       // Say so now rather than after the timeout.
       const watchForPrompt = (text) => {
-        if (sudoPassword) return;
+        if (sudoPassword) {
+          // A wrong password makes sudo ask again, on a stdin that has
+          // nothing more to give — a hang until the timeout, fifteen minutes
+          // later, for a mistake that is known now.
+          if (looksLikeWrongSudoPassword(text)) {
+            abort('sudo refused the password this run gave it.', SUDO_PASSWORD_INCORRECT);
+          }
+          return;
+        }
         if (looksLikePasswordPrompt(text)) {
           abort(
             'This host needs a sudo password, and this run had none to give.',

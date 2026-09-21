@@ -14,7 +14,10 @@ import {
   buildInstallCommand,
   looksLikePasswordPrompt,
   looksLikeSudoRefusal,
+  looksLikeWrongSudoPassword,
+  redactSecret,
   SUDO_PASSWORD_REQUIRED,
+  SUDO_PASSWORD_INCORRECT,
 } from '../provisionService.js';
 
 const URL = 'https://shellius.example/api/bootstrap/install.sh?token=abc';
@@ -44,6 +47,9 @@ describe('looksLikePasswordPrompt', () => {
   it('recognises the prompt that hung the install', () => {
     expect(looksLikePasswordPrompt('[sudo] password for ithadmin: ')).toBe(true);
   });
+  it('recognises sudo-rs\'s prompt', () => {
+    expect(looksLikePasswordPrompt('[sudo: authenticate] Password: ')).toBe(true);
+  });
   it('recognises a bare Password: prompt at a line start', () => {
     expect(looksLikePasswordPrompt('Installing…\nPassword:')).toBe(true);
   });
@@ -60,6 +66,7 @@ describe('looksLikeSudoRefusal', () => {
     'sudo: a password is required',
     'sudo: a terminal is required to read the password; either use the -S option',
     'sudo: no tty present and no askpass program specified',
+    'sudo-rs: interactive authentication is required',
   ])('recognises %s', (line) => {
     expect(looksLikeSudoRefusal(line)).toBe(true);
   });
@@ -72,4 +79,34 @@ describe('looksLikeSudoRefusal', () => {
 
 it('exposes a stable code the UI branches on', () => {
   expect(SUDO_PASSWORD_REQUIRED).toBe('SUDO_PASSWORD_REQUIRED');
+});
+
+describe('sudo password handling on the pty', () => {
+  it('redacts the sudo password wherever the pty echoes it back', () => {
+    expect(redactSecret('hunter2\r', 'hunter2')).toBe('••••••••\r');
+    expect(redactSecret('[sudo] password for ubuntu: hunter2', 'hunter2')).toBe('[sudo] password for ubuntu: ••••••••');
+    expect(redactSecret('nothing to hide', 'hunter2')).toBe('nothing to hide');
+    expect(redactSecret('no secret given', '')).toBe('no secret given');
+  });
+
+  it.each([
+    'Sorry, try again.',
+    'sudo: 1 incorrect password attempt',
+    'sudo: 3 incorrect password attempts',
+    // sudo-rs, the default sudo from Ubuntu 25.10
+    'sudo-rs: Authentication failed, try again.',
+    'sudo-rs: Incorrect authentication attempt',
+    'sudo-rs: maximum 3 incorrect authentication attempts',
+  ])('recognises a refused password: %s', (line) => {
+    expect(looksLikeWrongSudoPassword(line)).toBe(true);
+  });
+
+  it('does not mistake a missing password for a wrong one', () => {
+    expect(looksLikeWrongSudoPassword('sudo: a password is required')).toBe(false);
+  });
+
+  it('has a code distinct from "none given"', () => {
+    expect(SUDO_PASSWORD_INCORRECT).toBe('SUDO_PASSWORD_INCORRECT');
+    expect(SUDO_PASSWORD_INCORRECT).not.toBe(SUDO_PASSWORD_REQUIRED);
+  });
 });

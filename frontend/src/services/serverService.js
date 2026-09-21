@@ -29,7 +29,13 @@ export const triggerHealthCheck = (id) =>
 export const resetHostKey = (id) =>
   api.post(`/servers/${id}/host-key/reset`).then((r) => r.data?.data?.server ?? r.data?.data);
 
-export async function provisionServer(serverId, { privateKey, passphrase, password, sshUser, sudoPassword, credentialId, useCertificate, mode, onLog }) {
+/**
+ * Rejects with an Error carrying `code` when the backend sent one
+ * (SUDO_PASSWORD_REQUIRED / SUDO_PASSWORD_INCORRECT), so the caller can ask
+ * for exactly what is missing. Resolves with the `done` payload
+ * ({ success, sudoSaved }).
+ */
+export async function provisionServer(serverId, { privateKey, passphrase, password, sshUser, sudoPassword, rememberSudoPassword, credentialId, useCertificate, mode, onLog }) {
   return new Promise((resolve, reject) => {
     // This is a raw fetch (SSE stream), so it bypasses the axios interceptor —
     // attach the bearer token manually.
@@ -41,7 +47,7 @@ export async function provisionServer(serverId, { privateKey, passphrase, passwo
         ...(token ? { Authorization: `Bearer ${token}` } : {}),
       },
       credentials: 'include',
-      body: JSON.stringify({ privateKey, passphrase, password, sshUser, sudoPassword, credentialId, useCertificate, mode }),
+      body: JSON.stringify({ privateKey, passphrase, password, sshUser, sudoPassword, rememberSudoPassword, credentialId, useCertificate, mode }),
     }).then(async (response) => {
       if (!response.ok) {
         const data = await response.json().catch(() => ({}));
@@ -71,14 +77,15 @@ export async function provisionServer(serverId, { privateKey, passphrase, passwo
               if (p.message && onLog) onLog(p.message);
             } catch { /* ignore */ }
           } else if (type === 'done') {
-            resolve();
+            let p = {};
+            try { p = JSON.parse(data || '{}'); } catch { /* ignore */ }
+            resolve(p);
           } else if (type === 'error' && data) {
-            try {
-              const p = JSON.parse(data);
-              reject(new Error(p.message || 'Provisioning failed'));
-            } catch {
-              reject(new Error('Provisioning failed'));
-            }
+            let p = {};
+            try { p = JSON.parse(data); } catch { /* ignore */ }
+            const err = new Error(p.message || 'Provisioning failed');
+            if (p.code) err.code = p.code;
+            reject(err);
           }
         }
       };
@@ -92,6 +99,18 @@ export async function provisionServer(serverId, { privateKey, passphrase, passwo
       })();
     }).catch(reject);
   });
+}
+
+/** Save (or replace) the sudo password Shellius uses for installs on this host. */
+export async function saveSudoPassword(serverId, password) {
+  const { data } = await api.put(`/servers/${serverId}/sudo-password`, { password });
+  return data.data;
+}
+
+/** Forget the saved sudo password (and delete its Keystore identity if nothing else uses it). */
+export async function forgetSudoPassword(serverId) {
+  const { data } = await api.delete(`/servers/${serverId}/sudo-password`);
+  return data.data;
 }
 
 /**

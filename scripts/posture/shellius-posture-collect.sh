@@ -58,7 +58,16 @@
 
 set -uo pipefail
 
-VERSION="1.0.0"
+# 1.1.0: firewall rules sent inside `firewall` (they were beside it and the
+# API dropped them), ownerRef/process/agentVersion sent under the names the
+# API reads, every degraded reason sent, iptables/nftables INPUT parsed,
+# launcher-aware process attribution (pm2 via its God Daemon, secret
+# injectors such as `infisical run`, login-session processes).
+VERSION="1.1.0"
+
+# Where /proc is. Only ever changed by the collector's own test harness,
+# which points it at a fixture tree; systemd runs this with no such variable.
+PROC=${SHELLIUS_POSTURE_PROC:-/proc}
 
 have() { command -v "$1" >/dev/null 2>&1; }
 
@@ -97,7 +106,9 @@ DEGRADED=0
 DEGRADED_REASONS=()
 note_degraded() {
   DEGRADED=1
-  DEGRADED_REASONS+=("$1")
+  # Bounded: the API refuses (never truncates) an over-long reason, and one
+  # refused field costs the whole snapshot.
+  DEGRADED_REASONS+=("${1:0:500}")
 }
 
 TMP=$(mktemp -d) || { echo '{"error":"cannot create temp dir"}' >&2; exit 2; }
@@ -185,28 +196,28 @@ service_identity() {
 
 read_env() {
   local pid=$1 var=$2
-  [[ -r "/proc/$pid/environ" ]] || return 1
-  tr '\0' '\n' < "/proc/$pid/environ" 2>/dev/null | sed -n "s/^${var}=//p" | head -1
+  [[ -r "$PROC/$pid/environ" ]] || return 1
+  tr '\0' '\n' < "$PROC/$pid/environ" 2>/dev/null | sed -n "s/^${var}=//p" | head -1
 }
 
 proc_user() {
   local pid=$1
-  [[ -r "/proc/$pid/status" ]] || { echo "-"; return; }
-  local uid; uid=$(awk '/^Uid:/{print $2; exit}' "/proc/$pid/status" 2>/dev/null)
+  [[ -r "$PROC/$pid/status" ]] || { echo "-"; return; }
+  local uid; uid=$(awk '/^Uid:/{print $2; exit}' "$PROC/$pid/status" 2>/dev/null)
   [[ -n "$uid" ]] || { echo "-"; return; }
   id -nu "$uid" 2>/dev/null || echo "uid:$uid"
 }
 
 proc_cmdline() {
   local pid=$1
-  [[ -r "/proc/$pid/cmdline" ]] || return 1
-  tr '\0' ' ' < "/proc/$pid/cmdline" 2>/dev/null | sed 's/ *$//'
+  [[ -r "$PROC/$pid/cmdline" ]] || return 1
+  tr '\0' ' ' < "$PROC/$pid/cmdline" 2>/dev/null | sed 's/ *$//'
 }
 
 proc_ppid() {
   local pid=$1
-  [[ -r "/proc/$pid/status" ]] || return 1
-  awk '/^PPid:/{print $2; exit}' "/proc/$pid/status" 2>/dev/null
+  [[ -r "$PROC/$pid/status" ]] || return 1
+  awk '/^PPid:/{print $2; exit}' "$PROC/$pid/status" 2>/dev/null
 }
 
 # Where the service was started from — systemd only (docker/pm2 source
@@ -231,9 +242,152 @@ resolve_source() {
       ;;
   esac
   if [[ -z "$src" || "$src" == "-" ]]; then
-    [[ -n "$pid" && "$pid" != "-" ]] && src=$(readlink -f "/proc/$pid/cwd" 2>/dev/null || echo "")
+    [[ -n "$pid" && "$pid" != "-" ]] && src=$(readlink -f "$PROC/$pid/cwd" 2>/dev/null || echo "")
   fi
   printf '%s' "${src:--}"
+}
+
+# ---------------------------------------------------------------------------
+# Process ancestry — who STARTED this listener, not just what it is.
+#
+# The listening pid is rarely the thing a person manages. A pm2 app started
+# as `infisical run -- node server.js` listens as `node`, whose parent is
+# `infisical`, whose parent is pm2's God Daemon; the same app started with
+# `npm start` adds an npm and a sh in between. Looking only at the direct
+# parent (as this collector used to) found pm2 for none of those, and fell
+# through to whatever systemd scope the daemon happened to be in — a login
+# session's `session-12.scope`, reported as if it were a service.
+#
+# So walk up the tree, privilege-free (/proc/<pid>/status and cmdline are
+# world-readable), and classify what is found on the way:
+#   supervisor   pm2's God Daemon, systemd (via cgroup), a container runtime
+#   injector     a launcher that fetches secrets/config and execs the real
+#                program — infisical, doppler, op, dotenv, … — reported so a
+#                person reading the row knows where the environment came from
+#   shim         npm/yarn/sh/nohup/env/… — skipped when naming the app
+# ---------------------------------------------------------------------------
+
+# Launchers that inject secrets or configuration and then run the program.
+is_injector() {
+  case "$1" in
+    infisical|doppler|op|dotenv|dotenvx|envconsul|chamber|aws-vault|sops|teller|berglas|summon|secrethub|envkey-source|akeyless|vals|envwarden|bws|psst)
+      return 0 ;;
+  esac
+  return 1
+}
+
+# Pass-through launchers: they start the program and add nothing a person
+# would call "the app".
+is_shim() {
+  case "$1" in
+    sh|bash|dash|zsh|ash|env|nohup|setsid|timeout|stdbuf|nice|ionice|taskset|chpst|tini|dumb-init|gosu|su-exec|sudo|su|runuser|npm|npx|yarn|pnpm|corepack|node-dev|nodemon|direnv|with-contenv|catatonit|screen|tmux|SCREEN|pm2-runtime|forever|flock|xargs|script)
+      return 0 ;;
+  esac
+  return 1
+}
+
+proc_comm() {
+  local pid=$1
+  [[ -r "$PROC/$pid/comm" ]] || return 1
+  head -c 64 "$PROC/$pid/comm" 2>/dev/null | tr -d '\n'
+}
+
+# "infisical run" rather than "infisical run --env=prod --projectId=… --":
+# the tool and its subcommand, never its arguments (which can carry tokens).
+launcher_label() {
+  local pid=$1 comm=$2 cmd sub
+  cmd=$(proc_cmdline "$pid" 2>/dev/null || echo "")
+  sub=$(awk '{ for (i = 2; i <= NF; i++) if ($i !~ /^-/) { print $i; exit } }' <<<"$cmd")
+  case "$sub" in
+    run|exec|start|serve|dev) printf '%s %s' "$comm" "$sub" ;;
+    *) printf '%s' "$comm" ;;
+  esac
+}
+
+# pid -> "name<TAB>id<TAB>home" for every pm2 app whose pid file is
+# readable. pm2 writes $PM2_HOME/pids/<name>-<id>.pid with the pid of the
+# process it spawned — the app, or the launcher in front of it. Filled once,
+# lazily, from every PM2_HOME in use on the host: the standard ones plus the
+# one each running God Daemon names in its own process title
+# ("PM2 v5.3.1: God Daemon (/srv/app/.pm2)"), which is how a custom
+# PM2_HOME set by an ecosystem file or a secrets injector is found.
+declare -A PM2_PIDMAP=()
+declare -A PM2_HOMES=()
+PM2_INDEXED=0
+index_pm2() {
+  (( PM2_INDEXED == 1 )) && return 0
+  PM2_INDEXED=1
+  local home cmd
+  for home in ${PM2_HOME:+"$PM2_HOME"} /root/.pm2 /home/*/.pm2; do
+    [[ -d "$home" ]] && PM2_HOMES[$home]=1
+  done
+  # One grep over every cmdline, not a fork per process: this runs under a
+  # 20% CPU quota on hosts with thousands of processes.
+  local f
+  while IFS= read -r f; do
+    cmd=$(tr '\0' ' ' < "$f" 2>/dev/null) || continue
+    home=$(sed -n 's/.*God Daemon (\(.*\)).*/\1/p' <<<"$cmd" | sed 's/ *$//')
+    [[ -n "$home" && -d "$home" ]] && PM2_HOMES[$home]=1
+  done < <(grep -las 'God Daemon (' "$PROC"/[0-9]*/cmdline 2>/dev/null)
+  local base name id pid
+  for home in "${!PM2_HOMES[@]}"; do
+    for f in "$home"/pids/*.pid; do
+      [[ -r "$f" ]] || continue
+      pid=$(tr -dc '0-9' < "$f" 2>/dev/null)
+      [[ -n "$pid" ]] || continue
+      base=$(basename "$f" .pid)
+      id=${base##*-}
+      name=${base%-*}
+      [[ "$id" =~ ^[0-9]+$ ]] || { id=""; name=$base; }
+      PM2_PIDMAP[$pid]="${name}"$'\t'"${id}"$'\t'"${home}"
+    done
+  done
+}
+
+# Walk from a pid towards pid 1. Fills ANC_PIDS / ANC_COMMS (self first).
+# Stops at the first supervisor-shaped process or after 16 hops.
+ANC_PIDS=()
+ANC_COMMS=()
+walk_ancestry() {
+  ANC_PIDS=(); ANC_COMMS=()
+  local p=$1 depth=0 c
+  while [[ -n "$p" && "$p" != "0" ]] && (( depth < 16 )); do
+    c=$(proc_comm "$p" 2>/dev/null || echo "?")
+    ANC_PIDS+=("$p"); ANC_COMMS+=("$c")
+    case "$c" in
+      systemd|init|containerd-shim*|conmon|sshd|login|cron|crond|supervisord|runsvdir|s6-svscan) break ;;
+    esac
+    [[ "$p" == "1" ]] && break
+    p=$(proc_ppid "$p" 2>/dev/null || echo "")
+    depth=$((depth + 1))
+  done
+}
+
+# "via infisical run → npm start" for the launchers between the supervisor
+# (exclusive) and the listening process (exclusive), outermost first.
+# $1 = index of the supervisor in ANC_* (or ${#ANC_PIDS[@]} for none).
+launch_path() {
+  local top=$1 i c parts=()
+  for (( i = top - 1; i >= 1; i-- )); do
+    c=${ANC_COMMS[i]}
+    if is_injector "$c"; then
+      parts+=("$(launcher_label "${ANC_PIDS[i]}" "$c")")
+    elif [[ "$c" == npm || "$c" == yarn || "$c" == pnpm ]]; then
+      parts+=("$(launcher_label "${ANC_PIDS[i]}" "$c")")
+    fi
+  done
+  (( ${#parts[@]} == 0 )) && return 0
+  local IFS_SAVE=$IFS out=""
+  for c in "${parts[@]}"; do out+="${out:+ → }$c"; done
+  IFS=$IFS_SAVE
+  printf 'via %s' "$out"
+}
+
+# The listener's own command line, shortened, plus how it was launched.
+describe_proc() {
+  local pid=$1 via=${2:-} cmd
+  cmd=$(proc_cmdline "$pid" 2>/dev/null | cut -c1-120)
+  if [[ -n "$via" ]]; then printf '%s · %s' "${cmd:--}" "$via"; else printf '%s' "${cmd:--}"; fi
 }
 
 # Resolve a pid to owner kind + name + detail + id. Emits:
@@ -256,7 +410,7 @@ resolve_owner() {
   fi
 
   local cg="" cid="" unit=""
-  [[ -r "/proc/$pid/cgroup" ]] && cg=$(cat "/proc/$pid/cgroup" 2>/dev/null)
+  [[ -r "$PROC/$pid/cgroup" ]] && cg=$(cat "$PROC/$pid/cgroup" 2>/dev/null)
 
   if [[ -n "$cg" ]]; then
     cid=$(grep -oE '[0-9a-f]{64}' <<<"$cg" | head -1)
@@ -271,9 +425,9 @@ resolve_owner() {
     unit=$(grep -oE '[^/]+\.(service|scope)' <<<"$cg" | grep -vE '^user@[0-9]+\.service$' | tail -1)
   fi
 
-  # pm2: only resolvable for processes the collector's own user owns
-  # (environ is root/same-uid only). Cross-user pm2 apps fall through to
-  # the God Daemon parent-cmdline check below, which needs no privilege.
+  # pm2, exact: the app's own environment names it. Only readable for the
+  # collector's own uid (environ is owner/root only), so rarely — but when
+  # it is, nothing is more precise.
   local pm_id; pm_id=$(read_env "$pid" "pm_id" 2>/dev/null || echo "")
   if [[ -n "$pm_id" ]]; then
     local pm_name pm_exec pm_home
@@ -285,24 +439,63 @@ resolve_owner() {
     printf 'pm2\t%s\t%s\t%s\n' "${pm_name:-pm_id:$pm_id}" "${pm_exec:--}" "$pm_ref"
     return
   fi
-  local ppid pcmd
-  ppid=$(proc_ppid "$pid" 2>/dev/null || echo "")
-  if [[ -n "$ppid" && "$ppid" != "0" ]]; then
-    pcmd=$(proc_cmdline "$ppid" 2>/dev/null || echo "")
-    if [[ "$pcmd" == *"God Daemon"* || "$pcmd" == *"PM2 v"* ]]; then
-      printf 'pm2\t%s\t%s\t-\n' "${pname:-node}" "$(proc_cmdline "$pid" 2>/dev/null | cut -c1-80)"
+
+  walk_ancestry "$pid"
+  local n=${#ANC_PIDS[@]} i
+
+  # pm2 anywhere above: the God Daemon is the supervisor, and the process
+  # directly below it is what pm2 started (the app, or its launcher).
+  for (( i = 1; i < n; i++ )); do
+    local acmd; acmd=$(proc_cmdline "${ANC_PIDS[i]}" 2>/dev/null || echo "")
+    if [[ "$acmd" == *"God Daemon"* || "$acmd" == "PM2 v"* ]]; then
+      index_pm2
+      local j entry="" app_pid=${ANC_PIDS[i - 1]}
+      for (( j = 0; j < i; j++ )); do
+        entry=${PM2_PIDMAP[${ANC_PIDS[j]}]:-}
+        [[ -n "$entry" ]] && break
+      done
+      local via; via=$(launch_path "$i")
+      if [[ -n "$entry" ]]; then
+        local an aid ahome
+        IFS=$'\t' read -r an aid ahome <<<"$entry"
+        printf 'pm2\t%s\t%s\t%s\n' "$an" "$(describe_proc "$pid" "$via")" "#${aid:-?}@${ahome}"
+      else
+        # pid file not readable (a 0700/0750 home): name the app after what
+        # pm2 was told to run, skipping launchers and shims.
+        local k guess=""
+        for (( k = i - 1; k >= 0; k-- )); do
+          local kc=${ANC_COMMS[k]}
+          is_injector "$kc" && continue
+          is_shim "$kc" && continue
+          guess=$(proc_cmdline "${ANC_PIDS[k]}" 2>/dev/null | awk '{ for (x = 2; x <= NF; x++) if ($x !~ /^-/) { n = split($x, a, "/"); print a[n]; exit } }')
+          [[ -n "$guess" ]] || guess=$kc
+          break
+        done
+        printf 'pm2\t%s\t%s\t-\n' "${guess:-${pname:-app}}" "$(describe_proc "$pid" "$via")"
+      fi
       return
     fi
-  fi
+  done
+
+  local via; via=$(launch_path "$n")
 
   if [[ -n "$unit" && "$unit" != "-.scope" && "$unit" != "init.scope" ]]; then
+    # A login session is not a service. `session-12.scope` is the SSH login
+    # someone started this from — nothing restarts it, and it does not
+    # survive a reboot. Worth saying, and never worth calling a unit.
+    if [[ "$unit" =~ ^session-[0-9a-z]+\.scope$ ]]; then
+      local what="started by hand in a login session (${unit%.scope}) — not supervised, does not survive a reboot"
+      [[ -n "$via" ]] && what="$via; $what"
+      printf 'process\t%s\t%s\t-\n' "${pname:-unknown}" "$(proc_cmdline "$pid" 2>/dev/null | cut -c1-100) · $what"
+      return
+    fi
     local ukind="systemd"
     [[ "$cg" == *"user@"* ]] && ukind="systemd-user"
-    printf '%s\t%s\t%s\t%s\n' "$ukind" "$unit" "$(proc_cmdline "$pid" 2>/dev/null | cut -c1-80)" "$unit"
+    printf '%s\t%s\t%s\t%s\n' "$ukind" "$unit" "$(describe_proc "$pid" "$via")" "$unit"
     return
   fi
 
-  printf '%s\t%s\t%s\t-\n' "process" "${pname:-unknown}" "$(proc_cmdline "$pid" 2>/dev/null | cut -c1-80)"
+  printf '%s\t%s\t%s\t-\n' "process" "${pname:-unknown}" "$(describe_proc "$pid" "$via")"
 }
 
 # ---------------------------------------------------------------------------
@@ -340,6 +533,10 @@ collect_listeners() {
     raw=$(ss -H -tulpn 2>/dev/null) || raw=""
     [[ -n "$raw" ]] && note_degraded "listener owners limited to the collector's own user"
   fi
+
+  # Built here, in the main shell: resolve_owner runs in a subshell per
+  # listener, where a lazily-built index would be rebuilt every time.
+  index_pm2
 
   local netid state rq sq local_addr peer rest
   while read -r netid state rq sq local_addr peer rest; do
@@ -476,18 +673,235 @@ collect_firewall_firewalld() {
   return 0
 }
 
+# ---------------------------------------------------------------------------
+# iptables / nftables INPUT — hosts with neither ufw nor firewalld.
+#
+# These used to be reported as "raw iptables detected but not parsed", which
+# made every such host permanently degraded and every wildcard port's
+# reachability UNKNOWN — including the most common shape of all: a Docker
+# host whose INPUT chain is simply empty with policy ACCEPT, where the true
+# answer ("nothing filters inbound traffic") is both certain and important.
+#
+# The parser is deliberately conservative. It understands the rules that
+# decide whether a NEW inbound connection to a port is accepted — policy,
+# port/source ACCEPT/DROP/REJECT, a catch-all — and skips the ones that
+# cannot: loopback, established/related, ICMP, ban lists (fail2ban,
+# CrowdSec, sshguard), traffic on container/VPN/virtual interfaces. Anything
+# else it cannot evaluate (a jump to a chain it does not know, a negated
+# match, several nftables input chains) marks the result as NOT parsed: the
+# backend then withholds a verdict (UNKNOWN) rather than guessing one.
+# ---------------------------------------------------------------------------
+
+FW_PARSED=0
+
+# Interfaces whose traffic is internal plumbing, not the host's exposure.
+internal_iface() {
+  case "$1" in
+    lo|docker*|br-*|virbr*|veth*|cni*|flannel*|cali*|vxlan*|weave*|kube-*|tun*|tap*|wg*|tailscale*|zt*|lxc*|lxd*|podman*) return 0 ;;
+  esac
+  return 1
+}
+
+# Chains that only ever ban specific sources — safe to step over.
+ban_chain() {
+  case "$1" in
+    f2b-*|fail2ban*|sshguard*|crowdsec*|CROWDSEC*|KUBE-FIREWALL|LIBVIRT_INP|DOCKER-INGRESS) return 0 ;;
+  esac
+  return 1
+}
+
+add_fw_rule() {
+  local pspec=$1 proto=$2 action=$3 from=$4 engine=$5 key="$1|$2|$3|$4"
+  [[ -n "${FW_SEEN[$key]:-}" ]] && return 0
+  FW_SEEN[$key]=1
+  printf '%s\t%s\t%s\t%s\t%s\n' "$pspec" "$proto" "$action" "$from" "$engine" >> "$FWRULES"
+}
+
+# $1 = `iptables -S INPUT` output
+parse_iptables_input() {
+  local raw=$1 policy line partial="" any_rule=0
+  policy=$(grep -m1 -E '^-P INPUT ' <<<"$raw" | awk '{print $3}')
+  case "$policy" in
+    DROP|REJECT) FW_DEFAULT_IN="deny" ;;
+    *)           FW_DEFAULT_IN="allow" ;;
+  esac
+
+  while IFS= read -r line; do
+    [[ "$line" == "-A INPUT "* ]] || continue
+    local target iface proto dports src action
+    target=$(grep -oE -- '-j [A-Za-z0-9_.-]+' <<<"$line" | awk '{print $2}')
+    iface=$(grep -oE -- '(^| )-i [^ ]+' <<<"$line" | awk '{print $2}')
+    if [[ -n "$iface" ]] && internal_iface "$iface"; then continue; fi
+    # Established/related/invalid only — says nothing about a NEW connection.
+    if [[ "$line" =~ --(ctstate|state)\ ([A-Z,]+) ]] && [[ "${BASH_REMATCH[2]}" != *NEW* ]]; then continue; fi
+    proto=$(grep -oE -- '(^| )-p [a-z0-9-]+' <<<"$line" | awk '{print $2}')
+    case "$proto" in icmp|ipv6-icmp|icmpv6) continue ;; esac
+    case "$target" in
+      ACCEPT) action="ALLOW" ;;
+      DROP)   action="DENY" ;;
+      REJECT) action="REJECT" ;;
+      LOG|NFLOG|ULOG|"") continue ;;
+      *)
+        ban_chain "$target" && continue
+        partial="jumps to chain '$target'"
+        continue ;;
+    esac
+    # "! -s 10.0.0.0/8" and friends: the parser does not do negation.
+    if [[ "$line" == *" ! "* ]]; then partial="a negated match"; continue; fi
+
+    dports=$(grep -oE -- '--dports? [0-9:,]+' <<<"$line" | awk '{print $2}')
+    src=$(grep -oE -- '(^| )-s [^ ]+' <<<"$line" | awk '{print $2}')
+    [[ -z "$proto" || "$proto" == "all" ]] && proto="any"
+    local from=${src:-Anywhere}
+    [[ -n "$iface" ]] && from="${from} via ${iface}"
+
+    if [[ -z "$dports" ]]; then
+      if [[ -z "$src" && -z "$iface" && "$proto" == "any" ]]; then
+        # A catch-all: every later rule is unreachable, and this is the
+        # effective default.
+        [[ "$action" == "ALLOW" ]] && FW_DEFAULT_IN="allow" || FW_DEFAULT_IN="deny"
+        break
+      fi
+      dports="1:65535"
+    fi
+    any_rule=1
+    add_fw_rule "$dports" "$proto" "$action" "$from" "iptables"
+  done <<<"$raw"
+
+  FW_ENGINE="iptables"
+  # "Active" means it filters something. An ACCEPT policy with nothing but
+  # ACCEPT rules — the stock Docker host — filters nothing.
+  if [[ "$FW_DEFAULT_IN" == "deny" ]] || grep -qE $'\t(DENY|REJECT)\t' "$FWRULES" 2>/dev/null; then
+    FW_ACTIVE=1
+  fi
+  (( any_rule == 0 )) && [[ "$FW_DEFAULT_IN" == "allow" ]] && FW_ACTIVE=0
+  if [[ -n "$partial" ]]; then
+    FW_PARSED=0
+    note_degraded "iptables INPUT has rules this collector cannot evaluate ($partial) — reachability of ports behind them is not verified"
+  else
+    FW_PARSED=1
+  fi
+}
+
+# `nft list ruleset` → one line per input-hook chain ("C<TAB>table<TAB>
+# chain<TAB>policy") followed by that chain's rules ("R<TAB>rule").
+nft_input_chains() {
+  awk '
+    /^[[:space:]]*table[[:space:]]/ { tbl = $2 " " $3; next }
+    /^[[:space:]]*chain[[:space:]]/ { ch = $2; inchain = 1; isinput = 0; next }
+    inchain && /hook input/ {
+      isinput = 1; pol = "accept"
+      if (match($0, /policy [a-z]+/)) pol = substr($0, RSTART + 7, RLENGTH - 7)
+      print "C\t" tbl "\t" ch "\t" pol; next
+    }
+    inchain && /^[[:space:]]*}/ { inchain = 0; isinput = 0; next }
+    inchain && isinput && NF { sub(/^[[:space:]]+/, ""); print "R\t" $0 }
+  ' <<<"$1"
+}
+
+# $1 = `nft list ruleset` output
+parse_nft_input() {
+  local raw=$1 chains nchains partial="" any_rule=0 kind rest
+  chains=$(nft_input_chains "$raw")
+  nchains=$(grep -c $'^C\t' <<<"$chains")
+  FW_ENGINE="nftables"
+  if (( nchains == 0 )); then
+    # No input hook at all: nothing filters inbound traffic. Certain.
+    FW_DEFAULT_IN="allow"; FW_ACTIVE=0; FW_PARSED=1
+    return 0
+  fi
+  if (( nchains > 1 )); then
+    FW_PARSED=0
+    note_degraded "nftables has $nchains input chains; evaluating their combined verdict is not supported — reachability is not verified"
+    return 0
+  fi
+  local pol; pol=$(grep -m1 $'^C\t' <<<"$chains" | cut -f4)
+  [[ "$pol" == "drop" || "$pol" == "reject" ]] && FW_DEFAULT_IN="deny" || FW_DEFAULT_IN="allow"
+
+  while IFS=$'\t' read -r kind rest; do
+    [[ "$kind" == "R" ]] || continue
+    local r=$rest verdict proto dports src iface action
+    [[ "$r" =~ (iif|iifname)\ \"?([A-Za-z0-9_.*-]+) ]] && iface=${BASH_REMATCH[2]} || iface=""
+    if [[ -n "$iface" ]] && internal_iface "${iface%\*}"; then continue; fi
+    if [[ "$r" =~ ct\ state\ ([a-z,{} ]+) ]] && [[ "${BASH_REMATCH[1]}" != *new* ]]; then continue; fi
+    [[ "$r" == *icmp* ]] && continue
+    if [[ "$r" =~ (jump|goto)\ ([A-Za-z0-9_.-]+) ]]; then
+      ban_chain "${BASH_REMATCH[2]}" && continue
+      partial="jumps to chain '${BASH_REMATCH[2]}'"; continue
+    fi
+    if [[ "$r" == *" != "* ]]; then partial="a negated match"; continue; fi
+    verdict=$(grep -oE '(^| )(accept|drop|reject)( |$)' <<<"$r" | tail -1 | tr -d ' ')
+    case "$verdict" in
+      accept) action="ALLOW" ;;
+      drop)   action="DENY" ;;
+      reject) action="REJECT" ;;
+      *) continue ;;
+    esac
+    proto=$(grep -oE '(tcp|udp) dport' <<<"$r" | head -1 | awk '{print $1}')
+    dports=$(sed -nE 's/.*(tcp|udp) dport (\{[^}]*\}|[0-9-]+).*/\2/p' <<<"$r" | tr -d '{} ' | tr '-' ':')
+    src=$(grep -oE 'ip6? saddr [^ ]+' <<<"$r" | head -1 | awk '{print $3}')
+    [[ -z "$proto" ]] && proto="any"
+    local from=${src:-Anywhere}
+    [[ -n "$iface" ]] && from="${from} via ${iface}"
+    if [[ -z "$dports" ]]; then
+      if [[ -z "$src" && -z "$iface" && "$proto" == "any" ]]; then
+        [[ "$action" == "ALLOW" ]] && FW_DEFAULT_IN="allow" || FW_DEFAULT_IN="deny"
+        break
+      fi
+      dports="1:65535"
+    fi
+    [[ "$dports" =~ ^[0-9:,]+$ ]] || { partial="a port expression it does not read ($dports)"; continue; }
+    any_rule=1
+    add_fw_rule "$dports" "$proto" "$action" "$from" "nftables"
+  done <<<"$chains"
+
+  if [[ "$FW_DEFAULT_IN" == "deny" ]] || grep -qE $'\t(DENY|REJECT)\t' "$FWRULES" 2>/dev/null; then FW_ACTIVE=1; fi
+  (( any_rule == 0 )) && [[ "$FW_DEFAULT_IN" == "allow" ]] && FW_ACTIVE=0
+  if [[ -n "$partial" ]]; then
+    FW_PARSED=0
+    note_degraded "nftables input chain has rules this collector cannot evaluate ($partial) — reachability of ports behind them is not verified"
+  else
+    FW_PARSED=1
+  fi
+}
+
 collect_firewall() {
   # Prefer whichever engine is actually installed; if both are (rare), ufw
   # wins — same precedence as the reference collector.
-  if collect_firewall_ufw; then return; fi
-  if collect_firewall_firewalld; then return; fi
+  if collect_firewall_ufw; then FW_PARSED=1; return; fi
+  if collect_firewall_firewalld; then FW_PARSED=1; return; fi
 
-  if have nft && run_priv nft list ruleset >/dev/null 2>&1; then
-    FW_ENGINE="nftables"
-    note_degraded "nftables detected but not parsed — no usable firewall data (v1 supports ufw/firewalld only)"
-  elif have iptables; then
+  # A native nftables firewall (its own `inet filter` table, say) is not
+  # visible to `iptables -S`, which only reads the iptables-compat tables —
+  # so look at the full ruleset first, and use it when it has an input hook
+  # outside those tables.
+  local nft_raw=""
+  if have nft; then
+    nft_raw=$(run_priv nft list ruleset 2>/dev/null) || nft_raw=""
+  fi
+  local native_input=0
+  if [[ -n "$nft_raw" ]] && nft_input_chains "$nft_raw" | grep -qvE $'^(R\t|C\tip filter\t|C\tip6 filter\t)'; then
+    native_input=1
+  fi
+
+  if (( native_input == 0 )) && have iptables; then
+    local ipt
+    ipt=$(run_priv iptables -S INPUT 2>/dev/null) || ipt=""
+    if [[ -n "$ipt" ]]; then
+      parse_iptables_input "$ipt"
+      return
+    fi
+    note_degraded "iptables present but 'sudo iptables -S INPUT' failed (sudoers grant missing?)$(priv_err)"
     FW_ENGINE="iptables"
-    note_degraded "raw iptables detected but not parsed — no usable firewall data (v1 supports ufw/firewalld only)"
+    return
+  fi
+  if [[ -n "$nft_raw" ]] || (( native_input == 1 )); then
+    parse_nft_input "$nft_raw"
+    return
+  fi
+  if have nft; then
+    FW_ENGINE="nftables"
+    note_degraded "nftables present but 'sudo nft list ruleset' failed (sudoers grant missing?)$(priv_err)"
   fi
 }
 
@@ -536,7 +950,7 @@ fw_verdict() {
 match_container_listen_port() {
   local pid=$1 hexport=$2
   local nf
-  for nf in "/proc/$pid/net/tcp" "/proc/$pid/net/tcp6"; do
+  for nf in "$PROC/$pid/net/tcp" "$PROC/$pid/net/tcp6"; do
     [[ -r "$nf" ]] || continue
     awk -v p=":$hexport" 'NR>1 && $2 ~ (p"$") && $4=="0A" { found=1; exit } END { exit !found }'       "$nf" 2>/dev/null && return 0
   done
@@ -553,8 +967,8 @@ resolve_nat_owner() {
 
   if [[ -n "$hexport" ]]; then
     local pid_path pid cg cid runtime
-    for pid_path in /proc/[0-9]*; do
-      pid=${pid_path#/proc/}
+    for pid_path in "$PROC"/[0-9]*; do
+      pid=${pid_path#"$PROC"/}
       [[ -r "$pid_path/cgroup" ]] || continue
       cg=$(cat "$pid_path/cgroup" 2>/dev/null) || continue
       cid=$(grep -oE '[0-9a-f]{64}' <<<"$cg" | head -1)
@@ -745,10 +1159,10 @@ analyze() {
       docker-proxy) ownerName="docker-proxy" ;;
     esac
 
-    printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+    printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
       "$proto" "$bind" "$port" "${cport:--}" "$class" "$reach" "${svc:--}" \
       "$ownerKind" "$ownerName" "${detail:--}" "${user:--}" "${oid:--}" "${src:--}" \
-      "${pids:--}" "$bypass" "${csrc:-ss}" >> "$ENRICHED"
+      "${pids:--}" "$bypass" "${csrc:-ss}" "${pname:--}" >> "$ENRICHED"
   done
 }
 
@@ -881,7 +1295,7 @@ pm2_running_pid() {
     [[ -r "$f" ]] || continue
     pid=$(cat "$f" 2>/dev/null)
     [[ "$pid" =~ ^[0-9]+$ ]] || continue
-    [[ -d "/proc/$pid" ]] && { printf '%s' "$pid"; return 0; }
+    [[ -d "$PROC/$pid" ]] && { printf '%s' "$pid"; return 0; }
   done
   return 1
 }
@@ -894,7 +1308,9 @@ collect_pm2_services() {
   # resolution below already handles a custom PM2_HOME for RUNNING apps)
   # and what makes this testable against a fixture.
   local home dump owner
-  for home in ${PM2_HOME:+"$PM2_HOME"} /root/.pm2 /home/*/.pm2; do
+  index_pm2
+  # Every home index_pm2 found, including a running God Daemon's custom one.
+  for home in ${PM2_HOME:+"$PM2_HOME"} /root/.pm2 /home/*/.pm2 "${!PM2_HOMES[@]}"; do
     [[ -d "$home" ]] || continue
     [[ -n "${PM2_SEEN[$home]:-}" ]] && continue
     PM2_SEEN[$home]=1
@@ -1141,13 +1557,22 @@ json_esc() {
   printf '%s' "$s"
 }
 
+# The API refuses more than this (and refuses, never truncates, so one host
+# with a thousand sockets would never report at all). Truncate here instead,
+# lowest ports first, and say so.
+MAX_LISTENERS=500
+
 render_json() {
+  local nlisteners; nlisteners=$(wc -l < "$ENRICHED" 2>/dev/null || echo 0)
+  (( nlisteners > MAX_LISTENERS )) && note_degraded "$nlisteners listening sockets; only the first $MAX_LISTENERS (lowest ports) are reported"
   (( CONTAINERS_SEEN > 0 )) && note_degraded "container id could not be resolved to a name/image (no Docker socket access — see docs/posture/posture-spec.md §4); reported as docker:<id> / podman:<id>"
 
   local reasons_json="["
   local first=1 r
+  local nr=0
   for r in "${DEGRADED_REASONS[@]:-}"; do
     [[ -z "$r" ]] && continue
+    nr=$((nr + 1)); (( nr > 20 )) && break
     [[ $first -eq 0 ]] && reasons_json+=","; first=0
     reasons_json+="\"$(json_esc "$r")\""
   done
@@ -1165,21 +1590,32 @@ render_json() {
   else
     printf '"degradedReason":null,'
   fi
-  printf '"firewall":{"engine":"%s","active":%s,"defaultIncoming":"%s"},' \
-    "$FW_ENGINE" "$([[ $FW_ACTIVE -eq 1 ]] && echo true || echo false)" "$FW_DEFAULT_IN"
+  # Rules go INSIDE `firewall` — that is where the API reads them. Up to
+  # 1.0.0 they were a sibling (`firewallRules`) and the API dropped every one.
+  printf '"firewall":{"engine":"%s","active":%s,"defaultIncoming":"%s","parsed":%s,"rules":[' \
+    "$FW_ENGINE" "$([[ $FW_ACTIVE -eq 1 ]] && echo true || echo false)" "$FW_DEFAULT_IN" \
+    "$([[ $FW_PARSED -eq 1 ]] && echo true || echo false)"
+  local first3=1 pspec rproto action from engine
+  while IFS=$'\t' read -r pspec rproto action from engine; do
+    [[ -z "${pspec:-}" ]] && continue
+    [[ $first3 -eq 0 ]] && printf ','; first3=0
+    printf '{"port":"%s","proto":"%s","action":"%s","from":"%s"}' \
+      "$(json_esc "$pspec")" "$(json_esc "$rproto")" "$(json_esc "$action")" "$(json_esc "${from:0:128}")"
+  done < <(head -n 500 "$FWRULES")
+  printf ']},'
 
   printf '"listeners":['
-  local first2=1 proto bind port cport class reach svc ownerKind ownerName detail user oid src pids bypass source
-  while IFS=$'\t' read -r proto bind port cport class reach svc ownerKind ownerName detail user oid src pids bypass source; do
+  local first2=1 proto bind port cport class reach svc ownerKind ownerName detail user oid src pids bypass source pname
+  while IFS=$'\t' read -r proto bind port cport class reach svc ownerKind ownerName detail user oid src pids bypass source pname; do
     [[ $first2 -eq 0 ]] && printf ','; first2=0
-    printf '{"proto":"%s","bind":"%s","port":%s,"containerPort":%s,"bindClass":"%s","reachability":"%s","service":"%s","ownerKind":"%s","ownerName":"%s","ownerDetail":"%s","ownerUser":"%s","ownerId":"%s","sourcePath":"%s","pids":"%s","dockerFirewallBypass":%s,"source":"%s"}' \
+    printf '{"proto":"%s","bind":"%s","port":%s,"containerPort":%s,"bindClass":"%s","reachability":"%s","service":"%s","ownerKind":"%s","ownerName":"%s","ownerDetail":"%s","ownerUser":"%s","ownerRef":"%s","sourcePath":"%s","pids":"%s","dockerFirewallBypass":%s,"source":"%s","process":"%s"}' \
       "$(json_esc "$proto")" "$(json_esc "$bind")" "$port" \
       "$([[ -n "$cport" && "$cport" != "-" ]] && echo "$cport" || echo null)" \
       "$(json_esc "$class")" "$(json_esc "$reach")" "$(json_esc "$svc")" \
       "$(json_esc "$ownerKind")" "$(json_esc "$ownerName")" "$(json_esc "$detail")" \
-      "$(json_esc "$user")" "$(json_esc "$oid")" "$(json_esc "$src")" "$(json_esc "$pids")" \
-      "$([[ "$bypass" == "1" ]] && echo true || echo false)" "$(json_esc "$source")"
-  done < <(sort -t$'\t' -k3,3n "$ENRICHED")
+      "$(json_esc "$(nz "$user")")" "$(json_esc "$(nz "$oid")")" "$(json_esc "$(nz "$src")")" "$(json_esc "$(nz "$pids")")" \
+      "$([[ "$bypass" == "1" ]] && echo true || echo false)" "$(json_esc "$source")" "$(json_esc "$(nz "$pname")")"
+  done < <(sort -t$'\t' -k3,3n "$ENRICHED" | head -n "$MAX_LISTENERS")
   printf '],'
 
   printf '"services":['
@@ -1224,15 +1660,7 @@ render_json() {
     "$([[ $SVC_CONTAINERS_BLOCKED -eq 1 ]] && echo true || echo false)" \
     "$([[ $SVC_PM2 -eq 1 ]] && echo true || echo false)"
 
-  printf '"firewallRules":['
-  local first3=1 pspec rproto action from engine
-  while IFS=$'\t' read -r pspec rproto action from engine; do
-    [[ $first3 -eq 0 ]] && printf ','; first3=0
-    printf '{"port":"%s","proto":"%s","action":"%s","from":"%s","engine":"%s"}' \
-      "$(json_esc "$pspec")" "$(json_esc "$rproto")" "$(json_esc "$action")" \
-      "$(json_esc "$from")" "$(json_esc "$engine")"
-  done < "$FWRULES"
-  printf ']'
+  printf '"agentVersion":"%s"' "$VERSION"
   printf '}\n'
 }
 

@@ -39,6 +39,7 @@ import useIsMobile from '@/hooks/useIsMobile';
 import DeployWizardModal from '@/components/keystore/DeployWizardModal';
 import TestConnectionModal from '@/components/keystore/TestConnectionModal';
 import ServerPostureTab from '@/components/posture/ServerPostureTab';
+import { groupListeners } from '@/lib/listenerGroups';
 import { getServerPosture } from '@/services/postureService';
 import { Button } from '@/components/ui/button';
 import {
@@ -496,7 +497,7 @@ function ServerDetail() {
           {[
             { key: 'overview', label: 'Overview' },
             { key: 'findings', label: 'Open findings', count: openFindings.length, alert: needsAttention },
-            { key: 'ports', label: 'Ports & services', count: posture?.listeners?.length ?? null },
+            { key: 'ports', label: 'Ports & services', count: posture?.listeners ? groupListeners(posture.listeners).length : null },
           ].map((tab) => (
             <button
               key={tab.key}

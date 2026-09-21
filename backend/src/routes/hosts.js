@@ -135,7 +135,10 @@ const firewallSchema = Joi.object({
   engine: Joi.string().valid('ufw', 'firewalld', 'iptables', 'nftables', 'none', 'unknown').required(),
   active: Joi.boolean().required(),
   defaultIncoming: Joi.string().valid('allow', 'deny', 'reject', 'unknown').default('unknown'),
-  rules: Joi.array().items(firewallRuleSchema).max(200).default([]),
+  // The collector evaluated every INPUT rule it found (iptables/nftables).
+  // False = it met rules it cannot read, and no per-port verdict is derived.
+  parsed: Joi.boolean().default(false),
+  rules: Joi.array().items(firewallRuleSchema).max(500).default([]),
 }).required();
 
 const listenerSchema = Joi.object({
@@ -151,8 +154,14 @@ const listenerSchema = Joi.object({
   ownerRef: STR512,
   ownerUser: Joi.string().max(128).allow('', null),
   sourcePath: STR512,
-  source: Joi.string().valid('ss', 'docker').default('ss'),
-});
+  // 'nat' is a published port recovered from the NAT table's DNAT rules —
+  // a Docker publish with no host listener (userland-proxy=false). The
+  // collector has always sent it; this schema did not list it, so the first
+  // host whose sudo grant actually worked had every snapshot refused.
+  source: Joi.string().valid('ss', 'docker', 'nat').default('ss'),
+})
+  // Collectors up to 1.0.0 call it ownerId. Same field.
+  .rename('ownerId', 'ownerRef', { ignoreUndefined: true, override: true });
 
 /**
  * What is installed on the host and whether it is running.
@@ -185,7 +194,9 @@ const serviceInventorySchema = Joi.object({
   detail: STR512,
   sourcePath: STR512,
   exitCode: Joi.number().integer().min(-1).max(255).allow(null),
-  ports: Joi.array().items(declaredPortSchema).max(64).default([]),
+  // A container publishing a range expands to one entry per port (the
+  // collector caps each range at 33), so 64 refused real hosts.
+  ports: Joi.array().items(declaredPortSchema).max(256).default([]),
 });
 
 /**
@@ -214,26 +225,73 @@ const postureSchema = Joi.object({
   collectedAt: Joi.date().iso().required(),
   hostname: Joi.string().max(512).allow('', null),
   collectorOk: Joi.boolean().default(true),
-  degradedReason: Joi.string().max(512).allow('', null),
+  degradedReason: Joi.string().max(1024).allow('', null),
+  // Every reason, not just the first — a host can be degraded for three
+  // unrelated reasons and fixing the first one should not look like nothing
+  // changed.
+  degradedReasons: Joi.array().items(Joi.string().max(1024)).max(20).default([]),
   firewall: firewallSchema,
+  // Collectors up to 1.0.0 send the rules here, beside `firewall` rather
+  // than inside it. Accepted and folded into firewall.rules by the route;
+  // stripping it (as this schema used to) threw every ufw rule away.
+  firewallRules: Joi.array().items(firewallRuleSchema).max(500),
   listeners: Joi.array().items(listenerSchema).max(500).default([]),
   services: Joi.array().items(serviceInventorySchema).max(300).default([]),
   serviceScan: serviceScanSchema.default({}),
   metrics: metricsSchema.allow(null),
 });
 
+/**
+ * Fold the older collector's shape into the one ingest reads.
+ *
+ * - `firewallRules` beside `firewall` (collector <= 1.0.0) → `firewall.rules`.
+ * - No `agentVersion` (collector <= 1.0.0 only sent `scanner`, e.g.
+ *   "shellius-posture-collect/1.0.0") → take it from `scanner`, so the UI
+ *   stops reading "Version: Unknown" for a collector that told us.
+ * - `degradedReason` without `degradedReasons` → a one-item list.
+ */
+export function normalizePostureSnapshot(value) {
+  const out = { ...value };
+  const { firewallRules, ...rest } = out;
+  const firewall = { ...(rest.firewall || {}) };
+  if ((!Array.isArray(firewall.rules) || firewall.rules.length === 0) && Array.isArray(firewallRules)) {
+    firewall.rules = firewallRules;
+  }
+  rest.firewall = firewall;
+  if (!rest.agentVersion && rest.scanner) {
+    const m = /\/([0-9][0-9A-Za-z.+-]{0,40})$/.exec(String(rest.scanner));
+    if (m) rest.agentVersion = m[1];
+  }
+  if ((!Array.isArray(rest.degradedReasons) || rest.degradedReasons.length === 0) && rest.degradedReason) {
+    rest.degradedReasons = [rest.degradedReason];
+  }
+  return rest;
+}
+
 // This route parses its own body: the app-wide express.json() keeps express's
 // 100kb default, which a legitimate snapshot can exceed. The larger parser is
 // mounted HERE so only this endpoint accepts a bigger body, and it is still
 // bounded — 256KB, the same number the Content-Length check below enforces.
-router.post('/posture', agentAuth, express.json({ limit: MAX_POSTURE_BODY_BYTES }), asyncHandler(async (req, res) => {
+//
+// The size check runs BEFORE the body parser, so an oversized snapshot is
+// recorded against the host like any other refusal — body-parser's own 413
+// would otherwise reject it before this route ever learned whose it was.
+const rejectOversizedPosture = asyncHandler(async (req, res, next) => {
   const contentLength = Number(req.headers['content-length'] || 0);
   if (contentLength > MAX_POSTURE_BODY_BYTES) {
+    if (req.agentServer) {
+      await postureService.recordRejectedSnapshot(req.agentServer.id, [
+        `snapshot is ${contentLength} bytes; the limit is ${MAX_POSTURE_BODY_BYTES}`,
+      ]);
+    }
     throw new ApiError(413, 'Posture snapshot payload exceeds the 256KB limit', {
       code: 'POSTURE_PAYLOAD_TOO_LARGE',
     });
   }
+  next();
+});
 
+router.post('/posture', agentAuth, rejectOversizedPosture, express.json({ limit: MAX_POSTURE_BODY_BYTES }), asyncHandler(async (req, res) => {
   if (!req.agentServer) {
     // No legacy posture collector predates per-host tokens — never accept a
     // body-scoped serverId/orgId for this endpoint.
@@ -247,15 +305,55 @@ router.post('/posture', agentAuth, express.json({ limit: MAX_POSTURE_BODY_BYTES 
     stripUnknown: true,
   });
   if (error) {
+    const details = error.details.map((d) => d.message);
+    // Recorded on the server, not only returned. The collector logs a 400 to
+    // the host's journal and nowhere else, so without this a host whose every
+    // snapshot is refused is indistinguishable, in the UI, from one whose
+    // collector died — and "reinstall it" fixes neither.
+    await postureService.recordRejectedSnapshot(req.agentServer.id, details);
     throw new ApiError(400, 'Invalid posture snapshot', {
       code: 'POSTURE_INVALID_PAYLOAD',
-      details: error.details.map((d) => d.message),
+      details,
     });
   }
 
-  const result = await postureService.ingest(req.agentServer.orgId, req.agentServer.id, value);
+  const result = await postureService.ingest(
+    req.agentServer.orgId,
+    req.agentServer.id,
+    normalizePostureSnapshot(value)
+  );
 
   res.json({ success: true, data: result });
+}));
+
+// The ingest contract, for the collector's own tests: its real JSON output is
+// validated against exactly this, so the two cannot drift apart unnoticed
+// again (see routes/__tests__/postureCollector.test.js).
+export { postureSchema };
+
+// ---------------------------------------------------------------------------
+// POST /api/hosts/posture/problem
+// ---------------------------------------------------------------------------
+//
+// The report script's own failures — collector missing, collector crashed
+// with no output, snapshot too large to send — used to go to the host's
+// journal and nowhere else, so the UI could only ever say "stopped
+// reporting". The script now sends a one-line reason here instead. It is a
+// statement from the host about itself, stored as text and shown as text;
+// it never changes findings, listeners or anything else.
+const postureProblemSchema = Joi.object({
+  reason: Joi.string().trim().min(1).max(1024).required(),
+  collectorVersion: Joi.string().max(64).allow('', null),
+});
+
+router.post('/posture/problem', agentAuth, asyncHandler(async (req, res) => {
+  if (!req.agentServer) {
+    throw new ApiError(401, 'A per-host agent token is required', { code: 'AGENT_AUTH_REQUIRED' });
+  }
+  const { error, value } = postureProblemSchema.validate(req.body || {}, { stripUnknown: true });
+  if (error) throw new ApiError(400, error.message);
+  await postureService.recordRejectedSnapshot(req.agentServer.id, [`reported by the host: ${value.reason}`]);
+  res.json({ success: true, data: { recorded: true } });
 }));
 
 export default router;

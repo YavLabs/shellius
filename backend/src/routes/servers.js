@@ -15,6 +15,7 @@ import { planBulkInstall, isBootstrapped } from '../services/bulkBootstrapServic
 import { serverScopeWhere } from '../lib/scope.js';
 import prisma from '../config/db.js';
 import { mintInstallCertificate } from '../services/installCertService.js';
+import * as serverSudoService from '../services/serverSudoService.js';
 
 const router = express.Router();
 
@@ -336,8 +337,9 @@ router.post(
     const { error: modeError, value: modeValue } = provisionSchema.validate(req.body);
     if (modeError) throw new ApiError(400, modeError.message);
     const mode = modeValue.mode; // 'full' | 'posture' — rejected above if neither
-    const { privateKey, passphrase, password, sshUser, sudoPassword, credentialId, useCertificate } =
-      req.body;
+    const {
+      privateKey, passphrase, password, sshUser, sudoPassword, credentialId, useCertificate, rememberSudoPassword,
+    } = req.body;
 
     // Three ways in: a saved Keystore identity, credentials typed into the
     // form, or — for a host that is already bootstrapped and therefore
@@ -377,6 +379,20 @@ router.post(
     const effectiveUser = sshUser || identityAuth?.username || certServer?.sshUser;
     if (!effectiveUser) throw new ApiError(400, 'sshUser is required');
 
+    // A sudo password saved for this host — used only when none was typed.
+    const sudoTarget = await prisma.server.findFirst({
+      where: { id: req.params.id, orgId: req.orgId, ...serverScopeWhere(req.scope) },
+      select: { sudoCredentialId: true },
+    });
+    const savedSudo =
+      !sudoPassword && effectiveUser !== 'root'
+        ? await serverSudoService.resolveSavedSudo(req.orgId, req.user, sudoTarget?.sudoCredentialId, effectiveUser)
+        : {};
+    // Say "I won't be able to keep it" up front, not after a successful
+    // install when the password has already been typed and used.
+    const wantsRemember = !!rememberSudoPassword && !!sudoPassword && effectiveUser !== 'root';
+    const canRemember = wantsRemember && serverSudoService.canSaveSudo(req.user);
+
     // Set SSE headers before any async work so the client starts receiving
     res.setHeader('Content-Type', 'text/event-stream');
     res.setHeader('Cache-Control', 'no-cache');
@@ -406,6 +422,13 @@ router.post(
       send('log', { message: '[shellius] Bootstrap token generated' });
 
       if (identityName) send('log', { message: `[shellius] Using saved identity "${identityName}"` });
+      if (savedSudo.password) send('log', { message: `[shellius] Using the saved sudo password ("${savedSudo.name}")` });
+      if (savedSudo.note) send('log', { message: `[shellius] ${savedSudo.note}` });
+      if (wantsRemember && !canRemember) {
+        send('log', {
+          message: '[shellius] The sudo password will be used for this run only — saving it needs "Bind stored identities to servers" and "Manage Keystore"',
+        });
+      }
 
       if (certServer) {
         installCert = await mintInstallCertificate({
@@ -426,18 +449,35 @@ router.post(
         password: installCert ? undefined : identityAuth?.password || password || undefined,
         certificate: installCert?.certificate,
         sshUser: effectiveUser,
-        // A password identity doubles as the sudo password, as key deployment
-        // already does — otherwise `sudo -S` would have nothing to read.
-        sudoPassword: sudoPassword || identityAuth?.password || '',
+        // Typed now, then saved for this host, then a password identity's
+        // own password (which doubles as sudo's, as key deployment already
+        // assumes) — otherwise `sudo -S` would have nothing to read.
+        sudoPassword: sudoPassword || savedSudo.password || identityAuth?.password || '',
         scope: req.scope,
         bootstrapUrl,
         mode,
         onOutput: (line) => send('log', { message: line }),
       });
 
-      send('done', { success: true });
+      // Only now, once it has been seen to work.
+      let sudoSaved = null;
+      if (canRemember) {
+        try {
+          const saved = await serverSudoService.saveSudoPassword(
+            req.orgId, req.params.id, { password: sudoPassword }, req.user, { scope: req.scope, source: 'install' }
+          );
+          sudoSaved = { name: saved.name };
+          send('log', { message: `[shellius] Saved the sudo password to the Keystore as "${saved.name}" — reinstalls will not ask again` });
+        } catch (err) {
+          send('log', { message: `[shellius] Installed, but the sudo password could not be saved: ${err.message}` });
+        }
+      }
+
+      send('done', { success: true, sudoSaved });
     } catch (err) {
-      send('error', { message: err.message || 'Provisioning failed' });
+      // `code` lets the UI tell "no sudo password" from "wrong sudo
+      // password" from everything else, and ask for the right thing.
+      send('error', { message: err.message || 'Provisioning failed', code: err?.code });
     } finally {
       if (installCert) await installCert.dispose();
       res.end();
@@ -445,6 +485,44 @@ router.post(
   })
 );
 
+
+// ---------------------------------------------------------------------------
+// Saved sudo password (Keystore identity bound as Server.sudoCredentialId)
+// ---------------------------------------------------------------------------
+
+const sudoPasswordSchema = Joi.object({
+  password: Joi.string().min(1).max(1024).required(),
+});
+
+// PUT /api/servers/:id/sudo-password — save or replace. The password is
+// write-only: nothing ever returns it.
+router.put(
+  '/:id/sudo-password',
+  requirePermission('servers.manage_credentials', 'keystore.manage'),
+  // Audited by serverSudoService (with the Keystore identity's id), which
+  // also audits the saves made from an install.
+  asyncHandler(async (req, res) => {
+    const { error, value } = sudoPasswordSchema.validate(req.body || {});
+    if (error) throw new ApiError(400, error.message);
+    const result = await serverSudoService.saveSudoPassword(req.orgId, req.params.id, value, req.user, {
+      scope: req.scope,
+      source: 'manual',
+    });
+    res.json({ success: true, data: result });
+  })
+);
+
+// DELETE /api/servers/:id/sudo-password — unbind, and delete the identity if
+// this feature created it and nothing else uses it.
+router.delete(
+  '/:id/sudo-password',
+  requirePermission('servers.manage_credentials', 'keystore.manage'),
+  // Audited by serverSudoService.
+  asyncHandler(async (req, res) => {
+    const result = await serverSudoService.forgetSudoPassword(req.orgId, req.params.id, req.user, { scope: req.scope });
+    res.json({ success: true, data: result });
+  })
+);
 
 // ---------------------------------------------------------------------------
 // Bulk bootstrap / collector install
@@ -488,6 +566,8 @@ const bulkInstallSchema = Joi.object({
   passphrase: Joi.string().allow('', null),
   password: Joi.string().allow('', null),
   sudoPassword: Joi.string().allow('', null),
+  // Keep `sudoPassword` in the Keystore for every host it worked on.
+  rememberSudoPassword: Joi.boolean().default(false),
   // Prefer each server's own bound identity where it has one. Off means "use
   // the supplied credentials everywhere", which is what you want for a fleet
   // that shares one break-in account.
@@ -563,6 +643,12 @@ router.post(
 
     const backendUrl = resolveBackendUrl(req);
     const results = [];
+    const canRememberSudo = value.rememberSudoPassword && !!value.sudoPassword && serverSudoService.canSaveSudo(req.user);
+    if (value.rememberSudoPassword && value.sudoPassword && !canRememberSudo) {
+      send('log', {
+        message: '[shellius] The sudo password will be used for this run only — saving it needs "Bind stored identities to servers" and "Manage Keystore"',
+      });
+    }
 
     const runOne = async (target) => {
       if (aborted) return;
@@ -603,6 +689,15 @@ router.post(
 
         log(`[shellius] Connecting as ${sshUser} using ${authLabel}`);
 
+        // The batch's typed sudo password wins; otherwise this host's saved
+        // one, if it has one and the caller may use it.
+        let savedSudo = {};
+        if (!value.sudoPassword && sshUser !== 'root' && target.savedSudo?.id) {
+          savedSudo = await serverSudoService.resolveSavedSudo(req.orgId, req.user, target.savedSudo.id, sshUser);
+          if (savedSudo.password) log(`[shellius] Using the saved sudo password ("${savedSudo.name}")`);
+          if (savedSudo.note) log(`[shellius] ${savedSudo.note}`);
+        }
+
         const bootstrapToken = signBootstrapToken({
           serverId: target.id,
           orgId: req.orgId,
@@ -617,7 +712,7 @@ router.post(
             password: a.password || value.password || undefined,
             certificate: a.certificate || undefined,
             sshUser: extra.sshUser || sshUser,
-            sudoPassword: value.sudoPassword || a.password || '',
+            sudoPassword: value.sudoPassword || savedSudo.password || a.password || '',
             scope: req.scope,
             bootstrapUrl,
             mode: value.mode,
@@ -637,8 +732,22 @@ router.post(
           await runWith(fallbackAuth, { sshUser: value.sshUser || fallbackAuth.username || sshUser });
         }
 
+        // Worked with the batch's sudo password — keep it for this host.
+        let sudoSaved = null;
+        if (canRememberSudo && sshUser !== 'root') {
+          try {
+            const saved = await serverSudoService.saveSudoPassword(
+              req.orgId, target.id, { password: value.sudoPassword }, req.user, { scope: req.scope, source: 'bulk_install' }
+            );
+            sudoSaved = { name: saved.name };
+            log(`[shellius] Saved the sudo password to the Keystore as "${saved.name}"`);
+          } catch (err) {
+            log(`[shellius] Installed, but the sudo password could not be saved: ${err.message}`);
+          }
+        }
+
         results.push({ id: target.id, hostname: target.hostname, status: 'ok' });
-        send('server-done', { id: target.id, hostname: target.hostname, status: 'ok' });
+        send('server-done', { id: target.id, hostname: target.hostname, status: 'ok', sudoSaved });
       } catch (err) {
         // One host's failure is not the batch's. Twenty-nine successes and
         // one unreachable box is a good outcome that must not be thrown away.

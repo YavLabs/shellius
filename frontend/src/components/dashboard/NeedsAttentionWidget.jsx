@@ -106,7 +106,10 @@ function NeedsAttentionWidget({ onInstall }) {
 
   const critical = summary?.findings?.critical ?? 0;
   const high = summary?.findings?.high ?? 0;
-  const unmonitored = (summary?.servers?.notInstalled ?? 0) + (summary?.servers?.stale ?? 0);
+  // Refused hosts are as unmonitored as silent ones: their data stopped
+  // updating even though the collector is running.
+  const unmonitored =
+    (summary?.servers?.notInstalled ?? 0) + (summary?.servers?.stale ?? 0) + (summary?.servers?.rejected ?? 0);
   // Hosts that CAN run the collector. Windows and RDP-only hosts are excluded
   // by the API, because "3 of 32 reporting" on a fleet with twelve Windows
   // boxes reads as a backlog and is really a ceiling.

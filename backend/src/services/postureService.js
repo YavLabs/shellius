@@ -93,6 +93,9 @@ const SEVERITY = {
 // (nftables, iptables, unrecognized) withholds a verdict rather than guesses
 // one — see decision #8 in docs/posture/posture-spec.md.
 const VERDICT_CAPABLE_ENGINES = new Set(['ufw', 'firewalld', 'none']);
+// …and these only when the collector says it read every INPUT rule
+// (`firewall.parsed`). A chain it could not evaluate withholds the verdict.
+const PARSED_ENGINES = new Set(['iptables', 'nftables']);
 
 const REACH_RANK = { INTERNET: 5, LAN: 4, FIREWALLED: 3, UNKNOWN: 2, LOOPBACK: 1 };
 
@@ -213,7 +216,7 @@ function portSpecMatches(spec, port) {
  */
 function buildFirewallContext(firewall) {
   const engine = firewall?.engine || 'unknown';
-  const usable = VERDICT_CAPABLE_ENGINES.has(engine);
+  const usable = VERDICT_CAPABLE_ENGINES.has(engine) || (PARSED_ENGINES.has(engine) && firewall?.parsed === true);
   const active = !!firewall?.active;
   const defaultIncoming = firewall?.defaultIncoming || 'unknown';
   const rules = Array.isArray(firewall?.rules) ? firewall.rules : [];
@@ -256,7 +259,10 @@ function buildFirewallContext(firewall) {
 function reachabilityFor(listener, fwCtx) {
   const bind = normalizeBind(listener.bind);
   const bc = bindClass(bind);
-  const isDockerPublish = listener.source === 'docker' || listener.ownerKind === 'docker-proxy';
+  // 'nat': a published port the collector only found as a DNAT rule. It is
+  // the same Docker publish as a docker-proxy socket, minus the proxy.
+  const isDockerPublish =
+    listener.source === 'docker' || listener.source === 'nat' || listener.ownerKind === 'docker-proxy';
 
   if (bc === 'loopback') {
     return { reachability: 'LOOPBACK', bindClass: bc, bind, dockerBypass: false };
@@ -583,6 +589,14 @@ export function computeFindings(snapshot, settings = {}) {
       `${firewall.engine} is installed but inactive. Its rules are not being enforced.`,
       { firewallEngine: firewall.engine },
     ));
+  } else if (PARSED_ENGINES.has(firewall.engine) && firewall.parsed === true && !firewall.active) {
+    // The stock Docker host: iptables is there (Docker needs it) but INPUT
+    // is empty with policy ACCEPT, so nothing filters inbound traffic.
+    findings.push(mkFinding(
+      'FIREWALL_INACTIVE', null, null, null, null,
+      `${firewall.engine} is present but its INPUT chain accepts everything — no inbound traffic is filtered.`,
+      { firewallEngine: firewall.engine },
+    ));
   }
 
   return { listeners: enriched, findings };
@@ -611,6 +625,31 @@ async function getSettings(orgId) {
   const row = await prisma.postureSettings.findUnique({ where: { orgId } });
   const expectedPublicPorts = Array.isArray(row?.expectedPublicPorts) ? row.expectedPublicPorts : [];
   return { expectedPublicPorts };
+}
+
+const MAX_REJECT_REASON = 1000;
+
+/**
+ * Remember that this host's newest snapshot was refused, and why.
+ *
+ * Only ever called with the agent's token-derived server id. Best-effort:
+ * the caller is already on its way to a 4xx, and failing to write the
+ * bookkeeping must not turn that into a 500.
+ */
+export async function recordRejectedSnapshot(serverId, details = []) {
+  const reason = (Array.isArray(details) ? details : [String(details)])
+    .filter(Boolean)
+    .slice(0, 5)
+    .join('; ')
+    .slice(0, MAX_REJECT_REASON);
+  try {
+    await prisma.server.update({
+      where: { id: serverId },
+      data: { postureRejectedAt: new Date(), postureRejectReason: reason || 'snapshot refused' },
+    });
+  } catch (err) {
+    logger.warn('postureService: could not record a rejected snapshot', { serverId, error: err.message });
+  }
 }
 
 /**
@@ -643,7 +682,15 @@ export async function ingest(orgId, serverId, payload) {
     engine: payload.firewall.engine,
     active: !!payload.firewall.active,
     defaultIncoming: payload.firewall.defaultIncoming,
+    parsed: payload.firewall.parsed === true,
+    ruleCount: Array.isArray(payload.firewall.rules) ? payload.firewall.rules.length : 0,
   };
+
+  // An accepted snapshot supersedes whatever was refused before it.
+  await prisma.server.updateMany({
+    where: { id: serverId, orgId, NOT: { postureRejectedAt: null } },
+    data: { postureRejectedAt: null, postureRejectReason: null },
+  });
 
   const snapshot = await prisma.hostSnapshot.create({
     data: {
@@ -879,4 +926,4 @@ export async function ingest(orgId, serverId, payload) {
   };
 }
 
-export default { ingest, computeFindings };
+export default { ingest, computeFindings, recordRejectedSnapshot };
