@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { useNavigate, useSearchParams } from 'react-router-dom';
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import {
   Boxes,
   Download,
@@ -19,7 +19,8 @@ import SeverityBadge from '@/components/posture/SeverityBadge';
 import ExportDialog from '@/components/posture/ExportDialog';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { reachabilityTone } from '@/lib/badgeTones';
+import { reachabilityTone, severityTone, SEVERITY_ORDER } from '@/lib/badgeTones';
+import { appliedFilterCount } from '@/lib/filters';
 import { can } from '@/lib/permissions';
 import { useAuth } from '@/context/AuthContext';
 import { fromState } from '@/hooks/useBackTarget';
@@ -33,6 +34,7 @@ import { listCustomers } from '@/services/customerService';
 import BulkInstallModal from '@/components/servers/BulkInstallModal';
 import { ENVIRONMENT_LABELS } from '@/lib/labels';
 import useAutoRefresh from '@/hooks/useAutoRefresh';
+import useUrlFilters from '@/hooks/useUrlFilters';
 import { describeListener } from '@/lib/serviceIdentity';
 import ServiceCell, { RuntimeChip } from '@/components/posture/ServiceCell';
 
@@ -59,16 +61,51 @@ import ServiceCell, { RuntimeChip } from '@/components/posture/ServiceCell';
 
 const ENVIRONMENTS = ['demo', 'dev', 'staging', 'prod'];
 
-const KIND_LABELS = {
-  service: 'Protocol',
-  docker: 'Docker',
-  'docker-proxy': 'Docker',
-  podman: 'Podman',
-  pm2: 'PM2',
-  systemd: 'systemd',
-  process: 'Process',
-  unknown: 'Unattributed',
+/**
+ * The Type filter's options — the same runtime grouping the Type column
+ * renders (lib/serviceIdentity.js RUNTIMES). `container` and `docker-proxy`
+ * have no filter value of their own: a socket owned by either one is a
+ * Docker-published port as far as anyone filtering the page is concerned,
+ * so picking "Docker" sends `ownerKinds=docker,docker-proxy,container` —
+ * the backend filters on the whole set, not one raw kind at a time.
+ */
+const TYPE_GROUPS = [
+  { key: 'docker', label: 'Docker', ownerKinds: ['docker', 'docker-proxy', 'container'] },
+  { key: 'podman', label: 'Podman', ownerKinds: ['podman'] },
+  { key: 'pm2', label: 'pm2', ownerKinds: ['pm2'] },
+  { key: 'systemd', label: 'systemd', ownerKinds: ['systemd', 'systemd-user'] },
+  { key: 'process', label: 'Process', ownerKinds: ['process'] },
+  { key: 'unknown', label: 'Unknown', ownerKinds: ['unknown'] },
+];
+
+const FILTER_DEFAULTS = {
+  q: '',
+  proto: '',
+  reachability: '',
+  type: '',
+  state: '',
+  environment: '',
+  customerId: '',
+  serverId: '',
+  port: '',
+  portMin: '',
+  portMax: '',
+  hasFindings: '',
+  findingSeverity: '',
+  // The service-key chip a link from another page (or a service's own "view
+  // instances" action) arrives with — kept separate from the Filters drawer,
+  // shown as its own dismissible banner below.
+  service: '',
+  page: '1',
 };
+
+/** A text filter meant to be a port number — digits only, clamped to a valid port. */
+function sanitizePort(value) {
+  if (value === undefined || value === null || value === '') return '';
+  const digits = String(value).replace(/[^0-9]/g, '');
+  if (!digits) return '';
+  return String(Math.min(65535, Math.max(0, parseInt(digits, 10))));
+}
 
 function ServiceInventory() {
   const navigate = useNavigate();
@@ -76,17 +113,13 @@ function ServiceInventory() {
   const canExport = can(user, 'posture.export');
   const canOnboard = can(user, 'servers.onboard');
   const [bulkInstallOpen, setBulkInstallOpen] = useState(false);
-  const [params, setParams] = useSearchParams();
+  const [f, setF, clearF] = useUrlFilters(FILTER_DEFAULTS);
 
-  const serviceKey = params.get('service') || '';
-  const q = params.get('q') || '';
-  const proto = params.get('proto') || '';
-  const reachability = params.get('reachability') || '';
-  const ownerKind = params.get('ownerKind') || '';
-  const environment = params.get('environment') || '';
-  const customerId = params.get('customerId') || '';
-  const port = params.get('port') || '';
-  const state = params.get('state') || '';
+  const {
+    q, proto, reachability, type, state, environment, customerId, serverId,
+    port, portMin, portMax, hasFindings, findingSeverity, service: serviceKey,
+  } = f;
+  const page = Math.max(parseInt(f.page, 10) || 1, 1);
 
   const [services, setServices] = useState(null);
   const [listeners, setListeners] = useState(null);
@@ -94,24 +127,12 @@ function ServiceInventory() {
   const [customers, setCustomers] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
-  const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(25);
   const [exportOpen, setExportOpen] = useState(false);
 
   useBreadcrumbs([{ label: 'Services & ports' }]);
 
-  const patch = useCallback(
-    (next) => {
-      const merged = new URLSearchParams(params);
-      for (const [k, v] of Object.entries(next)) {
-        if (v === null || v === '' || v === undefined) merged.delete(k);
-        else merged.set(k, v);
-      }
-      setParams(merged, { replace: true });
-      setPage(1);
-    },
-    [params, setParams]
-  );
+  const typeGroup = TYPE_GROUPS.find((g) => g.key === type);
 
   // Shared by both views and by the export, so the file can never describe a
   // different set of rows than the screen.
@@ -120,19 +141,26 @@ function ServiceInventory() {
       q: q || undefined,
       proto: proto || undefined,
       reachability: reachability || undefined,
-      ownerKind: ownerKind || undefined,
+      ownerKinds: typeGroup ? typeGroup.ownerKinds.join(',') : undefined,
       environment: environment || undefined,
       customerId: customerId || undefined,
+      serverId: serverId || undefined,
       port: port || undefined,
+      portMin: portMin || undefined,
+      portMax: portMax || undefined,
+      hasFindings: hasFindings || undefined,
+      findingSeverity: findingSeverity || undefined,
       serviceKey: serviceKey || undefined,
       state: state || undefined,
     }),
-    [q, proto, reachability, ownerKind, environment, customerId, port, serviceKey, state]
+    [
+      q, proto, reachability, typeGroup, environment, customerId, serverId,
+      port, portMin, portMax, hasFindings, findingSeverity, serviceKey, state,
+    ]
   );
 
-  const loadedRef = useRef(false);
-  const load = useCallback(async () => {
-    if (!loadedRef.current) setLoading(true);
+  const load = useCallback(async (isFirstLoad) => {
+    if (isFirstLoad) setLoading(true);
     setError('');
     try {
       // The grouped call feeds the tiles only. One grid was showing the same
@@ -148,13 +176,13 @@ function ServiceInventory() {
       setError(err.response?.data?.error?.message || err.message || 'Could not load the inventory');
     } finally {
       setLoading(false);
-      loadedRef.current = true;
     }
   }, [filters, page, pageSize]);
 
   useEffect(() => {
-    load();
-  }, [load]);
+    load(listeners === null);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [filters, page, pageSize]);
 
   const fetchFacets = useCallback(async () => {
     await Promise.all([
@@ -167,7 +195,7 @@ function ServiceInventory() {
   useEffect(() => { fetchFacets(); }, [fetchFacets]);
 
   const loadAll = useCallback(async () => {
-    await Promise.all([load(), fetchFacets()]);
+    await Promise.all([load(false), fetchFacets()]);
   }, [load, fetchFacets]);
   const { refresh, refreshing, lastUpdated } = useAutoRefresh(loadAll);
 
@@ -175,27 +203,50 @@ function ServiceInventory() {
   // the honest fleet numbers rather than a page's worth.
   const summary = services?.meta;
 
-  const resetFilters = () =>
-    patch({
-      q: null,
-      proto: null,
-      reachability: null,
-      ownerKind: null,
-      environment: null,
-      customerId: null,
-      port: null,
-      service: null,
-      state: null,
-    });
+  // Any filter change narrows a different set of rows, so page 4 of the
+  // last query is not page 4 of this one. Port fields are also sanitised
+  // here — a text input the caller types freely into, clamped to a real
+  // port number rather than shipped straight to the API.
+  const patchFilters = useCallback(
+    (next) => {
+      const clean = { ...next };
+      for (const key of ['port', 'portMin', 'portMax']) {
+        if (key in clean) clean[key] = sanitizePort(clean[key]);
+      }
+      setF({ ...clean, page: '1' });
+    },
+    [setF]
+  );
 
-  const activeFilterCount = [proto, reachability, ownerKind, environment, customerId, port, serviceKey, state].filter(
-    Boolean
-  ).length;
+  const setPage = useCallback((n) => setF({ page: String(n) }), [setF]);
+
+  const resetFilters = () => clearF(['page']);
 
   // Declarative: DataTable renders these behind one "Filters" button, in a
   // drawer, as a draft until Apply. Six selects in a row above the table
   // wrapped onto two lines on a laptop and fired a request per change.
   const filterDefs = [
+    {
+      key: 'serverId',
+      label: 'Server',
+      placeholder: 'All servers',
+      type: 'entity',
+      entity: 'servers',
+    },
+    {
+      key: 'type',
+      label: 'Type',
+      placeholder: 'All types',
+      options: [
+        { value: '', label: 'All types' },
+        ...TYPE_GROUPS.map((g) => {
+          const count = (facets?.ownerKinds || [])
+            .filter((k) => g.ownerKinds.includes(k.value))
+            .reduce((n, k) => n + k.count, 0);
+          return { value: g.key, label: count ? `${g.label} (${count})` : g.label };
+        }),
+      ],
+    },
     {
       key: 'proto',
       label: 'Protocol',
@@ -221,16 +272,22 @@ function ServiceInventory() {
       ],
     },
     {
-      key: 'ownerKind',
-      label: 'Runtime',
-      placeholder: 'All runtimes',
-      options: [
-        { value: '', label: 'All runtimes' },
-        ...(facets?.ownerKinds || []).map((k) => ({
-          value: k.value,
-          label: `${KIND_LABELS[k.value] || k.value} (${k.count})`,
-        })),
-      ],
+      key: 'port',
+      label: 'Port',
+      placeholder: 'e.g. 8080',
+      type: 'text',
+    },
+    {
+      key: 'portMin',
+      label: 'Port range — from',
+      placeholder: 'e.g. 1024',
+      type: 'text',
+    },
+    {
+      key: 'portMax',
+      label: 'Port range — to',
+      placeholder: 'e.g. 65535',
+      type: 'text',
     },
     {
       key: 'state',
@@ -242,6 +299,24 @@ function ServiceInventory() {
         { value: 'internal', label: 'Container-internal only' },
         { value: 'running', label: 'Running (either)' },
         { value: 'stopped', label: 'Installed, stopped' },
+      ],
+    },
+    {
+      key: 'hasFindings',
+      label: 'Has findings',
+      placeholder: 'Any',
+      options: [
+        { value: '', label: 'Any' },
+        { value: 'true', label: 'Has open findings' },
+      ],
+    },
+    {
+      key: 'findingSeverity',
+      label: 'Finding severity',
+      placeholder: 'Any severity',
+      options: [
+        { value: '', label: 'Any severity' },
+        ...SEVERITY_ORDER.map((s) => ({ value: s.toUpperCase(), label: severityTone(s).label })),
       ],
     },
     {
@@ -262,30 +337,47 @@ function ServiceInventory() {
     },
   ];
 
-  const filterValues = { proto, reachability, ownerKind, state, environment, customerId };
+  const filterValues = {
+    serverId, type, proto, reachability, port, portMin, portMax, state,
+    hasFindings, findingSeverity, environment, customerId,
+  };
 
-  const filtered = !!(activeFilterCount || q);
+  // Counts exactly what the drawer shows — nothing more, nothing fewer —
+  // computed with the same function the drawer's own chip uses, so the two
+  // can never disagree about what "3 filters applied" means.
+  const activeFilterCount = appliedFilterCount(filterDefs, filterValues);
+  const filtered = !!(activeFilterCount || q || serviceKey);
+
   const emptyState = (
     <EmptyState
       icon={Network}
-      title={filtered ? 'Nothing matches these filters' : 'No services reported yet'}
+      title="No services reported yet"
       description={
-        filtered
-          ? 'Try a different runtime, protocol, environment or customer.'
-          : canOnboard
-            ? 'Services appear here once hosts run the posture collector.'
-            : 'Services appear here once hosts run the posture collector. Someone with onboarding rights can install it from Servers.'
+        canOnboard
+          ? 'Services appear here once hosts run the posture collector.'
+          : 'Services appear here once hosts run the posture collector. Someone with onboarding rights can install it from Servers.'
       }
       action={
-        filtered
-          ? { label: 'Reset filters', onClick: resetFilters }
-          : canOnboard
-            ? // A pointer to another page is not an action. The thing that
-              // fills this page is one button away.
-              { label: 'Install collectors', onClick: () => setBulkInstallOpen(true) }
-            : { label: 'Go to servers', onClick: () => navigate('/servers') }
+        canOnboard
+          ? // A pointer to another page is not an action. The thing that
+            // fills this page is one button away.
+            { label: 'Install collectors', onClick: () => setBulkInstallOpen(true) }
+          : { label: 'Go to servers', onClick: () => navigate('/servers') }
       }
     />
+  );
+
+  // A filtered result of zero stays INSIDE the table — same border, same
+  // header row, same "Filters" button — rather than replacing the whole
+  // DataTable with a full-page EmptyState. Losing the toolbar along with the
+  // rows meant "Clear filters" was nowhere on screen.
+  const filteredEmptyState = (
+    <div className="flex flex-col items-center gap-1.5 py-4 text-sm text-muted-foreground">
+      <span>No results match these filters.</span>
+      <button type="button" onClick={resetFilters} className="text-primary hover:underline">
+        Clear filters
+      </button>
+    </div>
   );
 
   const exportButton = canExport ? (
@@ -438,8 +530,8 @@ function ServiceInventory() {
         render: (r) =>
           (r.findings || []).length === 0 ? null : (
             <span className="flex gap-1">
-              {r.findings.map((f) => (
-                <SeverityBadge key={f.id} severity={f.severity} />
+              {r.findings.map((f2) => (
+                <SeverityBadge key={f2.id} severity={f2.severity} />
               ))}
             </span>
           ),
@@ -449,8 +541,8 @@ function ServiceInventory() {
           <span className="text-xs text-muted-foreground">—</span>
         ) : (
           <div className="flex flex-wrap gap-1">
-            {r.findings.map((f) => (
-              <SeverityBadge key={f.id} severity={f.severity} />
+            {r.findings.map((f2) => (
+              <SeverityBadge key={f2.id} severity={f2.severity} />
             ))}
           </div>
         ),
@@ -459,8 +551,8 @@ function ServiceInventory() {
 
   // Carries where you came from, so Server Details offers "Back to Services
   // & ports" rather than dropping you on the servers list.
-  const openServer = (serverId) =>
-    navigate(`/servers/${serverId}?tab=ports`, { state: fromState('/services', 'Services & ports') });
+  const openServer = (id) =>
+    navigate(`/servers/${id}?tab=ports`, { state: fromState('/services', 'Services & ports') });
 
   return (
     <div className="space-y-5 p-6 max-md:p-4 sm:space-y-6">
@@ -515,7 +607,7 @@ function ServiceInventory() {
           icon={Globe}
           accent="rose"
           loading={loading && !services}
-          onClick={() => patch({ reachability: 'INTERNET' })}
+          onClick={() => patchFilters({ reachability: 'INTERNET' })}
         />
       </div>
 
@@ -539,7 +631,7 @@ function ServiceInventory() {
           <span className="text-foreground">
             Filtered to <span className="font-medium">{serviceKey.split(':').slice(1).join(':')}</span>
           </span>
-          <button type="button" onClick={() => patch({ service: null })} className="text-xs text-primary hover:underline">
+          <button type="button" onClick={() => setF({ service: null, page: '1' })} className="text-xs text-primary hover:underline">
             Show everything
           </button>
         </div>
@@ -551,24 +643,26 @@ function ServiceInventory() {
         </div>
       )}
 
-      {/* An empty result REPLACES the table rather than rendering inside it.
-          DataTable puts its empty state in a tbody cell, which is already
-          inside the table's own bordered card — so an EmptyState card there
-          is a card in a card, under a header row of columns with nothing
-          under them. Same split as MyHosts / Roles / Posture. */}
-      {!loading && (listeners?.items || []).length === 0 ? (
+      {/* A truly empty fleet (never reported anything, no filter narrowing it)
+          replaces the table with a full-page EmptyState — the same split as
+          MyHosts / Roles / Posture. A FILTERED zero stays inside the table
+          (see `filteredEmptyState` below), so the toolbar (search + Filters)
+          is never the thing that disappears along with the rows. */}
+      {!loading && !filtered && (listeners?.items || []).length === 0 ? (
         emptyState
       ) : (
       <DataTable
         columns={listenerColumns}
         data={listeners?.items || []}
         loading={loading}
+        emptyState={filtered ? filteredEmptyState : undefined}
         filterDefs={filterDefs}
         filterValues={filterValues}
-        onFilterChange={(next) => patch(next)}
+        onFilterChange={patchFilters}
         toolbarActions={exportButton}
         searchPlaceholder="Search service, port, host, owner or customer..."
-        onSearchChange={(value) => patch({ q: value })}
+        initialSearch={q}
+        onSearchChange={(value) => patchFilters({ q: value })}
         onRowClick={(r) => r.server?.id && openServer(r.server.id)}
         serverPagination={{
           page,
@@ -577,7 +671,7 @@ function ServiceInventory() {
           pageSize,
           onPageSizeChange: (size) => {
             setPageSize(size);
-            setPage(1);
+            setF({ page: '1' });
           },
         }}
         mobile={{

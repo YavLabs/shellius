@@ -216,7 +216,7 @@ export async function listServerCoverage(orgId, scope, { state, page = 1, limit 
  * list and the summary counts are both server-paginated/aggregated queries,
  * and loading every row to filter in JS would defeat that.
  */
-function findingsSearchWhere(q) {
+export function findingsSearchWhere(q) {
   const needle = typeof q === 'string' ? q.trim() : '';
   if (!needle) return null;
   const or = [

@@ -23,6 +23,7 @@ import PDFDocument from 'pdfkit';
 
 import prisma from '../config/db.js';
 import { listListeners as listInventoryListeners } from './postureInventoryService.js';
+import { findingsSearchWhere } from './postureQueryService.js';
 import ApiError from '../utils/ApiError.js';
 import { relationScopeWhere } from '../lib/scope.js';
 
@@ -247,40 +248,51 @@ const MAX_ROWS = 50000;
 async function loadFindings(
   orgId,
   scope,
-  { serverId, serverIds, status, severity, code, environment, customerId, lastSeenFrom, lastSeenTo }
+  { serverId, serverIds, status, severity, code, environment, customerId, lastSeenFrom, lastSeenTo, q }
 ) {
-  const where = { orgId, ...relationScopeWhere(scope, 'server') };
-  if (serverId) where.serverId = serverId;
-  else if (serverIds?.length) where.serverId = { in: serverIds };
-  if (severity) where.severity = severity;
-  if (code) where.code = code;
+  // Built as an AND array — same reasoning as postureQueryService's
+  // buildFindingsWhere: `status` needs its own `OR` (mutedUntil) and `q`
+  // needs its own `OR` (the search clause); merging both into one `where`
+  // object would let the second silently clobber the first's `OR` key.
+  const and = [{ orgId }];
+  const relFilter = relationScopeWhere(scope, 'server');
+  if (relFilter.server) and.push(relFilter);
+  if (serverId) and.push({ serverId });
+  else if (serverIds?.length) and.push({ serverId: { in: serverIds } });
+  if (severity) and.push({ severity });
+  if (code) and.push({ code });
   if (environment || customerId) {
-    where.server = {
-      ...(where.server || {}),
-      ...(environment ? { environment } : {}),
-      ...(customerId ? { customerId } : {}),
-    };
+    and.push({
+      server: {
+        ...(environment ? { environment } : {}),
+        ...(customerId ? { customerId } : {}),
+      },
+    });
   }
   if (lastSeenFrom || lastSeenTo) {
-    where.lastSeenAt = {
-      ...(lastSeenFrom ? { gte: new Date(lastSeenFrom) } : {}),
-      ...(lastSeenTo ? { lte: new Date(lastSeenTo) } : {}),
-    };
+    and.push({
+      lastSeenAt: {
+        ...(lastSeenFrom ? { gte: new Date(lastSeenFrom) } : {}),
+        ...(lastSeenTo ? { lte: new Date(lastSeenTo) } : {}),
+      },
+    });
   }
+  // Same fields the findings page's own search box matches — an export from
+  // that page has to be able to say the same thing the page is showing.
+  const search = findingsSearchWhere(q);
+  if (search) and.push(search);
 
   const now = new Date();
   if (status === 'open') {
-    where.resolvedAt = null;
-    where.OR = [{ mutedUntil: null }, { mutedUntil: { lt: now } }];
+    and.push({ resolvedAt: null }, { OR: [{ mutedUntil: null }, { mutedUntil: { lt: now } }] });
   } else if (status === 'muted') {
-    where.resolvedAt = null;
-    where.mutedUntil = { gt: now };
+    and.push({ resolvedAt: null }, { mutedUntil: { gt: now } });
   } else if (status === 'resolved') {
-    where.NOT = { resolvedAt: null };
+    and.push({ NOT: { resolvedAt: null } });
   }
 
   return prisma.exposureFinding.findMany({
-    where,
+    where: { AND: and },
     include: { server: SERVER_INCLUDE },
     orderBy: [{ severity: 'asc' }, { lastSeenAt: 'desc' }],
     take: MAX_ROWS,
