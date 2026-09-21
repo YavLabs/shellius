@@ -9,6 +9,38 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 Tracked here as work lands on `main`; moved into a dated section on release
 (`node scripts/version.mjs bump <major|minor|patch>`).
 
+### Fixed
+
+- **The page kept showing the replaced collector's warnings after a reinstall.** The installer only enabled the timer, which does nothing to a timer that's already running, so the new collector first reported up to 5½ minutes later. The installer now starts a run immediately. Until the new collector reports, the page says **Collector reinstalled — waiting for its first report**.
+- **Docker hosts and hosts with custom firewall chains were "degraded" forever.** Containers shown by ID, firewall rules the collector can't evaluate, and a truncated socket list are limitations of the host, not faults, so no reinstall could clear them. They are now shown as notes, never counted as degraded, and never pre-selected for reinstall. This also applies to hosts still on older collectors. The container note had in fact never been shown at all, because its counter was lost in a subshell; that is fixed too.
+- **Outdated collectors weren't flagged for reinstall.** The 1.7.3 notes said they were; they weren't. They now show **Update available** and are pre-selected in the installer.
+- **`line 328: /proc/<pid>/cmdline: No such file or directory` on every run.** It came from a grep matching its own process.
+- **The host's auth log got three lines per listening port, every 5 minutes.** The collector now asks `systemctl show` without sudo first, and once per unit instead of once per port.
+- **The "Check on the host" commands misled.** A blocking `systemctl start` looked hung, and the report script's log was missed by `journalctl -u`. The checks now start the run without blocking, read the log by its tag, and include a command that runs the collector exactly as the service does.
+- **"Last seen" on the Server page's Agent card was always blank.** It read a field that doesn't exist.
+- **Certificates:** filtering by type read a field that doesn't exist, and filtering by environment could widen a scoped user's results beyond their customer scope.
+
+### Added
+
+- **SSH trust and Collector status columns** on the Servers list and Customer Details, and on the Server page's Onboarding card. SSH trust shows the CA agent's state (healthy, legacy token, agent silent, no heartbeat, install failed, installing, not installed, identity auth). Collector shows reporting, update available, degraded, reports refused, stopped reporting, waiting for report or not installed. Clicking a badge explains the state and offers the fix. Both statuses can be filtered on the Servers page.
+- **Reinstall posture collector** in the Server page's Host menu and in the row actions on the Servers list and Customer Details.
+- **Detailed filters:**
+  - **Access requests:** server, requester, protocol, environment and date.
+  - **Sessions:** server, user, auth method, protocol, environment and date.
+  - **Certificates:** server, user, type, environment and validity date.
+  - **Users:** manager and MFA.
+  - **Customers:** status and whether they have servers.
+  - **Keystore identities and keys:** type, source, certificate and last used.
+  - **Notifications:** type.
+  - **Ports:** protocol.
+
+  Lists that page on the server filter on the server, within the viewer's customer scope. Every filtered empty list offers **Clear filters**.
+- **Posture collector 1.1.1.**
+
+### Upgrade notes
+
+- **Migration:** `20260928000000_posture_installed_at` adds `servers.posture_installed_at`.
+
 ## [1.7.3] - 2026-09-21
 
 ### Fixed
