@@ -9,6 +9,22 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 Tracked here as work lands on `main`; moved into a dated section on release
 (`node scripts/version.mjs bump <major|minor|patch>`).
 
+## [1.7.1] - 2026-09-20
+
+### Fixed
+
+- **A collector install on a host whose sudo asks for a password hung forever.** The installer ran `sudo bash` in a terminal session, so sudo printed its prompt and waited for a typist who does not exist. Nothing errored and the connection never closed, so the host never finished, the run's heading eventually said "Install finished" over rows that were still spinning, and pressing **Stop** left them spinning. It also meant 1.7.0's fallback — retry with the batch's credentials when a certificate install fails — could never fire in the very case it was for, because a hang is not a failure. With no sudo password the installer now uses `sudo -n`, which stops immediately with "a password is required"; every install has a 15-minute hard limit; and any host still queued or running when a run ends is marked **not run** instead of spinning, with the heading saying **Install stopped** when that is what happened. The copy-paste commands for running an install by hand are unchanged — a person at a terminal can answer the prompt.
+- **Checkbox ticks sat outside their boxes** in the bulk-install host list. A margin on the checkbox moved the box but not its tick. Margins now move the whole control, so this cannot recur elsewhere.
+
+### Added
+
+- **Enter a sudo password for just the host that needs one.** A host whose sudo wants a password now shows as amber **Needs attention** rather than as a failure among failures. Expanding it offers a password box and **Retry this host**: the certificate still logs in, the password is given to `sudo` only, it is used once and not stored, and the hosts that already succeeded are not reinstalled. The run's summary updates the moment a retry succeeds.
+- **The single-host install window accepts a sudo password in certificate mode.** 1.7.0 hid that field on the grounds that a certificate carries no password — true, but the certificate only handles login, and a typed password can handle sudo. Hiding it left exactly these hosts with no way forward.
+
+### Changed
+
+- **The Notifications page matches the top-bar dropdown**: a coloured icon for each type, the title in bold while unread, the message underneath. It used to show the same blue "info" badge for every type, so an approval and a break-glass alert looked identical on the page. Both now read one shared type map. The **Related** column is gone — it only ever showed a raw type name or a dash, and clicking a row already opens the related item.
+
 ## [1.7.0] - 2026-09-20
 
 ### Added
