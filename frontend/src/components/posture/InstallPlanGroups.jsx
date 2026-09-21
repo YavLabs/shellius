@@ -49,7 +49,11 @@ function HostRow({ host, children, className }) {
         <span className="flex min-w-0 items-center gap-2">
           <span className="truncate text-sm text-foreground">{host.displayName || host.hostname}</span>
           {why && (
-            <Badge tone={why === 'Stopped reporting' ? 'warning' : 'danger'} variant="outline" className="shrink-0">
+            <Badge
+              tone={why === 'Update available' ? 'info' : why === 'Stopped reporting' ? 'warning' : 'danger'}
+              variant="outline"
+              className="shrink-0"
+            >
               {why}
             </Badge>
           )}

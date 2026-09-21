@@ -15,7 +15,7 @@
  * the API would refuse fails the build.
  */
 
-import { mkdtempSync, mkdirSync, writeFileSync, chmodSync, rmSync, symlinkSync, existsSync } from 'fs';
+import { mkdtempSync, mkdirSync, writeFileSync, chmodSync, rmSync, symlinkSync, existsSync, readFileSync } from 'fs';
 import { tmpdir } from 'os';
 import path from 'path';
 import { spawnSync } from 'child_process';
@@ -47,7 +47,7 @@ function which(tool) {
  * @param {Record<string,object>} fx.procs  pid -> { comm, cmdline[], ppid, uid, cgroup }
  * @param {Record<string,string>} [fx.files] relative path (under the sandbox) -> content
  */
-function runCollector({ stubs = {}, procs = {}, files = {} }) {
+function runCollector({ stubs = {}, procs = {}, files = {}, realProc = false }) {
   const root = mkdtempSync(path.join(tmpdir(), 'posture-collector-'));
   try {
     const bin = path.join(root, 'bin');
@@ -89,7 +89,7 @@ function runCollector({ stubs = {}, procs = {}, files = {} }) {
     const res = spawnSync(path.join(bin, 'bash'), [COLLECTOR], {
       env: {
         PATH: bin,
-        SHELLIUS_POSTURE_PROC: proc,
+        ...(realProc ? {} : { SHELLIUS_POSTURE_PROC: proc }),
         PM2_HOME: files['pm2/pids/.keep'] !== undefined ? path.join(root, 'pm2') : '',
         HOME: root,
         LANG: 'C',
@@ -103,7 +103,8 @@ function runCollector({ stubs = {}, procs = {}, files = {} }) {
     } catch {
       /* asserted below */
     }
-    return { json, stdout: res.stdout, stderr: res.stderr, status: res.status, root };
+    const sudoLog = existsSync(path.join(root, 'sudo.log')) ? readFileSync(path.join(root, 'sudo.log'), 'utf8') : '';
+    return { json, stdout: res.stdout, stderr: res.stderr, status: res.status, root, sudoLog };
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
@@ -143,7 +144,7 @@ describe('posture collector ↔ ingest contract', () => {
     expect(stderr).toBe('');
     const snap = validate(json);
 
-    expect(snap.agentVersion).toBe('1.1.0');
+    expect(snap.agentVersion).toBe('1.1.1');
     // The NAT-only publish is present, with the source the API used to refuse.
     const nat = snap.listeners.find((l) => l.port === 9000);
     expect(nat).toMatchObject({ source: 'nat', containerPort: 9000 });
@@ -181,13 +182,14 @@ describe('posture collector ↔ ingest contract', () => {
     expect(sshd).toMatchObject({ ownerKind: 'systemd', ownerName: 'ssh.service', ownerRef: 'ssh.service', process: 'sshd' });
   });
 
-  it('an INPUT rule it cannot evaluate withholds the verdict and says why', () => {
+  it('an INPUT rule it cannot evaluate withholds the verdict and says why — as a note', () => {
     const { json } = runCollector({
       stubs: {
         ss: ss(['tcp LISTEN 0 4096 0.0.0.0:22 0.0.0.0:* users:(("sshd",pid=800,fd=3))']),
         iptables: [
           'case "$*" in',
           '  "-S INPUT") printf "%s\\n" "-P INPUT ACCEPT" "-A INPUT -j INPUT_custom" ;;',
+          '  "-t nat -S") printf "%s\\n" "-P PREROUTING ACCEPT" ;;',
           '  *) exit 1 ;;',
           'esac',
         ].join('\n'),
@@ -196,8 +198,11 @@ describe('posture collector ↔ ingest contract', () => {
     });
     const snap = validate(json);
     expect(snap.firewall.parsed).toBe(false);
-    expect(snap.collectorOk).toBe(false);
-    expect(snap.degradedReasons.join(' ')).toMatch(/cannot evaluate \(jumps to chain 'INPUT_custom'\)/);
+    // A limitation of the host, not a fault: a note, and the collector is OK
+    // — reinstalling could never change how this host's firewall is built.
+    expect(snap.collectorOk).toBe(true);
+    expect(snap.degradedReasons).toEqual([]);
+    expect(snap.notes.join(' ')).toMatch(/cannot evaluate \(jumps to chain 'INPUT_custom'\)/);
   });
 
   it('a native nftables firewall is read from the ruleset', () => {
@@ -314,5 +319,54 @@ describe('ingest normalisation of collectors already in the field (<= 1.0.0)', (
     expect(snap.listeners[0].ownerId).toBeUndefined();
     expect(snap.agentVersion).toBe('1.0.0');
     expect(snap.firewallRules).toBeUndefined();
+  });
+});
+
+describe('collector 1.1.1 — what dev-demos-03 showed', () => {
+  // grep's own command line contains its pattern, so searching every
+  // /proc/*/cmdline for "God Daemon (" matched grep itself, whose entry was
+  // gone by the time it was read: "line 328: /proc/<pid>/cmdline: No such
+  // file or directory" on every run. Only the REAL /proc reproduces it.
+  it('prints nothing on stderr when scanning the real /proc', () => {
+    const { json, stderr } = runCollector({
+      realProc: true,
+      stubs: { ss: 'exit 0', iptables: 'case "$*" in "-S INPUT") echo "-P INPUT ACCEPT";; "-t nat -S") echo "-P PREROUTING ACCEPT";; *) exit 1;; esac' },
+    });
+    expect(json).not.toBeNull();
+    expect(stderr).toBe('');
+  });
+
+  it('asks systemctl without sudo, once per unit — not once per socket through sudo', () => {
+    const { json, sudoLog } = runCollector({
+      stubs: {
+        // Log every sudo call, then run it.
+        sudo: '[ "$1" = "-n" ] && shift\necho "$*" >> "$HOME/sudo.log"\nexec "$@"',
+        systemctl: 'case "$*" in "show -p FragmentPath --value clickhouse-server.service") echo /lib/systemd/system/clickhouse-server.service;; *) exit 0;; esac',
+        ss: ss([
+          'tcp LISTEN 0 4096 0.0.0.0:8123 0.0.0.0:* users:(("clickhouse-serv",pid=700,fd=3))',
+          'tcp LISTEN 0 4096 0.0.0.0:9000 0.0.0.0:* users:(("clickhouse-serv",pid=700,fd=4))',
+          'tcp LISTEN 0 4096 0.0.0.0:9009 0.0.0.0:* users:(("clickhouse-serv",pid=700,fd=5))',
+        ]),
+        iptables: 'case "$*" in "-S INPUT") echo "-P INPUT ACCEPT";; "-t nat -S") echo "-P PREROUTING ACCEPT";; *) exit 1;; esac',
+      },
+      procs: { 700: { comm: 'clickhouse-serv', ppid: 1, uid: 110, cgroup: '0::/system.slice/clickhouse-server.service' } },
+    });
+    const snap = validate(json);
+    expect(snap.listeners.filter((l) => l.sourcePath === '/lib/systemd/system/clickhouse-server.service')).toHaveLength(3);
+    expect(sudoLog).not.toContain('systemctl');
+  });
+
+  it('a Docker host is not "degraded" for being a Docker host', () => {
+    const { json } = runCollector({
+      stubs: {
+        ss: ss(['tcp LISTEN 0 4096 0.0.0.0:5432 0.0.0.0:* users:(("postgres",pid=900,fd=3))']),
+        iptables: 'case "$*" in "-S INPUT") echo "-P INPUT ACCEPT";; "-t nat -S") echo "-P PREROUTING ACCEPT";; *) exit 1;; esac',
+      },
+      procs: { 900: { comm: 'postgres', ppid: 1, uid: 999, cgroup: `0::/system.slice/docker-${'a'.repeat(64)}.scope` } },
+    });
+    const snap = validate(json);
+    expect(snap.collectorOk).toBe(true);
+    expect(snap.degradedReasons).toEqual([]);
+    expect(snap.notes.join(' ')).toMatch(/container id could not be resolved/);
   });
 });

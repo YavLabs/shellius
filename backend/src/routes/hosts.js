@@ -230,6 +230,8 @@ const postureSchema = Joi.object({
   // unrelated reasons and fixing the first one should not look like nothing
   // changed.
   degradedReasons: Joi.array().items(Joi.string().max(1024)).max(20).default([]),
+  // Limitations of the host, not faults of the collector (collector 1.1.1+).
+  notes: Joi.array().items(Joi.string().max(1024)).max(20).default([]),
   firewall: firewallSchema,
   // Collectors up to 1.0.0 send the rules here, beside `firewall` rather
   // than inside it. Accepted and folded into firewall.rules by the route;
@@ -250,6 +252,20 @@ const postureSchema = Joi.object({
  *   stops reading "Version: Unknown" for a collector that told us.
  * - `degradedReason` without `degradedReasons` → a one-item list.
  */
+// Reasons older collectors (<= 1.1.0) reported as "degraded" that are really
+// limitations of the host: a reinstall cannot change any of them. Collector
+// 1.1.1 sends these as `notes` itself; this keeps hosts that have not been
+// reinstalled from being "degraded" forever for the same reasons.
+const LIMITATION_PATTERNS = [
+  /container id could not be resolved/i,
+  /cannot evaluate/i,
+  /input chains/i,
+  /raw (iptables|nftables) detected but not parsed/i,
+  /nftables detected but not parsed/i,
+  /only the first \d+ .*are reported/i,
+];
+export const isLimitation = (reason) => LIMITATION_PATTERNS.some((re) => re.test(String(reason || '')));
+
 export function normalizePostureSnapshot(value) {
   const out = { ...value };
   const { firewallRules, ...rest } = out;
@@ -265,6 +281,15 @@ export function normalizePostureSnapshot(value) {
   if ((!Array.isArray(rest.degradedReasons) || rest.degradedReasons.length === 0) && rest.degradedReason) {
     rest.degradedReasons = [rest.degradedReason];
   }
+  // Faults stay degraded reasons; limitations become notes. `collectorOk`
+  // then means "no faults", whichever collector version sent it.
+  const reasons = Array.isArray(rest.degradedReasons) ? rest.degradedReasons : [];
+  const faults = reasons.filter((r) => !isLimitation(r));
+  const moved = reasons.filter((r) => isLimitation(r));
+  rest.notes = [...(Array.isArray(rest.notes) ? rest.notes : []), ...moved].slice(0, 20);
+  rest.degradedReasons = faults;
+  rest.degradedReason = faults[0] || null;
+  if (rest.collectorOk === false && faults.length === 0) rest.collectorOk = true;
   return rest;
 }
 

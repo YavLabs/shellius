@@ -58,3 +58,18 @@ describe('collectorStateOf', () => {
     expect(collectorStateOf({ installed: true }, { collectorOk: true })).toBe('reporting');
   });
 });
+
+describe('HOST_CHECK_COMMANDS', () => {
+  it('never blocks on the one-shot service, and reads the report script by its tag', async () => {
+    const { HOST_CHECK_COMMANDS } = await import('./collectorHealth');
+    const run = HOST_CHECK_COMMANDS.find((c) => c.command.includes('systemctl start')).command;
+    expect(run).toContain('--no-block');
+    expect(run).toContain('journalctl -t shellius-posture');
+  });
+  it('reproduces the service faithfully — its user and its sandbox, never root', async () => {
+    const { HOST_CHECK_COMMANDS } = await import('./collectorHealth');
+    const faithful = HOST_CHECK_COMMANDS.find((c) => c.command.includes('systemd-run')).command;
+    expect(faithful).toContain('User=shellius-posture');
+    expect(faithful).toContain('ProtectSystem=full');
+  });
+});

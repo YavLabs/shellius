@@ -333,7 +333,7 @@ function ServerPostureTab({
   // when the real story is "nothing has ever reported".
   // A host whose every snapshot is refused has sent something, so it is not
   // "not installed" — say what is actually happening, and how to fix it.
-  if (collectorState === 'rejected' && !snapshot) {
+  if ((collectorState === 'rejected' || collectorState === 'awaiting_report') && !snapshot) {
     return (
       <CollectorHealthBanner
         state={collectorState}
@@ -930,6 +930,8 @@ function ServerPostureTab({
             <StatRow label="Status">
               {collectorState === 'rejected' ? (
                 <Badge tone="danger">Reports refused</Badge>
+              ) : collectorState === 'awaiting_report' ? (
+                <Badge tone="info">Waiting for first report</Badge>
               ) : collectorState === 'stale' ? (
                 <Badge tone="warning">Stale</Badge>
               ) : collectorState === 'degraded' ? (

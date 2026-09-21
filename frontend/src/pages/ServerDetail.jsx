@@ -16,7 +16,9 @@ import {
   Send,
   AlertTriangle,
   ShieldAlert,
+  Radar,
 } from 'lucide-react';
+import { SshTrustBadge, CollectorBadge } from '@/components/servers/HostAgentStatus';
 import Modal from '@/components/shared/Modal';
 import ConfirmDialog from '@/components/shared/ConfirmDialog';
 import EnvironmentBadge from '@/components/shared/EnvironmentBadge';
@@ -337,6 +339,13 @@ function ServerDetail() {
               items: [
                 { key: 'health', label: checking ? 'Checking...' : 'Run health check', icon: Activity, onClick: handleHealthCheck, disabled: checking },
                 { key: 'bootstrap', label: 'Bootstrap host', icon: Download, onClick: () => { setWizardScope(null); setWizardOpen(true); } },
+                {
+                  key: 'reinstall-collector',
+                  label: 'Reinstall posture collector',
+                  icon: Radar,
+                  onClick: () => { setWizardScope('posture'); setWizardOpen(true); },
+                  hidden: server?.collector?.state === 'not_applicable',
+                },
                 { key: 'uninstall', label: 'Uninstall agent', icon: Eraser, onClick: () => setUninstallOpen(true), hidden: isCredentialMode },
                 { key: 'test', label: 'Test identity', icon: PlugZap, onClick: () => setTestIdentityOpen(true), hidden: !isCredentialMode },
               ],
@@ -430,6 +439,11 @@ function ServerDetail() {
                     <DropdownMenuItem onSelect={() => { setWizardScope(null); setWizardOpen(true); }}>
                       <Download className="mr-2 h-4 w-4" /> Bootstrap host
                     </DropdownMenuItem>
+                    {server?.collector?.state !== 'not_applicable' && (
+                      <DropdownMenuItem onSelect={() => { setWizardScope('posture'); setWizardOpen(true); }}>
+                        <Radar className="mr-2 h-4 w-4" /> Reinstall posture collector
+                      </DropdownMenuItem>
+                    )}
                     {!isCredentialMode && (
                       <DropdownMenuItem onSelect={() => setUninstallOpen(true)}>
                         <Eraser className="mr-2 h-4 w-4" /> Uninstall agent
@@ -661,6 +675,34 @@ function ServerDetail() {
         </Card>
 
         <Card title="Onboarding">
+          {/* What Shellius runs on this host and whether it works — the same
+              two badges as the server lists, with the fix one click away. */}
+          <Field
+            label="SSH trust"
+            value={
+              <SshTrustBadge
+                server={server}
+                canFix={canOnboard}
+                onFix={({ scope }) => {
+                  setWizardScope(scope || 'full');
+                  setWizardOpen(true);
+                }}
+              />
+            }
+          />
+          <Field
+            label="Posture collector"
+            value={
+              <CollectorBadge
+                server={server}
+                canFix={canOnboard}
+                onFix={() => {
+                  setWizardScope('posture');
+                  setWizardOpen(true);
+                }}
+              />
+            }
+          />
           {isCredentialMode ? (
             <>
               <Field label="Status" value="Ready (stored identity)" />
@@ -732,7 +774,7 @@ function ServerDetail() {
           <Card title="Agent">
             <Field label="Agent ID" value={server.agentId} mono />
             <Field label="Version" value={server.agentVersion} />
-            <Field label="Last seen" value={formatDateTime(server.agentLastSeenAt)} />
+            <Field label="Last seen" value={formatDateTime(server.agentLastSeen)} />
             {server.agentAuth === 'legacy' && (
               <div className="mt-2 flex items-start gap-2 rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2.5 text-sm text-amber-800 dark:text-amber-200">
                 <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />

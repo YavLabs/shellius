@@ -77,9 +77,15 @@ function StatusIcon({ status }) {
   return <span className="h-4 w-4 shrink-0 rounded-full border border-border" />;
 }
 
-function BulkInstallModal({ open, serverIds = [], onClose, onDone }) {
+/**
+ * @param {string[]} [preselectIds]  also tick these, even if healthy — used
+ *   when the modal is opened from one host's "Reinstall" action, where the
+ *   host being healthy is exactly why it would otherwise be unticked.
+ * @param {'posture'|'full'} [initialMode]
+ */
+function BulkInstallModal({ open, serverIds = [], onClose, onDone, preselectIds = [], initialMode = 'posture' }) {
   const [step, setStep] = useState('plan'); // plan | auth | run | manual
-  const [mode, setMode] = useState('posture');
+  const [mode, setMode] = useState(initialMode);
   const [method, setMethod] = useState('auto'); // auto | manual
   const { can } = useAuth();
   // Saving a sudo password binds a secret to a server and creates a Keystore
@@ -149,12 +155,15 @@ function BulkInstallModal({ open, serverIds = [], onClose, onDone }) {
         includeDone: false,
       });
       setPlan(data);
-      setChosen(defaultSelection(data));
+      const pickable = new Set(selectableHosts(data).map((h) => h.id));
+      setChosen([...new Set([...defaultSelection(data), ...preselectIds.filter((id) => pickable.has(id))])]);
     } catch (err) {
       setError(err.response?.data?.error?.message || err.message || 'Could not build the install plan');
     } finally {
       setPlanLoading(false);
     }
+    // preselectIds is read on each (re)plan; it is set together with `open`.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [serverIds, mode]);
 
   useEffect(() => {
@@ -171,6 +180,8 @@ function BulkInstallModal({ open, serverIds = [], onClose, onDone }) {
 
   useEffect(() => {
     if (!open) reset();
+    else setMode(initialMode);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, reset]);
 
   // Stop the run if the modal goes away — an abandoned bulk install is N

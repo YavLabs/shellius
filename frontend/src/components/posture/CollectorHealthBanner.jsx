@@ -1,8 +1,8 @@
 import { useState } from 'react';
-import { AlertTriangle, ChevronDown, Info, RefreshCw, ShieldOff, TerminalSquare, Ban } from 'lucide-react';
+import { AlertTriangle, ChevronDown, Info, Loader2, RefreshCw, ShieldOff, TerminalSquare, Ban } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { CopyButton } from '@/components/settings/shared';
-import { HOST_CHECK_COMMANDS, explainDegraded } from '@/lib/collectorHealth';
+import { HOST_CHECK_COMMANDS, explainDegraded, isOlderVersion } from '@/lib/collectorHealth';
 import { relativeTime, formatDateTime } from '@/utils/time';
 
 /**
@@ -92,6 +92,35 @@ export default function CollectorHealthBanner({ state, collector, snapshot, onRe
     <p className="italic">Ask someone who can onboard servers to reinstall the collector.</p>
   ) : null;
 
+  // Which collector said all this, and when — a warning from a collector
+  // that has since been replaced reads very differently.
+  const provenance = collector?.version ? (
+    <p className="opacity-80">
+      Reported by collector {collector.version}
+      {collector.lastSeenAt ? `, ${relativeTime(collector.lastSeenAt)}` : ''}.
+      {isOlderVersion(collector.version, collector.latestVersion) &&
+        ` Version ${collector.latestVersion} is available and may already fix some of this.`}
+    </p>
+  ) : null;
+
+  if (state === 'awaiting_report') {
+    return (
+      <Shell tone="info" icon={Loader2} title="Collector reinstalled — waiting for its first report">
+        <p>
+          Installed {relativeTime(collector?.installedAt)}. The new collector reports within a minute or two; this page
+          updates when it does.
+        </p>
+        {collector?.lastSeenAt && (
+          <p>
+            What is shown below is the last report from the collector it replaced
+            {collector.version ? ` (${collector.version})` : ''}, {relativeTime(collector.lastSeenAt)} — not the current state.
+          </p>
+        )}
+        <HostChecks />
+      </Shell>
+    );
+  }
+
   if (state === 'rejected') {
     return (
       <Shell tone="danger" icon={Ban} title="Shellius is refusing this host’s reports" action={reinstallButton('Update collector')}>
@@ -142,6 +171,7 @@ export default function CollectorHealthBanner({ state, collector, snapshot, onRe
         {!onlyInformational && (
           <p>It ran, but could not see everything. Treat “no findings” here as unverified, not clean.</p>
         )}
+        {provenance}
         {items.length === 0 && <p>The collector did not say why.</p>}
         <ul className="mt-1 space-y-2">
           {items.map((item) => (
@@ -163,6 +193,24 @@ export default function CollectorHealthBanner({ state, collector, snapshot, onRe
         </ul>
         {reinstallHelps && noPermissionHint}
         {!onlyInformational && <HostChecks />}
+      </Shell>
+    );
+  }
+
+  // Reporting fine, but with notes about what this host does not let it
+  // see. Not a problem to fix — said once, quietly.
+  const notes = snapshot?.notes || [];
+  if ((state === 'reporting' || state === 'outdated') && notes.length > 0) {
+    const { items } = explainDegraded(notes);
+    return (
+      <Shell tone="info" icon={Info} title="Reporting, with notes">
+        <ul className="space-y-1">
+          {items.map((item) => (
+            <li key={item.key}>
+              <span className="font-medium">{item.title}.</span> {item.explain}
+            </li>
+          ))}
+        </ul>
       </Shell>
     );
   }

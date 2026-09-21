@@ -16,6 +16,10 @@
  *   not_installed   never sent anything (and nothing refused either).
  *   rejected        the host IS sending, but its newest snapshot was
  *                   refused; the data shown is from before that.
+ *   awaiting_report Shellius (re)installed the collector after the newest
+ *                   snapshot, and the new collector has not reported yet.
+ *                   What is on the page came from the collector it
+ *                   replaced, and must not be presented as current.
  *   stale           sent before, has gone quiet.
  *   degraded        reporting, but could not see everything (no sudo, an
  *                   unparsed firewall, …) — its "no findings" means less.
@@ -29,6 +33,7 @@ export const COLLECTOR_STATES = [
   'not_applicable',
   'not_installed',
   'rejected',
+  'awaiting_report',
   'stale',
   'degraded',
   'reporting',
@@ -76,6 +81,7 @@ export async function latestSnapshots(orgId, serverIds) {
       collectorOk: r.collectorOk,
       degradedReason: r.degradedReason,
       degradedReasons: degradedReasonsOf(r),
+      notes: Array.isArray(r.raw?.notes) ? r.raw.notes.filter((n) => typeof n === 'string' && n) : [],
       agentVersion: r.agentVersion,
     });
   }
@@ -98,17 +104,27 @@ export function degradedReasonsOf(snapshot) {
  */
 export function classifyCollector(server, latest, settings, now = Date.now()) {
   if (!canInstallOn(server)) return 'not_applicable';
-  const rejectedAt = server?.postureRejectedAt ? new Date(server.postureRejectedAt).getTime() : null;
-  const receivedAt = latest?.receivedAt ? new Date(latest.receivedAt).getTime() : null;
-  // A refusal newer than the newest accepted snapshot means the collector is
-  // alive and talking — the problem is between it and us, not on the host.
-  if (rejectedAt && (!receivedAt || rejectedAt > receivedAt)) {
+  const ts = (d) => (d ? new Date(d).getTime() : null);
+  const rejectedAt = ts(server?.postureRejectedAt);
+  const installedAt = ts(server?.postureInstalledAt);
+  const receivedAt = ts(latest?.receivedAt);
+  const threshold = staleThresholdMs(settings);
+  // A refusal newer than both the newest accepted snapshot and the last
+  // install means the collector is alive and talking — the problem is
+  // between it and us, not on the host.
+  if (rejectedAt && (!receivedAt || rejectedAt > receivedAt) && (!installedAt || rejectedAt > installedAt)) {
     // …unless the refusal itself is old: then it has gone quiet since.
-    if (now - rejectedAt > staleThresholdMs(settings)) return receivedAt ? 'stale' : 'not_installed';
+    if (now - rejectedAt > threshold) return receivedAt ? 'stale' : 'not_installed';
     return 'rejected';
   }
+  // Reinstalled after the newest snapshot: that snapshot describes the
+  // collector that was replaced. Give the new one a collect interval or
+  // three to report before calling the host silent.
+  if (installedAt && (!receivedAt || installedAt > receivedAt)) {
+    return now - installedAt <= threshold ? 'awaiting_report' : 'stale';
+  }
   if (!receivedAt) return 'not_installed';
-  if (now - receivedAt > staleThresholdMs(settings)) return 'stale';
+  if (now - receivedAt > threshold) return 'stale';
   if (latest.collectorOk === false) return 'degraded';
   return 'reporting';
 }
