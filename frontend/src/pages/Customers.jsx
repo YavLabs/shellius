@@ -1,10 +1,12 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { Plus, Building2, Server, Eye, Pencil, Trash2, RefreshCw } from 'lucide-react';
 import Badge from '@/components/shared/Badge';
 import Modal from '@/components/shared/Modal';
 import ConfirmDialog from '@/components/shared/ConfirmDialog';
 import DataTable from '@/components/shared/DataTable';
+import FilteredEmptyState from '@/components/shared/FilteredEmptyState';
+import { appliedFilterCount, clearedFilterValues } from '@/lib/filters';
 import { CardIcon } from '@/components/mobile/MobileCard';
 import CustomerForm from '@/components/customers/CustomerForm';
 import PageHeader from '@/components/common/PageHeader';
@@ -28,6 +30,8 @@ function Customers() {
   const [confirm, setConfirm] = useState(null);
   const [deleteTarget, setDeleteTarget] = useState(null);
   const [searchParams, setSearchParams] = useSearchParams();
+  const [statusFilter, setStatusFilter] = useState('');
+  const [hasServersFilter, setHasServersFilter] = useState('');
 
   // Deep link: /customers?action=new — open the create modal on mount.
   useEffect(() => {
@@ -70,6 +74,47 @@ function Customers() {
   };
 
   const handleDelete = (c) => setDeleteTarget(c);
+
+  const filterDefs = [
+    {
+      key: 'status',
+      label: 'Status',
+      placeholder: 'All statuses',
+      options: [
+        { value: '', label: 'All statuses' },
+        { value: 'active', label: 'Active' },
+        { value: 'inactive', label: 'Inactive' },
+      ],
+    },
+    {
+      key: 'hasServers',
+      label: 'Servers',
+      placeholder: 'Any',
+      options: [
+        { value: '', label: 'Any' },
+        { value: 'yes', label: 'Has servers' },
+        { value: 'no', label: 'No servers' },
+      ],
+    },
+  ];
+  const filterValues = { status: statusFilter, hasServers: hasServersFilter };
+  const applyFilters = (next) => {
+    setStatusFilter(next.status ?? '');
+    setHasServersFilter(next.hasServers ?? '');
+  };
+
+  // Client-side list (all customers load at once, page-size 200) — filter
+  // here rather than server-side, matching how the search box already works.
+  const filteredCustomers = useMemo(() => {
+    return customers.filter((c) => {
+      if (statusFilter === 'active' && !c.isActive) return false;
+      if (statusFilter === 'inactive' && c.isActive) return false;
+      const count = c._count?.servers ?? 0;
+      if (hasServersFilter === 'yes' && count === 0) return false;
+      if (hasServersFilter === 'no' && count > 0) return false;
+      return true;
+    });
+  }, [customers, statusFilter, hasServersFilter]);
 
   const columns = [
     {
@@ -177,10 +222,18 @@ function Customers() {
 
       <DataTable
         columns={columns}
-        data={customers}
+        data={filteredCustomers}
         loading={loading}
         emptyMessage="No customers yet. Create your first customer to get started."
+        emptyState={
+          appliedFilterCount(filterDefs, filterValues) > 0 ? (
+            <FilteredEmptyState onClear={() => applyFilters(clearedFilterValues(filterDefs))} />
+          ) : undefined
+        }
         searchPlaceholder="Search customers..."
+        filterDefs={filterDefs}
+        filterValues={filterValues}
+        onFilterChange={applyFilters}
         onRowClick={(c) => navigate(`/customers/${c.id}`)}
         mobile={{
           leading: () => <CardIcon icon={Building2} />,

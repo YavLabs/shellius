@@ -18,6 +18,8 @@ import {
   Fingerprint,
 } from 'lucide-react';
 import DataTable from '@/components/shared/DataTable';
+import FilteredEmptyState from '@/components/shared/FilteredEmptyState';
+import { appliedFilterCount, clearedFilterValues } from '@/lib/filters';
 import { Badge } from '@/components/ui/badge';
 import { roleTone, statusTone } from '@/lib/badgeTones';
 import { CardStatus } from '@/components/mobile/MobileCard';
@@ -97,13 +99,22 @@ function Users() {
 
   const [role, setRole] = useState('');
   const [status, setStatus] = useState('');
+  const [managerId, setManagerId] = useState('');
+  const [mfaFilter, setMfaFilter] = useState('');
 
   const { user: me, can } = useAuth();
   const [roles, setRoles] = useState([]);
+  const [managers, setManagers] = useState([]);
   useEffect(() => {
     listRoles()
       .then(setRoles)
       .catch(() => setRoles([]));
+    // Light option list for the "Manager" filter — anyone could be a
+    // manager, so this pulls the full (bounded) user directory once rather
+    // than only the names present on the current page.
+    listUsers({ page: 1, pageSize: 200 })
+      .then((d) => setManagers(d.items || []))
+      .catch(() => {});
   }, []);
   const assignableRoleIds = new Set(roles.filter((r) => r.assignable).map((r) => r.id));
   const isMe = (r) => r.id === me?.id;
@@ -159,6 +170,8 @@ function Users() {
       const params = { page, pageSize };
       if (role) params.roleId = role;
       if (status) params.status = status;
+      if (managerId) params.managerId = managerId;
+      if (mfaFilter) params.mfaEnabled = mfaFilter;
       const data = await listUsers(params);
       setUsers(data.items || []);
       setTotal(data.total || 0);
@@ -167,7 +180,7 @@ function Users() {
     } finally {
       setLoading(false);
     }
-  }, [page, pageSize, role, status]);
+  }, [page, pageSize, role, status, managerId, mfaFilter]);
 
   useEffect(() => {
     fetchUsers();
@@ -321,11 +334,33 @@ function Users() {
         ...STATUSES.map((st) => ({ value: st, label: USER_STATUS_LABELS[st] || formatLabel(st) })),
       ],
     },
+    {
+      key: 'manager',
+      label: 'Manager',
+      placeholder: 'All managers',
+      searchable: true,
+      options: [
+        { value: '', label: 'All managers' },
+        ...managers.map((m) => ({ value: m.id, label: m.name || m.email })),
+      ],
+    },
+    {
+      key: 'mfa',
+      label: 'MFA',
+      placeholder: 'Any',
+      options: [
+        { value: '', label: 'Any' },
+        { value: 'true', label: 'Enabled' },
+        { value: 'false', label: 'Not enabled' },
+      ],
+    },
   ];
-  const filterValues = { role, status };
+  const filterValues = { role, status, manager: managerId, mfa: mfaFilter };
   const applyFilters = (next) => {
     setRole(next.role ?? '');
     setStatus(next.status ?? '');
+    setManagerId(next.manager ?? '');
+    setMfaFilter(next.mfa ?? '');
     setPage(1);
   };
 
@@ -515,6 +550,11 @@ function Users() {
         data={users}
         loading={loading}
         emptyMessage="No users found"
+        emptyState={
+          appliedFilterCount(filterDefs, filterValues) > 0 ? (
+            <FilteredEmptyState onClear={() => applyFilters(clearedFilterValues(filterDefs))} />
+          ) : undefined
+        }
         searchPlaceholder="Search by name or email..."
         filterDefs={filterDefs}
         filterValues={filterValues}

@@ -106,7 +106,13 @@ router.get(
   '/',
   requirePermission('users.view'),
   asyncHandler(async (req, res) => {
-    const result = await userService.listUsers(req.orgId, req.query);
+    const query = { ...req.query };
+    // Query strings arrive as strings — coerce the one boolean filter so
+    // `mfaEnabled=false` doesn't fall through userService's truthy check.
+    if (query.mfaEnabled === 'true') query.mfaEnabled = true;
+    else if (query.mfaEnabled === 'false') query.mfaEnabled = false;
+    else delete query.mfaEnabled;
+    const result = await userService.listUsers(req.orgId, query);
     res.json({ success: true, data: result });
   })
 );
