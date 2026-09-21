@@ -195,6 +195,77 @@ describe('posture — read/management API', () => {
   });
 
   // ---------------------------------------------------------------------
+  // New findings filters (1.7.5): serverId, code, last-seen range, search —
+  // and getSummary's tiles/sections/codes facet must reflect them exactly,
+  // since that is the whole point of sharing buildFindingsWhere.
+  // ---------------------------------------------------------------------
+
+  dbTest('listFindings: serverId, code and lastSeenFrom/lastSeenTo narrow the same way for the list and the summary', async () => {
+    const old = await createFinding(org.id, serverA.id, {
+      code: 'RANGE_OLD', port: 9201, lastSeenAt: new Date('2020-01-01T00:00:00Z'),
+    });
+    const recent = await createFinding(org.id, serverA.id, {
+      code: 'RANGE_RECENT', port: 9202, lastSeenAt: new Date(),
+    });
+
+    const byServer = await postureQueryService.listFindings(org.id, { serverId: serverA.id }, unscopedScope);
+    expect(byServer.findings.map((f) => f.id)).toEqual(expect.arrayContaining([old.id, recent.id]));
+    expect(byServer.findings.every((f) => f.server.id === serverA.id)).toBe(true);
+
+    const byCode = await postureQueryService.listFindings(org.id, { code: 'RANGE_RECENT' }, unscopedScope);
+    expect(byCode.findings.map((f) => f.id)).toEqual([recent.id]);
+
+    const byRange = await postureQueryService.listFindings(
+      org.id,
+      { lastSeenFrom: new Date(Date.now() - 60 * 60 * 1000).toISOString() },
+      unscopedScope
+    );
+    const rangeIds = byRange.findings.map((f) => f.id);
+    expect(rangeIds).toContain(recent.id);
+    expect(rangeIds).not.toContain(old.id);
+
+    // The summary's `codes` facet is not narrowed by `code` itself — picking
+    // one code must not make the picker forget the rest of them exist.
+    const summary = await postureQueryService.getSummary(org.id, unscopedScope, { serverId: serverA.id });
+    const codeValues = summary.codes.map((c) => c.value);
+    expect(codeValues).toEqual(expect.arrayContaining(['RANGE_OLD', 'RANGE_RECENT']));
+  });
+
+  dbTest('listFindings: `q` matches message, code, service, ownerLabel, server hostname and port', async () => {
+    const finding = await createFinding(org.id, serverA.id, {
+      code: 'SEARCH_TEST', port: 9301, message: 'A very particular sentence about exposure',
+    });
+
+    const byMessage = await postureQueryService.listFindings(org.id, { q: 'particular sentence' }, unscopedScope);
+    expect(byMessage.findings.map((f) => f.id)).toContain(finding.id);
+
+    const byCode = await postureQueryService.listFindings(org.id, { q: 'SEARCH_TEST' }, unscopedScope);
+    expect(byCode.findings.map((f) => f.id)).toContain(finding.id);
+
+    const byPort = await postureQueryService.listFindings(org.id, { q: '9301' }, unscopedScope);
+    expect(byPort.findings.map((f) => f.id)).toContain(finding.id);
+
+    const byHostname = await postureQueryService.listFindings(org.id, { q: serverA.hostname }, unscopedScope);
+    expect(byHostname.findings.map((f) => f.id)).toContain(finding.id);
+
+    const noMatch = await postureQueryService.listFindings(org.id, { q: 'nothing-matches-this-string' }, unscopedScope);
+    expect(noMatch.findings.map((f) => f.id)).not.toContain(finding.id);
+  });
+
+  dbTest('getSummary/listFindings: a scoped caller combining serverId or customerId with an out-of-scope target sees nothing', async () => {
+    const outOfScope = await postureQueryService.listFindings(org.id, { serverId: serverB.id }, scopedScope);
+    expect(outOfScope.findings).toEqual([]);
+    expect(outOfScope.total).toBe(0);
+
+    const outOfScopeCustomer = await postureQueryService.listFindings(org.id, { customerId: customerB.id }, scopedScope);
+    expect(outOfScopeCustomer.findings).toEqual([]);
+
+    const summaryOut = await postureQueryService.getSummary(org.id, scopedScope, { serverId: serverB.id });
+    expect(summaryOut.sections.total).toBe(0);
+    expect(summaryOut.codes).toEqual([]);
+  });
+
+  // ---------------------------------------------------------------------
   // getServerPosture — 404, never 403, for an out-of-scope server
   // ---------------------------------------------------------------------
 

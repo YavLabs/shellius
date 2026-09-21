@@ -79,7 +79,7 @@ function buildWhere(orgId, scope, filters = {}) {
     environment,
   } = filters;
 
-  const where = { orgId, ...relationScopeWhere(scope, 'server') };
+  const where = { orgId };
 
   if (proto) where.proto = proto;
   if (reachability) where.reachability = reachability;
@@ -92,17 +92,27 @@ function buildWhere(orgId, scope, filters = {}) {
     if (portMax != null) where.port.lte = Number(portMax);
   }
 
-  // Server-side predicates live on the relation so scope and the caller's
-  // own filters are ANDed rather than overwriting one another.
-  const serverWhere = {};
-  if (serverId) serverWhere.id = serverId;
-  else if (Array.isArray(serverIds) && serverIds.length) serverWhere.id = { in: serverIds };
-  if (customerId) serverWhere.customerId = customerId;
-  if (environment) serverWhere.environment = environment;
+  // Server-side predicates live on the relation, ANDed as an array rather
+  // than merged into one object. A plain `{ ...scopeWhere.server,
+  // ...callerWhere }` merge is a real leak here: scope's own predicate is
+  // `{ customerId: { in: [...] } }`, and a caller-supplied `customerId` is a
+  // bare string on the SAME key — the later spread silently overwrites the
+  // former, so a scoped caller naming any other customerId outright replaces
+  // their own scope instead of narrowing within it (customer-scope-spec
+  // §6.3). `AND` keeps the two predicates as separate conditions that must
+  // both hold, so an out-of-scope customerId/serverId can only ever narrow
+  // the result to nothing.
+  const serverFilters = [];
+  const relFilter = relationScopeWhere(scope, 'server');
+  if (relFilter.server) serverFilters.push(relFilter.server);
+  if (serverId) serverFilters.push({ id: serverId });
+  else if (Array.isArray(serverIds) && serverIds.length) serverFilters.push({ id: { in: serverIds } });
+  if (customerId) serverFilters.push({ customerId });
+  if (environment) serverFilters.push({ environment });
   // Terminated hosts keep their rows for audit; they are not part of "what is
   // running right now".
-  serverWhere.isActive = true;
-  where.server = { ...(where.server || {}), ...serverWhere };
+  serverFilters.push({ isActive: true });
+  where.server = serverFilters.length === 1 ? serverFilters[0] : { AND: serverFilters };
 
   return where;
 }
@@ -185,14 +195,19 @@ async function loadHostServices(orgId, scope, filters = {}) {
     orgId,
     ...(state === 'stopped' ? { running: false } : {}),
     ...(state === 'running' ? { running: true } : {}),
-    ...relationScopeWhere(scope, 'server'),
   };
-  const serverWhere = { isActive: true };
-  if (serverId) serverWhere.id = serverId;
-  else if (Array.isArray(serverIds) && serverIds.length) serverWhere.id = { in: serverIds };
-  if (customerId) serverWhere.customerId = customerId;
-  if (environment) serverWhere.environment = environment;
-  where.server = { ...(where.server || {}), ...serverWhere };
+  // Same `AND`-array reasoning as buildWhere() above: scope's own
+  // `customerId: { in: [...] }` must never share a plain merge with a
+  // caller-supplied `customerId`, or the caller's value silently replaces
+  // the scope instead of narrowing within it.
+  const serverFilters = [{ isActive: true }];
+  const relFilter = relationScopeWhere(scope, 'server');
+  if (relFilter.server) serverFilters.push(relFilter.server);
+  if (serverId) serverFilters.push({ id: serverId });
+  else if (Array.isArray(serverIds) && serverIds.length) serverFilters.push({ id: { in: serverIds } });
+  if (customerId) serverFilters.push({ customerId });
+  if (environment) serverFilters.push({ environment });
+  where.server = serverFilters.length === 1 ? serverFilters[0] : { AND: serverFilters };
   // `kind` on HostService is the same vocabulary as `ownerKind` on a
   // listener (docker/podman/pm2/systemd), so one filter drives both views.
   const kinds = parseOwnerKinds(ownerKind, ownerKinds);

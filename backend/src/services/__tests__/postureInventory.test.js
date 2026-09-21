@@ -53,6 +53,40 @@ describe('serviceKey', () => {
   });
 });
 
+describe('parseOwnerKinds', () => {
+  it('combines a single ownerKind and a csv ownerKinds into one deduped set', () => {
+    expect(inventory.parseOwnerKinds('docker', 'docker,docker-proxy, container')).toEqual([
+      'docker',
+      'docker-proxy',
+      'container',
+    ]);
+  });
+
+  it('returns null (no filter) when nothing was given', () => {
+    expect(inventory.parseOwnerKinds(undefined, undefined)).toBeNull();
+    expect(inventory.parseOwnerKinds('', '')).toBeNull();
+  });
+});
+
+describe('matchesQuery', () => {
+  it('matches a customer name and an IP address, same fields the export needs', () => {
+    const row = {
+      service: 'nginx',
+      port: 80,
+      proto: 'tcp',
+      server: { hostname: 'web-1', displayName: null, ipAddress: '10.1.2.3', customer: { name: 'Acme Corp' } },
+    };
+    expect(inventory.matchesQuery(row, 'Acme')).toBe(true);
+    expect(inventory.matchesQuery(row, '10.1.2.3')).toBe(true);
+    expect(inventory.matchesQuery(row, 'Globex')).toBe(false);
+  });
+
+  it('an empty query matches everything', () => {
+    expect(inventory.matchesQuery({ service: 'x' }, '')).toBe(true);
+    expect(inventory.matchesQuery({ service: 'x' }, undefined)).toBe(true);
+  });
+});
+
 describe('inventory + bulk plan (DB)', () => {
   let org;
   let customerA;
@@ -203,6 +237,121 @@ describe('inventory + bulk plan (DB)', () => {
     const out = await inventory.listListeners(org.id, { port: 80, serverId: webA.id }, UNSCOPED);
     expect(out.items[0].findings.map((f) => f.id)).toContain(finding.id);
     await prisma.exposureFinding.delete({ where: { id: finding.id } });
+  });
+
+  // ---- new filters (1.7.5): ownerKinds, findingSeverity, scoped facets ---
+
+  it('ownerKinds (csv) filters to a SET — grouping docker + docker-proxy as one "Type"', async () => {
+    if (!(await dbReachable())) return console.warn('DB unreachable — skipping');
+    const snap = await mkSnapshot(webA.id);
+    const proxy = await mkListener(webA.id, snap.id, {
+      port: 9443,
+      ownerKind: 'docker-proxy',
+      ownerName: 'docker-proxy',
+      reachability: 'INTERNET',
+    });
+    try {
+      const dockerOnly = await inventory.listListeners(org.id, { ownerKind: 'docker' }, UNSCOPED);
+      expect(dockerOnly.items.some((r) => r.port === 9443)).toBe(false);
+
+      const grouped = await inventory.listListeners(org.id, { ownerKinds: 'docker,docker-proxy' }, UNSCOPED);
+      expect(grouped.items.some((r) => r.port === 9443)).toBe(true);
+      expect(grouped.items.some((r) => r.ownerKind === 'docker')).toBe(true);
+    } finally {
+      await prisma.hostListener.delete({ where: { id: proxy.id } });
+    }
+  });
+
+  it('findingSeverity filters to rows carrying an OPEN finding of that severity, on both views', async () => {
+    if (!(await dbReachable())) return console.warn('DB unreachable — skipping');
+    const critical = await prisma.exposureFinding.create({
+      data: {
+        orgId: org.id,
+        serverId: webA.id,
+        code: 'SENSITIVE_PORT_EXPOSED',
+        proto: 'tcp',
+        port: 5432,
+        severity: 'CRITICAL',
+        message: 'sensitive',
+        firstSeenAt: new Date(),
+        lastSeenAt: new Date(),
+      },
+    });
+    const high = await prisma.exposureFinding.create({
+      data: {
+        orgId: org.id,
+        serverId: webB.id,
+        code: 'PORT_EXPOSED',
+        proto: 'tcp',
+        port: 80,
+        severity: 'HIGH',
+        message: 'exposed',
+        firstSeenAt: new Date(),
+        lastSeenAt: new Date(),
+      },
+    });
+    try {
+      const criticalOnly = await inventory.listListeners(org.id, { findingSeverity: 'CRITICAL' }, UNSCOPED);
+      expect(criticalOnly.items).toHaveLength(1);
+      expect(criticalOnly.items[0].port).toBe(5432);
+
+      const servicesCritical = await inventory.listServices(org.id, { findingSeverity: 'CRITICAL' }, UNSCOPED);
+      expect(servicesCritical.items.every((i) => (i.severityCounts.CRITICAL || 0) > 0)).toBe(true);
+      // nginx (webA + webB) only carries the HIGH finding, not the CRITICAL
+      // one, so a CRITICAL filter must drop it even though it has findings.
+      expect(servicesCritical.items.map((i) => i.key)).not.toContain('docker:nginx');
+    } finally {
+      await prisma.exposureFinding.deleteMany({ where: { id: { in: [critical.id, high.id] } } });
+    }
+  });
+
+  it(
+    'listFacets is scoped (a literal `server: {isActive:true}` after the scope spread used to silently ' +
+      'drop it) and merges in HostService kinds a socket scan never sees',
+    async () => {
+      if (!(await dbReachable())) return console.warn('DB unreachable — skipping');
+      const snap = await mkSnapshot(betaHost.id);
+      const stoppedOnly = await prisma.hostService.create({
+        data: {
+          orgId: org.id,
+          serverId: betaHost.id,
+          snapshotId: snap.id,
+          kind: 'systemd-user',
+          name: 'backup-timer',
+          state: 'stopped',
+          running: false,
+          ports: [],
+        },
+      });
+      try {
+        const unscoped = await inventory.listFacets(org.id, UNSCOPED);
+        expect(unscoped.ownerKinds.map((k) => k.value)).toContain('systemd-user');
+
+        const scopedToA = await inventory.listFacets(org.id, scopedTo([customerA.id]));
+        expect(scopedToA.ownerKinds.map((k) => k.value)).not.toContain('systemd-user');
+        // customerA's own kinds must still be there — proof the scope fix
+        // didn't just make the facet empty for everyone.
+        expect(scopedToA.ownerKinds.map((k) => k.value)).toContain('docker');
+
+        const scopedToB = await inventory.listFacets(org.id, scopedTo([customerB.id]));
+        expect(scopedToB.ownerKinds.map((k) => k.value)).toContain('systemd-user');
+      } finally {
+        await prisma.hostService.delete({ where: { id: stoppedOnly.id } });
+      }
+    }
+  );
+
+  it('a scoped caller naming an out-of-scope serverId directly still sees nothing', async () => {
+    if (!(await dbReachable())) return console.warn('DB unreachable — skipping');
+    const out = await inventory.listListeners(org.id, { serverId: betaHost.id }, scopedTo([customerA.id]));
+    expect(out.items).toHaveLength(0);
+    expect(out.meta.total).toBe(0);
+  });
+
+  it('a scoped caller naming an out-of-scope customerId directly still sees nothing', async () => {
+    if (!(await dbReachable())) return console.warn('DB unreachable — skipping');
+    const out = await inventory.listListeners(org.id, { customerId: customerB.id }, scopedTo([customerA.id]));
+    expect(out.items).toHaveLength(0);
   });
 
   // ---- bulk install plan -------------------------------------------------
