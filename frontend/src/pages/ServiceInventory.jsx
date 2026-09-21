@@ -20,7 +20,6 @@ import ExportDialog from '@/components/posture/ExportDialog';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { reachabilityTone } from '@/lib/badgeTones';
-import { serviceLabel } from '@/lib/postureLabels';
 import { can } from '@/lib/permissions';
 import { useAuth } from '@/context/AuthContext';
 import { fromState } from '@/hooks/useBackTarget';
@@ -34,6 +33,8 @@ import { listCustomers } from '@/services/customerService';
 import BulkInstallModal from '@/components/servers/BulkInstallModal';
 import { ENVIRONMENT_LABELS } from '@/lib/labels';
 import useAutoRefresh from '@/hooks/useAutoRefresh';
+import { describeListener } from '@/lib/serviceIdentity';
+import ServiceCell, { RuntimeChip } from '@/components/posture/ServiceCell';
 
 /**
  * Services & ports — what is running across the fleet.
@@ -295,30 +296,51 @@ function ServiceInventory() {
 
   const listenerColumns = [
     {
-      key: 'port',
-      label: 'Port',
-      className: 'w-28',
-      sortAccessor: (r) => r.port,
-      mobile: { slot: 'title', render: (r) => `${(r.proto || '').toUpperCase()}/${r.port}` },
-      render: (r) => (
-        <span className="font-mono text-sm">
-          {(r.proto || '').toUpperCase()}/{r.port}
-        </span>
-      ),
-    },
-    {
       key: 'service',
       label: 'Service',
-      searchAccessor: (r) => serviceLabel(r).text,
-      mobile: { slot: 'secondary', render: (r) => serviceLabel(r).text },
-      render: (r) => {
-        const { text, inferred } = serviceLabel(r);
-        return (
-          <span className={inferred ? 'text-muted-foreground' : 'text-foreground'} title={text}>
-            {text}
-          </span>
-        );
+      // Same readable cell as a server's Ports tab: the name, the recognised
+      // protocol when it adds something, and where it is defined underneath.
+      sortAccessor: (r) => describeListener(r).name.toLowerCase(),
+      searchAccessor: (r) => {
+        const d = describeListener(r);
+        return [d.name, d.runtime.label, d.protocol, d.subtext, d.id, d.details.user].join(' ');
       },
+      mobile: {
+        slot: 'secondary',
+        render: (r) => {
+          const d = describeListener(r);
+          return `${d.name} · ${d.runtime.label}${d.protocol ? ` · ${d.protocol}` : ''}`;
+        },
+      },
+      render: (r) => <ServiceCell listener={r} />,
+    },
+    {
+      key: 'type',
+      label: 'Type',
+      className: 'w-32',
+      sortAccessor: (r) => describeListener(r).runtime.label,
+      mobile: 'hidden',
+      render: (r) => <RuntimeChip runtime={describeListener(r).runtime} />,
+    },
+    {
+      key: 'port',
+      label: 'Port',
+      className: 'w-24',
+      sortAccessor: (r) => r.port,
+      mobile: { slot: 'title', render: (r) => `${(r.proto || '').toUpperCase()}/${r.port}` },
+      render: (r) => <span className="font-mono text-sm">{r.port}</span>,
+    },
+    {
+      key: 'proto',
+      label: 'Protocol',
+      className: 'w-24',
+      hideBelow: 'sm',
+      mobile: 'hidden',
+      render: (r) => (
+        <span className="inline-flex items-center rounded border border-border px-1.5 py-px font-mono text-[11px] uppercase text-muted-foreground">
+          {r.proto}
+        </span>
+      ),
     },
     {
       key: 'state',
