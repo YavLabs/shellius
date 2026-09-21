@@ -26,6 +26,8 @@ import {
 } from '@/services/serverService';
 import { saveBlob } from '@/utils/download';
 import InstallPlanGroups from '@/components/posture/InstallPlanGroups';
+import { defaultSelection, selectableHosts } from '@/lib/installPlan';
+import { useAuth } from '@/context/AuthContext';
 import { cn } from '@/lib/utils';
 
 /**
@@ -61,8 +63,10 @@ const SCOPES = [
 ];
 
 
-// Mirrors backend provisionService.SUDO_PASSWORD_REQUIRED.
+// Mirror backend provisionService: no sudo password given / the one given was refused.
 const SUDO_PASSWORD_REQUIRED = 'SUDO_PASSWORD_REQUIRED';
+const SUDO_PASSWORD_INCORRECT = 'SUDO_PASSWORD_INCORRECT';
+const isSudoCode = (code) => code === SUDO_PASSWORD_REQUIRED || code === SUDO_PASSWORD_INCORRECT;
 
 function StatusIcon({ status }) {
   if (status === 'ok') return <CheckCircle2 className="h-4 w-4 shrink-0 text-emerald-500" />;
@@ -77,7 +81,11 @@ function BulkInstallModal({ open, serverIds = [], onClose, onDone }) {
   const [step, setStep] = useState('plan'); // plan | auth | run | manual
   const [mode, setMode] = useState('posture');
   const [method, setMethod] = useState('auto'); // auto | manual
-  const [includeDone, setIncludeDone] = useState(false);
+  const { can } = useAuth();
+  // Saving a sudo password binds a secret to a server and creates a Keystore
+  // entry — both permissions, same as the backend checks.
+  const canSaveSudo = can('servers.manage_credentials') && can('keystore.manage');
+  const [rememberSudo, setRememberSudo] = useState(true);
 
   const [plan, setPlan] = useState(null);
   const [planLoading, setPlanLoading] = useState(false);
@@ -136,16 +144,18 @@ function BulkInstallModal({ open, serverIds = [], onClose, onDone }) {
         // every host without a bound identity before the user has had the
         // chance to supply one.
         hasFallbackCredentials: true,
-        includeDone,
+        // Already-done hosts come back as their own groups either way and
+        // are selectable one by one — see defaultSelection().
+        includeDone: false,
       });
       setPlan(data);
-      setChosen(data.targets.map((t) => t.id));
+      setChosen(defaultSelection(data));
     } catch (err) {
       setError(err.response?.data?.error?.message || err.message || 'Could not build the install plan');
     } finally {
       setPlanLoading(false);
     }
-  }, [serverIds, mode, includeDone]);
+  }, [serverIds, mode]);
 
   useEffect(() => {
     if (!open) return;
@@ -167,8 +177,14 @@ function BulkInstallModal({ open, serverIds = [], onClose, onDone }) {
   // unattended SSH sessions, not a background convenience.
   useEffect(() => () => runRef.current?.abort(), []);
 
-  const targets = plan?.targets || [];
-  const selectedTargets = targets.filter((t) => chosen.includes(t.id));
+  // Ready hosts and any already-done host ticked for a re-run.
+  const selectable = selectableHosts(plan);
+  const selectedTargets = selectable.filter((t) => chosen.includes(t.id));
+  const reinstallCount = selectedTargets.filter((t) => t.alreadyDone).length;
+  // Who will need `sudo` to answer with a password: a non-root login. Those
+  // with a saved sudo password need nothing typed.
+  const nonRoot = selectedTargets.filter((t) => (t.sshUser || sshUser || 'root') !== 'root');
+  const nonRootSaved = nonRoot.filter((t) => t.savedSudo).length;
   // Hosts that will need the fallback identity — i.e. the ones the plan
   // could not authenticate on its own. A certificate host never does: it is
   // already bootstrapped, so Shellius signs its way in. Getting this wrong
@@ -182,7 +198,7 @@ function BulkInstallModal({ open, serverIds = [], onClose, onDone }) {
     for (const v of Object.values(statuses)) {
       if (v.status === 'ok') t.ok += 1;
       else if (v.status === 'stopped') t.stopped += 1;
-      else if (v.status === 'failed' && v.code === SUDO_PASSWORD_REQUIRED) t.needsSudo += 1;
+      else if (v.status === 'failed' && isSudoCode(v.code)) t.needsSudo += 1;
       else if (v.status === 'failed') t.failed += 1;
     }
     return t;
@@ -191,6 +207,8 @@ function BulkInstallModal({ open, serverIds = [], onClose, onDone }) {
 
   const toggle = (id) =>
     setChosen((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]));
+  const setMany = (ids, on) =>
+    setChosen((prev) => (on ? [...new Set([...prev, ...ids])] : prev.filter((x) => !ids.includes(x))));
 
   const start = async () => {
     setStep('run');
@@ -216,12 +234,13 @@ function BulkInstallModal({ open, serverIds = [], onClose, onDone }) {
         sshUser: sshUser || undefined,
         password: password || undefined,
         sudoPassword: sudoPassword || undefined,
+        rememberSudoPassword: !!sudoPassword && canSaveSudo && rememberSudo,
       },
       {
         'server-start': ({ id }) => setStatuses((p) => ({ ...p, [id]: { status: 'running' } })),
         log: ({ id, message }) => append(id, message),
-        'server-done': ({ id, status, error: err, code }) =>
-          setStatuses((p) => ({ ...p, [id]: { status, error: err, code } })),
+        'server-done': ({ id, status, error: err, code, sudoSaved }) =>
+          setStatuses((p) => ({ ...p, [id]: { status, error: err, code, sudoSaved: !!sudoSaved } })),
         done: (s) => setSummary(s),
         error: ({ message }) => setError(message || 'Bulk install failed'),
       }
@@ -289,16 +308,18 @@ function BulkInstallModal({ open, serverIds = [], onClose, onDone }) {
    * batch: the other hosts already succeeded, and a bulk re-run would
    * reinstall on all of them to fix one.
    */
-  const retryWithSudo = async (target) => {
-    const secret = sudoFixes[target.id];
+  const retryWithSudo = async (target, secretOverride) => {
+    const secret = secretOverride ?? sudoFixes[target.id];
     if (!secret) return;
     setRetrying((p) => ({ ...p, [target.id]: true }));
     setStatuses((p) => ({ ...p, [target.id]: { status: 'running' } }));
     setLogs((p) => ({ ...p, [target.id]: [...(p[target.id] || []), '[shellius] Retrying with the sudo password you supplied'] }));
     try {
-      await provisionServer(target.id, {
+      const result = await provisionServer(target.id, {
         mode,
         sudoPassword: secret,
+        // Kept only if this install succeeds with it — see the backend.
+        rememberSudoPassword: canSaveSudo && rememberSudo,
         // Same way in as the batch used for this host.
         useCertificate: target.credentialSource === 'certificate' || undefined,
         credentialId: target.credentialSource === 'server' ? target.credential?.id : credentialId || undefined,
@@ -307,7 +328,7 @@ function BulkInstallModal({ open, serverIds = [], onClose, onDone }) {
         onLog: (message) =>
           setLogs((p) => ({ ...p, [target.id]: [...(p[target.id] || []), message] })),
       });
-      setStatuses((p) => ({ ...p, [target.id]: { status: 'ok' } }));
+      setStatuses((p) => ({ ...p, [target.id]: { status: 'ok', sudoSaved: !!result?.sudoSaved } }));
       // The password has done its job; do not keep it in component state.
       setSudoFixes((p) => {
         const next = { ...p };
@@ -318,10 +339,23 @@ function BulkInstallModal({ open, serverIds = [], onClose, onDone }) {
     } catch (err) {
       setStatuses((p) => ({
         ...p,
-        [target.id]: { status: 'failed', error: err?.message || 'Install failed', code: p[target.id]?.code },
+        [target.id]: { status: 'failed', error: err?.message || 'Install failed', code: err?.code || p[target.id]?.code },
       }));
     } finally {
       setRetrying((p) => ({ ...p, [target.id]: false }));
+    }
+  };
+
+  /** One password for every host still waiting on sudo — they often share it. */
+  const retryAllWaiting = async (secret) => {
+    const waiting = selectedTargets.filter((t) => {
+      const st = statuses[t.id];
+      return st?.status === 'failed' && isSudoCode(st.code) && !retrying[t.id];
+    });
+    for (const t of waiting) {
+      // Sequential on purpose: a wrong password fails fast, and N parallel
+      // sudo failures on N hosts is N audit-log lines about one typo.
+      await retryWithSudo(t, secret);
     }
   };
 
@@ -446,7 +480,12 @@ function BulkInstallModal({ open, serverIds = [], onClose, onDone }) {
               <section className="space-y-2">
                 <div className="flex flex-wrap items-center justify-between gap-2">
                   <h4 className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground/70">
-                    Will install on {selectedTargets.length} of {targets.length}
+                    {selectedTargets.length} selected
+                    {reinstallCount > 0 && (
+                      <span className="ml-1 normal-case tracking-normal">
+                        · {selectedTargets.length - reinstallCount} new, {reinstallCount} reinstall
+                      </span>
+                    )}
                   </h4>
                   {plan?.counts?.total > 0 && (
                     <span className="text-[11px] text-muted-foreground">
@@ -464,9 +503,7 @@ function BulkInstallModal({ open, serverIds = [], onClose, onDone }) {
                   selectable
                   selectedIds={chosen}
                   onToggle={toggle}
-                  onSelectAll={() =>
-                    setChosen(chosen.length === targets.length ? [] : targets.map((t) => t.id))
-                  }
+                  onSetMany={setMany}
                   footerFor={(group) =>
                     group.key === 'needs_credentials' && group.rows.length > 0 ? (
                       <p className="mt-3 rounded-md bg-muted/50 px-3 py-2 text-[11px] leading-relaxed text-muted-foreground">
@@ -475,19 +512,6 @@ function BulkInstallModal({ open, serverIds = [], onClose, onDone }) {
                         <code className="font-mono">storeAsIdentity</code> set, which saves the
                         credentials it was given to the Keystore instead of discarding them.
                       </p>
-                    ) : group.key === 'stale' && group.rows.length > 0 ? (
-                      <label className="mt-3 flex cursor-pointer items-start gap-2 text-xs text-muted-foreground">
-                        <Checkbox checked={includeDone} onChange={() => setIncludeDone((v) => !v)} />
-                        <span>
-                          Re-run on hosts that are already done — including the{' '}
-                          {group.rows.length} that stopped reporting.
-                        </span>
-                      </label>
-                    ) : group.key === 'installed' && group.rows.length > 0 ? (
-                      <label className="mt-3 flex cursor-pointer items-start gap-2 text-xs text-muted-foreground">
-                        <Checkbox checked={includeDone} onChange={() => setIncludeDone((v) => !v)} />
-                        <span>Re-run on hosts that are already done.</span>
-                      </label>
                     ) : null
                   }
                 />
@@ -631,17 +655,45 @@ function BulkInstallModal({ open, serverIds = [], onClose, onDone }) {
                       </label>
                     </div>
                   )}
-                  <label className="text-xs text-muted-foreground">
-                    sudo password (if different)
-                    <PasswordInput
-                      value={sudoPassword}
-                      onChange={(e) => setSudoPassword(e.target.value)}
-                      className="mt-1 h-9 w-full rounded-md border border-input bg-background px-3 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
-                    />
-                  </label>
                   <p className="text-xs text-muted-foreground">
                     Credentials are used in memory for this run and never stored.
                   </p>
+                </section>
+              )}
+
+              {/* sudo: asked once, up front, for every host that could need
+                  it — not only in the "credentials" section, which a fleet
+                  of certificate hosts never sees, and not host by host after
+                  the run has already failed on each of them. */}
+              {nonRoot.length > 0 && (
+                <section className="space-y-2 rounded-lg border border-border p-3">
+                  <h4 className="flex items-center gap-1.5 text-sm font-medium text-foreground">
+                    <KeyRound className="h-3.5 w-3.5 text-muted-foreground" aria-hidden="true" />
+                    sudo password <span className="font-normal text-muted-foreground">(optional)</span>
+                  </h4>
+                  <p className="text-xs leading-relaxed text-muted-foreground">
+                    {nonRoot.length} selected host{nonRoot.length === 1 ? '' : 's'} log in as a non-root user.
+                    {nonRootSaved > 0 &&
+                      ` ${nonRootSaved} ${nonRootSaved === 1 ? 'has' : 'have'} a saved sudo password and need nothing.`}{' '}
+                    If the others’ sudo asks for a password, enter it here; hosts with passwordless sudo ignore it. Leave it
+                    empty and any host that needs one stops and asks — you can answer it there.
+                  </p>
+                  <PasswordInput
+                    value={sudoPassword}
+                    onChange={(e) => setSudoPassword(e.target.value)}
+                    placeholder="sudo password"
+                    autoComplete="new-password"
+                    className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
+                  />
+                  {canSaveSudo && sudoPassword && (
+                    <label className="flex cursor-pointer items-start gap-2 text-xs text-muted-foreground">
+                      <Checkbox checked={rememberSudo} onChange={(e) => setRememberSudo(e.target.checked)} className="mt-0.5" />
+                      <span>
+                        <span className="font-medium text-foreground">Save it for each host where it works</span> — kept
+                        encrypted in the org Keystore, so reinstalls there do not ask again.
+                      </span>
+                    </label>
+                  )}
                 </section>
               )}
 
@@ -703,7 +755,8 @@ function BulkInstallModal({ open, serverIds = [], onClose, onDone }) {
               const isOpen = openLog === t.id;
               // Not a failure you debug — a password you type. It gets its
               // own treatment so it does not hide among real errors.
-              const needsSudo = st.status === 'failed' && st.code === SUDO_PASSWORD_REQUIRED;
+              const needsSudo = st.status === 'failed' && isSudoCode(st.code);
+              const wrongSudo = needsSudo && st.code === SUDO_PASSWORD_INCORRECT;
               const isRetrying = !!retrying[t.id];
               return (
                 <div
@@ -727,6 +780,11 @@ function BulkInstallModal({ open, serverIds = [], onClose, onDone }) {
                     <span className="min-w-0 flex-1 truncate text-sm text-foreground">
                       {t.displayName || t.hostname}
                     </span>
+                    {st.status === 'ok' && st.sudoSaved && (
+                      <span className="inline-flex shrink-0 items-center gap-1 text-[11px] text-emerald-600 dark:text-emerald-400" title="The sudo password was saved to the Keystore for this host">
+                        <KeyRound className="h-3 w-3" aria-hidden="true" /> sudo saved
+                      </span>
+                    )}
                     {needsSudo ? (
                       <span className="shrink-0 rounded-full bg-amber-500/15 px-2 py-0.5 text-[11px] font-medium text-amber-700 dark:text-amber-300">
                         Needs attention
@@ -754,9 +812,18 @@ function BulkInstallModal({ open, serverIds = [], onClose, onDone }) {
                   {isOpen && needsSudo && (
                     <div className="mx-2 mb-2 space-y-2 rounded-md border border-amber-500/30 bg-background/60 p-3">
                       <p className="text-xs leading-relaxed text-foreground">
-                        <span className="font-medium">{t.sshUser || 'This user'}</span> needs a
-                        password for <span className="font-mono">sudo</span> on this host. Enter it
-                        to retry just this host — it is used once for this install and not stored.
+                        {wrongSudo ? (
+                          <>
+                            <span className="font-mono">sudo</span> refused the password it was given for{' '}
+                            <span className="font-medium">{t.sshUser || 'this user'}</span>. Enter the right one to retry
+                            just this host.
+                          </>
+                        ) : (
+                          <>
+                            <span className="font-medium">{t.sshUser || 'This user'}</span> needs a password for{' '}
+                            <span className="font-mono">sudo</span> on this host. Enter it to retry just this host.
+                          </>
+                        )}
                       </p>
                       <form
                         className="flex flex-wrap items-center gap-2"
@@ -783,6 +850,25 @@ function BulkInstallModal({ open, serverIds = [], onClose, onDone }) {
                           )}
                         </Button>
                       </form>
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        {canSaveSudo ? (
+                          <label className="flex cursor-pointer items-center gap-2 text-[11px] text-muted-foreground">
+                            <Checkbox checked={rememberSudo} onChange={(e) => setRememberSudo(e.target.checked)} />
+                            Save it for next time (org Keystore, only if it works)
+                          </label>
+                        ) : (
+                          <span className="text-[11px] text-muted-foreground">Used once for this install; not stored.</span>
+                        )}
+                        {tally.needsSudo > 1 && sudoFixes[t.id] && !isRetrying && (
+                          <button
+                            type="button"
+                            onClick={() => retryAllWaiting(sudoFixes[t.id])}
+                            className="text-[11px] font-medium text-[hsl(var(--brand))] hover:underline"
+                          >
+                            Use it for all {tally.needsSudo} waiting hosts
+                          </button>
+                        )}
+                      </div>
                     </div>
                   )}
 

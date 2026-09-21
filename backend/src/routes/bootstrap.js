@@ -113,6 +113,15 @@ if (Object.values(POSTURE_ASSETS).some((v) => v === null)) {
   });
 }
 
+/**
+ * The collector version this deployment installs — the VERSION= line of the
+ * collector script it ships. The Server page compares a host's reported
+ * version with it, so an outdated collector says "reinstall to update"
+ * instead of looking current.
+ */
+export const POSTURE_COLLECTOR_VERSION =
+  (POSTURE_ASSETS.collect && /^VERSION="([^"]+)"/m.exec(POSTURE_ASSETS.collect)?.[1]) || null;
+
 const BOOTSTRAP_TTL_SECONDS = 30 * 60; // 30 min
 
 // Install modes:

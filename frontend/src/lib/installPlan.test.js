@@ -4,6 +4,9 @@ import {
   targetsByCredentialSource,
   needsSuppliedCredentials,
   credentialSourceLabel,
+  selectableHosts,
+  defaultSelection,
+  reinstallReason,
 } from './installPlan';
 
 const plan = {
@@ -17,8 +20,10 @@ const plan = {
     { id: 'e', reason: 'windows' },
     { id: 'f', reason: 'rdp_only' },
     { id: 'g', reason: 'inactive' },
-    { id: 'h', reason: 'collector_installed', stale: false },
-    { id: 'i', reason: 'collector_installed', stale: true },
+    { id: 'h', reason: 'collector_installed', stale: false, installable: true },
+    { id: 'i', reason: 'collector_installed', stale: true, needsReinstall: true, installable: true },
+    { id: 'j', reason: 'collector_installed', degraded: true, needsReinstall: true, installable: true },
+    { id: 'k', reason: 'collector_installed', rejected: true, needsReinstall: true, installable: false },
   ],
 };
 
@@ -27,12 +32,16 @@ const rowsOf = (key) => groupPlan(plan).find((g) => g.key === key).rows.map((r) 
 describe('groupPlan', () => {
   it('puts every host in exactly one group', () => {
     const all = groupPlan(plan).flatMap((g) => g.rows.map((r) => r.id));
-    expect(all.sort()).toEqual(['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i']);
+    expect(all.sort()).toEqual(['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i', 'j', 'k']);
     expect(new Set(all).size).toBe(all.length);
   });
 
-  it('counts only the ready group as actionable', () => {
-    expect(groupPlan(plan).filter((g) => g.actionable).map((g) => g.key)).toEqual(['ready']);
+  it('lets every group a host can be re-run from be selected — never the unreachable ones', () => {
+    expect(groupPlan(plan).filter((g) => g.selectable).map((g) => g.key)).toEqual([
+      'ready',
+      'needs_reinstall',
+      'installed',
+    ]);
   });
 
   // The whole point: "Install on all of them" used to include hosts the
@@ -43,8 +52,10 @@ describe('groupPlan', () => {
     expect(rowsOf('not_applicable').sort()).toEqual(['e', 'f', 'g']);
   });
 
-  it('separates a stale collector from a healthy one', () => {
-    expect(rowsOf('stale')).toEqual(['i']);
+  // The bug: a DEGRADED host was listed as "Already done — reporting", with
+  // no way to re-run on it short of a global toggle.
+  it('puts degraded, refused and stale collectors in "needs a reinstall", apart from healthy ones', () => {
+    expect(rowsOf('needs_reinstall')).toEqual(['i', 'j', 'k']);
     expect(rowsOf('installed')).toEqual(['h']);
   });
 
@@ -97,5 +108,22 @@ describe('credentialSourceLabel', () => {
   });
   it('returns null for a host with no source', () => {
     expect(credentialSourceLabel({ credentialSource: null })).toBeNull();
+  });
+});
+
+describe('selection', () => {
+  it('offers ready hosts and every reachable installed host', () => {
+    expect(selectableHosts(plan).map((h) => h.id)).toEqual(['a', 'b', 'c', 'h', 'i', 'j']);
+  });
+
+  it('pre-selects what needs doing — never a healthy host, never an unreachable one', () => {
+    expect(defaultSelection(plan)).toEqual(['a', 'b', 'c', 'i', 'j']);
+  });
+
+  it('names why an installed host needs a reinstall', () => {
+    expect(reinstallReason({ rejected: true })).toBe('Reports refused');
+    expect(reinstallReason({ collectorState: 'degraded' })).toBe('Degraded');
+    expect(reinstallReason({ stale: true })).toBe('Stopped reporting');
+    expect(reinstallReason({})).toBeNull();
   });
 });

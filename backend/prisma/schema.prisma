@@ -292,12 +292,23 @@ model Server {
   provisionError       String?        @map("provision_error")
   provisionedAt        DateTime?      @map("provisioned_at")
   lastProvisionAt      DateTime?      @map("last_provision_at")
+  // Keystore identity whose password is this host's sudo password, so a
+  // reinstall over a certificate (which has no password of its own) does
+  // not stop and ask again. Org-scoped only; never a personal vault item.
+  sudoCredentialId     String?        @map("sudo_credential_id")
+  // The newest posture snapshot this host sent that the API refused, and
+  // why. A host whose snapshots are all rejected looks exactly like one
+  // whose collector died — this is what tells the two apart. Cleared by the
+  // next accepted snapshot.
+  postureRejectedAt    DateTime?      @map("posture_rejected_at")
+  postureRejectReason  String?        @map("posture_reject_reason")
   createdAt            DateTime       @default(now()) @map("created_at")
   updatedAt            DateTime       @updatedAt @map("updated_at")
 
   organization     Organization         @relation(fields: [orgId], references: [id], onDelete: Cascade)
   customer         Customer             @relation(fields: [customerId], references: [id], onDelete: Cascade)
-  credential       Credential?          @relation(fields: [credentialId], references: [id], onDelete: SetNull)
+  credential       Credential?          @relation("ServerCredential", fields: [credentialId], references: [id], onDelete: SetNull)
+  sudoCredential   Credential?          @relation("ServerSudoCredential", fields: [sudoCredentialId], references: [id], onDelete: SetNull)
   keyDeployments   KeyDeployment[]
   certificates     Certificate[]
   accessRequests   AccessRequest[]
@@ -315,6 +326,7 @@ model Server {
   @@index([agentId])
   @@index([orgId, provisionStatus])
   @@index([credentialId])
+  @@index([sudoCredentialId])
   @@map("servers")
 }
 
@@ -1069,7 +1081,8 @@ model Credential {
   organization  Organization   @relation(fields: [orgId], references: [id], onDelete: Cascade)
   owner         User?          @relation("PersonalCredentials", fields: [ownerId], references: [id], onDelete: Cascade)
   sshKey        SshKey?        @relation(fields: [sshKeyId], references: [id], onDelete: Restrict)
-  servers       Server[]
+  servers       Server[]       @relation("ServerCredential")
+  sudoServers   Server[]       @relation("ServerSudoCredential")
   personalHosts PersonalHost[]
 
   @@unique([orgId, ownerId, name])

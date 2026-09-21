@@ -20,6 +20,8 @@ import ApiError from '../utils/ApiError.js';
 import { serverScopeWhere, relationScopeWhere } from '../lib/scope.js';
 import * as postureSettingsService from './postureSettingsService.js';
 import { canInstallOn, isBootstrapped } from './bulkBootstrapService.js';
+import { latestSnapshots, classifyCollector, degradedReasonsOf } from './postureCollectorState.js';
+import { POSTURE_COLLECTOR_VERSION } from '../routes/bootstrap.js';
 
 // ---------------------------------------------------------------------------
 // Shared shapes
@@ -130,34 +132,31 @@ export async function listServerCoverage(orgId, scope, { state, page = 1, limit 
       provisionStatus: true,
       agentId: true,
       credentialId: true,
+      sudoCredentialId: true,
+      postureRejectedAt: true,
+      postureRejectReason: true,
       customer: { select: { id: true, name: true } },
     },
     orderBy: [{ hostname: 'asc' }],
   });
 
-  const latestPerServer = servers.length
-    ? await prisma.hostSnapshot.groupBy({
-        by: ['serverId'],
-        where: { orgId, serverId: { in: servers.map((s) => s.id) } },
-        _max: { receivedAt: true },
-      })
-    : [];
-  const latestMap = new Map(latestPerServer.map((r) => [r.serverId, r._max.receivedAt]));
+  const latest = await latestSnapshots(orgId, servers.map((s) => s.id));
   const now = Date.now();
 
   const rows = servers.map((server) => {
-    const lastReceivedAt = latestMap.get(server.id) || null;
-    let collectorState = 'reporting';
+    const snap = latest.get(server.id);
     // A host that cannot run the collector is not a gap to be closed. It gets
     // its own state so the UI can exclude it from "not installed" instead of
     // listing an Install button that could never work.
-    if (!canInstallOn(server)) collectorState = 'not_applicable';
-    else if (!lastReceivedAt) collectorState = 'not_installed';
-    else if (isStale(lastReceivedAt, settings, now)) collectorState = 'stale';
+    const collectorState = classifyCollector(server, snap, settings, now);
+    const { sudoCredentialId, ...rest } = server;
     return {
-      ...server,
+      ...rest,
       collectorState,
-      lastReceivedAt,
+      lastReceivedAt: snap?.receivedAt || null,
+      collectorVersion: snap?.agentVersion || null,
+      degradedReasons: collectorState === 'degraded' ? snap?.degradedReasons || [] : [],
+      hasSavedSudo: !!sudoCredentialId,
       // How a bulk install would authenticate here, so the coverage list and
       // the installer never disagree about what is actually actionable.
       credentialSource: server.credentialId
@@ -171,6 +170,7 @@ export async function listServerCoverage(orgId, scope, { state, page = 1, limit 
   const filtered = state ? rows.filter((r) => r.collectorState === state) : rows;
   const start = (Math.max(1, Number(page)) - 1) * Math.min(Number(limit) || 25, 100);
   const take = Math.min(Number(limit) || 25, 100);
+  const count = (st) => rows.filter((r) => r.collectorState === st).length;
 
   return {
     items: filtered.slice(start, start + take),
@@ -178,10 +178,16 @@ export async function listServerCoverage(orgId, scope, { state, page = 1, limit 
     page: Math.max(1, Number(page)),
     limit: take,
     counts: {
-      reporting: rows.filter((r) => r.collectorState === 'reporting').length,
-      stale: rows.filter((r) => r.collectorState === 'stale').length,
-      notInstalled: rows.filter((r) => r.collectorState === 'not_installed').length,
-      notApplicable: rows.filter((r) => r.collectorState === 'not_applicable').length,
+      // `reporting` keeps meaning "fresh data is arriving", degraded or not —
+      // coverage is about whether we hear from the host. `degraded` is the
+      // part of it that cannot be fully trusted.
+      reporting: count('reporting') + count('degraded'),
+      healthy: count('reporting'),
+      degraded: count('degraded'),
+      rejected: count('rejected'),
+      stale: count('stale'),
+      notInstalled: count('not_installed'),
+      notApplicable: count('not_applicable'),
       total: rows.filter((r) => r.collectorState !== 'not_applicable').length,
       totalAll: rows.length,
     },
@@ -217,7 +223,7 @@ export async function getSummary(orgId, scope, { customerId, environment } = {})
         ? { AND: [...(customerId ? [{ customerId }] : []), ...(environment ? [{ environment }] : [])] }
         : {}),
     },
-    select: { id: true, osType: true, protocol: true },
+    select: { id: true, osType: true, protocol: true, postureRejectedAt: true },
   });
   // A Windows box and an RDP-only host cannot run the collector at all.
   // Counting them as "not installed" made the fleet read as permanently
@@ -229,25 +235,25 @@ export async function getSummary(orgId, scope, { customerId, environment } = {})
   const serverIds = applicable.map((s) => s.id);
 
   let reporting = 0;
+  let degraded = 0;
+  let rejected = 0;
   let stale = 0;
   let notInstalled = 0;
 
   if (serverIds.length > 0) {
-    const latestPerServer = await prisma.hostSnapshot.groupBy({
-      by: ['serverId'],
-      where: { orgId, serverId: { in: serverIds } },
-      _max: { receivedAt: true },
-    });
-    const latestMap = new Map(latestPerServer.map((r) => [r.serverId, r._max.receivedAt]));
+    const latest = await latestSnapshots(orgId, serverIds);
     const now = Date.now();
-    for (const id of serverIds) {
-      const lastReceivedAt = latestMap.get(id);
-      if (!lastReceivedAt) {
-        notInstalled += 1;
-      } else if (isStale(lastReceivedAt, settings, now)) {
-        stale += 1;
-      } else {
+    for (const server of applicable) {
+      const state = classifyCollector(server, latest.get(server.id), settings, now);
+      if (state === 'not_installed') notInstalled += 1;
+      else if (state === 'stale') stale += 1;
+      else if (state === 'rejected') rejected += 1;
+      else {
+        // Degraded hosts ARE reporting — they are counted there, and
+        // separately, so the tile can say "12 reporting · 3 degraded"
+        // without the two numbers adding up to more than the fleet.
         reporting += 1;
+        if (state === 'degraded') degraded += 1;
       }
     }
   }
@@ -322,6 +328,8 @@ export async function getSummary(orgId, scope, { customerId, environment } = {})
       total: serverIds.length,
       totalAll: servers.length,
       reporting,
+      degraded,
+      rejected,
       stale,
       notInstalled,
       notApplicable,
@@ -421,11 +429,25 @@ export async function getServerPosture(orgId, serverId, scope) {
   if (!orgId) throw new ApiError(400, 'orgId is required');
   if (!serverId) throw new ApiError(400, 'serverId is required');
 
-  const server = await prisma.server.findFirst({
+  const serverRow = await prisma.server.findFirst({
     where: { id: serverId, orgId, ...serverScopeWhere(scope) },
-    select: SERVER_SELECT,
+    select: {
+      ...SERVER_SELECT,
+      protocol: true,
+      sshUser: true,
+      provisionStatus: true,
+      agentId: true,
+      credentialId: true,
+      postureRejectedAt: true,
+      postureRejectReason: true,
+      sudoCredential: { select: { id: true, name: true, username: true } },
+    },
   });
-  if (!server) throw new ApiError(404, 'Server not found');
+  if (!serverRow) throw new ApiError(404, 'Server not found');
+  const {
+    postureRejectedAt, postureRejectReason, sudoCredential, protocol, sshUser, provisionStatus, agentId, credentialId,
+    ...server
+  } = serverRow;
 
   const settings = await postureSettingsService.getSettings(orgId);
 
@@ -469,14 +491,37 @@ export async function getServerPosture(orgId, serverId, scope) {
     take: 1500,
   });
 
-  const collector = latestSnapshot
-    ? {
-        installed: true,
-        version: latestSnapshot.agentVersion || null,
-        lastSeenAt: latestSnapshot.receivedAt,
-        stale: isStale(latestSnapshot.receivedAt, settings),
-      }
-    : { installed: false, version: null, lastSeenAt: null, stale: false };
+  const state = classifyCollector(
+    { osType: server.osType, protocol, postureRejectedAt },
+    latestSnapshot ? { receivedAt: latestSnapshot.receivedAt, collectorOk: latestSnapshot.collectorOk } : undefined,
+    settings
+  );
+  const collector = {
+    installed: !!latestSnapshot,
+    version: latestSnapshot?.agentVersion || null,
+    // What a reinstall would put there now.
+    latestVersion: POSTURE_COLLECTOR_VERSION,
+    lastSeenAt: latestSnapshot?.receivedAt || null,
+    stale: latestSnapshot ? isStale(latestSnapshot.receivedAt, settings) : false,
+    // One word for "what should the page say about the collector", so the
+    // Server page, the coverage list and the installer never disagree.
+    state,
+    // A refusal newer than the newest accepted snapshot. The host is alive
+    // and sending; Shellius is refusing what it sends.
+    rejection:
+      postureRejectedAt && (!latestSnapshot || postureRejectedAt > latestSnapshot.receivedAt)
+        ? { at: postureRejectedAt, reason: postureRejectReason }
+        : null,
+    // What a reinstall would need, so the page can offer the right button
+    // instead of a generic one that then asks for credentials it has.
+    install: {
+      canInstall: canInstallOn({ osType: server.osType, protocol }),
+      bootstrapped: isBootstrapped({ provisionStatus, agentId }),
+      hasIdentity: !!credentialId,
+      sshUser,
+      savedSudo: sudoCredential ? { id: sudoCredential.id, name: sudoCredential.name } : null,
+    },
+  };
 
   return {
     server,
@@ -486,6 +531,7 @@ export async function getServerPosture(orgId, serverId, scope) {
           agentVersion: latestSnapshot.agentVersion,
           collectorOk: latestSnapshot.collectorOk,
           degradedReason: latestSnapshot.degradedReason,
+          degradedReasons: degradedReasonsOf(latestSnapshot),
           firewall: latestSnapshot.firewall,
           // Which halves of the service scan ran on this host. "No stopped
           // containers" and "never looked for containers" must not render

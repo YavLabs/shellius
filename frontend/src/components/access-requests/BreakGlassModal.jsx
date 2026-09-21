@@ -318,7 +318,9 @@ function BreakGlassModal({ open, onClose, server }) {
           <dl className="space-y-1.5 text-sm">
             <div className="flex justify-between gap-4">
               <dt className="text-muted-foreground">Server</dt>
-              <dd className="text-foreground">{grantedAr.server?.hostname || server?.hostname}</dd>
+              <dd className="text-foreground">
+                {grantedAr.server?.displayName || grantedAr.server?.hostname || server?.displayName || server?.hostname}
+              </dd>
             </div>
             <div className="flex justify-between gap-4">
               <dt className="text-muted-foreground">Principal</dt>

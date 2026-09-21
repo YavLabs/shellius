@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Shield, ShieldAlert, Server, ChevronRight, MoreHorizontal, KeyRound, Plus } from 'lucide-react';
 import EnvironmentBadge from '@/components/shared/EnvironmentBadge';
+import { serverPrimaryLabel, serverSecondaryLabel } from '@/lib/serverLabel';
 import { Badge } from '@/components/ui/badge';
 import { getMyAccess } from '@/services/policyService';
 import { cn } from '@/lib/utils';
@@ -30,6 +31,8 @@ function AccessRow({ entry }) {
   const serverId = entry.server?.id || entry.serverId;
   const isMobile = useIsMobile();
   const ttl = formatMaxTtl(entry.maxTtl);
+  const primaryName = serverPrimaryLabel(entry.server, entry.serverId);
+  const secondaryHost = serverSecondaryLabel(entry.server);
 
   // Phones: the same card as the list pages — status by the corner, the
   // environment as the card's tint and bottom-left label.
@@ -38,8 +41,8 @@ function AccessRow({ entry }) {
     return (
       <MobileCard
         leading={<CardIcon icon={Server} />}
-        title={entry.server?.hostname || entry.serverId}
-        secondary={[who, ttl !== '-' ? ttl : null].filter(Boolean).join(' · ') || null}
+        title={primaryName}
+        secondary={[secondaryHost, who, ttl !== '-' ? ttl : null].filter(Boolean).join(' · ') || null}
         corner={
           requiresApproval ? <CardStatus tone="warning" label="Needs approval" /> : <CardStatus tone="success" label="Direct" />
         }
@@ -60,13 +63,14 @@ function AccessRow({ entry }) {
         <Server className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
         <div className="min-w-0">
           <div className="flex items-center gap-2">
-            <span className="truncate text-sm font-medium text-foreground">
-              {entry.server?.hostname || entry.serverId}
-            </span>
+            <span className="truncate text-sm font-medium text-foreground">{primaryName}</span>
             {entry.server?.environment && (
               <EnvironmentBadge environment={entry.server.environment} />
             )}
           </div>
+          {secondaryHost && (
+            <p className="mt-0.5 truncate text-xs text-muted-foreground">{secondaryHost}</p>
+          )}
           {principals.length > 0 && (
             <p className="mt-0.5 truncate text-[11px] font-mono text-muted-foreground">
               {principals.slice(0, 3).join(', ')}

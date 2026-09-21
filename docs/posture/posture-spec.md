@@ -94,8 +94,45 @@ precisely so it is scoped from day one rather than retrofitted.
 the token exactly as `routes/hosts.js` does today; `serverId`/`orgId` in the
 body are ignored in per-host-token mode.
 
-Caps (reject with 413/400, never truncate): ≤ 500 listeners, ≤ 200 firewall
-rules, ≤ 300 services, every string ≤ 512 chars, whole body ≤ 256 KB.
+Caps (reject with 413/400, never truncate): ≤ 500 listeners, ≤ 500 firewall
+rules, ≤ 300 services (≤ 256 declared ports each), every string ≤ 512 chars
+(degraded reasons ≤ 1024, ≤ 20 of them), whole body ≤ 256 KB. The collector
+caps its own output below these (500 listeners, 500 rules, 500-char reasons)
+and says so in a degraded reason, because one refused field costs the whole
+snapshot.
+
+**The collector's JSON is validated against this schema in CI.**
+`routes/__tests__/postureCollector.test.js` runs the real collector script
+against stubbed commands and a fixture `/proc`
+(`SHELLIUS_POSTURE_PROC`), and every case ends in the route's own
+`postureSchema.validate()`. It exists because the two drifted apart three
+ways with nothing noticing: listeners recovered from the NAT table were sent
+as `source: "nat"`, which the schema did not list — so the first hosts whose
+sudo grant actually worked (after 1.7.2) had **every** snapshot refused, went
+"stale", and kept showing their last degraded snapshot however often the
+collector was reinstalled; firewall rules were sent beside `firewall`
+(`firewallRules`) and silently stripped, so no rule ever reached the verdict
+logic; and the owner reference was sent as `ownerId` rather than `ownerRef`.
+The route still accepts all three legacy shapes (`normalizePostureSnapshot`),
+so collectors already in the field resume reporting as soon as the server is
+upgraded.
+
+**Refusals are recorded, not only returned.** A 400/413 on this route writes
+`Server.postureRejectedAt` / `postureRejectReason`; the next accepted snapshot
+clears them. A host that is sending but being refused therefore shows as
+**Reports refused**, with the reason, instead of looking exactly like a dead
+collector. `POST /api/hosts/posture/problem` (agentAuth, `{ reason }`) lets
+the report script record the failures it catches before anything can be sent
+— collector missing, collector exited with no output, snapshot over the size
+cap — which previously reached only the host's journal.
+
+**Collector state** is classified once (`services/postureCollectorState.js`)
+and used by the coverage list, the fleet summary, the Server page and the
+bulk-install planner, which used to disagree: `not_applicable`,
+`not_installed`, `rejected` (refusal newer than the last accepted snapshot),
+`stale`, `degraded` (fresh, but `collectorOk: false`), `reporting`. Degraded
+hosts count as reporting and are also counted separately, so the two never
+add up to more than the fleet.
 
 `postureService.ingest()`:
 1. Persist the snapshot.
@@ -161,12 +198,21 @@ that relies on bash line-continuation.
   not `nobody` (kept separate from `check-principals`'s account so the two
   agents' privilege grants never compound), not in the `docker` group, and
   with no Docker socket access at all. Root-only operations go through
-  `sudo -n` for exactly six fixed commands (sudoers drop-in, verbatim, at
+  `sudo -n` for exactly eight fixed commands (sudoers drop-in, verbatim, at
   `scripts/posture/shellius-posture.sudoers`):
   `ss -H -tulpn`, `ufw status verbose`, `firewall-cmd --list-all`,
-  `systemctl show -p FragmentPath --value <unit>`, `iptables -t nat -S`, and
-  `nft list table ip nat`. Same narrow-drop-in style as `check-principals`,
-  different account, different command set.
+  `systemctl show -p FragmentPath --value <unit>`, `iptables -t nat -S`,
+  `nft list table ip nat`, and — for hosts with neither ufw nor firewalld —
+  `iptables -S INPUT` and `nft list ruleset`. Same narrow-drop-in style as
+  `check-principals`, different account, different command set.
+- **The drop-ins must parse under every sudo the fleet runs**, classic sudo
+  and sudo-rs (the default from Ubuntu 25.10). Bootstrap deletes a drop-in
+  that `visudo -c` rejects, so one unsupported line removes every grant in
+  it. That is why there are **no `Defaults` lines**: `Defaults:… !requiretty`
+  is rejected by sudo-rs. `postureUnit.test.js` runs `visudo -c` on both
+  files wherever a visudo exists, and fails on any `Defaults` line. The
+  installer's sudo detection (`provisionService`) recognises both
+  implementations' prompts and messages.
 - **Consequence, stated plainly because it changes what v1 can see:** with no
   Docker socket access at all, container id→name/image resolution is not a
   sometimes-degrades case, it **never** resolves — every container listener
@@ -339,6 +385,26 @@ installed on were the only ones being refused.
     cause. When a run ends — including when the operator presses Stop — any
     host still queued or running is marked as not run, never left spinning.
 
+  - **A wrong sudo password fails fast** (`SUDO_PASSWORD_INCORRECT`): sudo
+    re-prompts on a stdin with nothing more to give, which used to hang
+    until the timeout. The UI then asks for the right one.
+  - **The password is scrubbed from install output.** A pty echoes what is
+    written to it — including the password written for `sudo -S`, before
+    anything could turn echo off — and every line is shown to the operator.
+    `provisionService` redacts it at the one place output leaves.
+  - **A sudo password can be saved per server** (`Server.sudoCredentialId`),
+    as an ordinary org Keystore identity tagged `sudo` (username = the
+    server's SSH user), so a reinstall over a certificate runs with nothing
+    typed. Saved only when asked ("Save it for next time", on by default in
+    the install dialogs) **and only after the install succeeded with it**;
+    managed from the Server page's Collector card (save / change / forget —
+    forgetting deletes the identity when this feature created it and nothing
+    else uses it). Saving needs `servers.manage_credentials` +
+    `keystore.manage`; using it needs `keystore.view`, like any stored
+    identity. Precedence per install: typed now → saved for this host → the
+    login identity's own password. It is used only when its username matches
+    the user the install connects as.
+
   The bulk runner still retries once with the batch's fallback credentials
   when a certificate install fails and a fallback exists, announcing it in
   the log. That retry used to be unreachable in exactly this case, because a
@@ -374,9 +440,9 @@ population the bulk installer then had to skip.
 - **`authMode` is untouched.** The stored identity is for installs and
   recovery; a bootstrapped host keeps authenticating by certificate for
   ordinary access.
-- **`sudoPassword` is not stored** — `Credential` has no field for it, and the
-  Keystore is deliberately not a password manager. Stated in the template
-  rather than dropped silently.
+- **The import's `sudoPassword` is not stored.** Import material is one-shot
+  by design; a sudo password is kept only through the explicit, per-server
+  "save it for next time" path above, after it has been seen to work.
 
 **Coverage counts exclude what cannot run the collector.** `listServerCoverage`
 and `getSummary` filtered on `isActive` only, so Windows and RDP-only hosts
@@ -387,6 +453,45 @@ that opened a wizard that could not work. Both now classify via
 `total`; `totalAll` keeps the true fleet size. The coverage modal reads the
 same plan the installer runs from (`lib/installPlan.js groupPlan`), so
 "Ready to install: N" and "Install on N hosts" are the same N by construction.
+
+### Collector 1.1.0 — firewall parsing and launcher-aware attribution
+
+**iptables / nftables INPUT is parsed.** It used to be reported as "raw
+iptables detected but not parsed", which made every host without ufw or
+firewalld permanently degraded, and every wildcard port's reachability
+UNKNOWN — including the most common shape of all, a Docker host whose INPUT
+chain is empty with policy ACCEPT, where the true answer ("nothing filters
+inbound traffic", raised as `FIREWALL_INACTIVE`) is certain and important.
+The parser understands policy, port/source ACCEPT/DROP/REJECT and a
+catch-all; it skips loopback, established/related/invalid, ICMP, ban-list
+chains (fail2ban, CrowdSec, sshguard, `KUBE-FIREWALL`) and rules on
+container/VPN/virtual interfaces. Anything else — a jump to an unknown chain,
+a negated match, several nftables input chains — sets `firewall.parsed:
+false`, and the backend then withholds a verdict (UNKNOWN) rather than guess.
+A native nftables firewall (its own `inet filter` table) is read from
+`nft list ruleset`, which `iptables -S` cannot see. IPv6 filtering is not
+evaluated separately; a dual-stack port gets the IPv4 verdict.
+
+**Who started a listener, not just what it is.** The collector walks the
+process tree (privilege-free: `/proc/<pid>/status` and `cmdline` are
+world-readable), up to 16 hops:
+- **pm2 anywhere above** the listener is the supervisor, however it was
+  launched — `pm2 start ecosystem.config.js`, or an app whose script is
+  `infisical run -- npm start`. The app is named from pm2's own pid file
+  (`$PM2_HOME/pids/<name>-<id>.pid`), across every `PM2_HOME` in use: the
+  standard homes plus the one each running God Daemon names in its process
+  title (`PM2 v5.3.1: God Daemon (/srv/app/.pm2)`), which is how a custom
+  home set by an ecosystem file or an injected environment is found. Where
+  the pid file is unreadable (a `0700`/`0750` home) it falls back to what pm2
+  ran, skipping launchers and shims.
+- **Secret/config injectors** (`infisical`, `doppler`, `op`, `dotenv`,
+  `envconsul`, `chamber`, `aws-vault`, `sops`, `teller`, `berglas`, `summon`,
+  …) and package-manager launchers are reported in the owner detail as
+  `via infisical run → npm start` — the tool and subcommand only, never
+  their arguments, which can carry tokens.
+- **A process started by hand in a login session** (`session-N.scope`) is
+  reported as a process "not supervised, does not survive a reboot", not as
+  a systemd unit.
 
 ---
 

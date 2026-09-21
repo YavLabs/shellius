@@ -1,5 +1,6 @@
 import { useState, useRef, useEffect } from 'react';
-import { X, Terminal, Upload, Key, Lock, Building2, CheckCircle2, AlertCircle, Loader2 } from 'lucide-react';
+import { X, Terminal, Upload, Key, KeyRound, Lock, Building2, CheckCircle2, AlertCircle, Loader2 } from 'lucide-react';
+import { Checkbox } from '@/components/ui/checkbox';
 import { provisionServer } from '@/services/serverService';
 import { listCredentials } from '@/services/keystoreService';
 import { useAuth } from '@/context/AuthContext';
@@ -19,6 +20,16 @@ function ProvisionModal({ server, onClose, installMode = 'full' }) {
   const [sshUser, setSshUser] = useState(server?.sshUser || '');
   const [sudoPassword, setSudoPassword] = useState('');
   const [needsSudo, setNeedsSudo] = useState(false);
+  // Keep a working sudo password in the Keystore so the next install on this
+  // host (a reinstall, an update) does not stop and ask again. On by default
+  // when the viewer may do it: re-typing it every time was the complaint.
+  const canSaveSudo = can('servers.manage_credentials') && can('keystore.manage');
+  const [rememberSudo, setRememberSudo] = useState(true);
+  const savedSudo = server?.sudoCredential || null;
+  // Set when the install stopped on sudo, so the form reopens saying why.
+  const [sudoProblem, setSudoProblem] = useState(null); // 'required' | 'incorrect' | null
+  const [errorCode, setErrorCode] = useState(null);
+  const [sudoSavedAs, setSudoSavedAs] = useState(null);
   const [logs, setLogs] = useState([]);
   const [errorMsg, setErrorMsg] = useState('');
   const fileRef = useRef(null);
@@ -111,9 +122,11 @@ function ProvisionModal({ server, onClose, installMode = 'full' }) {
     if (!canSubmit) return;
     setStep('running');
     setLogs([]);
+    setErrorCode(null);
+    setSudoSavedAs(null);
 
     try {
-      await provisionServer(server.id, {
+      const result = await provisionServer(server.id, {
         privateKey: mode === 'manual' ? privateKey.trim() || undefined : undefined,
         passphrase: mode === 'manual' ? passphrase || undefined : undefined,
         password: mode === 'manual' ? password || undefined : undefined,
@@ -123,6 +136,7 @@ function ProvisionModal({ server, onClose, installMode = 'full' }) {
             : // An empty override means "use the identity's own username".
               sshUser.trim() || undefined,
         sudoPassword: needsSudo ? sudoPassword : '',
+        rememberSudoPassword: needsSudo && !!sudoPassword && canSaveSudo && rememberSudo,
         credentialId: mode === 'identity' ? credentialId : undefined,
         // Server-side this mints a 5-minute, this-host-only certificate and
         // connects with it — no secret is sent, stored or needed.
@@ -134,17 +148,41 @@ function ProvisionModal({ server, onClose, installMode = 'full' }) {
           setTimeout(() => logsEndRef.current?.scrollIntoView({ behavior: 'smooth' }), 50);
         },
       });
+      setSudoSavedAs(result?.sudoSaved?.name || null);
+      setSudoProblem(null);
       setStep('done');
     } catch (err) {
       setErrorMsg(err.message || 'Provisioning failed');
+      setErrorCode(err.code || null);
       setStep('error');
     }
   };
+
+  // The install stopped on sudo: back to the form, switch on, focused on the
+  // one field that is missing — instead of a dead-end error.
+  const retryWithSudo = () => {
+    setSudoProblem(errorCode === 'SUDO_PASSWORD_INCORRECT' ? 'incorrect' : 'required');
+    setNeedsSudo(true);
+    setSudoPassword('');
+    setStep('form');
+  };
+  const sudoFailure = errorCode === 'SUDO_PASSWORD_REQUIRED' || errorCode === 'SUDO_PASSWORD_INCORRECT';
 
   const body = (
     <>
       {step === 'form' && (
         <div className="space-y-5 p-4 md:p-6">
+          {sudoProblem && (
+            <div role="alert" className="flex items-start gap-2 rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2.5 text-sm text-amber-800 dark:text-amber-200">
+              <KeyRound className="mt-0.5 h-4 w-4 shrink-0" />
+              <p>
+                {sudoProblem === 'incorrect'
+                  ? 'sudo refused that password. Enter the right one for '
+                  : 'This host needs a sudo password for '}
+                <span className="font-mono">{sshUser.trim() || server?.sshUser || 'root'}</span>, then start again.
+              </p>
+            </div>
+          )}
           <div className="rounded-lg border border-border bg-muted/30 px-4 py-3 text-sm text-muted-foreground">
             Shellius will SSH into{' '}
             <span className="font-mono text-foreground">{server?.ipAddress}</span> and install the
@@ -332,6 +370,15 @@ function ProvisionModal({ server, onClose, installMode = 'full' }) {
             </p>
           )}
           <div className="space-y-3">
+            {savedSudo && !needsSudo && (
+              <p className="flex items-start gap-1.5 rounded-md border border-emerald-500/30 bg-emerald-500/5 px-3 py-2 text-xs text-muted-foreground">
+                <KeyRound className="mt-0.5 h-3.5 w-3.5 shrink-0 text-emerald-500" />
+                <span>
+                  A sudo password is saved for this host (<span className="text-foreground">{savedSudo.name}</span>) and is used
+                  automatically. Turn the switch on only to use a different one.
+                </span>
+              </p>
+            )}
             <SwitchField
               label={
                 <span className="inline-flex items-center gap-1.5">
@@ -353,7 +400,24 @@ function ProvisionModal({ server, onClose, installMode = 'full' }) {
                 onChange={(e) => setSudoPassword(e.target.value)}
                 placeholder="sudo password"
                 autoComplete="new-password"
+                autoFocus={!!sudoProblem}
               />
+            )}
+            {needsSudo && canSaveSudo && (sshUser.trim() || server?.sshUser || 'root') !== 'root' && (
+              <label className="flex cursor-pointer items-start gap-2 text-xs text-muted-foreground">
+                <Checkbox
+                  checked={rememberSudo}
+                  onChange={(e) => setRememberSudo(e.target.checked)}
+                  className="mt-0.5"
+                />
+                <span>
+                  <span className="font-medium text-foreground">
+                    {savedSudo ? 'Replace the saved sudo password if this one works' : 'Save it for next time'}
+                  </span>
+                  {' — '}kept encrypted in the org Keystore, only after the install succeeds, and used for future installs on this
+                  host. Never shown again.
+                </span>
+              </label>
             )}
           </div>
         </div>
@@ -394,13 +458,33 @@ function ProvisionModal({ server, onClose, installMode = 'full' }) {
                 <>
                   <CheckCircle2 className="h-4 w-4 text-emerald-500" />
                   <span className="text-sm font-medium text-emerald-700 dark:text-emerald-400">
-                    Provisioning completed successfully
+                    {installMode === 'posture' ? 'Collector installed' : 'Provisioning completed successfully'}
+                    {sudoSavedAs && (
+                      <span className="block text-xs font-normal text-muted-foreground">
+                        Sudo password saved as “{sudoSavedAs}” — the next install here will not ask.
+                      </span>
+                    )}
+                    {installMode === 'posture' && (
+                      <span className="block text-xs font-normal text-muted-foreground">
+                        The first snapshot arrives within a few minutes; the page updates when it does.
+                      </span>
+                    )}
                   </span>
                 </>
               ) : (
                 <>
-                  <AlertCircle className="h-4 w-4 text-destructive" />
-                  <span className="text-sm font-medium text-destructive">{errorMsg}</span>
+                  <AlertCircle className="h-4 w-4 shrink-0 text-destructive" />
+                  <span className="min-w-0 flex-1 text-sm font-medium text-destructive">{errorMsg}</span>
+                  {sudoFailure && (
+                    <button
+                      type="button"
+                      onClick={retryWithSudo}
+                      className="inline-flex h-8 shrink-0 items-center gap-1.5 rounded-md border border-input bg-background px-3 text-xs font-medium text-foreground hover:bg-accent"
+                    >
+                      <KeyRound className="h-3.5 w-3.5" />
+                      {errorCode === 'SUDO_PASSWORD_INCORRECT' ? 'Try another password' : 'Enter sudo password'}
+                    </button>
+                  )}
                 </>
               )}
             </div>

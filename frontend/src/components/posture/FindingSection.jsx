@@ -19,6 +19,7 @@ function FindingSection({
   tone = 'neutral',
   open,
   onToggle,
+  meta,
   children,
 }) {
   const TONES = {
@@ -65,10 +66,13 @@ function FindingSection({
               {count}
             </span>
           </span>
+          {/* Truncated while collapsed; read in full once opened — a
+              description cut off mid-instruction is worse than none. */}
           {description && (
-            <span className="mt-0.5 block truncate text-xs text-muted-foreground">{description}</span>
+            <span className={cn('mt-0.5 block text-xs text-muted-foreground', !open && 'truncate')}>{description}</span>
           )}
         </span>
+        {meta && <span className="shrink-0 text-[11px] font-medium text-muted-foreground">{meta}</span>}
       </button>
       {open && !empty && <div className="border-t border-border px-4 py-4 max-sm:px-3">{children}</div>}
     </section>

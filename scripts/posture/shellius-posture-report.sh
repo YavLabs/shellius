@@ -48,14 +48,29 @@ done
 
 log() { logger -t "$LOG_TAG" "$1" 2>/dev/null || true; }
 
+# Tell the API about a failure that happened HERE, before any snapshot could
+# be sent — collector missing, crashed with no output, snapshot too large.
+# Those used to reach the journal and nowhere else, so the UI could only say
+# "stopped reporting" and nobody knew to look on the host. One attempt,
+# short timeout, a one-line reason; never retried, never fatal.
+report_problem() {
+  [ -n "${TOKEN:-}" ] || return 0
+  local reason
+  reason=$(printf '%s' "$1" | tr -d '\000-\037"\\' | cut -c1-900)
+  curl -fsS --max-time 10 \
+    -H "x-agent-token: $TOKEN" \
+    -H "Content-Type: application/json" \
+    -X POST \
+    --data-binary "{\"reason\":\"$reason\"}" \
+    -o /dev/null \
+    "$API_URL/api/hosts/posture/problem" >/dev/null 2>&1 || true
+}
+
 WORKDIR="$(mktemp -d)" || { log "FAIL cannot create temp dir"; exit 0; }
 trap 'rm -rf "$WORKDIR"' EXIT
 
-if [ ! -x "$COLLECTOR" ]; then
-  log "FAIL collector not found or not executable: $COLLECTOR"
-  exit 0
-fi
-
+# The token first: without it nothing can be reported to the API, including
+# the failures below.
 if [ ! -r "$TOKEN_FILE" ]; then
   log "FAIL agent token unreadable: $TOKEN_FILE"
   exit 0
@@ -66,10 +81,18 @@ if [ -z "$TOKEN" ]; then
   exit 0
 fi
 
+if [ ! -x "$COLLECTOR" ]; then
+  log "FAIL collector not found or not executable: $COLLECTOR"
+  report_problem "the collector is missing or not executable at $COLLECTOR"
+  exit 0
+fi
+
 PAYLOAD="$("$COLLECTOR" 2>"$WORKDIR/collect.err")"
 COLLECTOR_EXIT=$?
 if [ -z "$PAYLOAD" ]; then
-  log "FAIL collector produced no output (exit=$COLLECTOR_EXIT): $(tail -c 300 "$WORKDIR/collect.err" 2>/dev/null)"
+  ERR_TAIL="$(tail -c 300 "$WORKDIR/collect.err" 2>/dev/null)"
+  log "FAIL collector produced no output (exit=$COLLECTOR_EXIT): $ERR_TAIL"
+  report_problem "the collector exited $COLLECTOR_EXIT with no output: $ERR_TAIL"
   exit 0
 fi
 
@@ -80,6 +103,7 @@ if [ "$PAYLOAD_BYTES" -gt "$MAX_BYTES" ]; then
   # persistently over the cap needs a real fix (see degradedReason), not a
   # script that silently ships broken JSON.
   log "FAIL payload too large ($PAYLOAD_BYTES bytes > $MAX_BYTES) — dropping this cycle, not truncating"
+  report_problem "the snapshot is $PAYLOAD_BYTES bytes, over the $MAX_BYTES limit, so it was not sent"
   exit 0
 fi
 

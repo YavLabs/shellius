@@ -12,6 +12,8 @@ import ConfirmDialog from '@/components/shared/ConfirmDialog';
 import CertStatusBadge from '@/components/shared/CertStatusBadge';
 import EnvironmentBadge from '@/components/shared/EnvironmentBadge';
 import UserCell from '@/components/shared/UserCell';
+import ServerName, { serverSearchString } from '@/components/shared/ServerName';
+import EntityLink from '@/components/EntityLink';
 import Avatar from '@/components/ui/Avatar';
 import { Badge } from '@/components/ui/badge';
 import PageHeader from '@/components/common/PageHeader';
@@ -96,7 +98,13 @@ function CertDetailModal({ cert, open, onClose, onDownload }) {
           value={
             cert.issuedFor ? (
               <span className="flex items-center gap-2">
-                {cert.issuedFor.hostname}
+                <EntityLink
+                  to={`/servers/${cert.issuedFor.id}`}
+                  entityType="server"
+                  entityName={cert.issuedFor.displayName || cert.issuedFor.hostname}
+                >
+                  <ServerName server={cert.issuedFor} />
+                </EntityLink>
                 {cert.issuedFor.environment && (
                   <EnvironmentBadge environment={cert.issuedFor.environment} />
                 )}
@@ -247,17 +255,25 @@ function Certificates() {
       key: 'server',
       label: 'Server',
       sortable: true,
-      searchAccessor: (r) => `${r.issuedFor?.hostname || ''} ${r.issuedFor?.environment || ''}`,
+      searchAccessor: (r) => (r.issuedFor ? serverSearchString(r.issuedFor) : ''),
       mobile: {
         slot: 'title',
         render: (r) => (
-          <span className="min-w-0 break-all">{r.issuedFor?.hostname || 'Any server'}</span>
+          <span className="min-w-0 break-all">
+            {r.issuedFor?.displayName || r.issuedFor?.hostname || 'Any server'}
+          </span>
         ),
       },
       render: (r) =>
         r.issuedFor ? (
           <span className="flex items-center gap-2">
-            <span className="text-sm text-foreground">{r.issuedFor.hostname}</span>
+            <EntityLink
+              to={`/servers/${r.issuedFor.id}`}
+              entityType="server"
+              entityName={r.issuedFor.displayName || r.issuedFor.hostname}
+            >
+              <ServerName server={r.issuedFor} />
+            </EntityLink>
             <EnvironmentBadge environment={r.issuedFor.environment} />
           </span>
         ) : (

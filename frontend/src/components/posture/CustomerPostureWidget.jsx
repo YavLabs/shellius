@@ -60,8 +60,10 @@ function CustomerPostureWidget({ customerId, posture, canOnboard, onInstall }) {
   // "No collector anywhere" is notInstalled === total, NOT reporting === 0.
   // A stale host still has a collector and still has findings worth showing.
   const noCoverageAtAll = servers.total > 0 && servers.notInstalled === servers.total;
+  const degraded = servers.degraded ?? 0;
+  const rejected = servers.rejected ?? 0;
   const allClear =
-    !noCoverageAtAll && servers.notInstalled === 0 && servers.stale === 0;
+    !noCoverageAtAll && servers.notInstalled === 0 && servers.stale === 0 && degraded === 0 && rejected === 0;
 
   return (
     <div className="flex flex-col rounded-lg border border-border bg-card p-5 max-md:rounded-none max-md:border-0 max-md:bg-transparent max-md:p-0">
@@ -118,7 +120,7 @@ function CustomerPostureWidget({ customerId, posture, canOnboard, onInstall }) {
                 inset
                 icon={Radar}
                 label="Collector installed"
-                value={servers.reporting + servers.stale}
+                value={servers.reporting + servers.stale + rejected}
                 suffix={
                   <span className="ml-1 text-sm font-normal text-muted-foreground">
                     of {servers.total}
@@ -139,7 +141,7 @@ function CustomerPostureWidget({ customerId, posture, canOnboard, onInstall }) {
               <CoverageCallout
                 canOnboard={canOnboard}
                 onInstall={onInstall}
-                label={servers.notInstalled > 0 ? 'Install collectors' : 'Reinstall'}
+                label={servers.notInstalled > 0 ? 'Install collectors' : 'Fix collectors'}
               >
                 {servers.notInstalled > 0 && (
                   <>
@@ -152,6 +154,20 @@ function CustomerPostureWidget({ customerId, posture, canOnboard, onInstall }) {
                     {servers.notInstalled > 0 ? ' ' : ''}
                     {servers.stale} stopped reporting — their findings are held at the last known
                     state, not cleared.
+                  </>
+                )}
+                {degraded > 0 && (
+                  <>
+                    {' '}
+                    {degraded} {degraded === 1 ? 'is' : 'are'} degraded — reporting, but unable to see
+                    everything, so &ldquo;no findings&rdquo; there is unverified.
+                  </>
+                )}
+                {rejected > 0 && (
+                  <>
+                    {' '}
+                    {rejected} {rejected === 1 ? 'has' : 'have'} reports being refused — a reinstall
+                    updates the collector.
                   </>
                 )}
               </CoverageCallout>

@@ -9,6 +9,31 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 Tracked here as work lands on `main`; moved into a dated section on release
 (`node scripts/version.mjs bump <major|minor|patch>`).
 
+## [1.7.3] - 2026-09-21
+
+### Fixed
+
+- **Hosts kept showing "Collector degraded" after a reinstall, and then "stopped reporting".** Once 1.7.2 made the collector's sudo grant work, it started reporting Docker ports it found in the NAT table as `source: "nat"`. The API's schema did not allow that value, so it refused the whole snapshot. The host looked dead, the last (degraded) snapshot stayed on screen, and reinstalling changed nothing. The API now accepts it. It also accepts two other shapes the collector has always sent and the API silently dropped: firewall rules placed beside `firewall` instead of inside it (so no firewall rule ever reached the reachability logic), and `ownerId` instead of `ownerRef`. Collectors already on hosts start reporting again as soon as the server is upgraded, with no reinstall needed.
+- **A wrong sudo password hung an install for 15 minutes.** It now fails at once, and the install dialogs ask for the right password.
+- **The sudo password could appear in the install log.** A pty echoes what is written to it. Install output is now scrubbed.
+- **The ports table listed the same port twice** (`0.0.0.0` and `::`, or `127.0.0.53` and `127.0.0.54`). These are separate sockets, not duplicates from a reinstall; ingest replaces a host's listeners on every snapshot. They now show as one row with every bind.
+- **Access requests, sessions, certificates, the audit log and notifications showed a server's hostname but not its name.** They now show the name, with the hostname under it.
+
+### Added
+
+- **Refused reports are visible.** When the API rejects a host's snapshot, it records why, and the Server page shows **Reports refused** with the reason instead of "stopped reporting". The report script also sends the failures it catches before anything can be sent: collector missing, crashed, or snapshot too large.
+- **Every collector warning explains itself and offers the fix.** Degraded, refused and stale banners say what the problem means for the data shown. Each has a **Reinstall collector** button where a reinstall helps, and host commands to copy where it does not. An outdated collector shows **Update to 1.1.0**.
+- **Reinstall from the bulk installer without losing your place.** Degraded, refused and silent hosts get their own group, **Installed, but needs a reinstall**, selected by default. Healthy hosts can be ticked one by one. The single "re-run on hosts already done" switch is gone. The coverage list offers **Reinstall** per host, and "Install / reinstall on N hosts".
+- **Save a host's sudo password.** When sudo needs a password, tick **Save it for next time** in the install dialogs. The password is kept encrypted in the org Keystore, only once the install succeeds with it, and later installs on that host use it automatically. You can manage it from the Collector card on the Server page (save, change or forget). The bulk installer asks for a sudo password once, up front, and **Use it for all waiting hosts** applies one password to every host still waiting.
+- **Posture collector 1.1.0.** Hosts with neither ufw nor firewalld now have their iptables or nftables INPUT rules evaluated. They are no longer permanently degraded, and an empty INPUT chain is reported as an unfiltered host. Listeners are attributed to whoever started them: pm2 apps are found through their God Daemon and named from pm2's own pid files, including when launched as `infisical run -- npm start` or from an ecosystem file. Secret injectors (infisical, doppler, op, dotenv, …) are shown as `via infisical run`, never with their arguments. A process started by hand in an SSH session is labelled as unsupervised.
+- **Every reference to another entity links to it.** Servers, customers, users, requests and sessions open their detail pages. When you lack access to the destination, the reference is plain text.
+
+### Upgrade notes
+
+- **Migration:** `20260927000000_posture_rejections_and_sudo_credential` adds `servers.sudo_credential_id`, `posture_rejected_at` and `posture_reject_reason`.
+- **Expect new findings once hosts report again.** Firewall rules now reach the verdict logic for the first time, so `STALE_FIREWALL_RULE`, `STOPPED_SERVICE_PORT_OPEN` and allow-rule-based `PORT_EXPOSED` can appear. They were always true. iptables-only hosts gain real verdicts too.
+- To get collector 1.1.0 (firewall parsing, pm2/launcher attribution), run **Install collectors**. Hosts on 1.0.0 are now listed under **needs a reinstall** and show **Update to 1.1.0**.
+
 ## [1.7.2] - 2026-09-20
 
 ### Fixed

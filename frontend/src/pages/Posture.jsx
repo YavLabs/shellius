@@ -1,18 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
-import {
-  Radar,
-  ShieldAlert,
-  ShieldCheck,
-  ServerOff,
-  VolumeX,
-  Volume1,
-  Check,
-  Eye,
-  RefreshCw,
-  Info,
-  Download,
-} from 'lucide-react';
+import { Check, Download, Eye, Info, Radar, RefreshCw, ServerOff, ShieldAlert, ShieldCheck, ShieldOff, Volume1, VolumeX } from 'lucide-react';
 import DataTable from '@/components/shared/DataTable';
 import PageHeader from '@/components/common/PageHeader';
 import EmptyState from '@/components/ui/EmptyState';
@@ -325,6 +313,21 @@ function Posture() {
           <span className="font-medium text-foreground">{coverage?.reporting ?? 0}</span> of{' '}
           {coverage?.total ?? 0} servers reporting
         </span>
+        {/* Reporting, but not the whole picture: a degraded collector's
+            "no findings" means less, and a refused one's data is frozen.
+            Both are fixed from the coverage list, so both are named here. */}
+        {coverage?.degraded > 0 && (
+          <span className="flex items-center gap-1.5 text-destructive">
+            <ShieldOff className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+            {coverage.degraded} degraded
+          </span>
+        )}
+        {coverage?.rejected > 0 && (
+          <span className="flex items-center gap-1.5 text-destructive">
+            <ServerOff className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+            {coverage.rejected} with reports refused
+          </span>
+        )}
         {coverage?.stale > 0 && (
           <span className="flex items-center gap-1.5 text-amber-600 dark:text-amber-400">
             <ServerOff className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />

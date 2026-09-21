@@ -193,7 +193,7 @@ export async function issue({
     },
     include: {
       issuedTo: { select: { id: true, email: true, name: true, avatarUrl: true } },
-      issuedFor: { select: { id: true, hostname: true, environment: true } },
+      issuedFor: { select: { id: true, hostname: true, displayName: true, environment: true, customerId: true } },
     },
   });
 
@@ -255,7 +255,7 @@ export async function list({ orgId, userId, serverId, status, page = 1, limit = 
       orderBy: { createdAt: 'desc' },
       include: {
         issuedTo: { select: { id: true, email: true, name: true, avatarUrl: true } },
-        issuedFor: { select: { id: true, hostname: true, environment: true } },
+        issuedFor: { select: { id: true, hostname: true, displayName: true, environment: true, customerId: true } },
       },
     }),
     prisma.certificate.count({ where }),
@@ -280,7 +280,7 @@ export async function getById(orgId, certId, scope = UNSCOPED) {
     where: { id: certId, orgId, ...relationScopeWhere(scope, 'issuedFor') },
     include: {
       issuedTo: { select: { id: true, email: true, name: true, avatarUrl: true } },
-      issuedFor: { select: { id: true, hostname: true, environment: true } },
+      issuedFor: { select: { id: true, hostname: true, displayName: true, environment: true, customerId: true } },
       revokedBy: { select: { id: true, email: true, name: true, avatarUrl: true } },
     },
   });

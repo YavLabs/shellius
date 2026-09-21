@@ -46,7 +46,13 @@ function CollectorCoverageModal({ open, onClose, onInstall, onInstallAll, canIns
     if (open) load();
   }, [open, load]);
 
-  const ready = groupPlan(plan).find((g) => g.key === 'ready')?.rows || [];
+  const groups = groupPlan(plan);
+  const ready = groups.find((g) => g.key === 'ready')?.rows || [];
+  // Installed, but degraded / refused / silent — and reachable. These are as
+  // much "not covered" as a host with no collector: what they report is
+  // incomplete or stale. They go into the same run.
+  const fix = (groups.find((g) => g.key === 'needs_reinstall')?.rows || []).filter((r) => r.installable !== false);
+  const actionable = [...ready, ...fix];
   const counts = plan?.counts;
 
   return (
@@ -58,18 +64,24 @@ function CollectorCoverageModal({ open, onClose, onInstall, onInstallAll, canIns
       footer={
         <div className="flex flex-wrap items-center justify-between gap-2">
           <span className="text-xs text-muted-foreground">
-            {ready.length > 0
-              ? `${ready.length} host${ready.length === 1 ? '' : 's'} ready to install`
-              : 'Nothing is waiting to be installed.'}
+            {actionable.length > 0
+              ? [
+                  ready.length > 0 && `${ready.length} ready to install`,
+                  fix.length > 0 && `${fix.length} need a reinstall`,
+                ]
+                  .filter(Boolean)
+                  .join(' · ')
+              : 'Nothing needs installing or fixing.'}
           </span>
           <div className="flex items-center gap-2">
             <Button variant="outline" onClick={onClose}>
               Close
             </Button>
-            {canInstall && onInstallAll && ready.length > 0 && (
-              <Button onClick={() => onInstallAll(ready.map((r) => r.id))}>
+            {canInstall && onInstallAll && actionable.length > 0 && (
+              <Button onClick={() => onInstallAll(actionable.map((r) => r.id))}>
                 <Download className="mr-2 h-4 w-4" />
-                Install on {ready.length} host{ready.length === 1 ? '' : 's'}
+                {fix.length > 0 && ready.length === 0 ? 'Reinstall on' : fix.length > 0 ? 'Install / reinstall on' : 'Install on'}{' '}
+                {actionable.length} host{actionable.length === 1 ? '' : 's'}
               </Button>
             )}
           </div>

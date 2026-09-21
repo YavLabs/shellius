@@ -11,9 +11,21 @@
 # listed for both common locations (/usr/sbin vs /sbin, /usr/bin vs /bin)
 # since distros disagree on where these binaries live; only the ones that
 # exist on this host will ever match.
+#
+# No "Defaults" lines, deliberately. `Defaults:shellius-posture !requiretty`
+# looks like a harmless fix for old RHEL's requiretty, but sudo-rs (the
+# default sudo from Ubuntu 25.10) does not know the option and rejects the
+# whole file — and bootstrap deletes a drop-in visudo rejects, taking every
+# grant below with it. A host that still enforces requiretty reports sudo's
+# own "you must have a tty" in the collector's degraded reason instead.
 shellius-posture ALL=(root) NOPASSWD: /usr/sbin/ss -H -tulpn, /sbin/ss -H -tulpn, /usr/bin/ss -H -tulpn, /bin/ss -H -tulpn
 shellius-posture ALL=(root) NOPASSWD: /usr/sbin/ufw status verbose, /sbin/ufw status verbose
 shellius-posture ALL=(root) NOPASSWD: /usr/bin/firewall-cmd --list-all, /bin/firewall-cmd --list-all
 shellius-posture ALL=(root) NOPASSWD: /usr/bin/systemctl show -p FragmentPath --value *, /bin/systemctl show -p FragmentPath --value *
 shellius-posture ALL=(root) NOPASSWD: /usr/sbin/iptables -t nat -S, /sbin/iptables -t nat -S
 shellius-posture ALL=(root) NOPASSWD: /usr/sbin/nft list table ip nat, /sbin/nft list table ip nat
+# Hosts with neither ufw nor firewalld: the INPUT chain (iptables, incl. the
+# iptables-nft compat layer) and the full nftables ruleset (for a native
+# nftables firewall iptables cannot see). Read-only listings, fixed args.
+shellius-posture ALL=(root) NOPASSWD: /usr/sbin/iptables -S INPUT, /sbin/iptables -S INPUT, /usr/bin/iptables -S INPUT
+shellius-posture ALL=(root) NOPASSWD: /usr/sbin/nft list ruleset, /sbin/nft list ruleset, /usr/bin/nft list ruleset
