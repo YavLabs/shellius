@@ -9,6 +9,21 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 Tracked here as work lands on `main`; moved into a dated section on release
 (`node scripts/version.mjs bump <major|minor|patch>`).
 
+## [1.7.2] - 2026-09-20
+
+### Fixed
+
+- **Every host reported "Collector degraded", with unknown owners and UNKNOWN reachability.** The collector's systemd unit set `NoNewPrivileges=true`, which stops setuid programs such as `sudo` from gaining privilege — and the collector reaches root only through `sudo` and its narrow sudoers grant. Every privileged read failed on every host: listening sockets, `ufw`/`firewalld` state, the NAT table and `systemctl show`. The grant itself was fine. The unit no longer sets `NoNewPrivileges`, nor `RestrictSUIDSGID` or `ProtectKernelModules`, which older systemd releases treat as implying it. `ProtectSystem` is now `full` rather than `strict`, so the root commands sudo runs can take their lock files under `/run`.
+- **pm2 apps were never reported from a host.** The unit's `ProtectHome=true` hid `/root` and `/home` from the collector entirely. It is now `read-only`; ordinary file permissions still decide what the collector can open, so homes that are private (`0700`/`0750`) stay private.
+
+### Changed
+
+- **A collector privilege failure now names its cause.** The collector used to discard sudo's own error message, so this bug showed up only as "sudo grant missing?". The degraded reason for listening sockets, the firewall and the NAT table now ends with what sudo actually said.
+
+### Upgrade notes
+
+- **Existing hosts keep the broken unit until the collector is installed again.** After upgrading, run **Install collectors** with **Re-run on hosts that are already done**; the installer rewrites the unit and reloads systemd. Hosts whose sudo asks for a password will ask again.
+
 ## [1.7.1] - 2026-09-20
 
 ### Fixed
