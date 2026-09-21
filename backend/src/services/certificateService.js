@@ -4,6 +4,7 @@ import logger from '../utils/logger.js';
 import * as caService from './caService.js';
 import * as policyService from './policyService.js';
 import { UNSCOPED, assertServerInScope, relationScopeWhere } from '../lib/scope.js';
+import { endOfDayInclusive } from '../utils/dateRange.js';
 
 // ---------------------------------------------------------------------------
 // Internal helpers
@@ -268,7 +269,7 @@ export async function list({
   if (startDate || endDate) {
     where.validBefore = {};
     if (startDate) where.validBefore.gte = new Date(startDate);
-    if (endDate) where.validBefore.lte = new Date(endDate);
+    if (endDate) where.validBefore.lte = endOfDayInclusive(endDate);
   }
 
   const [items, total] = await Promise.all([

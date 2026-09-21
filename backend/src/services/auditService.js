@@ -7,6 +7,7 @@
 
 import prisma from '../config/db.js';
 import logger, { redactValue } from '../utils/logger.js';
+import { endOfDayInclusive } from '../utils/dateRange.js';
 
 // ---------------------------------------------------------------------------
 // Action taxonomy
@@ -199,7 +200,7 @@ export async function list({ orgId, filters = {}, page = 1, limit = 25 } = {}) {
   if (startDate || endDate) {
     where.createdAt = {};
     if (startDate) where.createdAt.gte = new Date(startDate);
-    if (endDate) where.createdAt.lte = new Date(endDate);
+    if (endDate) where.createdAt.lte = endOfDayInclusive(endDate);
   }
 
   // Search: ILIKE across action + resourceType + metadata::text
@@ -573,7 +574,7 @@ export async function exportAll({ orgId, filters = {}, format = 'json' }) {
   if (startDate || endDate) {
     where.createdAt = {};
     if (startDate) where.createdAt.gte = new Date(startDate);
-    if (endDate) where.createdAt.lte = new Date(endDate);
+    if (endDate) where.createdAt.lte = endOfDayInclusive(endDate);
   }
 
   const rows = await prisma.auditLog.findMany({

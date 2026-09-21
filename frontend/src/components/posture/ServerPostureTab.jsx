@@ -5,6 +5,8 @@ import CollectorHealthBanner from '@/components/posture/CollectorHealthBanner';
 import SudoPasswordRow from '@/components/posture/SudoPasswordRow';
 import { collectorStateOf, isOlderVersion } from '@/lib/collectorHealth';
 import { groupListeners, bindNote } from '@/lib/listenerGroups';
+import { describeListener } from '@/lib/serviceIdentity';
+import ServiceCell from '@/components/posture/ServiceCell';
 import DataTable from '@/components/shared/DataTable';
 import { PostureTile, PostureTileGrid } from '@/components/posture/PostureTiles';
 import { severityAccent } from '@/lib/mobileCard';
@@ -662,15 +664,56 @@ function ServerPostureTab({
 
   const listenerColumns = [
     {
+      key: 'service',
+      label: 'Service',
+      // One readable cell instead of three raw columns (Service / Owner /
+      // Source): the service's name, a runtime chip, the recognised protocol
+      // when it adds something, and where it is defined underneath.
+      sortAccessor: (r) => (r.listening ? describeListener(r).name.toLowerCase() : ''),
+      searchAccessor: (r) => {
+        if (!r.listening) return '';
+        const d = describeListener(r);
+        return [d.name, d.runtime.label, d.protocol, d.subtext, d.id, d.details.user, d.details.command].join(' ');
+      },
+      mobile: {
+        slot: 'secondary',
+        render: (r) => {
+          if (!r.listening) return 'Nothing listening on this port';
+          const d = describeListener(r);
+          return `${d.name} · ${d.runtime.label}${d.protocol ? ` · ${d.protocol}` : ''}`;
+        },
+      },
+      render: (r) =>
+        r.listening ? (
+          <ServiceCell listener={r} />
+        ) : (
+          <span className="text-sm text-muted-foreground">Nothing listening{r.expected ? ' — marked expected' : ''}</span>
+        ),
+    },
+    {
       key: 'port',
       label: 'Port',
+      className: 'w-24',
+      sortAccessor: (r) => r.port,
       mobile: { slot: 'title', render: (r) => `${(r.proto || '').toUpperCase()}/${r.port}${r.containerPort && r.containerPort !== r.port ? ` → ${r.containerPort}` : ''}` },
       render: (r) => (
-        <span className="font-mono text-sm">
-          {(r.proto || '').toUpperCase()}/{r.port}
+        <span className="font-mono text-sm" title={r.containerPort && r.containerPort !== r.port ? `Host port ${r.port} → container port ${r.containerPort}` : undefined}>
+          {r.port}
           {r.containerPort && r.containerPort !== r.port && (
             <span className="text-muted-foreground"> → {r.containerPort}</span>
           )}
+        </span>
+      ),
+    },
+    {
+      key: 'proto',
+      label: 'Protocol',
+      className: 'w-24',
+      hideBelow: 'sm',
+      mobile: 'hidden',
+      render: (r) => (
+        <span className="inline-flex items-center rounded border border-border px-1.5 py-px font-mono text-[11px] uppercase text-muted-foreground">
+          {r.proto}
         </span>
       ),
     },
@@ -714,65 +757,6 @@ function ServerPostureTab({
         const { tone, label } = reachabilityTone(r.reachability);
         return <Badge tone={tone}>{label}</Badge>;
       },
-    },
-    {
-      key: 'service',
-      label: 'Service',
-      // Search what the cell actually shows, so "docker" or "pm2" finds the
-      // rows the column now labels that way.
-      searchAccessor: (r) => (r.listening ? serviceLabel(r).text : ''),
-      // What is behind the port, then who owns it. "systemd unit" on its own
-      // — the inferred label — said less than the card had room for, while
-      // the owner sat in an unlabelled chip below reading like a second,
-      // contradictory service name.
-      mobile: {
-        slot: 'secondary',
-        render: (r) => {
-          if (!r.listening) return 'Nothing listening on this port';
-          const owner = r.ownerKind ? `${r.ownerKind}/${r.ownerName || '-'}` : null;
-          const service = serviceLabel(r).text;
-          return owner && owner !== service ? `${service} · ${owner}` : service;
-        },
-      },
-      render: (r) => {
-        if (!r.listening) return <span className="text-muted-foreground">—</span>;
-        const { text, inferred } = serviceLabel(r);
-        return (
-          <span className={inferred ? 'text-muted-foreground' : 'text-foreground'} title={text}>
-            {text}
-          </span>
-        );
-      },
-    },
-    {
-      key: 'owner',
-      label: 'Owner',
-      // Carried by the card's secondary line (see 'service') rather than a
-      // chip that repeated it.
-      mobile: 'hidden',
-      render: (r) => (
-        <div className="max-w-[14rem]">
-          <p className="truncate text-sm text-foreground">
-            {r.ownerKind ? `${r.ownerKind}/${r.ownerName || '-'}` : <span className="text-muted-foreground">Unattributed</span>}
-          </p>
-          {(r.ownerDetail || r.ownerUser) && (
-            <p className="truncate text-[11px] text-muted-foreground">
-              {[r.ownerDetail, r.ownerUser ? `user: ${r.ownerUser}` : null].filter(Boolean).join(' · ')}
-            </p>
-          )}
-        </div>
-      ),
-    },
-    {
-      key: 'sourcePath',
-      label: 'Source',
-      hideBelow: 'lg',
-      mobile: 'hidden',
-      render: (r) => (
-        <span className="max-w-[12rem] truncate font-mono text-[11px] text-muted-foreground" title={r.sourcePath}>
-          {r.sourcePath || '-'}
-        </span>
-      ),
     },
     {
       key: 'status',
@@ -1095,7 +1079,7 @@ function ServerPostureTab({
                         {(r.proto || '').toUpperCase()}/{r.port}
                       </span>
                       <span className="mt-0.5 block truncate text-[11px] text-muted-foreground">
-                        {r.listening ? serviceLabel(r).text : 'Nothing listening on this port'}
+                        {r.listening ? `${describeListener(r).name} · ${describeListener(r).runtime.label}` : 'Nothing listening on this port'}
                       </span>
                     </span>
                     <span className="flex shrink-0 items-center gap-1">

@@ -2,6 +2,7 @@ import prisma from '../config/db.js';
 import ApiError from '../utils/ApiError.js';
 import logger from '../utils/logger.js';
 import { UNSCOPED, sessionScopeWhere, serverScopeWhere } from '../lib/scope.js';
+import { endOfDayInclusive } from '../utils/dateRange.js';
 
 // ---------------------------------------------------------------------------
 // Shared include shape
@@ -210,7 +211,7 @@ export async function list({
   if (startDate || endDate) {
     where.startedAt = {};
     if (startDate) where.startedAt.gte = new Date(startDate);
-    if (endDate) where.startedAt.lte = new Date(endDate);
+    if (endDate) where.startedAt.lte = endOfDayInclusive(endDate);
   }
 
   const [items, total] = await Promise.all([

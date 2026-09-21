@@ -4,7 +4,8 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import SeverityBadge from '@/components/posture/SeverityBadge';
 import { DetailRow, DetailSection } from '@/components/posture/DetailRow';
-import { serviceLabel } from '@/lib/postureLabels';
+import { describeListener } from '@/lib/serviceIdentity';
+import { RuntimeChip } from '@/components/posture/ServiceCell';
 
 /**
  * ListenerDetailModal — the row-click view for one listening socket.
@@ -51,14 +52,6 @@ const REACHABILITY = {
   },
 };
 
-const OWNER_KIND = {
-  docker: 'Docker container',
-  'docker-proxy': 'Docker container',
-  podman: 'Podman container',
-  pm2: 'pm2 process',
-  systemd: 'systemd unit',
-};
-
 function ListenerDetailModal({
   open,
   listener,
@@ -84,8 +77,7 @@ function ListenerDetailModal({
   // inventing an answer.
   const notListening = listener.listening === false;
   const reach = REACHABILITY[listener.reachability] || REACHABILITY.UNKNOWN;
-  const { text: service, inferred } = serviceLabel(listener);
-  const kind = OWNER_KIND[listener.ownerKind] || listener.ownerKind || null;
+  const identity = describeListener(listener);
 
   const expected = listener.expected || null;
 
@@ -146,19 +138,23 @@ function ListenerDetailModal({
           <DetailRow label="Port" value={listener.port} mono />
           <DetailRow label="Bind address" value={listener.bind} mono />
           <DetailRow label="Container port" value={listener.containerPort} mono />
-          <DetailRow
-            label="Service"
-            value={inferred ? <span className="text-muted-foreground">{service}</span> : service}
-          />
+          {!notListening && <DetailRow label="Recognised as" value={identity.protocol || listener.service || null} />}
         </DetailSection>
 
         {!notListening && (
-        <DetailSection title="What owns it">
+        <DetailSection title="What is listening">
           <DetailRow
-            label="Kind"
-            value={kind || <span className="text-muted-foreground">Unattributed</span>}
+            label="Service"
+            value={
+              <span className="inline-flex items-center gap-1.5">
+                <span className="font-medium">{identity.name}</span>
+                <RuntimeChip runtime={identity.runtime} />
+              </span>
+            }
           />
-          <DetailRow label="Name" value={listener.ownerName} mono />
+          <DetailRow label="ID" value={identity.id || null} mono />
+          <DetailRow label="Command" value={identity.details.command || null} mono />
+          <DetailRow label="Raw owner" value={[listener.ownerKind, listener.ownerName].filter(Boolean).join(' / ') || null} mono />
           <DetailRow label="Reference" value={listener.ownerRef} mono />
           <DetailRow label="Unix user" value={listener.ownerUser} mono />
           <DetailRow label="PID" value={listener.pid} mono />

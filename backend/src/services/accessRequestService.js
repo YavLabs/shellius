@@ -23,6 +23,7 @@ import { TIERS } from '../config/permissions.js';
 import { canBypassProdApproval, isProdBypassEnabled } from './orgService.js';
 import { usersWithPermission } from './roleService.js';
 import { UNSCOPED, isUnscoped, assertServerInScope, serverScopeWhere, relationScopeWhere } from '../lib/scope.js';
+import { endOfDayInclusive } from '../utils/dateRange.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -1244,7 +1245,7 @@ export async function list({
   if (startDate || endDate) {
     const createdAt = {};
     if (startDate) createdAt.gte = new Date(startDate);
-    if (endDate) createdAt.lte = new Date(endDate);
+    if (endDate) createdAt.lte = endOfDayInclusive(endDate);
     extra.push({ createdAt });
   }
   if (extra.length > 0) where = { AND: [where, ...extra] };
