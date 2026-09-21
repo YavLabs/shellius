@@ -1242,6 +1242,7 @@ model HostListener {
   ownerDetail   String? @map("owner_detail") // image / exec path
   ownerRef      String? @map("owner_ref") // container id / pm2 id / unit name
   ownerUser     String? @map("owner_user") // owning unix user — "whose is it" on a shared box
+  process       String? @map("process_name") // the listening process's name (nginx, python3) — the last resort for naming it
   sourcePath    String? @map("source_path") // compose file / unit file / cwd — what you edit to change it
   pid           Int?
 

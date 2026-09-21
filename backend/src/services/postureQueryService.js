@@ -22,6 +22,7 @@ import * as postureSettingsService from './postureSettingsService.js';
 import { canInstallOn, isBootstrapped } from './bulkBootstrapService.js';
 import { latestSnapshots, classifyCollector, degradedReasonsOf } from './postureCollectorState.js';
 import { POSTURE_COLLECTOR_VERSION } from '../utils/postureCollectorVersion.js';
+import { withContainerNames } from './postureInventoryService.js';
 
 // ---------------------------------------------------------------------------
 // Shared shapes
@@ -548,7 +549,7 @@ export async function getServerPosture(orgId, serverId, scope) {
           serviceScan: latestSnapshot.raw?.serviceScan || null,
         }
       : null,
-    listeners,
+    listeners: withContainerNames(listeners, services),
     services,
     findings: findingRows.map(findingDto),
     metrics: metricRows

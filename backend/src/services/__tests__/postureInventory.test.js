@@ -702,3 +702,20 @@ describe('bulk install fallback credentials', () => {
     expect(shouldRetryWithFallback({ fallbackAuth: fb, attemptedAuth: {} })).toBe(false);
   });
 });
+
+describe('withContainerNames', () => {
+  it('names a cgroup-attributed container from the container scan, by its 12-char id', async () => {
+    const { withContainerNames } = await import('../postureInventoryService.js');
+    const rows = [
+      { serverId: 's1', ownerKind: 'container', ownerName: 'docker:3f2a9c1b7d4e', ownerRef: '3f2a9c1b7d4e', port: 8080 },
+      { serverId: 's2', ownerKind: 'container', ownerName: 'docker:3f2a9c1b7d4e', ownerRef: '3f2a9c1b7d4e', port: 8080 },
+      { serverId: 's1', ownerKind: 'systemd', ownerName: 'ssh.service', port: 22 },
+    ];
+    const services = [{ serverId: 's1', kind: 'docker', ref: '3f2a9c1b7d4e', name: 'api', detail: 'myorg/api:1.4' }];
+    const out = withContainerNames(rows, services);
+    expect(out[0]).toMatchObject({ containerName: 'api', containerImage: 'myorg/api:1.4' });
+    // Same id on another host is another container.
+    expect(out[1].containerName).toBeUndefined();
+    expect(out[2]).toBe(rows[2]);
+  });
+});

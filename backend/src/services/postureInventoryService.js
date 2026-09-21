@@ -236,6 +236,41 @@ function declaredPortRows(service) {
 }
 
 /**
+ * Name the container behind a port.
+ *
+ * A socket owned by a container is attributed from its cgroup, which gives
+ * an id and nothing else (no Docker socket, by design). When the host also
+ * runs the container scan, the same container is in HostService with its
+ * name and image — keyed by the same 12-character id. Pure: pass the rows
+ * and the host's services; returns rows with containerName/containerImage.
+ */
+export function withContainerNames(rows, services) {
+  const byRef = new Map();
+  for (const svc of services || []) {
+    if ((svc.kind === 'docker' || svc.kind === 'podman') && svc.ref) {
+      byRef.set(`${svc.serverId}:${String(svc.ref).slice(0, 12)}`, svc);
+    }
+  }
+  if (byRef.size === 0) return rows;
+  return rows.map((r) => {
+    if (r.ownerKind !== 'container') return r;
+    const id = String(r.ownerRef || r.ownerName || '').replace(/^(docker|podman):/, '').slice(0, 12);
+    const svc = byRef.get(`${r.serverId}:${id}`);
+    return svc ? { ...r, containerName: svc.name, containerImage: svc.detail || null } : r;
+  });
+}
+
+async function attachContainerNames(orgId, rows) {
+  const serverIds = [...new Set(rows.filter((r) => r.ownerKind === 'container').map((r) => r.serverId))];
+  if (serverIds.length === 0) return rows;
+  const services = await prisma.hostService.findMany({
+    where: { orgId, serverId: { in: serverIds }, kind: { in: ['docker', 'podman'] } },
+    select: { serverId: true, kind: true, ref: true, name: true, detail: true },
+  });
+  return withContainerNames(rows, services);
+}
+
+/**
  * GET /api/posture/inventory/listeners — the flat port list across the fleet.
  */
 export async function listListeners(orgId, query = {}, scope = UNSCOPED) {
@@ -289,13 +324,13 @@ export async function listListeners(orgId, query = {}, scope = UNSCOPED) {
     rows = withFindings.filter((r) => r.findings.length > 0);
     const total = rows.length;
     return {
-      items: rows.slice((page - 1) * limit, page * limit),
+      items: await attachContainerNames(orgId, rows.slice((page - 1) * limit, page * limit)),
       meta: { total, page, limit, truncated: listenerRows.length >= MAX_ROWS },
     };
   }
 
   const total = rows.length;
-  const pageRows = rows.slice((page - 1) * limit, page * limit);
+  const pageRows = await attachContainerNames(orgId, rows.slice((page - 1) * limit, page * limit));
   return {
     items: await attachFindings(orgId, pageRows),
     meta: { total, page, limit, truncated: listenerRows.length >= MAX_ROWS },
