@@ -232,7 +232,19 @@ export async function issue({
  * @param {{mode: string, customerIds: string[]}} [params.scope=UNSCOPED]
  * @returns {Promise<{ items: object[], total: number, page: number, limit: number }>}
  */
-export async function list({ orgId, userId, serverId, status, page = 1, limit = 25, scope = UNSCOPED }) {
+export async function list({
+  orgId,
+  userId,
+  serverId,
+  status,
+  environment,
+  certType,
+  startDate,
+  endDate,
+  page = 1,
+  limit = 25,
+  scope = UNSCOPED,
+}) {
   if (!orgId) throw new ApiError(400, 'orgId is required');
 
   page = parseInt(page, 10) || 1;
@@ -246,6 +258,16 @@ export async function list({ orgId, userId, serverId, status, page = 1, limit = 
   if (userId) where.issuedToId = userId;
   if (serverId) where.issuedForId = serverId;
   if (status) where.status = status;
+  if (certType) where.certType = certType;
+  // Merge with (never replace) the scope predicate already on `issuedFor` —
+  // replacing it would silently drop the customer-scope restriction.
+  if (environment) where.issuedFor = { ...(where.issuedFor || {}), environment };
+  // "Valid until" range — the dimension the page actually displays.
+  if (startDate || endDate) {
+    where.validBefore = {};
+    if (startDate) where.validBefore.gte = new Date(startDate);
+    if (endDate) where.validBefore.lte = new Date(endDate);
+  }
 
   const [items, total] = await Promise.all([
     prisma.certificate.findMany({

@@ -1184,7 +1184,22 @@ export async function getActiveByServerForUser(orgId, userId, serverId) {
  * @param {number}  [params.limit=25]
  * @returns {Promise<{ items: object[], total: number, page: number, limit: number }>}
  */
-export async function list({ orgId, userId, permissions, tab = 'mine', status, page = 1, limit = 25, scope = UNSCOPED }) {
+export async function list({
+  orgId,
+  userId,
+  permissions,
+  tab = 'mine',
+  status,
+  serverId,
+  requesterId,
+  protocol,
+  environment,
+  startDate,
+  endDate,
+  page = 1,
+  limit = 25,
+  scope = UNSCOPED,
+}) {
   if (!orgId) throw new ApiError(400, 'orgId is required');
   if (!userId) throw new ApiError(400, 'userId is required');
 
@@ -1214,8 +1229,25 @@ export async function list({ orgId, userId, permissions, tab = 'mine', status, p
     // 'mine' (default)
     where = { orgId, requesterId: userId };
   }
-  // AND-ed so it narrows the tab (to-review + APPROVED → nothing, not everything approved).
-  if (status) where = { AND: [where, { status }] };
+
+  // Additional filters, ANDed on top of the tab's base predicate so they can
+  // only narrow — never widen — what the tab (and its scope) already allows.
+  const extra = [];
+  if (status) extra.push({ status });
+  if (serverId) extra.push({ serverId });
+  // requesterId only makes sense outside 'mine' (which is already scoped to
+  // the caller) — harmless to accept there too, it just narrows to nothing
+  // or to the caller themselves.
+  if (requesterId) extra.push({ requesterId });
+  if (protocol) extra.push({ protocol });
+  if (environment) extra.push({ server: { environment } });
+  if (startDate || endDate) {
+    const createdAt = {};
+    if (startDate) createdAt.gte = new Date(startDate);
+    if (endDate) createdAt.lte = new Date(endDate);
+    extra.push({ createdAt });
+  }
+  if (extra.length > 0) where = { AND: [where, ...extra] };
 
   const [items, total] = await Promise.all([
     prisma.accessRequest.findMany({

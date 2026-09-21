@@ -20,13 +20,16 @@ import UserCell from '@/components/shared/UserCell';
 import Avatar from '@/components/ui/Avatar';
 import Modal from '@/components/shared/Modal';
 import ConfirmDialog from '@/components/shared/ConfirmDialog';
+import FilteredEmptyState from '@/components/shared/FilteredEmptyState';
+import { appliedFilterCount, clearedFilterValues } from '@/lib/filters';
 import SessionPlayer from '@/components/sessions/SessionPlayer';
 import PageHeader from '@/components/common/PageHeader';
-import SearchableSelect from '@/components/ui/SearchableSelect';
 import ConnectModal from '@/components/servers/ConnectModal';
 import { listSessions, listActiveSessions, getSession, terminateSession, downloadRecording } from '@/services/sessionService';
 import { listTerminalSessions } from '@/services/terminalService';
 import { getAccessIntent } from '@/services/accessRequestService';
+import { listServers } from '@/services/serverService';
+import { listUsers } from '@/services/userService';
 import { useAuth } from '@/context/AuthContext';
 import { useTerminalWorkspace } from '@/context/TerminalWorkspaceContext';
 import { useQuickConnect } from '@/context/QuickConnectContext';
@@ -469,6 +472,15 @@ function Sessions() {
   const [error, setError] = useState('');
 
   const [statusFilter, setStatusFilter] = useState('');
+  const [serverFilter, setServerFilter] = useState('');
+  const [userFilter, setUserFilter] = useState('');
+  const [authMethodFilter, setAuthMethodFilter] = useState('');
+  const [protocolFilter, setProtocolFilter] = useState('');
+  const [environmentFilter, setEnvironmentFilter] = useState('');
+  const [startDate, setStartDate] = useState('');
+  const [endDate, setEndDate] = useState('');
+  const [servers, setServers] = useState([]);
+  const [users, setUsers] = useState([]);
 
   const [detailId, setDetailId] = useState(null);
   const [detailOpen, setDetailOpen] = useState(false);
@@ -486,6 +498,13 @@ function Sessions() {
       } else {
         const params = { page, limit: pageSize };
         if (statusFilter) params.status = statusFilter;
+        if (serverFilter) params.serverId = serverFilter;
+        if (userFilter) params.userId = userFilter;
+        if (authMethodFilter) params.authMethod = authMethodFilter;
+        if (protocolFilter) params.protocol = protocolFilter;
+        if (environmentFilter) params.environment = environmentFilter;
+        if (startDate) params.startDate = startDate;
+        if (endDate) params.endDate = endDate;
         resp = await listSessions(params);
       }
       const items = resp.data?.items || resp.data || [];
@@ -498,14 +517,43 @@ function Sessions() {
     } finally {
       setLoading(false);
     }
-  }, [activeTab, page, pageSize, statusFilter]);
+  }, [
+    activeTab,
+    page,
+    pageSize,
+    statusFilter,
+    serverFilter,
+    userFilter,
+    authMethodFilter,
+    protocolFilter,
+    environmentFilter,
+    startDate,
+    endDate,
+  ]);
 
   useEffect(() => { fetchSessions(); }, [fetchSessions]);
+
+  // Lightweight option lists for the filter drawer.
+  useEffect(() => {
+    listServers({ page: 1, pageSize: 200 })
+      .then((d) => setServers(d.items || []))
+      .catch(() => {});
+    listUsers({ page: 1, pageSize: 200 })
+      .then((d) => setUsers(d.items || []))
+      .catch(() => {});
+  }, []);
 
   const handleTabChange = (key) => {
     setActiveTab(key);
     setPage(1);
     setStatusFilter('');
+    setServerFilter('');
+    setUserFilter('');
+    setAuthMethodFilter('');
+    setProtocolFilter('');
+    setEnvironmentFilter('');
+    setStartDate('');
+    setEndDate('');
   };
 
   const openDetail = (id) => { setDetailId(id); setDetailOpen(true); };
@@ -525,20 +573,93 @@ function Sessions() {
     }
   };
 
-  const filterSlot = activeTab === 'all' ? (
-    <SearchableSelect
-      className="w-[160px]"
-      value={statusFilter}
-      onChange={(v) => { setStatusFilter(v); setPage(1); }}
-      options={[
+  const filterDefs = activeTab === 'all' ? [
+    {
+      key: 'status',
+      label: 'Status',
+      placeholder: 'All statuses',
+      options: [
         { value: '', label: 'All statuses' },
         ...SESSION_STATUSES.map((s) => ({ value: s, label: SESSION_STATUS_LABELS[s] || s })),
-      ]}
-      placeholder="All statuses"
-      searchable={false}
-      clearable={false}
-    />
-  ) : null;
+      ],
+    },
+    {
+      key: 'server',
+      label: 'Server',
+      placeholder: 'All servers',
+      searchable: true,
+      options: [
+        { value: '', label: 'All servers' },
+        ...servers.map((s) => ({ value: s.id, label: s.displayName || s.hostname })),
+      ],
+    },
+    {
+      key: 'user',
+      label: 'User',
+      placeholder: 'All users',
+      searchable: true,
+      options: [
+        { value: '', label: 'All users' },
+        ...users.map((u) => ({ value: u.id, label: u.name || u.email })),
+      ],
+    },
+    {
+      key: 'authMethod',
+      label: 'Auth method',
+      placeholder: 'All methods',
+      options: [
+        { value: '', label: 'All methods' },
+        { value: 'certificate', label: 'Certificate' },
+        { value: 'credential', label: 'Identity' },
+        { value: 'quick_connect', label: 'Quick Connect' },
+      ],
+    },
+    {
+      key: 'protocol',
+      label: 'Protocol',
+      placeholder: 'All protocols',
+      options: [
+        { value: '', label: 'All protocols' },
+        { value: 'SSH', label: 'SSH' },
+        { value: 'RDP', label: 'RDP' },
+      ],
+    },
+    {
+      key: 'environment',
+      label: 'Environment',
+      placeholder: 'All environments',
+      options: [
+        { value: '', label: 'All environments' },
+        { value: 'demo', label: 'Demo' },
+        { value: 'dev', label: 'Dev' },
+        { value: 'staging', label: 'Staging' },
+        { value: 'prod', label: 'Prod' },
+      ],
+    },
+    { key: 'startDate', label: 'Started from', type: 'date' },
+    { key: 'endDate', label: 'Started to', type: 'date' },
+  ] : [];
+  const filterValues = {
+    status: statusFilter,
+    server: serverFilter,
+    user: userFilter,
+    authMethod: authMethodFilter,
+    protocol: protocolFilter,
+    environment: environmentFilter,
+    startDate,
+    endDate,
+  };
+  const applyFilters = (next) => {
+    setStatusFilter(next.status ?? '');
+    setServerFilter(next.server ?? '');
+    setUserFilter(next.user ?? '');
+    setAuthMethodFilter(next.authMethod ?? '');
+    setProtocolFilter(next.protocol ?? '');
+    setEnvironmentFilter(next.environment ?? '');
+    setStartDate(next.startDate ?? '');
+    setEndDate(next.endDate ?? '');
+    setPage(1);
+  };
 
   const columns = [
     {
@@ -726,8 +847,15 @@ function Sessions() {
         data={sessions}
         loading={loading}
         emptyMessage={activeTab === 'active' ? 'No active sessions.' : 'No sessions found.'}
+        emptyState={
+          appliedFilterCount(filterDefs, filterValues) > 0 ? (
+            <FilteredEmptyState onClear={() => applyFilters(clearedFilterValues(filterDefs))} />
+          ) : undefined
+        }
         searchPlaceholder="Search server or user..."
-        filters={filterSlot}
+        filterDefs={filterDefs}
+        filterValues={filterValues}
+        onFilterChange={applyFilters}
         mobile={{
           onCardClick: (r) => openDetail(r.id),
           accent: (r) => envAccent(r.server?.environment),

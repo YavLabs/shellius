@@ -1,10 +1,10 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Bell, CheckCheck } from 'lucide-react';
 import DataTable from '@/components/shared/DataTable';
 import PageHeader from '@/components/common/PageHeader';
-import { Button } from '@/components/ui/button';
-import SearchableSelect from '@/components/ui/SearchableSelect';
+import FilteredEmptyState from '@/components/shared/FilteredEmptyState';
+import { appliedFilterCount, clearedFilterValues } from '@/lib/filters';
 import {
   listNotifications,
   markAllNotificationsRead,
@@ -12,7 +12,7 @@ import {
 } from '@/services/notificationService';
 import { relativeTime } from '@/utils/time';
 import { RELATED_ROUTE } from '@/lib/notificationRoutes';
-import { notificationMeta } from '@/lib/notificationMeta';
+import { NOTIFICATION_META, notificationMeta } from '@/lib/notificationMeta';
 import { cn } from '@/lib/utils';
 
 
@@ -40,6 +40,7 @@ function Notifications() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [filter, setFilter] = useState('all');
+  const [typeFilter, setTypeFilter] = useState('');
 
   const fetch = useCallback(async () => {
     setLoading(true);
@@ -81,18 +82,38 @@ function Notifications() {
     else fetch();
   };
 
-  const filterSlot = (
-    <SearchableSelect
-      className="w-[160px]"
-      value={filter}
-      onChange={setFilter}
-      searchable={false}
-      clearable={false}
-      options={[
-        { value: 'all', label: 'All notifications' },
+  const filterDefs = [
+    {
+      key: 'readState',
+      label: 'Status',
+      placeholder: 'All notifications',
+      options: [
+        { value: '', label: 'All notifications' },
         { value: 'unread', label: 'Unread only' },
-      ]}
-    />
+      ],
+    },
+    {
+      key: 'type',
+      label: 'Type',
+      placeholder: 'All types',
+      options: [
+        { value: '', label: 'All types' },
+        ...Object.keys(NOTIFICATION_META).map((t) => ({ value: t, label: notificationMeta(t).label })),
+      ],
+    },
+  ];
+  // `filter` stays 'all'|'unread' for the fetch param; the drawer sees '' for "all".
+  const filterValues = { readState: filter === 'unread' ? 'unread' : '', type: typeFilter };
+  const applyFilters = (next) => {
+    setFilter(next.readState === 'unread' ? 'unread' : 'all');
+    setTypeFilter(next.type ?? '');
+  };
+
+  // Type is a client-side narrowing of the already-loaded page (isRead is
+  // the only dimension the API filters on — see routes/notifications.js).
+  const filteredItems = useMemo(
+    () => (typeFilter ? items.filter((n) => n.type === typeFilter) : items),
+    [items, typeFilter]
   );
 
   // Same row anatomy as the top-bar dropdown: a coloured icon for the type,
@@ -194,11 +215,18 @@ function Notifications() {
 
       <DataTable
         columns={columns}
-        data={items}
+        data={filteredItems}
         loading={loading}
         emptyMessage={filter === 'unread' ? 'No unread notifications.' : 'No notifications yet.'}
+        emptyState={
+          appliedFilterCount(filterDefs, filterValues) > 0 ? (
+            <FilteredEmptyState onClear={() => applyFilters(clearedFilterValues(filterDefs))} />
+          ) : undefined
+        }
         searchPlaceholder="Search notifications..."
-        filters={filterSlot}
+        filterDefs={filterDefs}
+        filterValues={filterValues}
+        onFilterChange={applyFilters}
         mobile={{ onCardClick: (n) => openNotification(n), titleClamp: 2 }}
       />
     </div>

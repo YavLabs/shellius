@@ -33,7 +33,7 @@ function strip(user) {
   };
 }
 
-export async function listUsers(orgId, { page = 1, pageSize = 25, role, roleId, status, managerId, search } = {}) {
+export async function listUsers(orgId, { page = 1, pageSize = 25, role, roleId, status, managerId, mfaEnabled, search } = {}) {
   page = parseInt(page, 10) || 1;
   pageSize = Math.min(parseInt(pageSize, 10) || 25, 100);
 
@@ -42,6 +42,7 @@ export async function listUsers(orgId, { page = 1, pageSize = 25, role, roleId, 
   if (roleId) where.roleId = roleId;
   if (status) where.status = status; // caller-supplied status overrides the default filter
   if (managerId) where.managerId = managerId;
+  if (mfaEnabled !== undefined) where.mfaEnabled = mfaEnabled;
   if (search) {
     where.OR = [
       { name: { contains: search, mode: 'insensitive' } },

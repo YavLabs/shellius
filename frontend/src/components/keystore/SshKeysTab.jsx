@@ -1,9 +1,11 @@
-import { useCallback, useEffect, useImperativeHandle, useState, forwardRef } from 'react';
+import { useCallback, useEffect, useImperativeHandle, useMemo, useState, forwardRef } from 'react';
 import { Pencil, Trash2, Copy, Download, Send, RefreshCw, Key, FileKey, Lock } from 'lucide-react';
 import DataTable from '@/components/shared/DataTable';
 import { CardIcon, CardStatus } from '@/components/mobile/MobileCard';
 import ConfirmDialog from '@/components/shared/ConfirmDialog';
 import EmptyState from '@/components/ui/EmptyState';
+import FilteredEmptyState from '@/components/shared/FilteredEmptyState';
+import { appliedFilterCount, clearedFilterValues } from '@/lib/filters';
 import { Badge } from '@/components/ui/badge';
 import { keySourceTone } from '@/lib/badgeTones';
 import { KEY_TYPE_LABELS, labelize } from '@/lib/labels';
@@ -43,6 +45,10 @@ const SshKeysTab = forwardRef(function SshKeysTab({ canManage, scope = 'org', ca
   const [deleteTarget, setDeleteTarget] = useState(null);
   const [deleteError, setDeleteError] = useState('');
   const [deleting, setDeleting] = useState(false);
+
+  const [keyTypeFilter, setKeyTypeFilter] = useState('');
+  const [sourceFilter, setSourceFilter] = useState('');
+  const [certFilter, setCertFilter] = useState('');
 
   const fetch = useCallback(async () => {
     setLoading(true);
@@ -113,6 +119,54 @@ const SshKeysTab = forwardRef(function SshKeysTab({ canManage, scope = 'org', ca
       setDeleting(false);
     }
   };
+
+  const filterDefs = [
+    {
+      key: 'keyType',
+      label: 'Key type',
+      placeholder: 'All types',
+      options: [
+        { value: '', label: 'All types' },
+        ...Object.entries(KEY_TYPE_LABELS).map(([value, label]) => ({ value, label })),
+      ],
+    },
+    {
+      key: 'source',
+      label: 'Source',
+      placeholder: 'All sources',
+      options: [
+        { value: '', label: 'All sources' },
+        { value: 'generated', label: 'Generated' },
+        { value: 'imported', label: 'Imported' },
+      ],
+    },
+    {
+      key: 'cert',
+      label: 'Certificate',
+      placeholder: 'Any',
+      options: [
+        { value: '', label: 'Any' },
+        { value: 'signed', label: 'Signed' },
+        { value: 'none', label: 'Unsigned' },
+      ],
+    },
+  ];
+  const filterValues = { keyType: keyTypeFilter, source: sourceFilter, cert: certFilter };
+  const applyFilters = (next) => {
+    setKeyTypeFilter(next.keyType ?? '');
+    setSourceFilter(next.source ?? '');
+    setCertFilter(next.cert ?? '');
+  };
+
+  const filteredKeys = useMemo(() => {
+    return keys.filter((k) => {
+      if (keyTypeFilter && (k.keyType || '').toLowerCase() !== keyTypeFilter) return false;
+      if (sourceFilter && (k.source || '').toLowerCase() !== sourceFilter) return false;
+      if (certFilter === 'signed' && !k.certificate) return false;
+      if (certFilter === 'none' && k.certificate) return false;
+      return true;
+    });
+  }, [keys, keyTypeFilter, sourceFilter, certFilter]);
 
   const columns = [
     {
@@ -258,11 +312,19 @@ const SshKeysTab = forwardRef(function SshKeysTab({ canManage, scope = 'org', ca
       ) : (
         <DataTable
           columns={columns}
-          data={keys}
+          data={filteredKeys}
           loading={loading}
           onRowClick={(r) => setDetailId(r.id)}
           searchPlaceholder="Search keys..."
           emptyMessage="No keys match your search"
+          emptyState={
+            appliedFilterCount(filterDefs, filterValues) > 0 ? (
+              <FilteredEmptyState onClear={() => applyFilters(clearedFilterValues(filterDefs))} />
+            ) : undefined
+          }
+          filterDefs={filterDefs}
+          filterValues={filterValues}
+          onFilterChange={applyFilters}
           mobile={{
             leading: () => <CardIcon icon={scope === 'personal' ? Lock : Key} />,
             // Signed keys: a quiet "Cert" next to the "⋯" menu instead of a chip.
