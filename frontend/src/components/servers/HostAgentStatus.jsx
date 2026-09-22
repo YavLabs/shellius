@@ -111,6 +111,43 @@ export function CollectorBadge({ server, onFix, canFix }) {
   return <StatusBadge kind="collector" status={server?.collector} onFix={onFix} canFix={canFix} />;
 }
 
+// Tones per state, matching serverAgentStatus.js — for places that have a
+// state but not a server row (a group header).
+const SSH_TRUST_TONES = {
+  healthy: 'success',
+  legacy_token: 'warning',
+  stale: 'warning',
+  no_heartbeat: 'warning',
+  installing: 'info',
+  failed: 'danger',
+  not_installed: 'warning',
+  identity_auth: 'neutral',
+  not_applicable: 'neutral',
+};
+const COLLECTOR_TONES = {
+  reporting: 'success',
+  outdated: 'info',
+  degraded: 'danger',
+  awaiting_report: 'info',
+  rejected: 'danger',
+  stale: 'warning',
+  not_installed: 'neutral',
+  not_applicable: 'neutral',
+};
+
+/**
+ * A plain status badge from a state + label, no popover — for a group
+ * header, which is itself a button.
+ */
+export function AgentStateBadge({ kind, state, label }) {
+  const tone = (kind === 'ssh' ? SSH_TRUST_TONES : COLLECTOR_TONES)[state] || 'neutral';
+  return (
+    <Badge tone={tone} dot className="whitespace-nowrap">
+      {label}
+    </Badge>
+  );
+}
+
 /** Filter options for the two columns, in the order a person scans them. */
 export const SSH_TRUST_FILTER_OPTIONS = [
   { value: '', label: 'Any SSH trust' },

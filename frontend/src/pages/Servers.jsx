@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import {
   Plus,
@@ -18,6 +18,9 @@ import {
   Send,
 } from 'lucide-react';
 import DataTable from '@/components/shared/DataTable';
+import GroupedView, { GroupLeafTable } from '@/components/shared/GroupedView';
+import useGroupBy from '@/hooks/useGroupBy';
+import { NONE, groupFilters } from '@/lib/grouping';
 import EntityLink from '@/components/EntityLink';
 import { CardIcon } from '@/components/mobile/MobileCard';
 import Modal from '@/components/shared/Modal';
@@ -33,6 +36,7 @@ import useAutoRefresh from '@/hooks/useAutoRefresh';
 import {
   SshTrustBadge,
   CollectorBadge,
+  AgentStateBadge,
   SSH_TRUST_FILTER_OPTIONS,
   COLLECTOR_FILTER_OPTIONS,
 } from '@/components/servers/HostAgentStatus';
@@ -48,6 +52,7 @@ import { Button } from '@/components/ui/button';
 import SearchableSelect from '@/components/ui/SearchableSelect';
 import {
   listServers,
+  listServerGroups,
   createServer,
   updateServer,
   bulkUpdateServers,
@@ -74,6 +79,38 @@ const SORT_KEY_TO_BACKEND = {
   health: 'healthStatus',
   lastCheck: 'lastHealthCheck',
 };
+
+// Group-by levels (backend serverService SERVER_GROUP_DIMS), and the list
+// filter each level's value goes back through when a group opens.
+const GROUP_OPTIONS = [
+  { value: 'customer', label: 'Customer' },
+  { value: 'environment', label: 'Environment' },
+  { value: 'health', label: 'Health' },
+  { value: 'sshTrust', label: 'SSH trust' },
+  { value: 'collector', label: 'Collector' },
+  { value: 'protocol', label: 'Protocol' },
+  { value: 'osType', label: 'OS' },
+  { value: 'cloudProvider', label: 'Cloud' },
+  { value: 'active', label: 'Status' },
+];
+const GROUP_PARAM = { customer: 'customerId', health: 'healthStatus', active: 'isActive' };
+const groupDimLabel = (dim) => GROUP_OPTIONS.find((o) => o.value === dim)?.label || dim;
+
+function renderGroupLabel(node) {
+  if (node.value === NONE) return node.label;
+  switch (node.dim) {
+    case 'environment':
+      return <EnvironmentBadge environment={node.value} />;
+    case 'health':
+      return <HealthStatusDot status={node.value} showLabel />;
+    case 'sshTrust':
+      return <AgentStateBadge kind="ssh" state={node.value} label={node.label} />;
+    case 'collector':
+      return <AgentStateBadge kind="collector" state={node.value} label={node.label} />;
+    default:
+      return node.label;
+  }
+}
 
 function Servers() {
   const navigate = useNavigate();
@@ -179,27 +216,39 @@ function Servers() {
     }
   }, []);
 
+  // Group by (?group=customer,environment). While set, the page shows the
+  // group tree — counted over the whole filtered set on the server — and
+  // each open group loads its own rows through the same list call.
+  const [groupKeys, setGroupKeys] = useGroupBy('shellius.servers.groupBy', GROUP_OPTIONS);
+  const grouped = groupKeys.length > 0;
+
+  // The list's filters (no page / sort): shared by the flat list, the group
+  // tree and every group's rows, so a group opens to exactly what it counted.
+  const filterParams = useMemo(() => {
+    const params = {};
+    if (f.environment) params.environment = f.environment;
+    if (f.healthStatus) params.healthStatus = f.healthStatus;
+    if (f.customerId) params.customerId = f.customerId;
+    if (f.sshTrust) params.sshTrust = f.sshTrust;
+    if (f.collector) params.collector = f.collector;
+    if (f.protocol) params.protocol = f.protocol;
+    if (f.osType) params.osType = f.osType;
+    if (f.isActive) params.isActive = f.isActive;
+    if (f.healthCheckFrom) params.healthCheckFrom = f.healthCheckFrom;
+    if (f.healthCheckTo) params.healthCheckTo = f.healthCheckTo;
+    if (f.q) params.search = f.q;
+    return params;
+  }, [f.environment, f.healthStatus, f.customerId, f.sshTrust, f.collector, f.protocol, f.osType, f.isActive, f.healthCheckFrom, f.healthCheckTo, f.q]);
+  const sortParams = useMemo(
+    () => (f.sortBy ? { sortBy: SORT_KEY_TO_BACKEND[f.sortBy] || f.sortBy, sortDir: f.sortDir } : {}),
+    [f.sortBy, f.sortDir]
+  );
+
   const fetch = useCallback(async ({ quiet = false } = {}) => {
     if (!quiet) setLoading(true);
     setError('');
     try {
-      const params = { page, pageSize };
-      if (f.environment) params.environment = f.environment;
-      if (f.healthStatus) params.healthStatus = f.healthStatus;
-      if (f.customerId) params.customerId = f.customerId;
-      if (f.sshTrust) params.sshTrust = f.sshTrust;
-      if (f.collector) params.collector = f.collector;
-      if (f.protocol) params.protocol = f.protocol;
-      if (f.osType) params.osType = f.osType;
-      if (f.isActive) params.isActive = f.isActive;
-      if (f.healthCheckFrom) params.healthCheckFrom = f.healthCheckFrom;
-      if (f.healthCheckTo) params.healthCheckTo = f.healthCheckTo;
-      if (f.sortBy) {
-        params.sortBy = SORT_KEY_TO_BACKEND[f.sortBy] || f.sortBy;
-        params.sortDir = f.sortDir;
-      }
-      if (f.q) params.search = f.q;
-      const data = await listServers(params);
+      const data = await listServers({ ...filterParams, ...sortParams, page, pageSize });
       setServers(data.items || []);
       setTotal(data.total || 0);
     } catch (err) {
@@ -207,16 +256,58 @@ function Servers() {
     } finally {
       setLoading(false);
     }
-  }, [page, pageSize, f.environment, f.healthStatus, f.customerId, f.sshTrust, f.collector, f.protocol, f.osType, f.isActive, f.healthCheckFrom, f.healthCheckTo, f.sortBy, f.sortDir, f.q]);
+  }, [page, pageSize, filterParams, sortParams]);
+
+  const [groupState, setGroupState] = useState({ tree: null, loading: false, error: '' });
+  // Bumped on every refresh so the open groups re-read their rows too.
+  const [groupTick, setGroupTick] = useState(0);
+  const groupSeq = useRef(0);
+  const fetchGroups = useCallback(async () => {
+    if (!groupKeys.length) return;
+    const mine = ++groupSeq.current;
+    setGroupState((s) => ({ ...s, loading: true, error: '' }));
+    try {
+      const data = await listServerGroups({ ...filterParams, groupBy: groupKeys.join(',') });
+      if (mine === groupSeq.current) setGroupState({ tree: data?.tree || [], loading: false, error: '' });
+    } catch (err) {
+      if (mine === groupSeq.current) {
+        setGroupState((s) => ({
+          ...s,
+          loading: false,
+          error: err.response?.data?.error?.message || err.message || 'Failed to load groups',
+        }));
+      }
+    }
+  }, [groupKeys, filterParams]);
+
+  // Re-read whatever the page is showing: the flat page, or the group tree
+  // plus every open group's rows.
+  const reload = useCallback(
+    ({ quiet = false } = {}) => {
+      if (grouped) {
+        setGroupTick((t) => t + 1);
+        return fetchGroups();
+      }
+      return fetch({ quiet });
+    },
+    [grouped, fetch, fetchGroups]
+  );
 
   // While any host on the page is mid-install — a collector waiting for its
   // first report, a bootstrap running — re-read the page every 15 s, quietly,
-  // so the badges move on their own instead of looking stuck.
-  const pendingOnPage = servers.some(
-    (sv) => sv.collector?.state === 'awaiting_report' || sv.sshTrust?.state === 'installing'
-  );
-  const quietFetch = useCallback(() => fetch({ quiet: true }), [fetch]);
-  useAutoRefresh(quietFetch, { interval: 15000, enabled: pendingOnPage });
+  // so the badges move on their own instead of looking stuck. Grouped, the
+  // tree says so when it is grouped by either status.
+  const pendingOnPage = grouped
+    ? (groupState.tree || []).some(function hasPending(n) {
+        return (
+          (n.dim === 'collector' && n.value === 'awaiting_report') ||
+          (n.dim === 'sshTrust' && n.value === 'installing') ||
+          (n.children || []).some(hasPending)
+        );
+      })
+    : servers.some((sv) => sv.collector?.state === 'awaiting_report' || sv.sshTrust?.state === 'installing');
+  const quietReload = useCallback(() => reload({ quiet: true }), [reload]);
+  useAutoRefresh(quietReload, { interval: 15000, enabled: pendingOnPage });
 
   // Server-side search — reset to page 1 and refetch when the query changes.
   const handleSearchChange = useCallback((q) => {
@@ -238,8 +329,12 @@ function Servers() {
   }, []);
 
   useEffect(() => {
-    fetch();
-  }, [fetch]);
+    if (!grouped) fetch();
+  }, [fetch, grouped]);
+
+  useEffect(() => {
+    if (grouped) fetchGroups();
+  }, [fetchGroups, grouped]);
 
   const handleSubmit = async (payload) => {
     let created = null;
@@ -251,7 +346,7 @@ function Servers() {
     }
     setFormOpen(false);
     setEditing(null);
-    fetch();
+    reload();
     // Open the install wizard for a host that actually needs it. This used to
     // jump straight to the manual one-liner with no eligibility check at all,
     // so a Windows or RDP-only host — which can never run the agent — was
@@ -266,7 +361,7 @@ function Servers() {
   const handleHealthCheck = async (server) => {
     try {
       await triggerHealthCheck(server.id);
-      fetch();
+      reload();
     } catch (err) {
       setError(err.response?.data?.error?.message || 'Health check failed');
     }
@@ -280,7 +375,7 @@ function Servers() {
     setBulkField('');
     setBulkValue('');
     setSelected([]);
-    fetch();
+    reload();
   };
 
   // Options for the bulk "value" control, keyed by the chosen field.
@@ -729,6 +824,41 @@ function Servers() {
     },
   ];
 
+  const refreshBusy = grouped ? groupState.loading : loading;
+  const emptyMessage = isScoped
+    ? 'No servers in your assigned customers. Ask an admin to expand your access scope.'
+    : 'No servers found';
+  // What a group's rows depend on besides its own path: every refresh, the
+  // page's filters and its sort.
+  const leafReloadKey = `${groupTick}|${JSON.stringify(filterParams)}|${JSON.stringify(sortParams)}`;
+
+  const groupedContent = grouped ? (
+    <GroupedView
+      tree={groupState.tree}
+      loading={groupState.loading}
+      error={groupState.error}
+      dimLabel={groupDimLabel}
+      renderLabel={renderGroupLabel}
+      emptyMessage={emptyMessage}
+      renderLeaf={(node, path) => (
+        <GroupLeafTable
+          columns={columns}
+          reloadKey={leafReloadKey}
+          fetchPage={({ page: p, pageSize: size }) =>
+            listServers({ ...filterParams, ...sortParams, ...groupFilters(path, GROUP_PARAM), page: p, pageSize: size })
+          }
+          emptyMessage="No servers in this group any more."
+          selectable={canBulk}
+          selectedIds={selected}
+          onSelectionChange={setSelected}
+          onRowClick={(r) => navigate(`/servers/${r.id}`)}
+          mobile={{ accent: (r) => envAccent(r.environment) }}
+          serverSort={{ sortKey: f.sortBy, sortDir: f.sortDir, onSortChange: handleSortChange }}
+        />
+      )}
+    />
+  ) : null;
+
   return (
     <div className="space-y-6 p-6">
       <PageHeader
@@ -742,7 +872,7 @@ function Servers() {
           // buttons on one screen fifty pixels apart, and neither did
           // anything the other did not. On phones both are the bottom-nav
           // sheet's entry, so nothing is lost by dropping this one.
-          { key: 'refresh', label: 'Refresh', icon: RefreshCw, variant: 'outline', onClick: () => fetch(), disabled: loading, spin: loading },
+          { key: 'refresh', label: 'Refresh', icon: RefreshCw, variant: 'outline', onClick: () => reload(), disabled: refreshBusy, spin: refreshBusy },
           // No selection = the whole fleet in scope. That is the case this
           // exists for: an inventory that predates posture, where installing
           // one host at a time means it never happens.
@@ -779,13 +909,11 @@ function Servers() {
 
       <DataTable
         columns={columns}
-        data={servers}
-        loading={loading}
-        emptyMessage={
-          isScoped
-            ? 'No servers in your assigned customers. Ask an admin to expand your access scope.'
-            : 'No servers found'
-        }
+        data={grouped ? [] : servers}
+        loading={!grouped && loading}
+        emptyMessage={emptyMessage}
+        grouping={{ keys: groupKeys, onChange: setGroupKeys, options: GROUP_OPTIONS }}
+        groupedContent={groupedContent}
         searchPlaceholder="Search name, hostname or IP..."
         initialSearch={f.q}
         onSearchChange={handleSearchChange}
@@ -870,7 +998,7 @@ function Servers() {
           installMode={installScope}
           onClose={() => {
             setProvisionServerTarget(null);
-            fetch();
+            reload();
           }}
         />
       )}
@@ -885,7 +1013,7 @@ function Servers() {
         open={bulkInstallOpen}
         serverIds={selected}
         onClose={() => setBulkInstallOpen(false)}
-        onDone={fetch}
+        onDone={() => reload()}
       />
 
       {deployWizardOpen && (
@@ -927,7 +1055,7 @@ function Servers() {
         onDeleted={() => {
           setDeleteTarget(null);
           setSelected([]);
-          fetch();
+          reload();
         }}
       />
     </div>

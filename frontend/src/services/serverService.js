@@ -4,6 +4,12 @@ const unwrapServer = (r) => r.data.data?.server ?? r.data.data;
 
 export const listServers = (params) =>
   api.get('/servers', { params }).then((r) => r.data.data);
+/**
+ * The group tree for the list — `{ groupBy, tree }` — over the whole filtered
+ * set. `params` are the list's own filters plus `groupBy: 'customer,environment'`.
+ */
+export const listServerGroups = (params) =>
+  api.get('/servers/groups', { params }).then((r) => r.data.data);
 export const getServer = (id) =>
   api.get(`/servers/${id}`).then(unwrapServer);
 export const createServer = (data) =>

@@ -191,6 +191,19 @@ router.get(
   })
 );
 
+// Group tree for the list: `?groupBy=customer,environment` plus the list's
+// own filters. Same `where` as GET / (org + customer scope included), so
+// each group opens — through GET / with its values as filters — to exactly
+// the rows it counted. Must stay above `/:id`.
+router.get(
+  '/groups',
+  requirePermission('servers.view'),
+  asyncHandler(async (req, res) => {
+    const result = await serverService.listServerGroups(req.orgId, req.query, req.scope);
+    res.json({ success: true, data: result });
+  })
+);
+
 router.get(
   '/health/summary',
   requirePermission('servers.view'),
