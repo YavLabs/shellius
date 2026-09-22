@@ -160,19 +160,28 @@ function GroupNode({ node, parent, openIds, onToggle, renderLeaf, renderLabel, d
  * `fetchPage({ page, pageSize })` (the page's list call with the group's
  * filters added). Refetches when `reloadKey` changes — pass the page's
  * refresh counter plus anything that changes what the group contains.
+ * `onRows(items)` hears each loaded page (and `null` when the group closes),
+ * for pages that watch the rows on screen — e.g. to keep polling while a
+ * host in any open group is still installing.
  */
-export function GroupLeafTable({ fetchPage, reloadKey, defaultPageSize = 10, ...tableProps }) {
+export function GroupLeafTable({ fetchPage, reloadKey, defaultPageSize = 10, onRows, ...tableProps }) {
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(defaultPageSize);
   const [state, setState] = useState({ items: [], total: 0, loading: true });
   const seq = useRef(0);
+  const onRowsRef = useRef(onRows);
+  onRowsRef.current = onRows;
+  useEffect(() => () => onRowsRef.current?.(null), []);
 
   useEffect(() => {
     const mine = ++seq.current;
     setState((s) => ({ ...s, loading: true }));
     Promise.resolve(fetchPage({ page, pageSize }))
       .then((r) => {
-        if (mine === seq.current) setState({ items: r?.items || [], total: r?.total || 0, loading: false });
+        if (mine === seq.current) {
+          setState({ items: r?.items || [], total: r?.total || 0, loading: false });
+          onRowsRef.current?.(r?.items || []);
+        }
       })
       .catch(() => {
         if (mine === seq.current) setState({ items: [], total: 0, loading: false });

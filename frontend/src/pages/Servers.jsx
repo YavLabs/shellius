@@ -20,7 +20,7 @@ import {
 import DataTable from '@/components/shared/DataTable';
 import GroupedView, { GroupLeafTable } from '@/components/shared/GroupedView';
 import useGroupBy from '@/hooks/useGroupBy';
-import { NONE, groupFilters } from '@/lib/grouping';
+import { NONE, groupFilters, pathId } from '@/lib/grouping';
 import EntityLink from '@/components/EntityLink';
 import { CardIcon } from '@/components/mobile/MobileCard';
 import Modal from '@/components/shared/Modal';
@@ -297,15 +297,26 @@ function Servers() {
   // first report, a bootstrap running — re-read the page every 15 s, quietly,
   // so the badges move on their own instead of looking stuck. Grouped, the
   // tree says so when it is grouped by either status.
+  // Grouped, either the tree says so (grouped by either status) or a row in
+  // an open group does — whatever the levels are.
+  const isPendingServer = (sv) => sv.collector?.state === 'awaiting_report' || sv.sshTrust?.state === 'installing';
+  const pendingLeaves = useRef(new Set());
+  const [leafPending, setLeafPending] = useState(false);
+  const onLeafRows = useCallback((id, items) => {
+    if (items && items.some(isPendingServer)) pendingLeaves.current.add(id);
+    else pendingLeaves.current.delete(id);
+    setLeafPending(pendingLeaves.current.size > 0);
+  }, []);
   const pendingOnPage = grouped
-    ? (groupState.tree || []).some(function hasPending(n) {
+    ? leafPending ||
+      (groupState.tree || []).some(function hasPending(n) {
         return (
           (n.dim === 'collector' && n.value === 'awaiting_report') ||
           (n.dim === 'sshTrust' && n.value === 'installing') ||
           (n.children || []).some(hasPending)
         );
       })
-    : servers.some((sv) => sv.collector?.state === 'awaiting_report' || sv.sshTrust?.state === 'installing');
+    : servers.some(isPendingServer);
   const quietReload = useCallback(() => reload({ quiet: true }), [reload]);
   useAutoRefresh(quietReload, { interval: 15000, enabled: pendingOnPage });
 
@@ -844,6 +855,7 @@ function Servers() {
         <GroupLeafTable
           columns={columns}
           reloadKey={leafReloadKey}
+          onRows={(items) => onLeafRows(pathId(path), items)}
           fetchPage={({ page: p, pageSize: size }) =>
             listServers({ ...filterParams, ...sortParams, ...groupFilters(path, GROUP_PARAM), page: p, pageSize: size })
           }
