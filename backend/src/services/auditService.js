@@ -109,6 +109,21 @@ export const ACTIONS = {
     test: 'email_provider.test',
     google_connect: 'email_provider.google_connect',
   },
+  api_token: {
+    create: 'api_token.create',
+    rotate: 'api_token.rotate',
+    revoke: 'api_token.revoke',
+    // Once per token, the first time it authenticates — so "was this
+    // credential ever actually used?" has an answer in the log, not just in
+    // a lastUsedAt column that a later use overwrites.
+    first_use: 'api_token.first_use',
+  },
+  service_account: {
+    create: 'service_account.create',
+    update: 'service_account.update',
+    delete: 'service_account.delete',
+    role_changed: 'service_account.role_changed',
+  },
 };
 
 // ---------------------------------------------------------------------------

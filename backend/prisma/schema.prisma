@@ -31,6 +31,21 @@ enum UserStatus {
   deleted
 }
 
+/// Whether a User row is a person or a machine identity.
+///
+/// Service accounts are real User rows so that everything built around a
+/// user keeps working for them: AuditLog.actorId is an FK to User (a
+/// synthetic id could not be attributed), roles and permissions resolve the
+/// same way, customer scope applies, and a service account can be a policy
+/// subject and actually connect to a server.
+///
+/// The cost is that every query meaning "people" must say so. Use the
+/// HUMANS filter from userService rather than writing `kind` by hand.
+enum UserKind {
+  human
+  service
+}
+
 enum DeviceAuthStatus {
   pending
   approved
@@ -78,6 +93,7 @@ model Organization {
   expectedPorts     ServerExpectedPort[]
   postureAlertRules PostureAlertRule[]
   postureSettings   PostureSettings?
+  apiTokens         ApiToken[]
 
   @@map("organizations")
 }
@@ -94,6 +110,12 @@ model User {
   role              OrgRole     @default(member)
   roleId            String?     @map("role_id")
   status            UserStatus  @default(active)
+  // Person or machine. See the UserKind enum. A service account never signs
+  // in: it holds no password, its email is unroutable, and it authenticates
+  // only by API token.
+  kind              UserKind    @default(human)
+  // Service accounts only: what this identity is for.
+  description       String?
   // Visibility scope. super_admin ignores this (they can edit their own).
   accessScope       AccessScope @default(ALL) @map("access_scope")
   managerId         String?     @map("manager_id")
@@ -154,12 +176,16 @@ model User {
   personalSshKeys         SshKey[]                @relation("PersonalSshKeys")
   personalCredentials     Credential[]            @relation("PersonalCredentials")
   personalHosts           PersonalHost[]
+  apiTokens               ApiToken[]              @relation("ApiTokensForUser")
+  apiTokensIssued         ApiToken[]              @relation("ApiTokensIssuedBy")
+  apiTokensRevoked        ApiToken[]              @relation("ApiTokensRevokedBy")
 
   @@unique([orgId, email])
   @@unique([orgId, jitUid], map: "user_org_jit_uid_unique")
   @@index([orgId])
   @@index([managerId])
   @@index([roleId])
+  @@index([orgId, kind])
   @@map("users")
 }
 
@@ -820,6 +846,57 @@ model Notification {
   @@index([userId, createdAt])
   @@index([orgId])
   @@map("notifications")
+}
+
+/// A long-lived bearer credential for non-interactive callers. Two kinds,
+/// one model, one auth path (middleware/apiTokenAuth.js):
+///
+///   personal — minted by a person for their own scripts. Its permissions
+///              are ALWAYS intersected with the owner's live role on every
+///              request, so it can narrow but never grant, and a demotion
+///              takes effect on the next call without re-minting.
+///   service  — belongs to a User row with kind = 'service': a non-login
+///              identity with its own Role, owned by the org rather than by
+///              a person, so it survives them leaving.
+///
+/// Only the SHA-256 hash is stored — the plaintext is returned exactly once,
+/// on create and on rotate, and never logged.
+model ApiToken {
+  id            String    @id @default(cuid())
+  orgId         String    @map("org_id")
+  // The identity this token acts as: its owner (personal) or the service
+  // account itself (service).
+  userId        String    @map("user_id")
+  kind          String // personal | service
+  name          String
+  description   String?
+  tokenHash     String    @unique @map("token_hash") // sha256 hex
+  // First few characters of the plaintext, for telling tokens apart in the
+  // UI. Not a secret and not enough to authenticate with.
+  tokenPrefix   String    @map("token_prefix")
+  /// Permission keys this token may use. EMPTY means "whatever its user's
+  /// role allows". Always intersected with that live set at request time.
+  scopes        String[]  @default([])
+  expiresAt     DateTime  @map("expires_at")
+  lastUsedAt    DateTime? @map("last_used_at")
+  lastUsedIp    String?   @map("last_used_ip")
+  revokedAt     DateTime? @map("revoked_at")
+  revokedById   String?   @map("revoked_by_id")
+  revokedReason String?   @map("revoked_reason")
+  rotatedAt     DateTime? @map("rotated_at")
+  createdById   String?   @map("created_by_id")
+  createdAt     DateTime  @default(now()) @map("created_at")
+  updatedAt     DateTime  @updatedAt @map("updated_at")
+
+  organization Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  user         User         @relation("ApiTokensForUser", fields: [userId], references: [id], onDelete: Cascade)
+  createdBy    User?        @relation("ApiTokensIssuedBy", fields: [createdById], references: [id], onDelete: SetNull)
+  revokedBy    User?        @relation("ApiTokensRevokedBy", fields: [revokedById], references: [id], onDelete: SetNull)
+
+  @@index([orgId, kind])
+  @@index([userId])
+  @@index([expiresAt])
+  @@map("api_tokens")
 }
 
 model UserToken {

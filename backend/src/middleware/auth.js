@@ -2,8 +2,9 @@ import ApiError from '../utils/ApiError.js';
 import { verifyAccessToken } from '../utils/jwt.js';
 import prisma from '../config/db.js';
 import * as mfaConfigService from '../services/mfaConfigService.js';
-import { permissionsForUser } from '../services/roleService.js';
-import { resolveScope } from '../lib/scope.js';
+import { USER_AUTH_SELECT, hydrateRequestUser } from './requestUser.js';
+import apiTokenAuth from './apiTokenAuth.js';
+import { looksLikeApiToken } from '../utils/apiToken.js';
 
 // ---------------------------------------------------------------------------
 // Enforced-MFA allowlist — endpoints that must stay reachable for a user who
@@ -34,7 +35,7 @@ function isMfaSetupAllowlisted(req) {
  *     values (demotions and role edits apply immediately, not on next login)
  *   - org-enforced MFA is applied except for a small allowlist of endpoints
  */
-const authenticate = async (req, res, next) => {
+export const authenticate = async (req, res, next) => {
   const header = req.headers.authorization;
 
   if (!header || !header.startsWith('Bearer ')) {
@@ -58,26 +59,20 @@ const authenticate = async (req, res, next) => {
   try {
     user = await prisma.user.findUnique({
       where: { id: decoded.userId },
-      select: {
-        id: true,
-        orgId: true,
-        email: true,
-        role: true,
-        roleId: true,
-        assignedRole: { select: { id: true, key: true, name: true, isSystem: true, baseRole: true, permissions: true } },
-        status: true,
-        accessScope: true,
-        sessionsValidFrom: true,
-        mfaTotpEnabled: true,
-        mfaEmailEnabled: true,
-        mfaBackupCodes: true,
-      },
+      select: USER_AUTH_SELECT,
     });
   } catch (err) {
     return next(err);
   }
 
   if (!user || user.orgId !== decoded.orgId || user.status !== 'active') {
+    return next(new ApiError(401, 'Session has been revoked — please sign in again', { code: 'SESSION_REVOKED' }));
+  }
+
+  // A service account has no interactive session to hold. It cannot obtain a
+  // JWT in the first place (authService refuses to sign one in), so this is
+  // the second lock on that door rather than the first.
+  if (user.kind === 'service') {
     return next(new ApiError(401, 'Session has been revoked — please sign in again', { code: 'SESSION_REVOKED' }));
   }
 
@@ -89,27 +84,11 @@ const authenticate = async (req, res, next) => {
     return next(new ApiError(401, 'Session has been revoked — please sign in again', { code: 'SESSION_REVOKED' }));
   }
 
-  // Customer scope, resolved per request like permissions — so narrowing or
-  // widening someone's scope takes effect on their next call, not their next
-  // login. Unscoped users (the default) cost nothing: resolveScope returns
-  // the shared UNSCOPED constant without touching the database.
   try {
-    req.scope = await resolveScope(user);
+    await hydrateRequestUser(req, user, { fid: decoded.fid });
   } catch (err) {
     return next(err);
   }
-
-  req.user = {
-    userId: user.id,
-    orgId: user.orgId,
-    accessScope: user.accessScope,
-    role: user.role, // base tier — DB-authoritative, demotions apply immediately
-    roleId: user.roleId,
-    roleKey: user.assignedRole?.key || user.role,
-    permissions: new Set(permissionsForUser(user)),
-    email: user.email,
-    fid: decoded.fid,
-  };
 
   try {
     const cfg = await mfaConfigService.getEffective(user.orgId);
@@ -132,4 +111,21 @@ const authenticate = async (req, res, next) => {
   next();
 };
 
-export default authenticate;
+/**
+ * The middleware every router mounts. Picks the authentication path from the
+ * shape of the bearer credential: our tokens carry a recognisable prefix, and
+ * anything else is treated as an access JWT exactly as before.
+ *
+ * Composing here rather than at each router means routes did not have to
+ * change to accept tokens — and, more importantly, that no route can be
+ * accidentally left behind on a path that skips the token rules.
+ */
+const bearerAuth = (req, res, next) => {
+  const header = req.headers.authorization || '';
+  if (header.startsWith('Bearer ') && looksLikeApiToken(header.slice(7).trim())) {
+    return apiTokenAuth(req, res, next);
+  }
+  return authenticate(req, res, next);
+};
+
+export default bearerAuth;

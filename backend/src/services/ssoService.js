@@ -259,8 +259,12 @@ export async function reconcileSsoUser({ orgId, cfg, subject, email, emailVerifi
   }
 
   // 2. Fall back to matching an existing local/invited account by email.
+  //    kind: 'human' — an SSO sign-in must never resolve to a service
+  //    account. Their addresses are unroutable and can't be registered at an
+  //    IdP, but matching one would hand a person a machine's role, so the
+  //    filter is explicit rather than implied.
   if (!user && email) {
-    const candidate = await prisma.user.findFirst({ where: { orgId, email } });
+    const candidate = await prisma.user.findFirst({ where: { orgId, email, kind: 'human' } });
     if (candidate) {
       // This SAME provider already has a (different-subject) identity linked
       // to this user — refuse to silently re-link under a new subject.

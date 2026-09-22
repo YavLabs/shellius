@@ -20,6 +20,10 @@ const ssoRouteSrc = read('../sso.js');
 const authRouteSrc = read('../auth.js');
 const usersRouteSrc = read('../users.js');
 const authMiddlewareSrc = read('../../middleware/auth.js');
+const apiTokenMiddlewareSrc = read('../../middleware/apiTokenAuth.js');
+const permissionsSrc = read('../../config/permissions.js');
+const authServiceSrc = read('../../services/authService.js');
+const ssoServiceSrc = read('../../services/ssoService.js');
 
 describe('POST /api/mfa/disable — requires proof of possession', () => {
   test('Joi schema requires either password XOR method, and method implies code', () => {
@@ -216,6 +220,47 @@ describe('authenticate middleware — enforced-MFA allowlist', () => {
   test('loads the user and rejects non-active / stale-session tokens with SESSION_REVOKED', () => {
     expect(authMiddlewareSrc).toContain('SESSION_REVOKED');
     expect(authMiddlewareSrc).toContain('sessionsValidFrom');
+  });
+
+  test('a service account can never hold a browser session', () => {
+    expect(authMiddlewareSrc).toContain("user.kind === 'service'");
+  });
+});
+
+describe('API tokens (docs/api-tokens.md)', () => {
+  test('the bearer entry point chooses its path by token prefix', () => {
+    expect(authMiddlewareSrc).toContain('looksLikeApiToken');
+    expect(authMiddlewareSrc).toContain('apiTokenAuth');
+  });
+
+  test('tokens are denied the endpoints that would let them escalate', () => {
+    for (const path of ["'/api/auth'", "'/api/mfa'", "'/api/vault'", "'/api/terminal'", "'/api/tokens'", "'/api/service-accounts'"]) {
+      expect(apiTokenMiddlewareSrc).toContain(path);
+    }
+    expect(apiTokenMiddlewareSrc).toContain('TOKEN_NOT_ALLOWED_HERE');
+  });
+
+  test('the deny-list is checked before the token is looked up', () => {
+    const denyIdx = apiTokenMiddlewareSrc.indexOf('isForbiddenPath(req)');
+    const lookupIdx = apiTokenMiddlewareSrc.indexOf('prisma.apiToken.findUnique');
+    expect(denyIdx).toBeGreaterThan(-1);
+    expect(lookupIdx).toBeGreaterThan(denyIdx);
+  });
+
+  test('permissions are intersected with the live role and stripped of non-delegable keys', () => {
+    expect(apiTokenMiddlewareSrc).toContain('permissionsForUser');
+    expect(apiTokenMiddlewareSrc).toContain('NON_DELEGABLE_PERMISSIONS');
+    expect(permissionsSrc).toContain('delegable: false');
+  });
+
+  test('an inactive principal cannot use a token', () => {
+    expect(apiTokenMiddlewareSrc).toContain('TOKEN_PRINCIPAL_INACTIVE');
+    expect(apiTokenMiddlewareSrc).toContain("user.status !== 'active'");
+  });
+
+  test('service accounts are excluded from password sign-in and SSO email matching', () => {
+    expect(authServiceSrc).toContain("kind: 'human'");
+    expect(ssoServiceSrc).toContain("kind: 'human'");
   });
 });
 
