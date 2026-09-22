@@ -1,5 +1,6 @@
 import { Queue, Worker } from 'bullmq';
 import IORedis from 'ioredis';
+import { trackHandle } from './handles.js';
 
 const connection = new IORedis(
   process.env.REDIS_URL || {
@@ -13,9 +14,10 @@ const connection = new IORedis(
 connection.on('error', (err) => {
   console.error('[queue/redis] Connection error:', err.message);
 });
+trackHandle(() => connection.quit().catch(() => connection.disconnect()));
 
 export function createQueue(name) {
-  return new Queue(name, {
+  const queue = new Queue(name, {
     connection,
     defaultJobOptions: {
       attempts: 3,
@@ -24,6 +26,8 @@ export function createQueue(name) {
       removeOnFail: { age: 86400 * 7 },
     },
   });
+  trackHandle(() => queue.close());
+  return queue;
 }
 
 export function createWorker(name, processor) {
