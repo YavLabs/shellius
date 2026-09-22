@@ -9,6 +9,119 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 Tracked here as work lands on `main`; moved into a dated section on release
 (`node scripts/version.mjs bump <major|minor|patch>`).
 
+## [2.0.0] - 2026-09-22
+
+2.0 answers the three questions a buyer's security team asks that Shellius
+could not answer: can we get the audit log into our SIEM, what happens when we
+remove someone from the IdP, and is there an API. It also fixes a security bug
+found while planning it.
+
+### Security
+
+- **Suspending or deleting an account now actually cuts its SSH access.**
+  Suspension revoked sessions and refresh tokens, but left the person's
+  already-issued SSH certificates and approved access requests alone — and
+  `certificateService.verify()`, which every host calls on every SSH
+  connection, never checked whether the human was still employed. A suspended
+  user's certificate kept authenticating until it expired, up to the policy's
+  maximum session duration. Disabling an account now revokes its certificates,
+  access requests and API tokens in one cascade, and certificate verification
+  refuses a certificate whose owner is no longer active.
+
+  If you have suspended anyone whose certificate had not yet expired, they had
+  access until it did. Audit → filter by `certificate.*` will show whether a
+  suspended user's certificate was used.
+
+### Added
+
+- **API tokens.** Two kinds: **service accounts**, which belong to the
+  organization and survive whoever created them, and **personal access
+  tokens**, which belong to a person and can never exceed that person's own
+  permissions. A token's permissions are recomputed on every request against
+  the owner's live role, so demoting someone narrows every token they hold
+  immediately — there is nothing to re-mint. Tokens cannot reach sign-in, MFA,
+  SSO, the personal vault, the terminal, or token management itself, and can
+  never hold a permission marked non-delegable. Shown once, expiry required
+  (90 days by default), rotatable and revocable, with last-used time and IP.
+  See `docs/api-tokens.md`.
+
+- **Audit export.** The audit log can now be streamed to a **webhook**
+  (HMAC-signed, for Splunk/Datadog/Panther or anything that speaks HTTP), to
+  **S3** as gzipped NDJSON, to a **syslog** collector over TCP+TLS, or sent as
+  a scheduled **email digest**. Delivery is at-least-once: the cursor advances
+  only after the destination accepts a batch, so a crash replays rather than
+  skips, and every record carries its immutable id for deduplication. A
+  failing destination backs off and auto-disables after ten consecutive
+  failures with a notification, because an audit pipeline that has quietly
+  died is worse than one that is loudly broken. Delivery history, including
+  the failures, is visible per sink. See `docs/audit-export.md`.
+
+- **Audit retention and archiving.** Optional per-organization retention, off
+  by default — the default remains to keep everything forever. Nothing is
+  deleted without an archive unless you explicitly ask for that, and nothing
+  is ever deleted past what an active sink has not yet shipped. That last rule
+  matters: retention and sinks are configured on different screens, often by
+  different people, and a short retention plus a stalled sink would destroy
+  entries that reached neither place. The API reports the holding point, so
+  "why has nothing been deleted?" is answerable.
+
+- **SSO deprovisioning.** Shellius can now reconcile accounts against the
+  identity provider's own directory — Microsoft Entra, Okta, Google Workspace
+  or GitHub org membership — and flag or suspend the people who are no longer
+  in it. A provider with no directory API says so explicitly rather than
+  silently doing nothing.
+
+  This is the only feature that can disable an account without a human
+  deciding to, so it is deliberately timid. Dry run is on by default. The
+  credential is tested before the directory is even read; an empty directory
+  or one that has halved since the last good run aborts the whole pass;
+  absence must persist past a grace period; the run aborts entirely if it
+  would act on more than a set percentage or count of your people; someone
+  still reachable through another sign-in provider is left alone; and the last
+  active super admin is never suspended. An aborted run is the feature
+  working, and says what it saw. See `docs/directory-sync.md`.
+
+### Migration notes
+
+- **Seven migrations.** Run `scripts/backup-db.sh` first, then
+  `docker compose ... exec backend npx prisma migrate deploy` as usual (or let
+  `docker/entrypoint-backend.sh` do it).
+
+- **On a large `audit_logs` table**, `20261002000000_audit_read_indexes`
+  creates three indexes and will hold a write lock for the duration, because
+  Prisma runs each migration in a single transaction and `CREATE INDEX
+  CONCURRENTLY` cannot be used inside one. To avoid the lock, create them by
+  hand with `CONCURRENTLY` first and then mark the migration applied:
+
+  ```
+  CREATE INDEX CONCURRENTLY "audit_logs_org_id_created_at_id_idx" ON "audit_logs" ("org_id", "created_at", "id");
+  CREATE INDEX CONCURRENTLY "audit_logs_org_id_action_idx" ON "audit_logs" ("org_id", "action");
+  CREATE INDEX CONCURRENTLY "audit_logs_org_id_resource_type_idx" ON "audit_logs" ("org_id", "resource_type");
+  npx prisma migrate resolve --applied 20261002000000_audit_read_indexes
+  ```
+
+- **If you sign in with Microsoft Entra or Okta, read this before arming
+  directory sync.** Deprovisioning has to match your users against the
+  provider's directory, and Entra makes that harder than it looks: the
+  identifier Entra puts in a sign-in token is unique *per application*, so it
+  appears nowhere in Microsoft Graph. Shellius now records the correct
+  directory identifier at sign-in, but it **cannot be reconstructed for
+  accounts that already exist** — those fill in as each person next signs in.
+
+  This is safe by construction: a user whose directory identifier is unknown
+  is never judged, and each run reports how many were skipped for that reason.
+  But it means an Entra or Okta organization should leave directory sync in
+  dry run until that count has come down. The rollout steps are in
+  `docs/directory-sync.md`. GitHub and Google identities are backfilled
+  automatically, because there the identifier provably matches.
+
+- Nothing else requires action. No existing behaviour changes on upgrade:
+  audit sinks, retention and directory sync are all off until configured, and
+  no users are signed out.
+
+### Migration notes
+
+
 ## [1.7.6] - 2026-09-22
 
 ### Fixed
