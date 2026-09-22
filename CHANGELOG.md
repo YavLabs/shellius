@@ -41,6 +41,9 @@ Tracked here as work lands on `main`; moved into a dated section on release
   - The Sessions "Active" tab faked paging.
   - Reviewers saw an empty Requester filter.
 
+- Services & ports export stopped at 200 rows.
+- Services & ports could show a port twice under a type or reachability filter.
+
 ### Added
 
 - **Retry failed hosts** in bulk install: one host or all of them, with the same method or with different credentials.
@@ -61,6 +64,20 @@ Tracked here as work lands on `main`; moved into a dated section on release
   - **Keystore:** linked key, usage, expired, unused.
   - **Notifications:** paging, type, date.
 - **Posture collector 1.1.2.**
+- **Nested grouping** on Servers, Posture, Services & ports and Keystore → Export to Servers:
+  - Use the **Group** button beside Filters to add up to 3 levels, then reorder or remove them.
+  - Groups are counted over every matching row, not just one page. Filters and search still apply.
+  - Groups are collapsible and show their counts. A group loads its rows, paged, only when opened.
+  - The grouping is saved in the URL and remembered per list.
+- **Column sorting on Services & ports**, over all matching rows. The sort is kept in the URL and used by the export.
+- **Audit log search by any resource's name:** policies, groups, roles, shared Keystore identities and keys, deployments, access requests, certificates, sessions and more. These resources also get labels in the list. Personal vault items are never looked up by name.
+
+### Changed
+
+- **Keystore → Export to Servers is one list:**
+  - It no longer switches between a batch view and a flat view when a filter is applied.
+  - It opens grouped by export run. Each run's header shows its summary, and retry and output are row actions.
+  - Filters always apply, and the list covers every run, not just the latest 20.
 
 ### Upgrade notes
 
