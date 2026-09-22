@@ -205,6 +205,6 @@ describe('disabling an account revokes its standing access (live DB)', () => {
       sessionReason: 'account_disabled',
     });
 
-    expect(counts).toEqual({ accessRequests: 1, certificates: 1 });
+    expect(counts).toEqual({ accessRequests: 1, certificates: 1, apiTokens: 0 });
   });
 });

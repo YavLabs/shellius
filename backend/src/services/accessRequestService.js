@@ -164,7 +164,7 @@ async function resolveApprovers({ orgId, requesterId, policy, manager }) {
     }
     if (orFilters.length) {
       const users = await prisma.user.findMany({
-        where: { orgId, status: 'active', deletedAt: null, OR: orFilters },
+        where: { orgId, status: 'active', deletedAt: null, kind: 'human', OR: orFilters },
         select: { id: true, name: true, email: true },
       });
       users.forEach(add);

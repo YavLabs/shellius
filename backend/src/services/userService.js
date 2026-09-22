@@ -11,6 +11,7 @@ import { log as auditLog } from './auditService.js';
 import { assertCanActOnRole, getSystemRole, resolveRole, hasPermission } from './roleService.js';
 import { isUnscoped, customerScopeWhere } from '../lib/scope.js';
 import { isDisabledStatus } from '../lib/userStatus.js';
+import * as apiTokenService from './apiTokenService.js';
 import { endOfDayInclusive } from '../utils/dateRange.js';
 
 const ROLE_BRIEF = { select: { id: true, key: true, name: true, isSystem: true, baseRole: true, permissions: true } };
@@ -64,7 +65,10 @@ export async function listUsers(orgId, {
   page = parseInt(page, 10) || 1;
   pageSize = Math.min(parseInt(pageSize, 10) || 25, 100);
 
-  const where = { orgId, status: { not: 'deleted' } };
+  // People only: service accounts are managed on their own admin page, and
+  // showing them here would put rows in the list that can't be edited like a
+  // user (no password, no MFA, no invite).
+  const where = { orgId, status: { not: 'deleted' }, kind: 'human' };
   if (role) where.role = role;
   if (roleId) where.roleId = roleId;
   if (status) where.status = status; // caller-supplied status overrides the default filter
@@ -639,8 +643,9 @@ export async function getUserDeleteImpact(orgId, userId) {
       prisma.groupMembership.count({ where: { userId } }),
       prisma.certificate.count({ where: { orgId, issuedToId: userId, status: 'ACTIVE' } }),
       prisma.policySubject.count({ where: { subjectType: 'USER', subjectId: userId } }),
+      // Reports can only be reassigned to a person.
       prisma.user.findMany({
-        where: { orgId, status: { not: 'deleted' }, id: { not: userId } },
+        where: { orgId, status: { not: 'deleted' }, id: { not: userId }, kind: 'human' },
         select: { id: true, name: true, email: true },
         orderBy: { name: 'asc' },
       }),
@@ -977,6 +982,11 @@ export async function exportUserData(orgId, userId) {
 export async function revokeAllAccessFor(orgId, userId, { reason, sessionReason, revokedById = null }) {
   const now = new Date();
 
+  // API tokens are a standing credential exactly like a certificate: they
+  // don't expire when the browser session does, so a disabled account would
+  // keep whatever automation it had running.
+  const tokens = await apiTokenService.revokeAllForUser(orgId, userId, reason, { userId: revokedById });
+
   const [requests, certificates] = await Promise.all([
     prisma.accessRequest.updateMany({
       where: { requesterId: userId, orgId, status: { in: ['PENDING', 'APPROVED'] } },
@@ -992,17 +1002,18 @@ export async function revokeAllAccessFor(orgId, userId, { reason, sessionReason,
   // account must not keep an open shell.
   await authService.revokeAllSessions(userId, orgId, sessionReason);
 
-  if (requests.count || certificates.count) {
+  if (requests.count || certificates.count || tokens) {
     logger.info('userService.revokeAllAccessFor: standing access revoked', {
       userId,
       orgId,
       reason: sessionReason,
       accessRequests: requests.count,
       certificates: certificates.count,
+      apiTokens: tokens,
     });
   }
 
-  return { accessRequests: requests.count, certificates: certificates.count };
+  return { accessRequests: requests.count, certificates: certificates.count, apiTokens: tokens };
 }
 
 // ---------------------------------------------------------------------------

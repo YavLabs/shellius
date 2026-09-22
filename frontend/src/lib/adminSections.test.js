@@ -28,6 +28,7 @@ describe('sections table', () => {
       ['people', 'roles', 'roles.view'],
       ['people', 'groups', 'groups.view'],
       ['people', 'policies', 'policies.view'],
+      ['people', 'service-accounts', 'service_accounts.view'],
       ['authentication', 'sso', 'settings.sso'],
       ['authentication', 'mfa', 'settings.mfa'],
       ['authentication', 'access', 'org.access_settings'],

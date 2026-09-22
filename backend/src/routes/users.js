@@ -17,6 +17,7 @@ import { passwordSignInBlocked } from '../services/orgService.js';
 import { sendMail } from '../services/mailer.js';
 import { renderTemplate } from '../email/index.js';
 import { log as auditLog } from '../services/auditService.js';
+import * as apiTokenService from '../services/apiTokenService.js';
 
 const router = express.Router();
 
@@ -689,6 +690,38 @@ router.post(
   asyncHandler(async (req, res) => {
     const result = await userService.adminRevokeSessions(req.orgId, req.params.id, actorFromReq(req));
     res.json({ success: true, data: result });
+  })
+);
+
+// ---------------------------------------------------------------------------
+// Someone else's API tokens. Seeing them and revoking them are separate
+// permissions: an auditor should be able to answer "what credentials does
+// this person hold?" without being able to break their automation.
+// ---------------------------------------------------------------------------
+
+router.get(
+  '/:id/tokens',
+  requirePermission('tokens.view_all'),
+  asyncHandler(async (req, res) => {
+    // Confirms the user is in this org (404s otherwise) before reading their
+    // tokens, so this can't be used to probe ids across organizations.
+    await userService.getUser(req.orgId, req.params.id);
+    const data = await apiTokenService.listForUser(req.orgId, req.params.id);
+    res.json({ success: true, data });
+  })
+);
+
+router.delete(
+  '/:id/tokens/:tokenId',
+  requirePermission('tokens.revoke_any'),
+  asyncHandler(async (req, res) => {
+    await apiTokenService.revoke(
+      req.orgId,
+      req.params.tokenId,
+      { userId: req.params.id, reason: 'Revoked by an administrator' },
+      actorFromReq(req)
+    );
+    res.json({ success: true, data: { revoked: true } });
   })
 );
 

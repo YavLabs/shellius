@@ -12,6 +12,7 @@ import {
   HardDrive,
   Radar,
   ShieldHalf,
+  Bot,
 } from 'lucide-react';
 import { canAny } from '@/lib/permissions';
 
@@ -75,6 +76,15 @@ export const ADMIN_SECTIONS = [
     icon: ShieldHalf,
     anyOf: ['policies.view'],
     keywords: ['policy', 'access policy', 'rules', 'grant', 'break-glass', 'break glass', 'auto approve', 'principals', 'ttl'],
+  },
+  {
+    key: 'service-accounts',
+    group: 'people',
+    label: 'Service accounts',
+    description: 'Machine identities for CI and automation',
+    icon: Bot,
+    anyOf: ['service_accounts.view'],
+    keywords: ['service account', 'machine identity', 'ci', 'terraform', 'automation', 'bot', 'api token', 'bearer token'],
   },
   {
     key: 'sso',

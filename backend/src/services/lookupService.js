@@ -41,8 +41,10 @@ export async function lookupCustomers(orgId, scope, { q, ids, limit }) {
   return rows.map((r) => ({ value: r.id, label: r.name, sublabel: r.slug }));
 }
 
-export async function lookupUsers(orgId, { q, ids, limit }) {
-  const where = { orgId };
+export async function lookupUsers(orgId, { q, ids, limit, includeService = false }) {
+  // Most pickers mean "choose a person". The audit log's actor filter is the
+  // exception — a service account acts, so it has to be findable there.
+  const where = { orgId, ...(includeService ? {} : { kind: 'human' }) };
   if (ids?.length) where.id = { in: ids };
   else if (q) where.OR = [{ name: contains(q) }, { email: contains(q) }];
   const rows = await prisma.user.findMany({ where, take: limit, orderBy: { name: 'asc' }, select: { id: true, name: true, email: true } });

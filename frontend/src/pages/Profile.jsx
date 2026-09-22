@@ -11,6 +11,7 @@ import MfaCard from '@/components/profile/MfaCard';
 import SessionsCard from '@/components/profile/SessionsCard';
 import NotificationPreferencesCard from '@/components/profile/NotificationPreferencesCard';
 import SignInMethodsCard from '@/components/profile/SignInMethodsCard';
+import ApiTokensCard from '@/components/profile/ApiTokensCard';
 import {
   getMe,
   updateMe,
@@ -86,7 +87,7 @@ function InfoRow({ label, value }) {
 }
 
 function Profile() {
-  const { user: authUser, logout, refreshUser } = useAuth();
+  const { user: authUser, logout, refreshUser, can } = useAuth();
   const navigate = useNavigate();
 
   const [profile, setProfile] = useState(null);
@@ -383,6 +384,7 @@ function Profile() {
         <SignInMethodsCard hasPassword={hasPassword} />
         <SessionsCard />
         <NotificationPreferencesCard />
+        {can('tokens.personal') && <ApiTokensCard />}
 
         {/* Data export section */}
         <SectionCard

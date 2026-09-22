@@ -170,7 +170,9 @@ async function resolveRecipients(orgId, rule) {
   if (orFilters.length === 0) return [];
 
   return prisma.user.findMany({
-    where: { orgId, status: 'active', deletedAt: null, OR: orFilters },
+    // Alerts are sent to people, and a service account's address is
+    // deliberately undeliverable.
+    where: { orgId, status: 'active', deletedAt: null, kind: 'human', OR: orFilters },
     select: { id: true, name: true, email: true, role: true, accessScope: true },
   });
 }

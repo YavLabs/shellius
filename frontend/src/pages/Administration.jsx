@@ -42,6 +42,7 @@ import QuickConnectSettings from '@/components/settings/QuickConnectSettings';
 import PostureSettings from '@/components/settings/PostureSettings';
 import EmailTab from '@/components/settings/email/EmailTab';
 import StorageTab from '@/components/settings/StorageTab';
+import ServiceAccountsTab from '@/components/settings/serviceAccounts/ServiceAccountsTab';
 
 /**
  * What each section renders. `card: true` wraps a former standalone page
@@ -53,6 +54,7 @@ const SECTION_VIEWS = {
   roles: { card: true, render: () => <Roles /> },
   groups: { card: true, render: (id) => (id ? <GroupDetail /> : <Groups />) },
   policies: { card: true, render: () => <Policies /> },
+  'service-accounts': { render: () => <ServiceAccountsTab /> },
   sso: { render: () => <SsoTab /> },
   mfa: { render: () => <MfaTab /> },
   access: { render: () => <AccessSettings /> },

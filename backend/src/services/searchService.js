@@ -177,6 +177,7 @@ async function searchUsers(orgId, q, limit) {
     where: {
       orgId,
       status: { not: 'deleted' },
+      kind: 'human',
       OR: [
         { name: { contains: q, mode: 'insensitive' } },
         { email: { contains: q, mode: 'insensitive' } },

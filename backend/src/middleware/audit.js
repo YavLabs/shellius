@@ -38,8 +38,13 @@ const audit = (action, resourceType) => async (req, res, next) => {
           // as, so attribution and the FK are unchanged — this says which of
           // that identity's tokens was used, which is what you need when one
           // of them has to be revoked.
+          //
+          // Named `credential*`, not `token*`: auditService.log scrubs its
+          // metadata through redactValue, which redacts any key matching
+          // /token/ — correctly, since that is usually a secret. These two
+          // are an id and a label, and are the point of the entry.
           ...(req.auth?.type === 'api_token'
-            ? { via: 'api_token', tokenId: req.auth.tokenId, tokenName: req.auth.tokenName }
+            ? { via: 'api_token', credentialId: req.auth.tokenId, credentialName: req.auth.tokenName }
             : {}),
         },
         ipAddress: req.ip,

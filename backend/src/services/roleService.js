@@ -546,6 +546,9 @@ export async function usersWithPermission(orgId, permission, { excludeUserId } =
       roleId: { in: roleIds },
       status: 'active',
       deletedAt: null,
+      // Notifications go to people. A service account holds a role and so
+      // would otherwise be "notified" at an address that cannot receive mail.
+      kind: 'human',
       ...(excludeUserId ? { NOT: { id: excludeUserId } } : {}),
     },
     select: { id: true, email: true, name: true },
