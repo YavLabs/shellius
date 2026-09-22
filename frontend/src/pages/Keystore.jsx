@@ -83,6 +83,7 @@ function Keystore() {
     next.set('tab', nextTab);
     next.delete('action');
     next.delete('highlight');
+    next.delete('group');
     setSearchParams(next, { replace: true });
   };
 
@@ -91,6 +92,9 @@ function Keystore() {
     const next = new URLSearchParams(searchParams);
     next.set('tab', key);
     next.delete('action');
+    // ?group= belongs to the tab that set it (each list restores its own
+    // remembered grouping on mount — hooks/useGroupBy).
+    next.delete('group');
     setSearchParams(next, { replace: true });
   };
 

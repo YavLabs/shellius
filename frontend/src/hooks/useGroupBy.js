@@ -13,10 +13,15 @@ import { parseGroupKeys, serializeGroupKeys } from '@/lib/grouping';
  *
  * @param {string} storageKey  e.g. 'shellius.servers.groupBy'
  * @param {Array<{value, label}>} options  the levels this list offers
- * @param {{ param?: string }} [opts]
+ * `defaultKeys` is the grouping a list opens with when there is neither a
+ * `group` param nor anything remembered (a first visit). It goes in the URL
+ * only — not remembered — so a later change of default still reaches people
+ * who never picked a grouping themselves.
+ *
+ * @param {{ param?: string, defaultKeys?: string[] }} [opts]
  * @returns {[string[], (keys: string[]) => void]}
  */
-export default function useGroupBy(storageKey, options, { param = 'group' } = {}) {
+export default function useGroupBy(storageKey, options, { param = 'group', defaultKeys } = {}) {
   const [params, setParams] = useSearchParams();
   const raw = params.get(param);
   const optionSig = (options || []).map((o) => o.value).join('|');
@@ -54,14 +59,29 @@ export default function useGroupBy(storageKey, options, { param = 'group' } = {}
     if (restored.current) return;
     restored.current = true;
     if (raw !== null) return;
-    let saved = '';
+    let saved = null;
     try {
-      saved = localStorage.getItem(storageKey) || '';
+      saved = localStorage.getItem(storageKey);
     } catch {
-      saved = '';
+      saved = null;
     }
-    const savedKeys = parseGroupKeys(saved, options);
-    if (savedKeys.length) write(savedKeys);
+    const savedKeys = parseGroupKeys(saved || '', options);
+    if (savedKeys.length) {
+      write(savedKeys);
+      return;
+    }
+    // Nothing remembered at all (not even "flat"): the list's default.
+    const fallback = saved === null ? parseGroupKeys(serializeGroupKeys(defaultKeys), options) : [];
+    if (fallback.length) {
+      setParams(
+        (prev) => {
+          const p = new URLSearchParams(prev);
+          p.set(param, serializeGroupKeys(fallback));
+          return p;
+        },
+        { replace: true }
+      );
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
