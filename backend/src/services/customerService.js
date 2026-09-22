@@ -15,7 +15,15 @@ function slugify(name) {
     .slice(0, 30);
 }
 
-export async function listCustomers(orgId, { page = 1, pageSize = 25, search, isActive } = {}, scope) {
+// Whitelisted sort keys — never pass sortBy straight into Prisma's orderBy.
+const CUSTOMER_SORTABLE = {
+  name: (dir) => ({ name: dir }),
+  slug: (dir) => ({ slug: dir }),
+  servers: (dir) => ({ servers: { _count: dir } }),
+  status: (dir) => ({ isActive: dir }),
+};
+
+export async function listCustomers(orgId, { page = 1, pageSize = 25, search, isActive, hasServers, sortBy, sortDir } = {}, scope) {
   page = parseInt(page, 10) || 1;
   pageSize = Math.min(parseInt(pageSize, 10) || 25, 100);
 
@@ -29,13 +37,21 @@ export async function listCustomers(orgId, { page = 1, pageSize = 25, search, is
   if (isActive !== undefined) {
     where.isActive = isActive === true || isActive === 'true';
   }
+  if (hasServers === 'yes' || hasServers === true) {
+    where.servers = { some: {} };
+  } else if (hasServers === 'no' || hasServers === false) {
+    where.servers = { none: {} };
+  }
+
+  const dir = sortDir === 'desc' ? 'desc' : 'asc';
+  const orderBy = CUSTOMER_SORTABLE[sortBy] ? CUSTOMER_SORTABLE[sortBy](dir) : { createdAt: 'desc' };
 
   const [items, total] = await Promise.all([
     prisma.customer.findMany({
       where,
       skip: (page - 1) * pageSize,
       take: pageSize,
-      orderBy: { createdAt: 'desc' },
+      orderBy,
       include: { _count: { select: { servers: true } } },
     }),
     prisma.customer.count({ where }),

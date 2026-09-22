@@ -23,6 +23,7 @@ import { TIERS } from '../config/permissions.js';
 import { canBypassProdApproval, isProdBypassEnabled } from './orgService.js';
 import { usersWithPermission } from './roleService.js';
 import { UNSCOPED, isUnscoped, assertServerInScope, serverScopeWhere, relationScopeWhere } from '../lib/scope.js';
+import { endOfDayInclusive } from '../utils/dateRange.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -1164,6 +1165,26 @@ export async function getActiveByServerForUser(orgId, userId, serverId) {
 }
 
 // ---------------------------------------------------------------------------
+// list() sort whitelist — every value here MUST also be enumerated in the
+// route's Joi schema (routes/accessRequests.js `listQuerySchema.sortBy`), so
+// an unrecognised column is rejected with a 400 before it ever reaches here.
+// ---------------------------------------------------------------------------
+function buildOrderBy(sortBy, sortDir) {
+  const dir = sortDir === 'asc' ? 'asc' : 'desc';
+  switch (sortBy) {
+    case 'status':
+      return { status: dir };
+    case 'requestedDuration':
+      return { requestedDuration: dir };
+    case 'server':
+      return { server: { hostname: dir } };
+    case 'createdAt':
+    default:
+      return { createdAt: dir };
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Public API — list
 // ---------------------------------------------------------------------------
 
@@ -1180,6 +1201,11 @@ export async function getActiveByServerForUser(orgId, userId, serverId) {
  * @param {Set<string>} params.permissions
  * @param {string}  [params.tab='mine']
  * @param {string}  [params.status]   optional status filter (PENDING, APPROVED, …)
+ * @param {string}  [params.search]   matches reason, server hostname/displayName/ip, requester name/email
+ * @param {string}  [params.reviewerId] matches the primary reviewer OR the resolved approver set
+ * @param {string}  [params.customerId] via the server relation, ANDed with scope
+ * @param {string}  [params.sortBy='createdAt']  one of createdAt|status|requestedDuration|server
+ * @param {string}  [params.sortDir='desc']
  * @param {number}  [params.page=1]
  * @param {number}  [params.limit=25]
  * @returns {Promise<{ items: object[], total: number, page: number, limit: number }>}
@@ -1192,8 +1218,13 @@ export async function list({
   status,
   serverId,
   requesterId,
+  reviewerId,
+  customerId,
   protocol,
   environment,
+  search,
+  sortBy = 'createdAt',
+  sortDir = 'desc',
   startDate,
   endDate,
   page = 1,
@@ -1239,12 +1270,34 @@ export async function list({
   // the caller) — harmless to accept there too, it just narrows to nothing
   // or to the caller themselves.
   if (requesterId) extra.push({ requesterId });
+  // Any eligible approver — the primary reviewerId OR a member of the
+  // resolved approver set — matches, same eligibility rule review()/getById()
+  // already use.
+  if (reviewerId) extra.push({ OR: [{ reviewerId }, { approvers: { some: { userId: reviewerId } } }] });
+  // Merged as its own AND element (never spread into an existing `server`
+  // key) so it composes with `environment` above instead of clobbering it.
+  if (customerId) extra.push({ server: { customerId } });
   if (protocol) extra.push({ protocol });
   if (environment) extra.push({ server: { environment } });
+  if (search) {
+    const q = search.trim();
+    if (q) {
+      extra.push({
+        OR: [
+          { reason: { contains: q, mode: 'insensitive' } },
+          { server: { hostname: { contains: q, mode: 'insensitive' } } },
+          { server: { displayName: { contains: q, mode: 'insensitive' } } },
+          { server: { ipAddress: { contains: q, mode: 'insensitive' } } },
+          { requester: { name: { contains: q, mode: 'insensitive' } } },
+          { requester: { email: { contains: q, mode: 'insensitive' } } },
+        ],
+      });
+    }
+  }
   if (startDate || endDate) {
     const createdAt = {};
     if (startDate) createdAt.gte = new Date(startDate);
-    if (endDate) createdAt.lte = new Date(endDate);
+    if (endDate) createdAt.lte = endOfDayInclusive(endDate);
     extra.push({ createdAt });
   }
   if (extra.length > 0) where = { AND: [where, ...extra] };
@@ -1254,7 +1307,7 @@ export async function list({
       where,
       skip: (page - 1) * limit,
       take: limit,
-      orderBy: { createdAt: 'desc' },
+      orderBy: buildOrderBy(sortBy, sortDir),
       include: REQUEST_INCLUDE,
     }),
     prisma.accessRequest.count({ where }),

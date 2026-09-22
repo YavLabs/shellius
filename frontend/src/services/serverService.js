@@ -4,6 +4,12 @@ const unwrapServer = (r) => r.data.data?.server ?? r.data.data;
 
 export const listServers = (params) =>
   api.get('/servers', { params }).then((r) => r.data.data);
+/**
+ * The group tree for the list — `{ groupBy, tree }` — over the whole filtered
+ * set. `params` are the list's own filters plus `groupBy: 'customer,environment'`.
+ */
+export const listServerGroups = (params) =>
+  api.get('/servers/groups', { params }).then((r) => r.data.data);
 export const getServer = (id) =>
   api.get(`/servers/${id}`).then(unwrapServer);
 export const createServer = (data) =>
@@ -28,6 +34,8 @@ export const triggerHealthCheck = (id) =>
   api.post(`/servers/${id}/health-check`).then(unwrapServer);
 export const resetHostKey = (id) =>
   api.post(`/servers/${id}/host-key/reset`).then((r) => r.data?.data?.server ?? r.data?.data);
+export const listOsTypes = () =>
+  api.get('/servers/meta/os-types').then((r) => r.data?.data?.osTypes ?? []);
 
 /**
  * Rejects with an Error carrying `code` when the backend sent one

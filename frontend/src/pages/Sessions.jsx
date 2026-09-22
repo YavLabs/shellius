@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useMemo } from 'react';
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import {
   Film,
   Terminal as TerminalIcon,
@@ -28,8 +28,6 @@ import ConnectModal from '@/components/servers/ConnectModal';
 import { listSessions, listActiveSessions, getSession, terminateSession, downloadRecording } from '@/services/sessionService';
 import { listTerminalSessions } from '@/services/terminalService';
 import { getAccessIntent } from '@/services/accessRequestService';
-import { listServers } from '@/services/serverService';
-import { listUsers } from '@/services/userService';
 import { useAuth } from '@/context/AuthContext';
 import { useTerminalWorkspace } from '@/context/TerminalWorkspaceContext';
 import { useQuickConnect } from '@/context/QuickConnectContext';
@@ -40,6 +38,8 @@ import { can } from '@/lib/permissions';
 import { envAccent } from '@/lib/mobileCard';
 import { statusTone } from '@/lib/badgeTones';
 import { CardStatus } from '@/components/mobile/MobileCard';
+import useAutoRefresh from '@/hooks/useAutoRefresh';
+import useUrlFilters from '@/hooks/useUrlFilters';
 
 // A session row is "connectable" from this page when it's the caller's own
 // still-ACTIVE session — matches the terminal hub's "caller's own sessions
@@ -458,29 +458,39 @@ const TABS = [
 
 const SESSION_STATUSES = ['ACTIVE', 'ENDED', 'TERMINATED'];
 
+const SESSION_FILTER_DEFAULTS = {
+  tab: 'all',
+  status: '',
+  server: '',
+  user: '',
+  customer: '',
+  authMethod: '',
+  protocol: '',
+  environment: '',
+  clientIp: '',
+  startDate: '',
+  endDate: '',
+  q: '',
+  sortBy: 'startedAt',
+  sortDir: 'desc',
+  page: '1',
+};
+
 function Sessions() {
   const { user } = useAuth();
   const canTerminate = can(user, 'sessions.terminate');
   const sessionConnect = useSessionConnect();
 
-  const [activeTab, setActiveTab] = useState('all');
+  const [f, setF] = useUrlFilters(SESSION_FILTER_DEFAULTS);
+  // ?tab=active (the Dashboard's "Active sessions" widget) opens that tab.
+  const activeTab = f.tab === 'active' ? 'active' : 'all';
+  const page = parseInt(f.page, 10) || 1;
+
   const [sessions, setSessions] = useState([]);
   const [total, setTotal] = useState(0);
-  const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(20);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
-
-  const [statusFilter, setStatusFilter] = useState('');
-  const [serverFilter, setServerFilter] = useState('');
-  const [userFilter, setUserFilter] = useState('');
-  const [authMethodFilter, setAuthMethodFilter] = useState('');
-  const [protocolFilter, setProtocolFilter] = useState('');
-  const [environmentFilter, setEnvironmentFilter] = useState('');
-  const [startDate, setStartDate] = useState('');
-  const [endDate, setEndDate] = useState('');
-  const [servers, setServers] = useState([]);
-  const [users, setUsers] = useState([]);
 
   const [detailId, setDetailId] = useState(null);
   const [detailOpen, setDetailOpen] = useState(false);
@@ -488,23 +498,26 @@ function Sessions() {
   const [terminateTarget, setTerminateTarget] = useState(null);
   const [terminating, setTerminating] = useState(false);
 
+  const loadedRef = useRef(false);
   const fetchSessions = useCallback(async () => {
-    setLoading(true);
+    if (!loadedRef.current) setLoading(true);
     setError('');
     try {
       let resp;
+      // The active tab shares every filter except status (forced ACTIVE) and
+      // date range ("right now" has no date range). It is deliberately
+      // unpaginated (sessionService.listActive) — DataTable paginates the
+      // actual returned array client-side instead of showing page counts
+      // for a server page it never fetched.
+      const shared = { serverId: f.server, userId: f.user, customerId: f.customer, authMethod: f.authMethod, protocol: f.protocol, environment: f.environment, clientIp: f.clientIp, search: f.q };
+      const cleaned = Object.fromEntries(Object.entries(shared).filter(([, v]) => v));
       if (activeTab === 'active') {
-        resp = await listActiveSessions({ page, limit: pageSize });
+        resp = await listActiveSessions(cleaned);
       } else {
-        const params = { page, limit: pageSize };
-        if (statusFilter) params.status = statusFilter;
-        if (serverFilter) params.serverId = serverFilter;
-        if (userFilter) params.userId = userFilter;
-        if (authMethodFilter) params.authMethod = authMethodFilter;
-        if (protocolFilter) params.protocol = protocolFilter;
-        if (environmentFilter) params.environment = environmentFilter;
-        if (startDate) params.startDate = startDate;
-        if (endDate) params.endDate = endDate;
+        const params = { ...cleaned, page, limit: pageSize, sortBy: f.sortBy, sortDir: f.sortDir };
+        if (f.status) params.status = f.status;
+        if (f.startDate) params.startDate = f.startDate;
+        if (f.endDate) params.endDate = f.endDate;
         resp = await listSessions(params);
       }
       const items = resp.data?.items || resp.data || [];
@@ -516,44 +529,48 @@ function Sessions() {
       setError(err.response?.data?.error?.message || err.message || 'Failed to load sessions.');
     } finally {
       setLoading(false);
+      loadedRef.current = true;
     }
   }, [
     activeTab,
     page,
     pageSize,
-    statusFilter,
-    serverFilter,
-    userFilter,
-    authMethodFilter,
-    protocolFilter,
-    environmentFilter,
-    startDate,
-    endDate,
+    f.status,
+    f.server,
+    f.user,
+    f.customer,
+    f.authMethod,
+    f.protocol,
+    f.environment,
+    f.clientIp,
+    f.q,
+    f.sortBy,
+    f.sortDir,
+    f.startDate,
+    f.endDate,
   ]);
 
   useEffect(() => { fetchSessions(); }, [fetchSessions]);
 
-  // Lightweight option lists for the filter drawer.
-  useEffect(() => {
-    listServers({ page: 1, pageSize: 200 })
-      .then((d) => setServers(d.items || []))
-      .catch(() => {});
-    listUsers({ page: 1, pageSize: 200 })
-      .then((d) => setUsers(d.items || []))
-      .catch(() => {});
-  }, []);
+  // Active sessions change on their own — gentle 30s polling on top of the
+  // manual Refresh button.
+  const { refresh, refreshing, lastUpdated } = useAutoRefresh(fetchSessions, { interval: 30000 });
 
   const handleTabChange = (key) => {
-    setActiveTab(key);
-    setPage(1);
-    setStatusFilter('');
-    setServerFilter('');
-    setUserFilter('');
-    setAuthMethodFilter('');
-    setProtocolFilter('');
-    setEnvironmentFilter('');
-    setStartDate('');
-    setEndDate('');
+    setF({
+      tab: key,
+      page: '1',
+      status: '',
+      server: '',
+      user: '',
+      customer: '',
+      authMethod: '',
+      protocol: '',
+      environment: '',
+      clientIp: '',
+      startDate: '',
+      endDate: '',
+    });
   };
 
   const openDetail = (id) => { setDetailId(id); setDetailOpen(true); };
@@ -573,36 +590,24 @@ function Sessions() {
     }
   };
 
-  const filterDefs = activeTab === 'all' ? [
-    {
-      key: 'status',
-      label: 'Status',
-      placeholder: 'All statuses',
-      options: [
-        { value: '', label: 'All statuses' },
-        ...SESSION_STATUSES.map((s) => ({ value: s, label: SESSION_STATUS_LABELS[s] || s })),
-      ],
-    },
-    {
-      key: 'server',
-      label: 'Server',
-      placeholder: 'All servers',
-      searchable: true,
-      options: [
-        { value: '', label: 'All servers' },
-        ...servers.map((s) => ({ value: s.id, label: s.displayName || s.hostname })),
-      ],
-    },
-    {
-      key: 'user',
-      label: 'User',
-      placeholder: 'All users',
-      searchable: true,
-      options: [
-        { value: '', label: 'All users' },
-        ...users.map((u) => ({ value: u.id, label: u.name || u.email })),
-      ],
-    },
+  // The active tab shares every filter except status (forced ACTIVE — the
+  // one thing that used to make the drawer empty and useless there) and the
+  // date range ("right now" has no range to pick).
+  const filterDefs = [
+    ...(activeTab === 'all'
+      ? [{
+          key: 'status',
+          label: 'Status',
+          placeholder: 'All statuses',
+          options: [
+            { value: '', label: 'All statuses' },
+            ...SESSION_STATUSES.map((s) => ({ value: s, label: SESSION_STATUS_LABELS[s] || s })),
+          ],
+        }]
+      : []),
+    { key: 'server', label: 'Server', type: 'entity', entity: 'servers', placeholder: 'All servers' },
+    { key: 'customer', label: 'Customer', type: 'entity', entity: 'customers', placeholder: 'All customers' },
+    { key: 'user', label: 'User', type: 'entity', entity: 'users', placeholder: 'All users' },
     {
       key: 'authMethod',
       label: 'Auth method',
@@ -636,29 +641,40 @@ function Sessions() {
         { value: 'prod', label: 'Prod' },
       ],
     },
-    { key: 'startDate', label: 'Started from', type: 'date' },
-    { key: 'endDate', label: 'Started to', type: 'date' },
-  ] : [];
+    { key: 'clientIp', label: 'Client IP', type: 'text', placeholder: 'Contains…' },
+    ...(activeTab === 'all'
+      ? [
+          { key: 'startDate', label: 'Started from', type: 'date' },
+          { key: 'endDate', label: 'Started to', type: 'date' },
+        ]
+      : []),
+  ];
   const filterValues = {
-    status: statusFilter,
-    server: serverFilter,
-    user: userFilter,
-    authMethod: authMethodFilter,
-    protocol: protocolFilter,
-    environment: environmentFilter,
-    startDate,
-    endDate,
+    status: f.status,
+    server: f.server,
+    customer: f.customer,
+    user: f.user,
+    authMethod: f.authMethod,
+    protocol: f.protocol,
+    environment: f.environment,
+    clientIp: f.clientIp,
+    startDate: f.startDate,
+    endDate: f.endDate,
   };
   const applyFilters = (next) => {
-    setStatusFilter(next.status ?? '');
-    setServerFilter(next.server ?? '');
-    setUserFilter(next.user ?? '');
-    setAuthMethodFilter(next.authMethod ?? '');
-    setProtocolFilter(next.protocol ?? '');
-    setEnvironmentFilter(next.environment ?? '');
-    setStartDate(next.startDate ?? '');
-    setEndDate(next.endDate ?? '');
-    setPage(1);
+    setF({
+      status: next.status ?? '',
+      server: next.server ?? '',
+      customer: next.customer ?? '',
+      user: next.user ?? '',
+      authMethod: next.authMethod ?? '',
+      protocol: next.protocol ?? '',
+      environment: next.environment ?? '',
+      clientIp: next.clientIp ?? '',
+      startDate: next.startDate ?? '',
+      endDate: next.endDate ?? '',
+      page: '1',
+    });
   };
 
   const columns = [
@@ -728,6 +744,7 @@ function Sessions() {
     },
     {
       key: 'duration',
+      sortable: false,
       label: 'Duration',
       mobile: {
         slot: 'secondary',
@@ -754,13 +771,26 @@ function Sessions() {
     },
     {
       key: 'authMethod',
+      sortable: false,
       label: 'Auth',
       hideBelow: 'md',
       mobile: 'hidden',
       render: (r) => <AuthMethodBadge authMethod={r.authMethod} />,
     },
     {
+      key: 'protocol',
+      sortable: false,
+      label: 'Protocol',
+      hideBelow: 'md',
+      searchAccessor: (r) => r.sessionType || r.protocol || '',
+      mobile: 'hidden',
+      render: (r) => (
+        <span className="text-xs text-muted-foreground">{r.sessionType || r.protocol || '-'}</span>
+      ),
+    },
+    {
       key: 'clientIp',
+      sortable: false,
       label: 'Client IP',
       hideBelow: 'lg',
       mobile: {
@@ -814,7 +844,11 @@ function Sessions() {
         icon={TerminalIcon}
         title="Sessions"
         subtitle="Active and historical SSH/RDP sessions."
-      helpKey="sessions" />
+        helpKey="sessions"
+        onRefresh={refresh}
+        refreshing={refreshing}
+        lastUpdated={lastUpdated}
+      />
 
       {/* Tabs */}
       <div className="flex items-center gap-1 border-b border-border">
@@ -853,6 +887,22 @@ function Sessions() {
           ) : undefined
         }
         searchPlaceholder="Search server or user..."
+        initialSearch={f.q}
+        onSearchChange={(value) => setF({ q: value, page: '1' })}
+        // The active tab has no server-side sort (nothing to sort a
+        // right-now snapshot by, and /sessions/active is deliberately
+        // unpaginated) — omitting serverPagination there lets DataTable
+        // paginate AND sort the actual returned array client-side, instead
+        // of faking a server page over data it never sliced.
+        serverSort={
+          activeTab === 'all'
+            ? {
+                sortKey: f.sortBy,
+                sortDir: f.sortDir,
+                onSortChange: (key, dir) => setF({ sortBy: key, sortDir: dir, page: '1' }),
+              }
+            : undefined
+        }
         filterDefs={filterDefs}
         filterValues={filterValues}
         onFilterChange={applyFilters}
@@ -862,13 +912,17 @@ function Sessions() {
           corner: (r) => <CardStatus {...statusTone(r.status)} />,
           leading: (r) => <Avatar name={r.user?.name} email={r.user?.email} avatarUrl={r.user?.avatarUrl} size="md" />,
         }}
-        serverPagination={{
-          page,
-          total,
-          onPageChange: setPage,
-          pageSize,
-          onPageSizeChange: (size) => { setPageSize(size); setPage(1); },
-        }}
+        serverPagination={
+          activeTab === 'all'
+            ? {
+                page,
+                total,
+                onPageChange: (p) => setF({ page: String(p) }),
+                pageSize,
+                onPageSizeChange: (size) => { setPageSize(size); setF({ page: '1' }); },
+              }
+            : undefined
+        }
       />
 
       <SessionDetailDrawer

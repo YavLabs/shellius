@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import {
   Plus,
@@ -18,6 +18,9 @@ import {
   Send,
 } from 'lucide-react';
 import DataTable from '@/components/shared/DataTable';
+import GroupedView, { GroupLeafTable } from '@/components/shared/GroupedView';
+import useGroupBy from '@/hooks/useGroupBy';
+import { NONE, groupFilters, pathId } from '@/lib/grouping';
 import EntityLink from '@/components/EntityLink';
 import { CardIcon } from '@/components/mobile/MobileCard';
 import Modal from '@/components/shared/Modal';
@@ -29,9 +32,11 @@ import { envAccent } from '@/lib/mobileCard';
 import ServerForm from '@/components/servers/ServerForm';
 import BootstrapModal from '@/components/servers/BootstrapModal';
 import BootstrapWizard from '@/components/servers/BootstrapWizard';
+import useAutoRefresh from '@/hooks/useAutoRefresh';
 import {
   SshTrustBadge,
   CollectorBadge,
+  AgentStateBadge,
   SSH_TRUST_FILTER_OPTIONS,
   COLLECTOR_FILTER_OPTIONS,
 } from '@/components/servers/HostAgentStatus';
@@ -47,19 +52,65 @@ import { Button } from '@/components/ui/button';
 import SearchableSelect from '@/components/ui/SearchableSelect';
 import {
   listServers,
+  listServerGroups,
   createServer,
   updateServer,
   bulkUpdateServers,
   triggerHealthCheck,
+  listOsTypes,
 } from '@/services/serverService';
 import { listCustomers } from '@/services/customerService';
 import { useAuth } from '@/context/AuthContext';
 import { can } from '@/lib/permissions';
 import { relativeTime } from '@/utils/time';
 import { ENVIRONMENT_LABELS, HEALTH_STATUS_LABELS } from '@/lib/labels';
+import useUrlFilters from '@/hooks/useUrlFilters';
 
 const ENVIRONMENTS = ['demo', 'dev', 'staging', 'prod'];
 const HEALTH_STATUSES = ['healthy', 'unhealthy', 'unknown', 'maintenance'];
+const PROTOCOLS = ['ssh', 'rdp', 'both'];
+// Column key -> backend sortBy. The column keys read better in the table
+// ("health", "lastCheck") than the Prisma fields they sort on.
+const SORT_KEY_TO_BACKEND = {
+  hostname: 'hostname',
+  ipAddress: 'ipAddress',
+  customer: 'customer',
+  environment: 'environment',
+  health: 'healthStatus',
+  lastCheck: 'lastHealthCheck',
+};
+
+// Group-by levels (backend serverService SERVER_GROUP_DIMS), and the list
+// filter each level's value goes back through when a group opens.
+const GROUP_OPTIONS = [
+  { value: 'customer', label: 'Customer' },
+  { value: 'environment', label: 'Environment' },
+  { value: 'health', label: 'Health' },
+  { value: 'sshTrust', label: 'SSH trust' },
+  { value: 'collector', label: 'Collector' },
+  { value: 'protocol', label: 'Protocol' },
+  { value: 'osType', label: 'OS' },
+  { value: 'cloudProvider', label: 'Cloud' },
+  { value: 'active', label: 'Status' },
+];
+const GROUP_PARAM = { customer: 'customerId', health: 'healthStatus', active: 'isActive' };
+const groupDimLabel = (dim) => GROUP_OPTIONS.find((o) => o.value === dim)?.label || dim;
+
+function renderGroupLabel(node) {
+  if (node.value === NONE) return node.label;
+  switch (node.dim) {
+    case 'environment':
+      return <EnvironmentBadge environment={node.value} />;
+    case 'health':
+      return <HealthStatusDot status={node.value} showLabel />;
+    case 'sshTrust':
+      return <AgentStateBadge kind="ssh" state={node.value} label={node.label} />;
+    case 'collector':
+      return <AgentStateBadge kind="collector" state={node.value} label={node.label} />;
+    default:
+      return node.label;
+  }
+}
 
 function Servers() {
   const navigate = useNavigate();
@@ -75,17 +126,35 @@ function Servers() {
 
   const [servers, setServers] = useState([]);
   const [total, setTotal] = useState(0);
-  const [page, setPage] = useState(1);
-  const [pageSize, setPageSize] = useState(20);
-  const [search, setSearch] = useState('');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  const [osTypes, setOsTypes] = useState([]);
 
-  const [environment, setEnvironment] = useState('');
-  const [healthStatus, setHealthStatus] = useState('');
-  const [customerFilter, setCustomerFilter] = useState('');
-  const [sshTrustFilter, setSshTrustFilter] = useState('');
-  const [collectorFilter, setCollectorFilter] = useState('');
+  // Every filter, search, sort and page value lives in the URL — a link in
+  // from Customer Details (`?customerId=`) opens filtered, and a refresh or
+  // Back never silently drops what was applied.
+  const [f, setF] = useUrlFilters({
+    q: '',
+    environment: '',
+    healthStatus: '',
+    customerId: '',
+    sshTrust: '',
+    collector: '',
+    protocol: '',
+    osType: '',
+    isActive: '',
+    healthCheckFrom: '',
+    healthCheckTo: '',
+    sortBy: '',
+    sortDir: 'asc',
+    page: '1',
+    pageSize: '20',
+  });
+  const page = parseInt(f.page, 10) || 1;
+  const pageSize = parseInt(f.pageSize, 10) || 20;
+  const setPage = (p) => setF({ page: String(p) });
+  const setPageSize = (size) => setF({ pageSize: String(size), page: '1' });
+
   const [customers, setCustomers] = useState([]);
 
   const [selected, setSelected] = useState([]);
@@ -147,18 +216,39 @@ function Servers() {
     }
   }, []);
 
-  const fetch = useCallback(async () => {
-    setLoading(true);
+  // Group by (?group=customer,environment). While set, the page shows the
+  // group tree — counted over the whole filtered set on the server — and
+  // each open group loads its own rows through the same list call.
+  const [groupKeys, setGroupKeys] = useGroupBy('shellius.servers.groupBy', GROUP_OPTIONS);
+  const grouped = groupKeys.length > 0;
+
+  // The list's filters (no page / sort): shared by the flat list, the group
+  // tree and every group's rows, so a group opens to exactly what it counted.
+  const filterParams = useMemo(() => {
+    const params = {};
+    if (f.environment) params.environment = f.environment;
+    if (f.healthStatus) params.healthStatus = f.healthStatus;
+    if (f.customerId) params.customerId = f.customerId;
+    if (f.sshTrust) params.sshTrust = f.sshTrust;
+    if (f.collector) params.collector = f.collector;
+    if (f.protocol) params.protocol = f.protocol;
+    if (f.osType) params.osType = f.osType;
+    if (f.isActive) params.isActive = f.isActive;
+    if (f.healthCheckFrom) params.healthCheckFrom = f.healthCheckFrom;
+    if (f.healthCheckTo) params.healthCheckTo = f.healthCheckTo;
+    if (f.q) params.search = f.q;
+    return params;
+  }, [f.environment, f.healthStatus, f.customerId, f.sshTrust, f.collector, f.protocol, f.osType, f.isActive, f.healthCheckFrom, f.healthCheckTo, f.q]);
+  const sortParams = useMemo(
+    () => (f.sortBy ? { sortBy: SORT_KEY_TO_BACKEND[f.sortBy] || f.sortBy, sortDir: f.sortDir } : {}),
+    [f.sortBy, f.sortDir]
+  );
+
+  const fetch = useCallback(async ({ quiet = false } = {}) => {
+    if (!quiet) setLoading(true);
     setError('');
     try {
-      const params = { page, pageSize };
-      if (environment) params.environment = environment;
-      if (healthStatus) params.healthStatus = healthStatus;
-      if (customerFilter) params.customerId = customerFilter;
-      if (sshTrustFilter) params.sshTrust = sshTrustFilter;
-      if (collectorFilter) params.collector = collectorFilter;
-      if (search) params.search = search;
-      const data = await listServers(params);
+      const data = await listServers({ ...filterParams, ...sortParams, page, pageSize });
       setServers(data.items || []);
       setTotal(data.total || 0);
     } catch (err) {
@@ -166,12 +256,79 @@ function Servers() {
     } finally {
       setLoading(false);
     }
-  }, [page, pageSize, environment, healthStatus, customerFilter, sshTrustFilter, collectorFilter, search]);
+  }, [page, pageSize, filterParams, sortParams]);
+
+  const [groupState, setGroupState] = useState({ tree: null, loading: false, error: '' });
+  // Bumped on every refresh so the open groups re-read their rows too.
+  const [groupTick, setGroupTick] = useState(0);
+  const groupSeq = useRef(0);
+  const fetchGroups = useCallback(async () => {
+    if (!groupKeys.length) return;
+    const mine = ++groupSeq.current;
+    setGroupState((s) => ({ ...s, loading: true, error: '' }));
+    try {
+      const data = await listServerGroups({ ...filterParams, groupBy: groupKeys.join(',') });
+      if (mine === groupSeq.current) setGroupState({ tree: data?.tree || [], loading: false, error: '' });
+    } catch (err) {
+      if (mine === groupSeq.current) {
+        setGroupState((s) => ({
+          ...s,
+          loading: false,
+          error: err.response?.data?.error?.message || err.message || 'Failed to load groups',
+        }));
+      }
+    }
+  }, [groupKeys, filterParams]);
+
+  // Re-read whatever the page is showing: the flat page, or the group tree
+  // plus every open group's rows.
+  const reload = useCallback(
+    ({ quiet = false } = {}) => {
+      if (grouped) {
+        setGroupTick((t) => t + 1);
+        return fetchGroups();
+      }
+      return fetch({ quiet });
+    },
+    [grouped, fetch, fetchGroups]
+  );
+
+  // While any host on the page is mid-install — a collector waiting for its
+  // first report, a bootstrap running — re-read the page every 15 s, quietly,
+  // so the badges move on their own instead of looking stuck. Grouped, the
+  // tree says so when it is grouped by either status.
+  // Grouped, either the tree says so (grouped by either status) or a row in
+  // an open group does — whatever the levels are.
+  const isPendingServer = (sv) => sv.collector?.state === 'awaiting_report' || sv.sshTrust?.state === 'installing';
+  const pendingLeaves = useRef(new Set());
+  const [leafPending, setLeafPending] = useState(false);
+  const onLeafRows = useCallback((id, items) => {
+    if (items && items.some(isPendingServer)) pendingLeaves.current.add(id);
+    else pendingLeaves.current.delete(id);
+    setLeafPending(pendingLeaves.current.size > 0);
+  }, []);
+  const pendingOnPage = grouped
+    ? leafPending ||
+      (groupState.tree || []).some(function hasPending(n) {
+        return (
+          (n.dim === 'collector' && n.value === 'awaiting_report') ||
+          (n.dim === 'sshTrust' && n.value === 'installing') ||
+          (n.children || []).some(hasPending)
+        );
+      })
+    : servers.some(isPendingServer);
+  const quietReload = useCallback(() => reload({ quiet: true }), [reload]);
+  useAutoRefresh(quietReload, { interval: 15000, enabled: pendingOnPage });
 
   // Server-side search — reset to page 1 and refetch when the query changes.
   const handleSearchChange = useCallback((q) => {
-    setSearch(q);
-    setPage(1);
+    setF({ q, page: '1' });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const handleSortChange = useCallback((sortBy, sortDir) => {
+    setF({ sortBy, sortDir });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   useEffect(() => {
@@ -179,8 +336,16 @@ function Servers() {
   }, [fetchCustomers]);
 
   useEffect(() => {
-    fetch();
-  }, [fetch]);
+    listOsTypes().then(setOsTypes).catch(() => {});
+  }, []);
+
+  useEffect(() => {
+    if (!grouped) fetch();
+  }, [fetch, grouped]);
+
+  useEffect(() => {
+    if (grouped) fetchGroups();
+  }, [fetchGroups, grouped]);
 
   const handleSubmit = async (payload) => {
     let created = null;
@@ -192,7 +357,7 @@ function Servers() {
     }
     setFormOpen(false);
     setEditing(null);
-    fetch();
+    reload();
     // Open the install wizard for a host that actually needs it. This used to
     // jump straight to the manual one-liner with no eligibility check at all,
     // so a Windows or RDP-only host — which can never run the agent — was
@@ -207,7 +372,7 @@ function Servers() {
   const handleHealthCheck = async (server) => {
     try {
       await triggerHealthCheck(server.id);
-      fetch();
+      reload();
     } catch (err) {
       setError(err.response?.data?.error?.message || 'Health check failed');
     }
@@ -221,7 +386,7 @@ function Servers() {
     setBulkField('');
     setBulkValue('');
     setSelected([]);
-    fetch();
+    reload();
   };
 
   // Options for the bulk "value" control, keyed by the chosen field.
@@ -232,7 +397,7 @@ function Servers() {
     { value: 'osType', label: 'OS Type' },
     { value: 'isActive', label: 'Status' },
     { value: 'sshUser', label: 'SSH User' },
-  ].filter((f) => canEdit && (f.value !== 'environment' || can(user, 'servers.change_environment')));
+  ].filter((bf) => canEdit && (bf.value !== 'environment' || can(user, 'servers.change_environment')));
   const bulkValueOptions = {
     environment: ENVIRONMENTS.map((e) => ({ value: e, label: ENVIRONMENT_LABELS[e] || e })),
     customerId: customers.map((c) => ({ value: c.id, label: c.name })),
@@ -251,7 +416,7 @@ function Servers() {
       { value: 'false', label: 'Inactive' },
     ],
   };
-  const bulkFieldLabel = BULK_FIELDS.find((f) => f.value === bulkField)?.label || '';
+  const bulkFieldLabel = BULK_FIELDS.find((bf) => bf.value === bulkField)?.label || '';
 
   const filterDefs = [
     {
@@ -272,35 +437,66 @@ function Servers() {
         ...HEALTH_STATUSES.map((h) => ({ value: h, label: HEALTH_STATUS_LABELS[h] || h })),
       ],
     },
+    { key: 'customerId', label: 'Customer', placeholder: 'All customers', type: 'entity', entity: 'customers' },
     {
-      key: 'customerId',
-      label: 'Customer',
-      placeholder: 'All customers',
-      searchable: true,
+      key: 'protocol',
+      label: 'Protocol',
+      placeholder: 'All protocols',
       options: [
-        { value: '', label: 'All customers' },
-        ...customers.map((c) => ({ value: c.id, label: c.name })),
+        { value: '', label: 'All protocols' },
+        ...PROTOCOLS.map((p) => ({ value: p, label: p.toUpperCase() })),
       ],
     },
-  ];
-  filterDefs.push(
+    {
+      key: 'osType',
+      label: 'OS',
+      placeholder: 'All OS types',
+      options: [
+        { value: '', label: 'All OS types' },
+        ...osTypes.map((o) => ({ value: o, label: o })),
+      ],
+    },
+    {
+      key: 'isActive',
+      label: 'Status',
+      placeholder: 'Any status',
+      options: [
+        { value: '', label: 'Any status' },
+        { value: 'true', label: 'Active' },
+        { value: 'false', label: 'Inactive' },
+      ],
+    },
     { key: 'sshTrust', label: 'SSH trust', placeholder: 'Any SSH trust', options: SSH_TRUST_FILTER_OPTIONS },
-    { key: 'collector', label: 'Posture collector', placeholder: 'Any collector state', options: COLLECTOR_FILTER_OPTIONS }
-  );
+    { key: 'collector', label: 'Posture collector', placeholder: 'Any collector state', options: COLLECTOR_FILTER_OPTIONS },
+    { key: 'healthCheckFrom', label: 'Last health check from', type: 'date' },
+    { key: 'healthCheckTo', label: 'Last health check to', type: 'date' },
+  ];
   const filterValues = {
-    environment,
-    healthStatus,
-    customerId: customerFilter,
-    sshTrust: sshTrustFilter,
-    collector: collectorFilter,
+    environment: f.environment,
+    healthStatus: f.healthStatus,
+    customerId: f.customerId,
+    sshTrust: f.sshTrust,
+    collector: f.collector,
+    protocol: f.protocol,
+    osType: f.osType,
+    isActive: f.isActive,
+    healthCheckFrom: f.healthCheckFrom,
+    healthCheckTo: f.healthCheckTo,
   };
   const applyFilters = (next) => {
-    setEnvironment(next.environment ?? '');
-    setHealthStatus(next.healthStatus ?? '');
-    setCustomerFilter(next.customerId ?? '');
-    setSshTrustFilter(next.sshTrust ?? '');
-    setCollectorFilter(next.collector ?? '');
-    setPage(1);
+    setF({
+      environment: next.environment ?? '',
+      healthStatus: next.healthStatus ?? '',
+      customerId: next.customerId ?? '',
+      sshTrust: next.sshTrust ?? '',
+      collector: next.collector ?? '',
+      protocol: next.protocol ?? '',
+      osType: next.osType ?? '',
+      isActive: next.isActive ?? '',
+      healthCheckFrom: next.healthCheckFrom ?? '',
+      healthCheckTo: next.healthCheckTo ?? '',
+      page: '1',
+    });
   };
 
   const bulkActionsSlot =
@@ -486,7 +682,8 @@ function Servers() {
     {
       key: 'protocol',
       label: 'Protocol',
-      sortable: true,
+      // Not a whitelisted server-sort column (see SORT_KEY_TO_BACKEND).
+      sortable: false,
       mobile: {
         slot: 'leading',
         render: (r) => {
@@ -525,6 +722,7 @@ function Servers() {
       key: 'sshTrust',
       label: 'SSH trust',
       hideBelow: 'md',
+      sortable: false,
       searchAccessor: (r) => r.sshTrust?.label || '',
       mobile: {
         slot: 'meta',
@@ -539,6 +737,7 @@ function Servers() {
       key: 'collector',
       label: 'Collector',
       hideBelow: 'md',
+      sortable: false,
       searchAccessor: (r) => r.collector?.label || '',
       mobile: {
         slot: 'meta',
@@ -551,6 +750,7 @@ function Servers() {
       key: 'os',
       label: 'OS',
       hideBelow: 'lg',
+      sortable: false,
       render: (r) => <span className="text-muted-foreground">{r.osType || '-'}</span>,
     },
     {
@@ -567,6 +767,7 @@ function Servers() {
       key: 'quickConnect',
       label: '',
       className: 'w-36',
+      sortable: false,
       mobile: 'action',
       render: (r) => <QuickConnectButton server={r} currentUser={user} />,
     },
@@ -634,6 +835,42 @@ function Servers() {
     },
   ];
 
+  const refreshBusy = grouped ? groupState.loading : loading;
+  const emptyMessage = isScoped
+    ? 'No servers in your assigned customers. Ask an admin to expand your access scope.'
+    : 'No servers found';
+  // What a group's rows depend on besides its own path: every refresh, the
+  // page's filters and its sort.
+  const leafReloadKey = `${groupTick}|${JSON.stringify(filterParams)}|${JSON.stringify(sortParams)}`;
+
+  const groupedContent = grouped ? (
+    <GroupedView
+      tree={groupState.tree}
+      loading={groupState.loading}
+      error={groupState.error}
+      dimLabel={groupDimLabel}
+      renderLabel={renderGroupLabel}
+      emptyMessage={emptyMessage}
+      renderLeaf={(node, path) => (
+        <GroupLeafTable
+          columns={columns}
+          reloadKey={leafReloadKey}
+          onRows={(items) => onLeafRows(pathId(path), items)}
+          fetchPage={({ page: p, pageSize: size }) =>
+            listServers({ ...filterParams, ...sortParams, ...groupFilters(path, GROUP_PARAM), page: p, pageSize: size })
+          }
+          emptyMessage="No servers in this group any more."
+          selectable={canBulk}
+          selectedIds={selected}
+          onSelectionChange={setSelected}
+          onRowClick={(r) => navigate(`/servers/${r.id}`)}
+          mobile={{ accent: (r) => envAccent(r.environment), maxMeta: 4 }}
+          serverSort={{ sortKey: f.sortBy, sortDir: f.sortDir, onSortChange: handleSortChange }}
+        />
+      )}
+    />
+  ) : null;
+
   return (
     <div className="space-y-6 p-6">
       <PageHeader
@@ -647,7 +884,7 @@ function Servers() {
           // buttons on one screen fifty pixels apart, and neither did
           // anything the other did not. On phones both are the bottom-nav
           // sheet's entry, so nothing is lost by dropping this one.
-          { key: 'refresh', label: 'Refresh', icon: RefreshCw, variant: 'outline', onClick: () => fetch(), disabled: loading, spin: loading },
+          { key: 'refresh', label: 'Refresh', icon: RefreshCw, variant: 'outline', onClick: () => reload(), disabled: refreshBusy, spin: refreshBusy },
           // No selection = the whole fleet in scope. That is the case this
           // exists for: an inventory that predates posture, where installing
           // one host at a time means it never happens.
@@ -684,14 +921,13 @@ function Servers() {
 
       <DataTable
         columns={columns}
-        data={servers}
-        loading={loading}
-        emptyMessage={
-          isScoped
-            ? 'No servers in your assigned customers. Ask an admin to expand your access scope.'
-            : 'No servers found'
-        }
+        data={grouped ? [] : servers}
+        loading={!grouped && loading}
+        emptyMessage={emptyMessage}
+        grouping={{ keys: groupKeys, onChange: setGroupKeys, options: GROUP_OPTIONS }}
+        groupedContent={groupedContent}
         searchPlaceholder="Search name, hostname or IP..."
+        initialSearch={f.q}
         onSearchChange={handleSearchChange}
         filterDefs={filterDefs}
         filterValues={filterValues}
@@ -701,7 +937,8 @@ function Servers() {
         onSelectionChange={setSelected}
         bulkActions={bulkActionsSlot}
         onRowClick={(r) => navigate(`/servers/${r.id}`)}
-        mobile={{ accent: (r) => envAccent(r.environment) }}
+        mobile={{ accent: (r) => envAccent(r.environment), maxMeta: 4 }}
+        serverSort={{ sortKey: f.sortBy, sortDir: f.sortDir, onSortChange: handleSortChange }}
         serverPagination={{
           page,
           total,
@@ -773,7 +1010,7 @@ function Servers() {
           installMode={installScope}
           onClose={() => {
             setProvisionServerTarget(null);
-            fetch();
+            reload();
           }}
         />
       )}
@@ -788,7 +1025,7 @@ function Servers() {
         open={bulkInstallOpen}
         serverIds={selected}
         onClose={() => setBulkInstallOpen(false)}
-        onDone={fetch}
+        onDone={() => reload()}
       />
 
       {deployWizardOpen && (
@@ -830,7 +1067,7 @@ function Servers() {
         onDeleted={() => {
           setDeleteTarget(null);
           setSelected([]);
-          fetch();
+          reload();
         }}
       />
     </div>

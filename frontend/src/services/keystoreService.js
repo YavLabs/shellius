@@ -69,11 +69,22 @@ export const moveKeyToOrg = (id) =>
 // Deployments — /keystore/deployments
 // ---------------------------------------------------------------------------
 
+// The route sends pagination as a top-level `meta`, not nested under `data`
+// (unlike most list endpoints) — flatten it here so callers get one object:
+// { deployments, total, page, pageSize }.
 export const listDeployments = (params) =>
-  api.get('/keystore/deployments', { params }).then((r) => r.data.data);
+  api.get('/keystore/deployments', { params }).then((r) => ({
+    deployments: r.data.data?.deployments ?? [],
+    total: r.data.meta?.total ?? 0,
+    page: r.data.meta?.page ?? 1,
+    pageSize: r.data.meta?.pageSize ?? 25,
+  }));
 
-export const listDeploymentBatches = (params) =>
-  api.get('/keystore/deployments/batches', { params }).then((r) => r.data.data?.batches ?? []);
+// Group tree over the whole filtered set: { groupBy, tree, active }, where
+// `active` counts matching rows still pending/running. Takes the list's
+// filters plus `groupBy` ('batch,status').
+export const listDeploymentGroups = (params) =>
+  api.get('/keystore/deployments/groups', { params }).then((r) => r.data.data ?? { groupBy: [], tree: [], active: 0 });
 
 export const createDeployments = (data) =>
   api.post('/keystore/deployments', data).then((r) => r.data.data);

@@ -4,6 +4,7 @@ import logger from '../utils/logger.js';
 import * as caService from './caService.js';
 import * as policyService from './policyService.js';
 import { UNSCOPED, assertServerInScope, relationScopeWhere } from '../lib/scope.js';
+import { endOfDayInclusive } from '../utils/dateRange.js';
 
 // ---------------------------------------------------------------------------
 // Internal helpers
@@ -219,6 +220,63 @@ export async function issue({
   return { certificate, signedCert };
 }
 
+// list() sort whitelist — every value here MUST also be enumerated in the
+// route's Joi schema (routes/certificates.js `listQuerySchema.sortBy`), so an
+// unrecognised column is rejected with a 400 before it ever reaches here.
+function buildOrderBy(sortBy, sortDir) {
+  const dir = sortDir === 'asc' ? 'asc' : 'desc';
+  switch (sortBy) {
+    case 'serial':
+      return { serial: dir };
+    case 'issuedTo':
+      return { issuedTo: { name: dir } };
+    case 'server':
+      return { issuedFor: { hostname: dir } };
+    case 'status':
+      return { status: dir };
+    case 'validBefore':
+      return { validBefore: dir };
+    case 'createdAt':
+    default:
+      return { createdAt: dir };
+  }
+}
+
+/**
+ * Certificate ids whose serial, principals, keyId, issuedTo name/email, or
+ * issuedFor hostname/displayName match `search`. Raw SQL because `serial` is
+ * a Postgres bigint — Prisma has no `contains` for numeric columns, so
+ * substring search needs an explicit `::text` cast. Deliberately NOT
+ * scope-filtered here: the id list is only ever intersected (`id: { in }`)
+ * with the caller's normal Prisma `where`, which already carries the scope
+ * predicate — narrowing here just needs to stay inside the org.
+ *
+ * @returns {Promise<string[]>}
+ */
+async function searchCertificateIds(orgId, search) {
+  const q = search.trim();
+  if (!q) return null;
+  const like = `%${q}%`;
+  const rows = await prisma.$queryRaw`
+    SELECT c.id
+    FROM certificates c
+    LEFT JOIN users u ON u.id = c.issued_to_id
+    LEFT JOIN servers s ON s.id = c.issued_for_id
+    WHERE c.org_id = ${orgId}
+      AND (
+        c.serial::text ILIKE ${like} OR
+        c.key_id ILIKE ${like} OR
+        array_to_string(c.principals, ',') ILIKE ${like} OR
+        u.name ILIKE ${like} OR
+        u.email ILIKE ${like} OR
+        s.hostname ILIKE ${like} OR
+        s.display_name ILIKE ${like}
+      )
+    LIMIT 5000
+  `;
+  return rows.map((r) => r.id);
+}
+
 /**
  * List certificates with optional filters (paginated).
  *
@@ -227,6 +285,10 @@ export async function issue({
  * @param {string}  [params.userId]    - Filter by issuedToId
  * @param {string}  [params.serverId]  - Filter by issuedForId
  * @param {string}  [params.status]    - ACTIVE | REVOKED | EXPIRED
+ * @param {string}  [params.customerId] - via issuedFor, MERGED with (never replaces) scope
+ * @param {string}  [params.search]     - serial, principals, keyId, user name/email, server name/hostname
+ * @param {string}  [params.sortBy='createdAt'] one of createdAt|serial|issuedTo|server|status|validBefore
+ * @param {string}  [params.sortDir='desc']
  * @param {number}  [params.page=1]
  * @param {number}  [params.limit=25]
  * @param {{mode: string, customerIds: string[]}} [params.scope=UNSCOPED]
@@ -239,6 +301,10 @@ export async function list({
   status,
   environment,
   certType,
+  customerId,
+  search,
+  sortBy = 'createdAt',
+  sortDir = 'desc',
   startDate,
   endDate,
   page = 1,
@@ -254,38 +320,61 @@ export async function list({
   // issuedFor relation. A scoped user never sees certs issued without a
   // server (relationScopeWhere excludes null relations) — those are HOST
   // certs / ad-hoc issuance, not something a customer-scoped user requests.
-  const where = { orgId, ...relationScopeWhere(scope, 'issuedFor') };
-  if (userId) where.issuedToId = userId;
-  if (serverId) where.issuedForId = serverId;
-  if (status) where.status = status;
+  //
+  // Each predicate below is its own `AND` element rather than being merged
+  // into a shared `issuedFor` object — merging would let a later assignment
+  // (e.g. `customerId`) silently clobber the scope predicate's `customerId`
+  // key instead of narrowing alongside it.
+  const where = { orgId };
+  const andClauses = [];
+  const scopePredicate = relationScopeWhere(scope, 'issuedFor');
+  if (Object.keys(scopePredicate).length) andClauses.push(scopePredicate);
+  if (userId) andClauses.push({ issuedToId: userId });
+  if (serverId) andClauses.push({ issuedForId: serverId });
+  if (status) andClauses.push({ status });
   // Prisma field is `type` (CertType enum) — `certType` is only the param
   // name the API/frontend use for it (see issue(): `type: certType`).
-  if (certType) where.type = certType;
-  // Merge with (never replace) the scope predicate already on `issuedFor` —
-  // replacing it would silently drop the customer-scope restriction.
-  if (environment) where.issuedFor = { ...(where.issuedFor || {}), environment };
+  if (certType) andClauses.push({ type: certType });
+  if (environment) andClauses.push({ issuedFor: { environment } });
+  if (customerId) andClauses.push({ issuedFor: { customerId } });
+  if (search) {
+    const ids = await searchCertificateIds(orgId, search);
+    if (ids !== null) andClauses.push({ id: { in: ids } });
+  }
   // "Valid until" range — the dimension the page actually displays.
   if (startDate || endDate) {
-    where.validBefore = {};
-    if (startDate) where.validBefore.gte = new Date(startDate);
-    if (endDate) where.validBefore.lte = new Date(endDate);
+    const validBefore = {};
+    if (startDate) validBefore.gte = new Date(startDate);
+    if (endDate) validBefore.lte = endOfDayInclusive(endDate);
+    andClauses.push({ validBefore });
   }
+  if (andClauses.length) where.AND = andClauses;
 
-  const [items, total] = await Promise.all([
+  // "Expiring soon" — scoped to the org/caller like everything else here, but
+  // NOT to the current filters/page: the page used to count only the certs
+  // already on screen, so paging or filtering silently changed the number.
+  // This always answers "how many of everything I can see expire within 24h".
+  const now = new Date();
+  const in24h = new Date(now.getTime() + 24 * 60 * 60 * 1000);
+  const expiringWhere = { orgId, status: 'ACTIVE', validBefore: { gt: now, lte: in24h } };
+  if (Object.keys(scopePredicate).length) expiringWhere.AND = [scopePredicate];
+
+  const [items, total, expiringSoonCount] = await Promise.all([
     prisma.certificate.findMany({
       where,
       skip: (page - 1) * limit,
       take: limit,
-      orderBy: { createdAt: 'desc' },
+      orderBy: buildOrderBy(sortBy, sortDir),
       include: {
         issuedTo: { select: { id: true, email: true, name: true, avatarUrl: true } },
         issuedFor: { select: { id: true, hostname: true, displayName: true, environment: true, customerId: true } },
       },
     }),
     prisma.certificate.count({ where }),
+    prisma.certificate.count({ where: expiringWhere }),
   ]);
 
-  return { items, total, page, limit };
+  return { items, total, page, limit, expiringSoonCount };
 }
 
 /**

@@ -1,6 +1,6 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
-import { useNavigate, useSearchParams } from 'react-router-dom';
-import { Check, Download, Eye, Info, Radar, RefreshCw, ServerOff, ShieldAlert, ShieldCheck, ShieldOff, Volume1, VolumeX } from 'lucide-react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
+import { Check, Download, Eye, Info, Radar, Search, ServerOff, ShieldAlert, ShieldCheck, ShieldOff, Volume1, VolumeX } from 'lucide-react';
 import DataTable from '@/components/shared/DataTable';
 import PageHeader from '@/components/common/PageHeader';
 import EmptyState from '@/components/ui/EmptyState';
@@ -10,12 +10,13 @@ import SeverityBadge from '@/components/posture/SeverityBadge';
 import FindingStatusBadge from '@/components/posture/FindingStatusBadge';
 import FleetFindingsSection from '@/components/posture/FleetFindingsSection';
 import FilterControl from '@/components/shared/FilterControl';
+import GroupByControl from '@/components/shared/GroupByControl';
 import MuteDialog from '@/components/posture/MuteDialog';
 import CollectorCoverageModal from '@/components/posture/CollectorCoverageModal';
 import FindingDetailModal from '@/components/posture/FindingDetailModal';
 import ExportDialog from '@/components/posture/ExportDialog';
 import ExpectedPortDialog from '@/components/posture/ExpectedPortDialog';
-import { canMarkExpected } from '@/lib/postureLabels';
+import { canMarkExpected, codeLabel } from '@/lib/postureLabels';
 import ExpectableMarker from '@/components/posture/ExpectableMarker';
 import { PostureTile, PostureTileGrid } from '@/components/posture/PostureTiles';
 import BootstrapWizard from '@/components/servers/BootstrapWizard';
@@ -23,6 +24,7 @@ import BulkInstallModal from '@/components/servers/BulkInstallModal';
 import BootstrapModal from '@/components/servers/BootstrapModal';
 import ProvisionModal from '@/components/servers/ProvisionModal';
 import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
 import {
   getPostureSummary,
   muteFinding,
@@ -34,6 +36,10 @@ import { useAuth } from '@/context/AuthContext';
 import { can } from '@/lib/permissions';
 import { severityAccent } from '@/lib/mobileCard';
 import { POSTURE_ALERTS_EVENT } from '@/hooks/usePostureAlertCount';
+import useAutoRefresh from '@/hooks/useAutoRefresh';
+import useUrlFilters from '@/hooks/useUrlFilters';
+import useGroupBy from '@/hooks/useGroupBy';
+import { FINDING_GROUP_OPTIONS } from '@/lib/findingGroups';
 import { relativeTime, formatDateTime } from '@/utils/time';
 import { ENVIRONMENT_LABELS } from '@/lib/labels';
 
@@ -112,13 +118,30 @@ function Posture() {
   // finding moves it between two sections, and leaving the other one stale
   // would show the same row in both.
   const [reloadKey, setReloadKey] = useState(0);
-  // Seeded from the URL so a link in from Customer Details lands on the
-  // filtered view rather than the whole fleet.
-  const [searchParams] = useSearchParams();
-  const [severity, setSeverity] = useState(searchParams.get('severity') || '');
-  const [customerId, setCustomerId] = useState(searchParams.get('customerId') || '');
-  const [environment, setEnvironment] = useState('');
+  // Every filter the inbox offers lives in the URL — a link in from Customer
+  // Details (`?customerId=`) or the Dashboard (`?severity=`) lands on the
+  // filtered view rather than the whole fleet, and Back/refresh/share all
+  // keep working the same way.
+  const [f, setF] = useUrlFilters({
+    severity: '', customerId: '', environment: '', serverId: '', code: '',
+    lastSeenFrom: '', lastSeenTo: '', q: '',
+  });
+  const { severity, customerId, environment, serverId, code, lastSeenFrom, lastSeenTo, q } = f;
+  // One grouping for every section (`?group=severity,server`); each open
+  // section groups its own findings by it, over the whole filtered set.
+  const [groupKeys, setGroupKeys] = useGroupBy('shellius.posture.groupBy', FINDING_GROUP_OPTIONS);
   const [customers, setCustomers] = useState([]);
+
+  // Debounced so a keystroke does not refetch the summary and every open
+  // section on every character — same 200ms feel as DataTable's own search.
+  const [searchDraft, setSearchDraft] = useState(q);
+  useEffect(() => {
+    const id = setTimeout(() => {
+      if (searchDraft !== q) setF({ q: searchDraft });
+    }, 250);
+    return () => clearTimeout(id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchDraft]);
 
   const [error, setError] = useState('');
 
@@ -150,14 +173,22 @@ function Posture() {
   // The dialog closes on success, so its confirmation lives here instead.
   const [expectedNotice, setExpectedNotice] = useState('');
 
+  const summaryLoadedRef = useRef(false);
   const fetchSummary = useCallback(async () => {
-    setSummaryLoading(true);
+    if (!summaryLoadedRef.current) setSummaryLoading(true);
     try {
       // The tiles have to describe the list under them. Without the page's
-      // own filters they were fleet totals sitting above a filtered table.
+      // own filters they were fleet totals sitting above a filtered table —
+      // every filter the inbox offers narrows the summary the same way it
+      // narrows the rows, so the two can never disagree.
       const data = await getPostureSummary({
         customerId: customerId || undefined,
         environment: environment || undefined,
+        serverId: serverId || undefined,
+        code: code || undefined,
+        lastSeenFrom: lastSeenFrom || undefined,
+        lastSeenTo: lastSeenTo || undefined,
+        q: q || undefined,
       });
       setSummary(data);
       // The sidebar badge counts the same thing; broadcasting it here means
@@ -172,8 +203,9 @@ function Posture() {
       /* the page still works without the summary tiles */
     } finally {
       setSummaryLoading(false);
+      summaryLoadedRef.current = true;
     }
-  }, [customerId, environment]);
+  }, [customerId, environment, serverId, code, lastSeenFrom, lastSeenTo, q]);
 
   const fetchCustomers = useCallback(async () => {
     try {
@@ -191,8 +223,13 @@ function Posture() {
       severity: severity || undefined,
       customerId: customerId || undefined,
       environment: environment || undefined,
+      serverId: serverId || undefined,
+      code: code || undefined,
+      lastSeenFrom: lastSeenFrom || undefined,
+      lastSeenTo: lastSeenTo || undefined,
+      q: q || undefined,
     }),
-    [severity, customerId, environment]
+    [severity, customerId, environment, serverId, code, lastSeenFrom, lastSeenTo, q]
   );
 
   /** Refetch the sections and the counts above them, together. */
@@ -205,10 +242,21 @@ function Posture() {
     fetchCustomers();
   }, [fetchSummary, fetchCustomers]);
 
+  // One function reloads the tiles, the customer list and every open
+  // section (via reloadKey) without disturbing filters or which sections
+  // are expanded.
+  const loadAll = useCallback(async () => {
+    await Promise.all([fetchSummary(), fetchCustomers()]);
+    fetch();
+  }, [fetchSummary, fetchCustomers, fetch]);
+  const { refresh, refreshing, lastUpdated } = useAutoRefresh(loadAll);
+
   const resetFilters = () => {
-    setSeverity('');
-    setCustomerId('');
-    setEnvironment('');
+    setF({
+      severity: '', customerId: '', environment: '', serverId: '', code: '',
+      lastSeenFrom: '', lastSeenTo: '', q: '',
+    });
+    setSearchDraft('');
   };
 
 
@@ -266,7 +314,7 @@ function Posture() {
   // Choosing a severity narrows every section at once and opens the queue,
   // which is where someone clicking "Critical" expects to land.
   const pickSeverity = (key) => {
-    setSeverity(key);
+    setF({ severity: key });
     setOpenSections((p) => ({ ...p, open: true }));
   };
 
@@ -498,6 +546,35 @@ function Posture() {
       ],
     },
     {
+      key: 'serverId',
+      label: 'Server',
+      placeholder: 'All servers',
+      type: 'entity',
+      entity: 'servers',
+    },
+    {
+      key: 'code',
+      label: 'Finding type',
+      placeholder: 'All types',
+      searchable: true,
+      // Only the codes actually present in scope, so the picker never offers
+      // a choice that can only ever return zero rows.
+      options: [
+        { value: '', label: 'All types' },
+        ...(summary?.codes || []).map((c) => ({ value: c.value, label: `${codeLabel(c.value)} (${c.count})` })),
+      ],
+    },
+    {
+      key: 'lastSeenFrom',
+      label: 'Last seen from',
+      type: 'date',
+    },
+    {
+      key: 'lastSeenTo',
+      label: 'Last seen to',
+      type: 'date',
+    },
+    {
       key: 'environment',
       label: 'Environment',
       placeholder: 'All environments',
@@ -515,11 +592,17 @@ function Posture() {
     },
   ];
 
-  const filterValues = { severity, environment, customerId };
+  const filterValues = { severity, environment, customerId, serverId, code, lastSeenFrom, lastSeenTo };
   const applyFilters = (next) => {
-    setSeverity(next.severity ?? '');
-    setEnvironment(next.environment ?? '');
-    setCustomerId(next.customerId ?? '');
+    setF({
+      severity: next.severity ?? '',
+      environment: next.environment ?? '',
+      customerId: next.customerId ?? '',
+      serverId: next.serverId ?? '',
+      code: next.code ?? '',
+      lastSeenFrom: next.lastSeenFrom ?? '',
+      lastSeenTo: next.lastSeenTo ?? '',
+    });
   };
 
 
@@ -610,7 +693,9 @@ function Posture() {
   // that must never be confused with "clean" — a filtered view with nothing
   // matching.
   const noneEverReported = !summaryLoading && summary && (summary.servers?.total ?? 0) === 0;
-  const hasActiveFilter = !!(severity || customerId || environment);
+  const hasActiveFilter = !!(
+    severity || customerId || environment || serverId || code || lastSeenFrom || lastSeenTo || q
+  );
   const emptyState = noneEverReported ? (
     <EmptyState
       icon={Radar}
@@ -636,9 +721,11 @@ function Posture() {
         title="Posture"
         subtitle="Exposure findings across every server that reports to Shellius."
         helpKey="posture"
+        onRefresh={refresh}
+        refreshing={refreshing}
+        lastUpdated={lastUpdated}
         actions={[
           { key: 'export', label: 'Export', icon: Download, variant: 'outline', onClick: () => setExportOpen(true), hidden: !canExport },
-          { key: 'refresh', label: 'Refresh', icon: RefreshCw, variant: 'outline', onClick: () => { fetch(); fetchSummary(); } },
         ]}
       />
 
@@ -693,7 +780,20 @@ function Posture() {
               apply to all of them — a severity filter that only narrowed
               "Open" would make the other counts lie. */}
           <div className="flex flex-wrap items-center gap-2">
+            {/* Its own row on phones: beside Filters and Group it shrank to "Sea". */}
+            <div className="relative min-w-0 flex-1 max-w-sm max-sm:max-w-none max-sm:basis-full">
+              <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+              <Input
+                value={searchDraft}
+                onChange={(e) => setSearchDraft(e.target.value)}
+                placeholder="Search message, code, service, server, port..."
+                aria-label="Search findings"
+                className="pl-9 h-9"
+                type="search"
+              />
+            </div>
             <FilterControl defs={filterDefs} values={filterValues} onChange={applyFilters} />
+            <GroupByControl groupKeys={groupKeys} onChange={setGroupKeys} options={FINDING_GROUP_OPTIONS} />
           </div>
 
           <div className="space-y-2">
@@ -717,6 +817,7 @@ function Posture() {
                 onSelectionChange={handleSelection}
                 bulkActions={bulkActionsSlot}
                 reloadKey={reloadKey}
+                groupKeys={groupKeys}
                 mobile={{
                   accent: (r) => severityAccent(r.severity),
                   // Finding messages are sentences; one truncated line left
@@ -817,7 +918,17 @@ function Posture() {
       <ExportDialog
         open={exportOpen}
         dataset="findings"
-        filters={{ status: 'open', severity: severity || undefined, environment: environment || undefined, customerId: customerId || undefined }}
+        filters={{
+          status: 'open',
+          severity: severity || undefined,
+          environment: environment || undefined,
+          customerId: customerId || undefined,
+          serverId: serverId || undefined,
+          code: code || undefined,
+          lastSeenFrom: lastSeenFrom || undefined,
+          lastSeenTo: lastSeenTo || undefined,
+          q: q || undefined,
+        }}
         serverCount={2}
         scopeLabel="findings matching the current filters"
         onClose={() => setExportOpen(false)}

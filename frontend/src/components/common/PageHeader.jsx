@@ -1,5 +1,6 @@
 import { Link } from 'react-router-dom';
-import { ArrowLeft, ChevronDown } from 'lucide-react';
+import { ArrowLeft, ChevronDown, RefreshCw } from 'lucide-react';
+import { relativeTime } from '@/utils/time';
 import HelpButton from './HelpButton';
 import MobilePageHeader from '@/components/mobile/MobilePageHeader';
 import { useAdminFrame } from '@/components/admin/AdminFrameContext';
@@ -41,7 +42,7 @@ function DesktopAction({ action: a }) {
     );
   }
   return (
-    <Button variant={a.variant} size={a.size} onClick={a.onClick} disabled={a.disabled}>
+    <Button variant={a.variant} size={a.size} onClick={a.onClick} disabled={a.disabled} title={a.title}>
       {Icon && <Icon className={cn('mr-2 h-4 w-4', a.spin && 'animate-spin')} />}
       {a.label}
     </Button>
@@ -59,9 +60,41 @@ function DesktopAction({ action: a }) {
  * `compactPrimary` puts the primary action at the end of the title row on
  * phones instead of full-width under the subtitle.
  */
-function PageHeader({ icon: Icon, title, subtitle, children, helpKey, back, actions, compactPrimary = false }) {
+function PageHeader({
+  icon: Icon,
+  title,
+  subtitle,
+  children,
+  helpKey,
+  back,
+  actions,
+  compactPrimary = false,
+  onRefresh,
+  refreshing = false,
+  lastUpdated = null,
+}) {
   const inFrame = useAdminFrame();
   const isMobile = useIsMobile();
+
+  // One Refresh button, the same on every page: pass `onRefresh` (and
+  // ideally `refreshing` / `lastUpdated` from hooks/useAutoRefresh). Pages
+  // that already put a 'refresh' action in `actions` keep theirs.
+  const hasOwnRefresh = (actions || []).some((a) => a && a.key === 'refresh');
+  if (onRefresh && !hasOwnRefresh) {
+    actions = [
+      {
+        key: 'refresh',
+        label: refreshing ? 'Refreshing…' : 'Refresh',
+        icon: RefreshCw,
+        variant: 'outline',
+        spin: refreshing,
+        disabled: refreshing,
+        onClick: onRefresh,
+        title: lastUpdated ? `Updated ${relativeTime(lastUpdated)}` : 'Reload this page’s data',
+      },
+      ...(actions || []),
+    ];
+  }
 
   if (isMobile) {
     return (

@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import {
   Plus,
@@ -21,9 +21,23 @@ import { Button } from '@/components/ui/button';
 import SearchableSelect from '@/components/ui/SearchableSelect';
 import { listPolicies, createPolicy, updatePolicy, getPolicy } from '@/services/policyService';
 import { listCustomers } from '@/services/customerService';
+import { listGroups } from '@/services/groupService';
 import { useAuth } from '@/context/AuthContext';
 import { relativeTime } from '@/utils/time';
 import { can } from '@/lib/permissions';
+import { ENVIRONMENT_LABELS } from '@/lib/labels';
+import useAutoRefresh from '@/hooks/useAutoRefresh';
+import useUrlFilters from '@/hooks/useUrlFilters';
+
+const ENVIRONMENTS = ['demo', 'dev', 'staging', 'prod'];
+// Column key -> backend sortBy for listPolicies.
+const SORT_KEY_TO_BACKEND = {
+  name: 'name',
+  effect: 'effect',
+  priority: 'priority',
+  isActive: 'isActive',
+  updatedAt: 'updatedAt',
+};
 
 
 function EffectBadge({ effect }) {
@@ -37,15 +51,27 @@ function Policies() {
 
   const [policies, setPolicies] = useState([]);
   const [total, setTotal] = useState(0);
-  const [page, setPage] = useState(1);
-  const [pageSize, setPageSize] = useState(20);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
 
-  const [effectFilter, setEffectFilter] = useState('');
-  const [customerFilter, setCustomerFilter] = useState('');
-  const [activeFilter, setActiveFilter] = useState('');
+  const [f, setF] = useUrlFilters({
+    q: '',
+    effect: '',
+    customerId: '',
+    orgWide: '',
+    active: '',
+    environment: '',
+    subjectUser: '',
+    subjectGroup: '',
+    sortBy: '',
+    sortDir: 'asc',
+    page: '1',
+    pageSize: '20',
+  });
+  const page = parseInt(f.page, 10) || 1;
+  const pageSize = parseInt(f.pageSize, 10) || 20;
   const [customers, setCustomers] = useState([]);
+  const [groups, setGroups] = useState([]);
 
   const [formOpen, setFormOpen] = useState(false);
   const [editing, setEditing] = useState(null);
@@ -88,14 +114,37 @@ function Policies() {
     } catch { /* ignore */ }
   }, []);
 
+  const fetchGroups = useCallback(async () => {
+    try {
+      const rows = await listGroups();
+      setGroups(rows || []);
+    } catch { /* ignore */ }
+  }, []);
+
+  const loadedRef = useRef(false);
   const fetchPolicies = useCallback(async () => {
-    setLoading(true);
+    if (!loadedRef.current) setLoading(true);
     setError('');
     try {
-      const params = { page, limit: pageSize };
-      if (effectFilter) params.effect = effectFilter;
-      if (customerFilter) params.customerId = customerFilter;
-      if (activeFilter !== '') params.isActive = activeFilter === 'true';
+      // Bug fix: this used to send `limit`, which listPolicies (backend
+      // reads `pageSize`) silently ignored — every page came back with the
+      // default 25 regardless of the page size picked here.
+      const params = { page, pageSize };
+      if (f.effect) params.effect = f.effect;
+      if (f.orgWide === 'true') params.orgWide = true;
+      else if (f.customerId) params.customerId = f.customerId;
+      if (f.active !== '') params.isActive = f.active === 'true';
+      if (f.environment) params.environment = f.environment;
+      // Either subject filter narrows to policies naming that user or group
+      // as a subject — the backend param is a single `subjectId` regardless
+      // of subject type.
+      if (f.subjectUser) params.subjectId = f.subjectUser;
+      else if (f.subjectGroup) params.subjectId = f.subjectGroup;
+      if (f.q) params.search = f.q;
+      if (f.sortBy) {
+        params.sortBy = SORT_KEY_TO_BACKEND[f.sortBy] || f.sortBy;
+        params.sortDir = f.sortDir;
+      }
       const resp = await listPolicies(params);
       const items = resp.data?.items || resp.data || [];
       const metaTotal = resp.meta?.total ?? resp.data?.total ?? items.length;
@@ -105,11 +154,30 @@ function Policies() {
       setError(err.response?.data?.error?.message || err.message || 'Failed to load policies');
     } finally {
       setLoading(false);
+      loadedRef.current = true;
     }
-  }, [page, pageSize, effectFilter, customerFilter, activeFilter]);
+  }, [page, pageSize, f.effect, f.orgWide, f.customerId, f.active, f.environment, f.subjectUser, f.subjectGroup, f.q, f.sortBy, f.sortDir]);
+
+  // One function so the header's Refresh button reloads both the table and
+  // the customer filter options.
+  const loadAll = useCallback(async () => {
+    await Promise.all([fetchPolicies(), fetchCustomers(), fetchGroups()]);
+  }, [fetchPolicies, fetchCustomers, fetchGroups]);
+  const { refresh, refreshing, lastUpdated } = useAutoRefresh(loadAll);
 
   useEffect(() => { fetchCustomers(); }, [fetchCustomers]);
+  useEffect(() => { fetchGroups(); }, [fetchGroups]);
   useEffect(() => { fetchPolicies(); }, [fetchPolicies]);
+
+  const handleSearchChange = useCallback((q) => {
+    setF({ q, page: '1' });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const handleSortChange = useCallback((sortBy, sortDir) => {
+    setF({ sortBy, sortDir });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const handleSubmit = async (payload) => {
     if (editing) {
@@ -138,6 +206,15 @@ function Policies() {
       ],
     },
     {
+      key: 'orgWide',
+      label: 'Scope',
+      placeholder: 'Org-wide and customer',
+      options: [
+        { value: '', label: 'Org-wide and customer' },
+        { value: 'true', label: 'Org-wide only' },
+      ],
+    },
+    {
       key: 'customerId',
       label: 'Customer',
       placeholder: 'All customers',
@@ -145,6 +222,15 @@ function Policies() {
       options: [
         { value: '', label: 'All customers' },
         ...customers.map((c) => ({ value: c.id, label: c.name })),
+      ],
+    },
+    {
+      key: 'environment',
+      label: 'Environment',
+      placeholder: 'All environments',
+      options: [
+        { value: '', label: 'All environments' },
+        ...ENVIRONMENTS.map((e) => ({ value: e, label: ENVIRONMENT_LABELS[e] || e })),
       ],
     },
     {
@@ -157,13 +243,39 @@ function Policies() {
         { value: 'false', label: 'Inactive' },
       ],
     },
+    { key: 'subjectUser', label: 'Subject (user)', placeholder: 'Any user', type: 'entity', entity: 'users' },
+    {
+      key: 'subjectGroup',
+      label: 'Subject (group)',
+      placeholder: 'Any group',
+      searchable: true,
+      options: [
+        { value: '', label: 'Any group' },
+        ...groups.map((g) => ({ value: g.id, label: g.name })),
+      ],
+    },
   ];
-  const filterValues = { effect: effectFilter, customerId: customerFilter, active: activeFilter };
+  const filterValues = {
+    effect: f.effect,
+    orgWide: f.orgWide,
+    customerId: f.customerId,
+    environment: f.environment,
+    active: f.active,
+    subjectUser: f.subjectUser,
+    subjectGroup: f.subjectGroup,
+  };
   const applyFilters = (next) => {
-    setEffectFilter(next.effect ?? '');
-    setCustomerFilter(next.customerId ?? '');
-    setActiveFilter(next.active ?? '');
-    setPage(1);
+    setF({
+      effect: next.effect ?? '',
+      orgWide: next.orgWide ?? '',
+      // Org-wide and a specific customer are mutually exclusive.
+      customerId: next.orgWide === 'true' ? '' : next.customerId ?? '',
+      environment: next.environment ?? '',
+      active: next.active ?? '',
+      subjectUser: next.subjectUser ?? '',
+      subjectGroup: next.subjectUser ? '' : next.subjectGroup ?? '',
+      page: '1',
+    });
   };
 
   const columns = [
@@ -198,6 +310,7 @@ function Policies() {
     {
       key: 'scope',
       label: 'Scope',
+      sortable: false,
       mobile: { slot: 'secondary', order: 1 },
       render: (r) => (
         <span className="text-sm text-muted-foreground">
@@ -209,6 +322,7 @@ function Policies() {
       key: 'environments',
       label: 'Environments',
       hideBelow: 'md',
+      sortable: false,
       mobile: 'hidden',
       render: (r) => {
         const envs = r.targetEnvironments || [];
@@ -224,6 +338,7 @@ function Policies() {
       key: 'subjects',
       label: 'Subjects',
       hideBelow: 'lg',
+      sortable: false,
       render: (r) => {
         const count = (r.subjects || []).length;
         return (
@@ -285,6 +400,9 @@ function Policies() {
         title="Policies"
         subtitle="Access control policies governing who can reach which servers."
         helpKey="policies"
+        onRefresh={refresh}
+        refreshing={refreshing}
+        lastUpdated={lastUpdated}
         actions={[
           {
             key: 'new',
@@ -310,17 +428,20 @@ function Policies() {
         data={policies}
         loading={loading}
         emptyMessage="No policies found. Create one to control server access."
-        searchPlaceholder="Search by policy name..."
+        searchPlaceholder="Search by name or description..."
+        initialSearch={f.q}
+        onSearchChange={handleSearchChange}
         filterDefs={filterDefs}
         filterValues={filterValues}
         onFilterChange={applyFilters}
         mobile={{ corner: (r) => <CardStatus {...policyEffectTone(r.effect)} /> }}
+        serverSort={{ sortKey: f.sortBy, sortDir: f.sortDir, onSortChange: handleSortChange }}
         serverPagination={{
           page,
           total,
-          onPageChange: setPage,
+          onPageChange: (p) => setF({ page: String(p) }),
           pageSize,
-          onPageSizeChange: (size) => { setPageSize(size); setPage(1); },
+          onPageSizeChange: (size) => setF({ pageSize: String(size), page: '1' }),
         }}
       />
 

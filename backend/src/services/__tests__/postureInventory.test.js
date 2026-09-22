@@ -22,6 +22,7 @@ import prisma from '../../config/db.js';
 import * as inventory from '../postureInventoryService.js';
 import { planBulkInstall } from '../bulkBootstrapService.js';
 import { UNSCOPED } from '../../lib/scope.js';
+import { NONE } from '../../utils/groupTree.js';
 import { dbReachable, createTestOrg, cleanupOrg } from './testDbHelper.js';
 
 let seq = 0;
@@ -50,6 +51,79 @@ describe('serviceKey', () => {
     const a = inventory.serviceKey({ ownerKind: 'docker', ownerName: 'nginx' });
     const b = inventory.serviceKey({ ownerKind: 'docker', ownerName: 'NGINX' });
     expect(a.key).toBe(b.key);
+  });
+});
+
+describe('parseOwnerKinds', () => {
+  it('combines a single ownerKind and a csv ownerKinds into one deduped set', () => {
+    expect(inventory.parseOwnerKinds('docker', 'docker,docker-proxy, container')).toEqual([
+      'docker',
+      'docker-proxy',
+      'container',
+    ]);
+  });
+
+  it('returns null (no filter) when nothing was given', () => {
+    expect(inventory.parseOwnerKinds(undefined, undefined)).toBeNull();
+    expect(inventory.parseOwnerKinds('', '')).toBeNull();
+  });
+});
+
+describe('matchesQuery', () => {
+  it('matches a customer name and an IP address, same fields the export needs', () => {
+    const row = {
+      service: 'nginx',
+      port: 80,
+      proto: 'tcp',
+      server: { hostname: 'web-1', displayName: null, ipAddress: '10.1.2.3', customer: { name: 'Acme Corp' } },
+    };
+    expect(inventory.matchesQuery(row, 'Acme')).toBe(true);
+    expect(inventory.matchesQuery(row, '10.1.2.3')).toBe(true);
+    expect(inventory.matchesQuery(row, 'Globex')).toBe(false);
+  });
+
+  it('an empty query matches everything', () => {
+    expect(inventory.matchesQuery({ service: 'x' }, '')).toBe(true);
+    expect(inventory.matchesQuery({ service: 'x' }, undefined)).toBe(true);
+  });
+});
+
+describe('listener sort whitelist', () => {
+  it('accepts every column the page can sort, and nothing else', () => {
+    for (const key of ['service', 'type', 'port', 'proto', 'bind', 'state', 'server', 'customer', 'environment', 'reachability', 'findings']) {
+      expect(inventory.parseListenerSort(key, 'asc')).toEqual({ key, dir: 'asc' });
+    }
+    expect(inventory.parseListenerSort('ownerName', 'asc')).toBeNull();
+    expect(inventory.parseListenerSort('__proto__', 'asc')).toBeNull();
+    expect(inventory.parseListenerSort('constructor', 'asc')).toBeNull();
+    expect(inventory.parseListenerSort('', 'asc')).toBeNull();
+    expect(inventory.parseListenerSort(undefined)).toBeNull();
+  });
+
+  it('defaults the direction to ascending', () => {
+    expect(inventory.parseListenerSort('port', 'sideways')).toEqual({ key: 'port', dir: 'asc' });
+    expect(inventory.parseListenerSort('port', 'DESC')).toEqual({ key: 'port', dir: 'desc' });
+  });
+
+  const rows = [
+    { id: 'c', port: 443, proto: 'tcp', server: { hostname: 'b-host', customer: { name: 'Beta' }, environment: 'dev' }, reachability: 'LAN', listening: true },
+    { id: 'a', port: 22, proto: 'tcp', server: { hostname: 'a-host', customer: { name: 'Acme' }, environment: 'prod' }, reachability: 'INTERNET', listening: true },
+    { id: 'b', port: 22, proto: 'tcp', server: { hostname: 'c-host', customer: { name: 'Acme' }, environment: 'staging' }, reachability: null, listening: false },
+  ];
+
+  it('an unknown sort keeps the rows in the order they came', () => {
+    expect(inventory.sortListenerRows(rows, inventory.parseListenerSort('nope'))).toBe(rows);
+  });
+
+  it('sorts by server, customer, environment and reachability, ties broken by port then id', () => {
+    const ids = (key, dir = 'asc') => inventory.sortListenerRows(rows, { key, dir }).map((r) => r.id);
+    expect(ids('server')).toEqual(['a', 'c', 'b']);
+    expect(ids('server', 'desc')).toEqual(['b', 'c', 'a']);
+    expect(ids('customer')).toEqual(['a', 'b', 'c']);
+    expect(ids('environment')).toEqual(['a', 'b', 'c']); // prod, staging, dev
+    expect(ids('reachability')).toEqual(['a', 'c', 'b']); // INTERNET, LAN, none last
+    expect(ids('state')).toEqual(['a', 'c', 'b']); // listening before stopped
+    expect(ids('port', 'desc')).toEqual(['c', 'a', 'b']);
   });
 });
 
@@ -203,6 +277,203 @@ describe('inventory + bulk plan (DB)', () => {
     const out = await inventory.listListeners(org.id, { port: 80, serverId: webA.id }, UNSCOPED);
     expect(out.items[0].findings.map((f) => f.id)).toContain(finding.id);
     await prisma.exposureFinding.delete({ where: { id: finding.id } });
+  });
+
+  // ---- new filters (1.7.5): ownerKinds, findingSeverity, scoped facets ---
+
+  it('ownerKinds (csv) filters to a SET — grouping docker + docker-proxy as one "Type"', async () => {
+    if (!(await dbReachable())) return console.warn('DB unreachable — skipping');
+    const snap = await mkSnapshot(webA.id);
+    const proxy = await mkListener(webA.id, snap.id, {
+      port: 9443,
+      ownerKind: 'docker-proxy',
+      ownerName: 'docker-proxy',
+      reachability: 'INTERNET',
+    });
+    try {
+      const dockerOnly = await inventory.listListeners(org.id, { ownerKind: 'docker' }, UNSCOPED);
+      expect(dockerOnly.items.some((r) => r.port === 9443)).toBe(false);
+
+      const grouped = await inventory.listListeners(org.id, { ownerKinds: 'docker,docker-proxy' }, UNSCOPED);
+      expect(grouped.items.some((r) => r.port === 9443)).toBe(true);
+      expect(grouped.items.some((r) => r.ownerKind === 'docker')).toBe(true);
+    } finally {
+      await prisma.hostListener.delete({ where: { id: proxy.id } });
+    }
+  });
+
+  it('findingSeverity filters to rows carrying an OPEN finding of that severity, on both views', async () => {
+    if (!(await dbReachable())) return console.warn('DB unreachable — skipping');
+    const critical = await prisma.exposureFinding.create({
+      data: {
+        orgId: org.id,
+        serverId: webA.id,
+        code: 'SENSITIVE_PORT_EXPOSED',
+        proto: 'tcp',
+        port: 5432,
+        severity: 'CRITICAL',
+        message: 'sensitive',
+        firstSeenAt: new Date(),
+        lastSeenAt: new Date(),
+      },
+    });
+    const high = await prisma.exposureFinding.create({
+      data: {
+        orgId: org.id,
+        serverId: webB.id,
+        code: 'PORT_EXPOSED',
+        proto: 'tcp',
+        port: 80,
+        severity: 'HIGH',
+        message: 'exposed',
+        firstSeenAt: new Date(),
+        lastSeenAt: new Date(),
+      },
+    });
+    try {
+      const criticalOnly = await inventory.listListeners(org.id, { findingSeverity: 'CRITICAL' }, UNSCOPED);
+      expect(criticalOnly.items).toHaveLength(1);
+      expect(criticalOnly.items[0].port).toBe(5432);
+
+      const servicesCritical = await inventory.listServices(org.id, { findingSeverity: 'CRITICAL' }, UNSCOPED);
+      expect(servicesCritical.items.every((i) => (i.severityCounts.CRITICAL || 0) > 0)).toBe(true);
+      // nginx (webA + webB) only carries the HIGH finding, not the CRITICAL
+      // one, so a CRITICAL filter must drop it even though it has findings.
+      expect(servicesCritical.items.map((i) => i.key)).not.toContain('docker:nginx');
+    } finally {
+      await prisma.exposureFinding.deleteMany({ where: { id: { in: [critical.id, high.id] } } });
+    }
+  });
+
+  it(
+    'listFacets is scoped (a literal `server: {isActive:true}` after the scope spread used to silently ' +
+      'drop it) and merges in HostService kinds a socket scan never sees',
+    async () => {
+      if (!(await dbReachable())) return console.warn('DB unreachable — skipping');
+      const snap = await mkSnapshot(betaHost.id);
+      const stoppedOnly = await prisma.hostService.create({
+        data: {
+          orgId: org.id,
+          serverId: betaHost.id,
+          snapshotId: snap.id,
+          kind: 'systemd-user',
+          name: 'backup-timer',
+          state: 'stopped',
+          running: false,
+          ports: [],
+        },
+      });
+      try {
+        const unscoped = await inventory.listFacets(org.id, UNSCOPED);
+        expect(unscoped.ownerKinds.map((k) => k.value)).toContain('systemd-user');
+
+        const scopedToA = await inventory.listFacets(org.id, scopedTo([customerA.id]));
+        expect(scopedToA.ownerKinds.map((k) => k.value)).not.toContain('systemd-user');
+        // customerA's own kinds must still be there — proof the scope fix
+        // didn't just make the facet empty for everyone.
+        expect(scopedToA.ownerKinds.map((k) => k.value)).toContain('docker');
+
+        const scopedToB = await inventory.listFacets(org.id, scopedTo([customerB.id]));
+        expect(scopedToB.ownerKinds.map((k) => k.value)).toContain('systemd-user');
+      } finally {
+        await prisma.hostService.delete({ where: { id: stoppedOnly.id } });
+      }
+    }
+  );
+
+  it('a scoped caller naming an out-of-scope serverId directly still sees nothing', async () => {
+    if (!(await dbReachable())) return console.warn('DB unreachable — skipping');
+    const out = await inventory.listListeners(org.id, { serverId: betaHost.id }, scopedTo([customerA.id]));
+    expect(out.items).toHaveLength(0);
+    expect(out.meta.total).toBe(0);
+  });
+
+  it('a scoped caller naming an out-of-scope customerId directly still sees nothing', async () => {
+    if (!(await dbReachable())) return console.warn('DB unreachable — skipping');
+    const out = await inventory.listListeners(org.id, { customerId: customerB.id }, scopedTo([customerA.id]));
+    expect(out.items).toHaveLength(0);
+  });
+
+  // ---- group by ----------------------------------------------------------
+
+  // Every leaf of a tree, with the list filters that open it.
+  const PARAM_FOR = {
+    server: 'serverId',
+    customer: 'customerId',
+    type: 'ownerKind',
+    protocol: 'service',
+    findings: 'hasFindings',
+  };
+  const leaves = (nodes, filters = {}) =>
+    nodes.flatMap((n) => {
+      const next = { ...filters, [PARAM_FOR[n.dim] || n.dim]: n.value };
+      return n.children ? leaves(n.children, next) : [{ node: n, filters: next }];
+    });
+
+  it('groups honour customer scope: a scoped caller only sees their own customers', async () => {
+    if (!(await dbReachable())) return console.warn('DB unreachable — skipping');
+    const out = await inventory.listListenerGroups(
+      org.id,
+      { groupBy: 'customer,server' },
+      scopedTo([customerA.id])
+    );
+    expect(out.tree.map((n) => n.value)).toEqual([customerA.id]);
+    expect(out.tree[0].label).toBe('Acme');
+    const serverIds = out.tree[0].children.map((n) => n.value);
+    expect(serverIds).not.toContain(betaHost.id);
+  });
+
+  it('groups honour customer scope even when the caller names an out-of-scope customer', async () => {
+    if (!(await dbReachable())) return console.warn('DB unreachable — skipping');
+    const out = await inventory.listListenerGroups(
+      org.id,
+      { groupBy: 'customer', customerId: customerB.id },
+      scopedTo([customerA.id])
+    );
+    expect(out.tree).toEqual([]);
+    expect(out.total).toBe(0);
+  });
+
+  it('every group opens, through the list, to exactly the rows it counted', async () => {
+    if (!(await dbReachable())) return console.warn('DB unreachable — skipping');
+    for (const groupBy of ['customer,environment', 'type,protocol', 'reachability,port', 'status,findings,proto']) {
+      const out = await inventory.listListenerGroups(org.id, { groupBy }, UNSCOPED);
+      const all = await inventory.listListeners(org.id, { limit: 200 }, UNSCOPED);
+      expect(out.total).toBe(all.meta.total);
+      for (const { node, filters } of leaves(out.tree)) {
+        const page = await inventory.listListeners(org.id, { ...filters, limit: 200 }, UNSCOPED);
+        expect({ groupBy, value: node.value, total: page.meta.total }).toEqual({
+          groupBy,
+          value: node.value,
+          total: node.count,
+        });
+      }
+    }
+  });
+
+  it('the NONE group of an optional value (no recognised protocol) opens to those rows', async () => {
+    if (!(await dbReachable())) return console.warn('DB unreachable — skipping');
+    const out = await inventory.listListenerGroups(org.id, { groupBy: 'protocol' }, UNSCOPED);
+    const none = out.tree.find((n) => n.value === NONE);
+    expect(none).toBeDefined();
+    const rows = await inventory.listListeners(org.id, { service: NONE, limit: 200 }, UNSCOPED);
+    expect(rows.meta.total).toBe(none.count);
+    expect(rows.items.every((r) => !r.service)).toBe(true);
+  });
+
+  it('NONE on a column that is never empty matches nothing instead of throwing', async () => {
+    if (!(await dbReachable())) return console.warn('DB unreachable — skipping');
+    for (const f of [{ customerId: NONE }, { environment: NONE }, { serverId: NONE }, { ownerKind: NONE }]) {
+      const out = await inventory.listListeners(org.id, f, UNSCOPED);
+      expect(out.meta.total).toBe(0);
+    }
+  });
+
+  it('sorts the whole filtered set by a whitelisted column, server-side', async () => {
+    if (!(await dbReachable())) return console.warn('DB unreachable — skipping');
+    const desc = await inventory.listListeners(org.id, { sortBy: 'port', sortDir: 'desc', limit: 1 }, UNSCOPED);
+    const all = await inventory.listListeners(org.id, { limit: 200 }, UNSCOPED);
+    expect(desc.items[0].port).toBe(Math.max(...all.items.map((r) => r.port)));
   });
 
   // ---- bulk install plan -------------------------------------------------
@@ -579,6 +850,26 @@ describe('running services with no host port', () => {
     expect(internal.items.map((r) => r.port)).toEqual([5432]);
   });
 
+  it('groups declared ports too: status and an empty reachability open to their exact rows', async () => {
+    if (!(await dbReachable())) return console.warn('DB unreachable — skipping');
+    const out = await inventory.listListenerGroups(org.id, { groupBy: 'status,reachability', serverId: host.id }, UNSCOPED);
+    const byStatus = Object.fromEntries(out.tree.map((n) => [n.value, n]));
+    expect(byStatus.exposed.count).toBe(1); // 8000, the socket
+    expect(byStatus.internal.count).toBe(1); // 5432, inside the container
+    expect(byStatus.stopped.count).toBe(1); // 9100, declared by a stopped container
+    expect(byStatus.stopped.children.map((n) => n.value)).toEqual([NONE]);
+    for (const s of out.tree) {
+      for (const r of s.children) {
+        const rows = await inventory.listListeners(
+          org.id,
+          { serverId: host.id, status: s.value, reachability: r.value },
+          UNSCOPED
+        );
+        expect(rows.meta.total).toBe(r.count);
+      }
+    }
+  });
+
   it('groups a running container into the services view even with no host port', async () => {
     if (!(await dbReachable())) return console.warn('DB unreachable — skipping');
     const out = await inventory.listServices(org.id, { serverId: host.id }, UNSCOPED);
@@ -589,6 +880,50 @@ describe('running services with no host port', () => {
     expect(db.ports).toContain(5432);
     // Declared, not observed on the host — it must not read as exposed.
     expect(db.internetExposed).toBe(0);
+  });
+
+  // Last in this block: it adds a port the assertions above do not expect.
+  it('a type group opens to its counted rows even when another kind owns the socket', async () => {
+    if (!(await dbReachable())) return console.warn('DB unreachable — skipping');
+    // docker-proxy holds the socket for 7000; the docker scan declares it.
+    const extraListener = await prisma.hostListener.create({
+      data: {
+        orgId: org.id,
+        serverId: host.id,
+        snapshotId: snapshot.id,
+        proto: 'tcp',
+        bind: '0.0.0.0',
+        port: 7000,
+        bindClass: 'wildcard',
+        reachability: 'INTERNET',
+        ownerKind: 'docker-proxy',
+        ownerName: 'docker-proxy',
+      },
+    });
+    const extraService = await prisma.hostService.create({
+      data: {
+        orgId: org.id,
+        serverId: host.id,
+        snapshotId: snapshot.id,
+        kind: 'docker',
+        name: 'web',
+        state: 'running',
+        running: true,
+        ports: [{ proto: 'tcp', port: 7000, containerPort: 80, bind: '0.0.0.0' }],
+      },
+    });
+    try {
+      const out = await inventory.listListenerGroups(org.id, { groupBy: 'type', serverId: host.id }, UNSCOPED);
+      for (const n of out.tree) {
+        const rows = await inventory.listListeners(org.id, { serverId: host.id, ownerKind: n.value }, UNSCOPED);
+        expect({ kind: n.value, total: rows.meta.total }).toEqual({ kind: n.value, total: n.count });
+      }
+      const docker = await inventory.listListeners(org.id, { serverId: host.id, ownerKind: 'docker' }, UNSCOPED);
+      expect(docker.items.some((r) => r.port === 7000)).toBe(false);
+    } finally {
+      await prisma.hostListener.delete({ where: { id: extraListener.id } });
+      await prisma.hostService.delete({ where: { id: extraService.id } });
+    }
   });
 });
 
@@ -678,5 +1013,44 @@ describe('bulk plan — certificate-eligible hosts (DB)', () => {
       scope: UNSCOPED,
     });
     expect(plan.skipped.find((s) => s.id === bootstrapped.id)?.reason).toBe('already_provisioned');
+  });
+});
+
+describe('bulk install fallback credentials', () => {
+  // Typed credentials used to produce no fallback at all, so every host that
+  // needed them failed with "No credentials available for this host".
+  it('turns typed credentials into a usable fallback', async () => {
+    const { typedFallbackAuth } = await import('../bulkBootstrapService.js');
+    expect(typedFallbackAuth({ sshUser: 'ubuntu', password: 'pw' })).toEqual({
+      username: 'ubuntu', password: 'pw', privateKey: undefined, passphrase: undefined,
+    });
+    expect(typedFallbackAuth({ sshUser: 'ubuntu' })).toBeNull();
+  });
+
+  it('retries with them after a certificate OR a saved identity fails — never with what just failed', async () => {
+    const { shouldRetryWithFallback } = await import('../bulkBootstrapService.js');
+    const fb = { password: 'x' };
+    expect(shouldRetryWithFallback({ usedCertificate: true, fallbackAuth: fb, attemptedAuth: {} })).toBe(true);
+    expect(shouldRetryWithFallback({ usedOwnIdentity: true, fallbackAuth: fb, attemptedAuth: {} })).toBe(true);
+    expect(shouldRetryWithFallback({ usedOwnIdentity: true, fallbackAuth: fb, attemptedAuth: fb })).toBe(false);
+    expect(shouldRetryWithFallback({ usedCertificate: true, fallbackAuth: null, attemptedAuth: {} })).toBe(false);
+    expect(shouldRetryWithFallback({ fallbackAuth: fb, attemptedAuth: {} })).toBe(false);
+  });
+});
+
+describe('withContainerNames', () => {
+  it('names a cgroup-attributed container from the container scan, by its 12-char id', async () => {
+    const { withContainerNames } = await import('../postureInventoryService.js');
+    const rows = [
+      { serverId: 's1', ownerKind: 'container', ownerName: 'docker:3f2a9c1b7d4e', ownerRef: '3f2a9c1b7d4e', port: 8080 },
+      { serverId: 's2', ownerKind: 'container', ownerName: 'docker:3f2a9c1b7d4e', ownerRef: '3f2a9c1b7d4e', port: 8080 },
+      { serverId: 's1', ownerKind: 'systemd', ownerName: 'ssh.service', port: 22 },
+    ];
+    const services = [{ serverId: 's1', kind: 'docker', ref: '3f2a9c1b7d4e', name: 'api', detail: 'myorg/api:1.4' }];
+    const out = withContainerNames(rows, services);
+    expect(out[0]).toMatchObject({ containerName: 'api', containerImage: 'myorg/api:1.4' });
+    // Same id on another host is another container.
+    expect(out[1].containerName).toBeUndefined();
+    expect(out[2]).toBe(rows[2]);
   });
 });

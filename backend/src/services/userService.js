@@ -10,6 +10,7 @@ import { parseAvatarDataUrl } from '../utils/avatar.js';
 import { log as auditLog } from './auditService.js';
 import { assertCanActOnRole, getSystemRole, resolveRole, hasPermission } from './roleService.js';
 import { isUnscoped, customerScopeWhere } from '../lib/scope.js';
+import { endOfDayInclusive } from '../utils/dateRange.js';
 
 const ROLE_BRIEF = { select: { id: true, key: true, name: true, isSystem: true, baseRole: true, permissions: true } };
 
@@ -33,7 +34,32 @@ function strip(user) {
   };
 }
 
-export async function listUsers(orgId, { page = 1, pageSize = 25, role, roleId, status, managerId, mfaEnabled, search } = {}) {
+// Whitelisted sort keys — never pass sortBy straight into Prisma's orderBy.
+const USER_SORTABLE = {
+  name: (dir) => ({ name: dir }),
+  email: (dir) => ({ email: dir }),
+  role: (dir) => ({ role: dir }),
+  status: (dir) => ({ status: dir }),
+  lastLogin: (dir) => ({ lastLoginAt: dir }),
+};
+
+export async function listUsers(orgId, {
+  page = 1,
+  pageSize = 25,
+  role,
+  roleId,
+  status,
+  managerId,
+  mfaEnabled,
+  search,
+  locked,
+  lastLoginFrom,
+  lastLoginTo,
+  accessScope,
+  groupId,
+  sortBy,
+  sortDir,
+} = {}) {
   page = parseInt(page, 10) || 1;
   pageSize = Math.min(parseInt(pageSize, 10) || 25, 100);
 
@@ -43,19 +69,42 @@ export async function listUsers(orgId, { page = 1, pageSize = 25, role, roleId, 
   if (status) where.status = status; // caller-supplied status overrides the default filter
   if (managerId) where.managerId = managerId;
   if (mfaEnabled !== undefined) where.mfaEnabled = mfaEnabled;
+  if (accessScope) where.accessScope = accessScope;
+  if (groupId) where.groupMemberships = { some: { groupId } };
+  // Locked = lockedUntil in the future (the same rule the login flow uses).
+  if (locked === true || locked === 'true') where.lockedUntil = { gt: new Date() };
+  else if (locked === false || locked === 'false') {
+    where.OR = (where.OR || []).concat([{ lockedUntil: null }, { lockedUntil: { lte: new Date() } }]);
+  }
+  if (lastLoginFrom || lastLoginTo) {
+    where.lastLoginAt = {};
+    if (lastLoginFrom) where.lastLoginAt.gte = new Date(lastLoginFrom);
+    if (lastLoginTo) where.lastLoginAt.lte = endOfDayInclusive(lastLoginTo);
+  }
   if (search) {
-    where.OR = [
+    const searchOr = [
       { name: { contains: search, mode: 'insensitive' } },
       { email: { contains: search, mode: 'insensitive' } },
     ];
+    // `search` and the locked=false OR both want the top-level OR key — AND
+    // them together instead of letting one clobber the other.
+    if (where.OR) {
+      where.AND = [...(where.AND || []), { OR: where.OR }, { OR: searchOr }];
+      delete where.OR;
+    } else {
+      where.OR = searchOr;
+    }
   }
+
+  const dir = sortDir === 'desc' ? 'desc' : 'asc';
+  const orderBy = USER_SORTABLE[sortBy] ? USER_SORTABLE[sortBy](dir) : { createdAt: 'desc' };
 
   const [items, total] = await Promise.all([
     prisma.user.findMany({
       where,
       skip: (page - 1) * pageSize,
       take: pageSize,
-      orderBy: { createdAt: 'desc' },
+      orderBy,
       include: { manager: { select: { id: true, name: true } }, assignedRole: ROLE_BRIEF },
     }),
     prisma.user.count({ where }),

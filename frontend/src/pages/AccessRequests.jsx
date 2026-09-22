@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { useTerminalWorkspace } from '@/context/TerminalWorkspaceContext';
 import { useSearchParams } from 'react-router-dom';
 import {
@@ -10,7 +10,6 @@ import {
   AlertCircle,
   KeyRound,
   Eye,
-  RefreshCw,
   Zap,
 } from 'lucide-react';
 import DataTable from '@/components/shared/DataTable';
@@ -33,13 +32,13 @@ import {
   getAccessRequest,
   revokeAccessRequest,
 } from '@/services/accessRequestService';
-import { listServers } from '@/services/serverService';
-import { listUsers } from '@/services/userService';
 import { useAuth } from '@/context/AuthContext';
 import { relativeTime, formatDateTime } from '@/utils/time';
 import { ACCESS_REQUEST_STATUS_LABELS } from '@/lib/labels';
 import { PENDING_REVIEWS_EVENT } from '@/hooks/usePendingReviewCount';
 import { can } from '@/lib/permissions';
+import useAutoRefresh from '@/hooks/useAutoRefresh';
+import useUrlFilters from '@/hooks/useUrlFilters';
 import { envAccent } from '@/lib/mobileCard';
 import { CardStatus } from '@/components/mobile/MobileCard';
 import { statusTone } from '@/lib/badgeTones';
@@ -254,33 +253,57 @@ const TABS = [
 
 const STATUSES = ['PENDING', 'APPROVED', 'DENIED', 'EXPIRED', 'REVOKED'];
 
+// A picker may only list users if the caller can, via one of the
+// permissions lookup.js's ACCESS.users checks (backend routes/lookup.js).
+// Without one of these the picker's API call 403s and shows an empty list —
+// so the filter itself is hidden rather than offered and failing silently.
+function canListUsers(user) {
+  return (
+    can(user, 'users.view') ||
+    can(user, 'access_requests.view_all') ||
+    can(user, 'sessions.view_all') ||
+    can(user, 'certificates.view_all') ||
+    can(user, 'audit.view')
+  );
+}
+
+const AR_FILTER_DEFAULTS = {
+  tab: 'mine',
+  status: '',
+  server: '',
+  requester: '',
+  reviewer: '',
+  customer: '',
+  protocol: '',
+  environment: '',
+  startDate: '',
+  endDate: '',
+  q: '',
+  sortBy: 'createdAt',
+  sortDir: 'desc',
+  page: '1',
+};
+
 function AccessRequests() {
   const { user } = useAuth();
   const { openTab } = useTerminalWorkspace();
   const isAdmin = can(user, 'access_requests.view_all');
+  const canPickUsers = canListUsers(user);
   const tabs = isAdmin ? [...TABS, { key: 'all', label: 'All' }] : TABS;
 
-  // ?tab=to-review (Activity's "To review" tile) opens that tab.
-  const [activeTab, setActiveTab] = useState(() => {
-    const t = new URLSearchParams(window.location.search).get('tab');
-    return t === 'to-review' || (t === 'all' && isAdmin) ? t : 'mine';
-  });
+  const [f, setF] = useUrlFilters(AR_FILTER_DEFAULTS);
+  // ?tab=to-review (Activity's "To review" tile) / ?tab=all opens that tab —
+  // re-validated on every URL change (not just first render), and falls back
+  // to 'mine' for a tab this viewer isn't allowed (or doesn't exist).
+  const activeTab = f.tab === 'to-review' || (f.tab === 'all' && isAdmin) ? f.tab : 'mine';
+  const page = parseInt(f.page, 10) || 1;
+
   const [requests, setRequests] = useState([]);
   const [total, setTotal] = useState(0);
   const [pendingReviewCount, setPendingReviewCount] = useState(0);
-  const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(20);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
-  const [statusFilter, setStatusFilter] = useState('');
-  const [serverFilter, setServerFilter] = useState('');
-  const [requesterFilter, setRequesterFilter] = useState('');
-  const [protocolFilter, setProtocolFilter] = useState('');
-  const [environmentFilter, setEnvironmentFilter] = useState('');
-  const [startDate, setStartDate] = useState('');
-  const [endDate, setEndDate] = useState('');
-  const [servers, setServers] = useState([]);
-  const [requesters, setRequesters] = useState([]);
 
   const [selectedId, setSelectedId] = useState(null);
   const [detailOpen, setDetailOpen] = useState(false);
@@ -316,18 +339,24 @@ function AccessRequests() {
     }
   }, [searchParams, setSearchParams]);
 
+  const loadedRef = useRef(false);
   const fetchRequests = useCallback(async () => {
-    setLoading(true);
+    if (!loadedRef.current) setLoading(true);
     setError('');
     try {
       const params = { tab: activeTab, page, limit: pageSize };
-      if (statusFilter) params.status = statusFilter;
-      if (serverFilter) params.serverId = serverFilter;
-      if (requesterFilter) params.requesterId = requesterFilter;
-      if (protocolFilter) params.protocol = protocolFilter;
-      if (environmentFilter) params.environment = environmentFilter;
-      if (startDate) params.startDate = startDate;
-      if (endDate) params.endDate = endDate;
+      if (f.status) params.status = f.status;
+      if (f.server) params.serverId = f.server;
+      if (f.requester) params.requesterId = f.requester;
+      if (f.reviewer) params.reviewerId = f.reviewer;
+      if (f.customer) params.customerId = f.customer;
+      if (f.protocol) params.protocol = f.protocol;
+      if (f.environment) params.environment = f.environment;
+      if (f.q) params.search = f.q;
+      if (f.sortBy) params.sortBy = f.sortBy;
+      if (f.sortDir) params.sortDir = f.sortDir;
+      if (f.startDate) params.startDate = f.startDate;
+      if (f.endDate) params.endDate = f.endDate;
       const resp = await listAccessRequests(params);
       const items = resp.data?.items || resp.data || [];
       const metaTotal = resp.meta?.total ?? (Array.isArray(resp.data) ? resp.data.length : 0);
@@ -337,33 +366,25 @@ function AccessRequests() {
       setError(err.response?.data?.error?.message || err.message || 'Failed to load access requests.');
     } finally {
       setLoading(false);
+      loadedRef.current = true;
     }
   }, [
     activeTab,
     page,
     pageSize,
-    statusFilter,
-    serverFilter,
-    requesterFilter,
-    protocolFilter,
-    environmentFilter,
-    startDate,
-    endDate,
+    f.status,
+    f.server,
+    f.requester,
+    f.reviewer,
+    f.customer,
+    f.protocol,
+    f.environment,
+    f.q,
+    f.sortBy,
+    f.sortDir,
+    f.startDate,
+    f.endDate,
   ]);
-
-  // Lightweight option lists for the filter drawer's searchable selects — a
-  // page-scoped fetch (like Policies' customer list), not the full inventory.
-  useEffect(() => {
-    listServers({ page: 1, pageSize: 200 })
-      .then((d) => setServers(d.items || []))
-      .catch(() => {});
-    if (isAdmin) {
-      listUsers({ page: 1, pageSize: 200 })
-        .then((d) => setRequesters(d.items || []))
-        .catch(() => {});
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isAdmin]);
 
   const fetchPendingReviewCount = useCallback(async () => {
     try {
@@ -378,16 +399,27 @@ function AccessRequests() {
   useEffect(() => { fetchRequests(); }, [fetchRequests]);
   useEffect(() => { fetchPendingReviewCount(); }, [fetchPendingReviewCount]);
 
+  // Pending requests change on their own (another reviewer acts, one
+  // expires) — gentle 30s polling on top of the manual Refresh button.
+  const loadAll = useCallback(async () => {
+    await Promise.all([fetchRequests(), fetchPendingReviewCount()]);
+  }, [fetchRequests, fetchPendingReviewCount]);
+  const { refresh, refreshing, lastUpdated } = useAutoRefresh(loadAll, { interval: 30000 });
+
   const handleTabChange = (key) => {
-    setActiveTab(key);
-    setPage(1);
-    setStatusFilter('');
-    setServerFilter('');
-    setRequesterFilter('');
-    setProtocolFilter('');
-    setEnvironmentFilter('');
-    setStartDate('');
-    setEndDate('');
+    setF({
+      tab: key,
+      page: '1',
+      status: '',
+      server: '',
+      requester: '',
+      reviewer: '',
+      customer: '',
+      protocol: '',
+      environment: '',
+      startDate: '',
+      endDate: '',
+    });
   };
 
   const openDetail = (id) => {
@@ -437,27 +469,13 @@ function AccessRequests() {
         ...STATUSES.map((s) => ({ value: s, label: ACCESS_REQUEST_STATUS_LABELS[s] || s })),
       ],
     },
-    {
-      key: 'server',
-      label: 'Server',
-      placeholder: 'All servers',
-      searchable: true,
-      options: [
-        { value: '', label: 'All servers' },
-        ...servers.map((s) => ({ value: s.id, label: s.displayName || s.hostname })),
-      ],
-    },
-    ...(activeTab !== 'mine'
-      ? [{
-          key: 'requester',
-          label: 'Requester',
-          placeholder: 'All requesters',
-          searchable: true,
-          options: [
-            { value: '', label: 'All requesters' },
-            ...requesters.map((u) => ({ value: u.id, label: u.name || u.email })),
-          ],
-        }]
+    { key: 'server', label: 'Server', type: 'entity', entity: 'servers', placeholder: 'All servers' },
+    { key: 'customer', label: 'Customer', type: 'entity', entity: 'customers', placeholder: 'All customers' },
+    ...(activeTab !== 'mine' && canPickUsers
+      ? [{ key: 'requester', label: 'Requester', type: 'entity', entity: 'users', placeholder: 'All requesters' }]
+      : []),
+    ...(activeTab === 'all' && canPickUsers
+      ? [{ key: 'reviewer', label: 'Reviewer', type: 'entity', entity: 'users', placeholder: 'All reviewers' }]
       : []),
     {
       key: 'protocol',
@@ -485,23 +503,29 @@ function AccessRequests() {
     { key: 'endDate', label: 'Created to', type: 'date' },
   ];
   const filterValues = {
-    status: statusFilter,
-    server: serverFilter,
-    requester: requesterFilter,
-    protocol: protocolFilter,
-    environment: environmentFilter,
-    startDate,
-    endDate,
+    status: f.status,
+    server: f.server,
+    customer: f.customer,
+    requester: f.requester,
+    reviewer: f.reviewer,
+    protocol: f.protocol,
+    environment: f.environment,
+    startDate: f.startDate,
+    endDate: f.endDate,
   };
   const applyFilters = (next) => {
-    setStatusFilter(next.status ?? '');
-    setServerFilter(next.server ?? '');
-    setRequesterFilter(next.requester ?? '');
-    setProtocolFilter(next.protocol ?? '');
-    setEnvironmentFilter(next.environment ?? '');
-    setStartDate(next.startDate ?? '');
-    setEndDate(next.endDate ?? '');
-    setPage(1);
+    setF({
+      status: next.status ?? '',
+      server: next.server ?? '',
+      customer: next.customer ?? '',
+      requester: next.requester ?? '',
+      reviewer: next.reviewer ?? '',
+      protocol: next.protocol ?? '',
+      environment: next.environment ?? '',
+      startDate: next.startDate ?? '',
+      endDate: next.endDate ?? '',
+      page: '1',
+    });
   };
 
   const columns = [
@@ -524,8 +548,11 @@ function AccessRequests() {
     ...(activeTab !== 'mine'
       ? [{
           key: 'requester',
+          // Not a backend-whitelisted sort column (server sorts createdAt |
+          // status | requestedDuration | server) — sortable:false so the
+          // header never sends a sortBy the API would 400 on.
+          sortable: false,
           label: 'Requester',
-          sortable: true,
           searchAccessor: (r) => r.requester?.name || r.requester?.email || '',
           mobile: {
             slot: 'secondary',
@@ -538,6 +565,7 @@ function AccessRequests() {
     ...(activeTab === 'mine'
       ? [{
           key: 'reviewer',
+          sortable: false,
           label: 'Reviewer',
           mobile: 'hidden',
           render: (r) => (
@@ -549,6 +577,7 @@ function AccessRequests() {
       : []),
     {
       key: 'reason',
+      sortable: false,
       label: 'Reason',
       hideBelow: 'md',
       // Phones: in the request details (tap the card).
@@ -560,8 +589,11 @@ function AccessRequests() {
       ),
     },
     {
-      key: 'duration',
+      // Backend sort column is `requestedDuration` — key matches it directly
+      // so clicking the header sends a sortBy the API already whitelists.
+      key: 'requestedDuration',
       label: 'Duration',
+      sortable: true,
       mobile: 'hidden',
       render: (r) => (
         <span className="text-sm text-muted-foreground">{formatDuration(r.requestedDuration)}</span>
@@ -626,8 +658,10 @@ function AccessRequests() {
         title="Access Requests"
         subtitle="Request temporary access to servers or review pending requests."
         helpKey="access-requests"
+        onRefresh={refresh}
+        refreshing={refreshing}
+        lastUpdated={lastUpdated}
         actions={[
-          { key: 'refresh', label: 'Refresh', icon: RefreshCw, variant: 'outline', onClick: () => fetchRequests(), disabled: loading, spin: loading },
           { key: 'new', label: 'New request', icon: Plus, onClick: () => setFormOpen(true) },
         ]}
       />
@@ -678,6 +712,13 @@ function AccessRequests() {
           ) : undefined
         }
         searchPlaceholder="Search servers or requesters..."
+        initialSearch={f.q}
+        onSearchChange={(value) => setF({ q: value, page: '1' })}
+        serverSort={{
+          sortKey: f.sortBy,
+          sortDir: f.sortDir,
+          onSortChange: (key, dir) => setF({ sortBy: key, sortDir: dir, page: '1' }),
+        }}
         filterDefs={filterDefs}
         filterValues={filterValues}
         onFilterChange={applyFilters}
@@ -693,9 +734,9 @@ function AccessRequests() {
         serverPagination={{
           page,
           total,
-          onPageChange: setPage,
+          onPageChange: (p) => setF({ page: String(p) }),
           pageSize,
-          onPageSizeChange: (size) => { setPageSize(size); setPage(1); },
+          onPageSizeChange: (size) => { setPageSize(size); setF({ page: '1' }); },
         }}
       />
 

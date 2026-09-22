@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   Server,
@@ -35,6 +35,7 @@ import { QUICK_ACTIONS, isQuickActionVisible } from '@/lib/commands';
 import { cn } from '@/lib/utils';
 import useIsMobile from '@/hooks/useIsMobile';
 import { SectionTitle, ViewAllLink } from '@/components/mobile/MobileNavList';
+import useAutoRefresh from '@/hooks/useAutoRefresh';
 
 
 /**
@@ -132,9 +133,15 @@ function Dashboard() {
 
   const [auditItems, setAuditItems] = useState([]);
   const [auditLoading, setAuditLoading] = useState(true);
+  // Widgets that own their own fetch (My access, Needs attention, Recent
+  // connections) reload when this changes — one Refresh click for everything
+  // on the page, not just the stats fetched here.
+  const [refreshKey, setRefreshKey] = useState(0);
+  const statsLoadedRef = useRef(false);
+  const auditLoadedRef = useRef(false);
 
   const loadStats = useCallback(async () => {
-    setStatsLoading(true);
+    if (!statsLoadedRef.current) setStatsLoading(true);
     try {
       const [srvStats, sessResp, reqResp, certResp] = await Promise.allSettled([
         getServerStats(),
@@ -160,6 +167,7 @@ function Dashboard() {
       // stats degrade gracefully
     } finally {
       setStatsLoading(false);
+      statsLoadedRef.current = true;
     }
   }, [allSessions, allCerts]);
 
@@ -168,7 +176,7 @@ function Dashboard() {
       setAuditLoading(false);
       return;
     }
-    setAuditLoading(true);
+    if (!auditLoadedRef.current) setAuditLoading(true);
     try {
       const resp = await listAudit({ limit: 10, page: 1 });
       setAuditItems(resp.data?.items || []);
@@ -176,8 +184,17 @@ function Dashboard() {
       // ignore
     } finally {
       setAuditLoading(false);
+      auditLoadedRef.current = true;
     }
   }, [isAdmin]);
+
+  // One function reloads everything visible: the stat cards, the audit feed,
+  // and (via refreshKey) every self-fetching widget below.
+  const loadDashboard = useCallback(async () => {
+    await Promise.all([loadStats(), loadAudit()]);
+    setRefreshKey((k) => k + 1);
+  }, [loadStats, loadAudit]);
+  const { refresh, refreshing, lastUpdated } = useAutoRefresh(loadDashboard, { interval: 60000 });
 
   useEffect(() => {
     loadStats();
@@ -203,7 +220,11 @@ function Dashboard() {
         icon={LayoutDashboard}
         title="Dashboard"
         subtitle="Overview of your infrastructure and access management."
-      helpKey="dashboard" />
+        helpKey="dashboard"
+        onRefresh={refresh}
+        refreshing={refreshing}
+        lastUpdated={lastUpdated}
+      />
 
       {/* Phones: the four metrics as a compact 2×2 grid. */}
       {isMobile && (
@@ -328,7 +349,7 @@ function Dashboard() {
           in the app; handing out directions from it instead of a button is
           how coverage stays where it is. */}
       {showPosture && (
-        <NeedsAttentionWidget onInstall={canOnboard ? () => setBulkInstallOpen(true) : undefined} />
+        <NeedsAttentionWidget onInstall={canOnboard ? () => setBulkInstallOpen(true) : undefined} refreshKey={refreshKey} />
       )}
 
       {canOnboard && (
@@ -343,7 +364,7 @@ function Dashboard() {
           quick action for this role, Recent connections takes the row. */}
       <div className={cn('grid grid-cols-1 gap-4', showQuickActions && 'lg:grid-cols-3')}>
         <div className={cn(showQuickActions && 'lg:col-span-2')}>
-          <RecentConnectionsWidget />
+          <RecentConnectionsWidget refreshKey={refreshKey} />
         </div>
         {showQuickActions && (
           <div>
@@ -355,7 +376,7 @@ function Dashboard() {
       {/* Bottom row: My access + Recent activity (audit.view). Alone, My
           access spans the row and lays its servers out in two columns. */}
       <div className={cn('grid grid-cols-1 gap-4', isAdmin && 'lg:grid-cols-2')}>
-        <MyAccessWidget wide={!isAdmin} />
+        <MyAccessWidget wide={!isAdmin} refreshKey={refreshKey} />
 
         {isAdmin && (
           <div className="flex flex-col rounded-lg border border-border bg-card p-5 max-md:rounded-none max-md:border-0 max-md:bg-transparent max-md:p-0">

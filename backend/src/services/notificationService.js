@@ -1,6 +1,7 @@
 import prisma from '../config/db.js';
 import ApiError from '../utils/ApiError.js';
 import logger from '../utils/logger.js';
+import { endOfDayInclusive } from '../utils/dateRange.js';
 
 // ---------------------------------------------------------------------------
 // Public API
@@ -56,7 +57,7 @@ export async function create({ orgId, userId, type, title, body, metadata = {} }
  * @param {number}  [params.limit=25]
  * @returns {Promise<{ items: object[], total: number, page: number, limit: number }>}
  */
-export async function list({ userId, isRead, page = 1, limit = 25 }) {
+export async function list({ userId, isRead, type, createdFrom, createdTo, page = 1, limit = 25 }) {
   if (!userId) throw new ApiError(400, 'userId is required');
 
   page = parseInt(page, 10) || 1;
@@ -65,6 +66,12 @@ export async function list({ userId, isRead, page = 1, limit = 25 }) {
   const where = { userId };
   if (isRead !== undefined && isRead !== null) {
     where.isRead = isRead === true || isRead === 'true';
+  }
+  if (type) where.type = type;
+  if (createdFrom || createdTo) {
+    where.createdAt = {};
+    if (createdFrom) where.createdAt.gte = new Date(createdFrom);
+    if (createdTo) where.createdAt.lte = endOfDayInclusive(createdTo);
   }
 
   const [items, total] = await Promise.all([

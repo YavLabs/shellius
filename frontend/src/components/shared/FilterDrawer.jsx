@@ -4,6 +4,7 @@ import { X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import SearchableSelect from '@/components/ui/SearchableSelect';
+import EntityPicker from '@/components/shared/EntityPicker';
 import BottomSheet from '@/components/mobile/BottomSheet';
 import useIsMobile from '@/hooks/useIsMobile';
 import { cn } from '@/lib/utils';
@@ -27,7 +28,9 @@ import { appliedFilterCount, clearedFilterValues } from '@/lib/filters';
  * same controls, same draft, same buttons.
  *
  * @param {Array} defs   [{ key, label, placeholder, options, type, searchable }]
- *                       type: 'select' (default) | 'text' | 'date'
+ *                       type: 'select' (default) | 'text' | 'date' |
+ *                       'entity' (+ entity: 'servers'|'customers'|'users' —
+ *                       searches the API; not capped at 100)
  * @param {object} values current committed values, keyed by def.key
  * @param {Function} onApply called with the draft when Apply is pressed
  */
@@ -76,6 +79,14 @@ function FilterDrawer({ open, onClose, defs = [], values = {}, onApply, title = 
               value={draft[def.key] ?? ''}
               onChange={(e) => set(def.key, e.target.value)}
               className="flex h-9 w-full rounded-md border border-input bg-background px-3 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
+            />
+          ) : def.type === 'entity' ? (
+            <EntityPicker
+              className="w-full"
+              kind={def.entity}
+              value={draft[def.key] ?? ''}
+              onChange={(v) => set(def.key, v)}
+              anyLabel={def.placeholder || `All ${def.label.toLowerCase()}`}
             />
           ) : def.type === 'text' ? (
             <Input

@@ -51,6 +51,25 @@ export function serviceLabel(listener) {
 
 
 /**
+ * Human labels for a finding's `code` — the Finding-type filter's options are
+ * built from whatever codes the fleet actually has (getSummary's `codes`
+ * facet), so a code Shellius has never produced yet still renders as itself
+ * rather than disappearing from the list.
+ */
+const CODE_LABELS = {
+  DOCKER_FIREWALL_BYPASS: 'Docker bypasses the host firewall',
+  SENSITIVE_PORT_EXPOSED: 'Sensitive port exposed',
+  PORT_EXPOSED: 'Port exposed',
+  FIREWALL_INACTIVE: 'Firewall inactive',
+  STALE_FIREWALL_RULE: 'Stale firewall rule',
+  EXPECTED_PUBLIC: 'Marked as expected',
+};
+
+export function codeLabel(code) {
+  return CODE_LABELS[code] || code;
+}
+
+/**
  * Finding codes that declaring a port expected actually resolves.
  *
  * Mirrors SUPERSEDED_CODES in backend/src/services/postureExpectedPortService.js

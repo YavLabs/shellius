@@ -1,3 +1,4 @@
+import { useCallback, useState } from 'react';
 import { Cable, Lock, Server, SquareTerminal, Zap, ChevronRight } from 'lucide-react';
 import PageHeader from '@/components/common/PageHeader';
 import { NavGroup, NavRow, SearchLauncher } from '@/components/mobile/MobileNavList';
@@ -7,6 +8,7 @@ import { useQuickConnect } from '@/context/QuickConnectContext';
 import { useCommandPalette } from '@/context/CommandPaletteContext';
 import { useTerminalWorkspace } from '@/context/TerminalWorkspaceContext';
 import { canAccessRoute } from '@/lib/commands';
+import useAutoRefresh from '@/hooks/useAutoRefresh';
 
 /**
  * Connect — the phone bottom navigation's "Connect" tab: everything about
@@ -25,9 +27,23 @@ function ConnectHub() {
   const canServers = canAccessRoute(user, '/servers');
   const canHosts = canAccessRoute(user, '/my-hosts');
 
+  // RecentConnections owns its own fetch; bumping this key makes it reload.
+  const [refreshKey, setRefreshKey] = useState(0);
+  const load = useCallback(async () => {
+    setRefreshKey((k) => k + 1);
+  }, []);
+  const { refresh, refreshing, lastUpdated } = useAutoRefresh(load);
+
   return (
     <div className="space-y-6 p-6">
-      <PageHeader icon={Cable} title="Connect" subtitle="Get onto a server, one of your hosts or any address." />
+      <PageHeader
+        icon={Cable}
+        title="Connect"
+        subtitle="Get onto a server, one of your hosts or any address."
+        onRefresh={refresh}
+        refreshing={refreshing}
+        lastUpdated={lastUpdated}
+      />
 
       <SearchLauncher onClick={openPalette} placeholder="Search servers and hosts…" />
 
@@ -62,7 +78,7 @@ function ConnectHub() {
       </NavGroup>
 
       {/* Its "View all" leads to the full Recent connections page. */}
-      <RecentConnections variant="widget" showQuickConnect={false} />
+      <RecentConnections variant="widget" showQuickConnect={false} refreshKey={refreshKey} />
     </div>
   );
 }

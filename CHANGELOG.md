@@ -9,6 +9,90 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 Tracked here as work lands on `main`; moved into a dated section on release
 (`node scripts/version.mjs bump <major|minor|patch>`).
 
+## [1.7.5] - 2026-09-22
+
+### Security
+
+- **Services & ports leaked across customers.** A user limited to some customers could see another customer's entire port inventory by putting that customer's ID in the filter. The Type/Protocol filter counts also included every customer's hosts. Both are fixed, with tests.
+
+### Fixed
+
+- **Bulk install: the results list showed hosts that were never selected.** When a run finished, the page behind it reloaded, and the installer quietly rebuilt its plan. The results are now fixed at the moment you start.
+- **Bulk install: typed credentials never worked.** A password typed instead of a saved identity was never used as a fallback, so every host that needed it failed with "No credentials available for this host". A host whose own saved identity fails now also falls back to the credentials you enter.
+- **"Waiting for its first report" looked stuck.** Its icon didn't spin, and nothing re-checked. The Server page, the Servers list and Customer Details now re-check every 15 s while a collector install is pending, and there is a **Check now** button.
+- **The Resources panel (CPU, memory, disk, load) was always empty on real hosts.** No collector ever measured them. Collector 1.1.2 does. Until a host has it, the panel says why and offers the update.
+- **Ports & services was hard to read.** It is now:
+  - **Service:** a readable name, plus the recognised protocol and where it's defined.
+  - **Type:** systemd, Docker, pm2, Podman or process.
+  - **Port** and **Protocol** as separate columns.
+- **Other ports fixes:**
+  - Containers show their own name and image.
+  - The process name is stored.
+  - "Not listening" is shown as a chip like the other reachability values.
+- **Search boxes did nothing** on Access Requests, Sessions, Certificates, Users and Policies. Tables that page on the server also sorted only the current page. Both now run on the server.
+- **Server, customer and user filters were capped at 100 entries.** They now search as you type.
+- **Filters were lost on refresh or when following a link.** They now live in the URL. The Dashboard's "active sessions" / "active certificates" links and Customer Details' "view servers" link now open already filtered.
+- **Date "to" filters left out the day you picked.** That day is now included.
+- **Other bugs:**
+  - Policies' pager used the wrong page size.
+  - The Audit log's resource and action lists were wrong; they now come from your data.
+  - The Services export ignored the State filter and exported nothing for Container-internal.
+  - The Posture tab's Filters button could disappear.
+  - Posture section counts ignored filters.
+  - Certificates' "expiring soon" counted only the current page.
+  - The Sessions "Active" tab faked paging.
+  - Reviewers saw an empty Requester filter.
+
+- Services & ports export stopped at 200 rows.
+- Services & ports could show a port twice under a type or reachability filter.
+- Grouped lists no longer load the flat list first and then flash into groups.
+- **Phones:**
+  - The list toolbar wraps instead of cutting Sort to "S…".
+  - Posture search gets its own row.
+  - Service cards lead with the service name.
+  - Server cards show the collector state.
+- The backend test suite exits on its own. Redis, queue and database connections are closed after each file.
+
+### Added
+
+- **Retry failed hosts** in bulk install: one host or all of them, with the same method or with different credentials.
+- **A Refresh button on every page.** Access Requests and Sessions also refresh on their own every 30 s, and the Dashboard every 60 s.
+- **Detailed filters on every list that shows data:**
+  - **Services & ports:** server, type, port / port range, findings.
+  - **Posture:** server, finding type, last seen, search.
+  - **Server Posture tab:** type, bind, severity.
+  - **Servers:** protocol, OS, active, last check.
+  - **Customer Details:** the standard filter drawer.
+  - **Customers:** paging, search, filters.
+  - **Users:** locked, last login, scope, group.
+  - **Policies:** org-wide, environment, subject.
+  - **Access Requests:** reviewer, customer.
+  - **Sessions:** customer, client IP.
+  - **Certificates:** customer.
+  - **Audit log:** actor picker, IP, resource.
+  - **Keystore:** linked key, usage, expired, unused.
+  - **Notifications:** paging, type, date.
+- **Posture collector 1.1.2.**
+- **Nested grouping** on Servers, Posture, Services & ports and Keystore → Export to Servers:
+  - Use the **Group** button beside Filters to add up to 3 levels, then reorder or remove them.
+  - Groups are counted over every matching row, not just one page. Filters and search still apply.
+  - Groups are collapsible and show their counts. A group loads its rows, paged, only when opened.
+  - The grouping is saved in the URL and remembered per list.
+- **Column sorting on Services & ports**, over all matching rows. The sort is kept in the URL and used by the export.
+- **Audit log search by any resource's name:** policies, groups, roles, shared Keystore identities and keys, deployments, access requests, certificates, sessions and more. These resources also get labels in the list. Personal vault items are never looked up by name. Deletes now save the resource's name in the audit entry, so deleted resources stay searchable by name. This applies from this release on.
+
+### Changed
+
+- **Keystore → Export to Servers is one list:**
+  - It no longer switches between a batch view and a flat view when a filter is applied.
+  - It opens grouped by export run. Each run's header shows its summary, and retry and output are row actions.
+  - Filters always apply, and the list covers every run, not just the latest 20.
+
+### Upgrade notes
+
+- **Migrations:** `20260929000000_listener_process_name` adds `host_listeners.process_name`.
+- Reinstall collectors to get 1.1.2 and resource metrics. Hosts on older versions are pre-selected under **needs a reinstall**.
+
 ## [1.7.4] - 2026-09-21
 
 ### Fixed

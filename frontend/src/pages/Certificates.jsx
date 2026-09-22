@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import {
   Eye,
   Download,
@@ -21,12 +21,12 @@ import { Button } from '@/components/ui/button';
 import FilteredEmptyState from '@/components/shared/FilteredEmptyState';
 import { appliedFilterCount, clearedFilterValues } from '@/lib/filters';
 import { listCertificates, revokeCertificate } from '@/services/certificateService';
-import { listServers } from '@/services/serverService';
-import { listUsers } from '@/services/userService';
 import { useAuth } from '@/context/AuthContext';
 import { formatDateTime } from '@/utils/time';
 import { CERT_STATUS_LABELS } from '@/lib/labels';
 import { can } from '@/lib/permissions';
+import useAutoRefresh from '@/hooks/useAutoRefresh';
+import useUrlFilters from '@/hooks/useUrlFilters';
 import { envAccent } from '@/lib/mobileCard';
 import { certificateStatusTone } from '@/lib/badgeTones';
 import { CardStatus } from '@/components/mobile/MobileCard';
@@ -154,73 +154,74 @@ function CertDetailModal({ cert, open, onClose, onDownload }) {
 
 const STATUSES = ['ACTIVE', 'REVOKED', 'EXPIRED'];
 
+const CERT_FILTER_DEFAULTS = {
+  status: '',
+  server: '',
+  customer: '',
+  user: '',
+  environment: '',
+  certType: '',
+  startDate: '',
+  endDate: '',
+  q: '',
+  sortBy: 'createdAt',
+  sortDir: 'desc',
+  page: '1',
+};
+
 function Certificates() {
   const { user } = useAuth();
   const canAdmin = can(user, 'certificates.revoke');
 
+  const [f, setF] = useUrlFilters(CERT_FILTER_DEFAULTS);
+  const page = parseInt(f.page, 10) || 1;
+
   const [certs, setCerts] = useState([]);
   const [total, setTotal] = useState(0);
-  const [page, setPage] = useState(1);
+  // Server-side, independent of the current page/filters (certificateService.list) —
+  // was computed from `certs` (the current page only), so paging or filtering
+  // silently changed the number.
+  const [expiringSoonCount, setExpiringSoonCount] = useState(0);
   const [pageSize, setPageSize] = useState(20);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
-
-  const [statusFilter, setStatusFilter] = useState('');
-  const [serverFilter, setServerFilter] = useState('');
-  const [userFilter, setUserFilter] = useState('');
-  const [environmentFilter, setEnvironmentFilter] = useState('');
-  const [certTypeFilter, setCertTypeFilter] = useState('');
-  const [startDate, setStartDate] = useState('');
-  const [endDate, setEndDate] = useState('');
-  const [servers, setServers] = useState([]);
-  const [issuers, setIssuers] = useState([]);
 
   const [detailCert, setDetailCert] = useState(null);
   const [revokeTarget, setRevokeTarget] = useState(null);
   const [revoking, setRevoking] = useState(false);
 
+  const loadedRef = useRef(false);
   const fetchCerts = useCallback(async () => {
-    setLoading(true);
+    if (!loadedRef.current) setLoading(true);
     setError('');
     try {
-      const params = { page, limit: pageSize };
-      if (statusFilter) params.status = statusFilter;
-      if (serverFilter) params.serverId = serverFilter;
-      if (userFilter) params.userId = userFilter;
-      if (environmentFilter) params.environment = environmentFilter;
-      if (certTypeFilter) params.certType = certTypeFilter;
-      if (startDate) params.startDate = startDate;
-      if (endDate) params.endDate = endDate;
+      const params = { page, limit: pageSize, sortBy: f.sortBy, sortDir: f.sortDir };
+      if (f.status) params.status = f.status;
+      if (f.server) params.serverId = f.server;
+      if (f.customer) params.customerId = f.customer;
+      if (f.user) params.userId = f.user;
+      if (f.environment) params.environment = f.environment;
+      if (f.certType) params.certType = f.certType;
+      if (f.q) params.search = f.q;
+      if (f.startDate) params.startDate = f.startDate;
+      if (f.endDate) params.endDate = f.endDate;
       const resp = await listCertificates(params);
       const items = resp.data?.items || resp.data || [];
       const metaTotal = resp.meta?.total ?? resp.data?.total ?? items.length;
       setCerts(items);
       setTotal(metaTotal);
+      setExpiringSoonCount(resp.data?.expiringSoonCount ?? 0);
     } catch (err) {
       setError(err.response?.data?.error?.message || err.message || 'Failed to load certificates');
     } finally {
       setLoading(false);
+      loadedRef.current = true;
     }
-  }, [page, pageSize, statusFilter, serverFilter, userFilter, environmentFilter, certTypeFilter, startDate, endDate]);
+  }, [page, pageSize, f.status, f.server, f.customer, f.user, f.environment, f.certType, f.q, f.sortBy, f.sortDir, f.startDate, f.endDate]);
 
   useEffect(() => { fetchCerts(); }, [fetchCerts]);
 
-  // Lightweight option lists for the filter drawer.
-  useEffect(() => {
-    listServers({ page: 1, pageSize: 200 })
-      .then((d) => setServers(d.items || []))
-      .catch(() => {});
-    listUsers({ page: 1, pageSize: 200 })
-      .then((d) => setIssuers(d.items || []))
-      .catch(() => {});
-  }, []);
-
-  // Count certs expiring within 24h
-  const expiringSoonCount = certs.filter((c) => {
-    if (c.status !== 'ACTIVE') return false;
-    const ms = msUntil(c.validBefore);
-    return ms !== null && ms > 0 && ms < ONE_DAY_MS;
-  }).length;
+  const { refresh, refreshing, lastUpdated } = useAutoRefresh(fetchCerts);
 
   const handleDownload = (cert) => {
     if (!cert.signedCert) return;
@@ -253,26 +254,9 @@ function Certificates() {
         ...STATUSES.map((s) => ({ value: s, label: CERT_STATUS_LABELS[s] || s })),
       ],
     },
-    {
-      key: 'server',
-      label: 'Server',
-      placeholder: 'All servers',
-      searchable: true,
-      options: [
-        { value: '', label: 'All servers' },
-        ...servers.map((s) => ({ value: s.id, label: s.displayName || s.hostname })),
-      ],
-    },
-    {
-      key: 'user',
-      label: 'Issued to',
-      placeholder: 'All users',
-      searchable: true,
-      options: [
-        { value: '', label: 'All users' },
-        ...issuers.map((u) => ({ value: u.id, label: u.name || u.email })),
-      ],
-    },
+    { key: 'server', label: 'Server', type: 'entity', entity: 'servers', placeholder: 'All servers' },
+    { key: 'customer', label: 'Customer', type: 'entity', entity: 'customers', placeholder: 'All customers' },
+    { key: 'user', label: 'Issued to', type: 'entity', entity: 'users', placeholder: 'All users' },
     {
       key: 'certType',
       label: 'Type',
@@ -299,23 +283,27 @@ function Certificates() {
     { key: 'endDate', label: 'Valid until to', type: 'date' },
   ];
   const filterValues = {
-    status: statusFilter,
-    server: serverFilter,
-    user: userFilter,
-    certType: certTypeFilter,
-    environment: environmentFilter,
-    startDate,
-    endDate,
+    status: f.status,
+    server: f.server,
+    customer: f.customer,
+    user: f.user,
+    certType: f.certType,
+    environment: f.environment,
+    startDate: f.startDate,
+    endDate: f.endDate,
   };
   const applyFilters = (next) => {
-    setStatusFilter(next.status ?? '');
-    setServerFilter(next.server ?? '');
-    setUserFilter(next.user ?? '');
-    setCertTypeFilter(next.certType ?? '');
-    setEnvironmentFilter(next.environment ?? '');
-    setStartDate(next.startDate ?? '');
-    setEndDate(next.endDate ?? '');
-    setPage(1);
+    setF({
+      status: next.status ?? '',
+      server: next.server ?? '',
+      customer: next.customer ?? '',
+      user: next.user ?? '',
+      certType: next.certType ?? '',
+      environment: next.environment ?? '',
+      startDate: next.startDate ?? '',
+      endDate: next.endDate ?? '',
+      page: '1',
+    });
   };
 
   const columns = [
@@ -369,6 +357,7 @@ function Certificates() {
     },
     {
       key: 'principals',
+      sortable: false,
       label: 'Principals',
       hideBelow: 'md',
       mobile: 'hidden',
@@ -383,6 +372,18 @@ function Certificates() {
           </span>
         );
       },
+    },
+    {
+      // certType is filterable (the Type filter def above) but wasn't
+      // actually shown anywhere on the row.
+      key: 'certType',
+      sortable: false,
+      label: 'Type',
+      hideBelow: 'md',
+      mobile: 'hidden',
+      render: (r) => (
+        <span className="text-xs text-muted-foreground">{r.certType || r.type || '-'}</span>
+      ),
     },
     {
       key: 'validBefore',
@@ -428,13 +429,17 @@ function Certificates() {
         icon={FileKey}
         title="Certificates"
         subtitle="Short-lived SSH certificates issued by the Shellius CA."
-      helpKey="certificates" />
+        helpKey="certificates"
+        onRefresh={refresh}
+        refreshing={refreshing}
+        lastUpdated={lastUpdated}
+      />
 
       {expiringSoonCount > 0 && (
         <div className="flex items-center gap-3 rounded-md border border-amber-500/40 bg-amber-500/10 px-4 py-3">
           <AlertTriangle className="h-4 w-4 shrink-0 text-amber-600 dark:text-amber-400" />
           <p className="text-sm text-amber-700 dark:text-amber-300">
-            {expiringSoonCount} of your certificate{expiringSoonCount === 1 ? '' : 's'} expire{expiringSoonCount === 1 ? 's' : ''} within 24 hours.
+            {expiringSoonCount} certificate{expiringSoonCount === 1 ? '' : 's'} you can see expire{expiringSoonCount === 1 ? 's' : ''} within 24 hours — across every page and filter, not just this one.
           </p>
         </div>
       )}
@@ -456,6 +461,13 @@ function Certificates() {
           ) : undefined
         }
         searchPlaceholder="Search by user, server, or serial..."
+        initialSearch={f.q}
+        onSearchChange={(value) => setF({ q: value, page: '1' })}
+        serverSort={{
+          sortKey: f.sortBy,
+          sortDir: f.sortDir,
+          onSortChange: (key, dir) => setF({ sortBy: key, sortDir: dir, page: '1' }),
+        }}
         filterDefs={filterDefs}
         filterValues={filterValues}
         onFilterChange={applyFilters}
@@ -468,9 +480,9 @@ function Certificates() {
         serverPagination={{
           page,
           total,
-          onPageChange: setPage,
+          onPageChange: (p) => setF({ page: String(p) }),
           pageSize,
-          onPageSizeChange: (size) => { setPageSize(size); setPage(1); },
+          onPageSizeChange: (size) => { setPageSize(size); setF({ page: '1' }); },
         }}
       />
 

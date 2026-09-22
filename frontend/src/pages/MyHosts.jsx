@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import {
   Lock,
@@ -31,6 +31,7 @@ import {
 import { useTerminalWorkspace } from '@/context/TerminalWorkspaceContext';
 import { statusTone } from '@/lib/badgeTones';
 import { relativeTime, formatDateTime } from '@/utils/time';
+import useAutoRefresh from '@/hooks/useAutoRefresh';
 
 function MyHosts() {
   const navigate = useNavigate();
@@ -59,8 +60,9 @@ function MyHosts() {
       .catch(() => setStatus({ enabled: false, canUseVault: false, canUseHosts: false, canUseOrgIdentities: false }));
   }, []);
 
+  const loadedRef = useRef(false);
   const fetchHosts = useCallback(async () => {
-    setLoading(true);
+    if (!loadedRef.current) setLoading(true);
     setError('');
     try {
       const data = await listVaultHosts();
@@ -69,6 +71,7 @@ function MyHosts() {
       setError(err.response?.data?.error?.message || err.message || 'Failed to load your hosts');
     } finally {
       setLoading(false);
+      loadedRef.current = true;
     }
   }, []);
 
@@ -79,6 +82,11 @@ function MyHosts() {
   useEffect(() => {
     fetchHosts();
   }, [fetchHosts]);
+
+  const loadAll = useCallback(async () => {
+    await Promise.all([fetchHosts(), fetchStatus()]);
+  }, [fetchHosts, fetchStatus]);
+  const { refresh, refreshing, lastUpdated } = useAutoRefresh(loadAll);
 
   // Deep link: /my-hosts?action=new
   useEffect(() => {
@@ -342,7 +350,14 @@ function MyHosts() {
   if (status && !status.enabled) {
     return (
       <div className="space-y-6 p-6">
-        <PageHeader icon={Lock} title="My hosts" subtitle="A private list of SSH targets only you can see." />
+        <PageHeader
+          icon={Lock}
+          title="My hosts"
+          subtitle="A private list of SSH targets only you can see."
+          onRefresh={refresh}
+          refreshing={refreshing}
+          lastUpdated={lastUpdated}
+        />
         <EmptyState
           icon={ShieldOff}
           title="Personal vault is turned off"
@@ -359,6 +374,9 @@ function MyHosts() {
         title="My hosts"
         subtitle="A private list of SSH targets only you can see."
         helpKey="my-hosts"
+        onRefresh={refresh}
+        refreshing={refreshing}
+        lastUpdated={lastUpdated}
         actions={[
           {
             key: 'add',

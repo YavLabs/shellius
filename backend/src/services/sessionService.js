@@ -2,6 +2,7 @@ import prisma from '../config/db.js';
 import ApiError from '../utils/ApiError.js';
 import logger from '../utils/logger.js';
 import { UNSCOPED, sessionScopeWhere, serverScopeWhere } from '../lib/scope.js';
+import { endOfDayInclusive } from '../utils/dateRange.js';
 
 // ---------------------------------------------------------------------------
 // Shared include shape
@@ -156,6 +157,62 @@ export async function end(sessionId, { status = 'ENDED', metadataPatch } = {}) {
 }
 
 // ---------------------------------------------------------------------------
+// list() sort whitelist — every value here MUST also be enumerated in the
+// route's Joi schema (routes/sessions.js `listQuerySchema.sortBy`), so an
+// unrecognised column is rejected with a 400 before it ever reaches here.
+// ---------------------------------------------------------------------------
+function buildOrderBy(sortBy, sortDir) {
+  const dir = sortDir === 'asc' ? 'asc' : 'desc';
+  switch (sortBy) {
+    case 'status':
+      return { status: dir };
+    case 'user':
+      return { user: { name: dir } };
+    case 'server':
+      return { server: { hostname: dir } };
+    case 'startedAt':
+    default:
+      return { startedAt: dir };
+  }
+}
+
+/**
+ * Extra AND-composed predicates shared by list() and listActive() — search,
+ * customer scope (via the server relation), and the free-text filters. Kept
+ * separate from the base `where` (which may already carry its own top-level
+ * `OR` from `sessionScopeWhere`) so nothing here clobbers it.
+ */
+function buildExtraClauses({ serverId, userId, authMethod, protocol, environment, clientIp, customerId, search }) {
+  const extra = [];
+  if (userId) extra.push({ userId });
+  if (serverId) extra.push({ serverId });
+  if (authMethod) extra.push({ authMethod });
+  if (protocol) extra.push({ sessionType: protocol });
+  if (environment) extra.push({ server: { environment } });
+  // Merged as its own AND element (never spread into an existing `server`
+  // key) so it composes with `environment` above instead of clobbering it.
+  if (customerId) extra.push({ server: { customerId } });
+  if (clientIp) extra.push({ clientIp: { contains: clientIp, mode: 'insensitive' } });
+  if (search) {
+    const q = search.trim();
+    if (q) {
+      extra.push({
+        OR: [
+          { server: { hostname: { contains: q, mode: 'insensitive' } } },
+          { server: { displayName: { contains: q, mode: 'insensitive' } } },
+          { server: { ipAddress: { contains: q, mode: 'insensitive' } } },
+          { targetHost: { contains: q, mode: 'insensitive' } },
+          { user: { name: { contains: q, mode: 'insensitive' } } },
+          { user: { email: { contains: q, mode: 'insensitive' } } },
+          { clientIp: { contains: q, mode: 'insensitive' } },
+        ],
+      });
+    }
+  }
+  return extra;
+}
+
+// ---------------------------------------------------------------------------
 // list
 // ---------------------------------------------------------------------------
 
@@ -169,6 +226,11 @@ export async function end(sessionId, { status = 'ENDED', metadataPatch } = {}) {
  * @param {string}  [params.userId]
  * @param {string}  [params.serverId]
  * @param {'ACTIVE'|'ENDED'|'TERMINATED'} [params.status]
+ * @param {string}  [params.search]   matches server name/hostname/ip, target host, user name/email, client IP
+ * @param {string}  [params.customerId] via the server relation, ANDed with sessionScopeWhere
+ * @param {string}  [params.clientIp]  contains match
+ * @param {string}  [params.sortBy='startedAt']  one of startedAt|status|user|server
+ * @param {string}  [params.sortDir='desc']
  * @param {number}  [params.page=1]
  * @param {number}  [params.limit=25]
  * @param {{mode: string, customerIds: string[]}} [params.scope=UNSCOPED]
@@ -188,6 +250,11 @@ export async function list({
   authMethod,
   protocol,
   environment,
+  clientIp,
+  customerId,
+  search,
+  sortBy = 'startedAt',
+  sortDir = 'desc',
   startDate,
   endDate,
   page = 1,
@@ -200,25 +267,22 @@ export async function list({
   page = parseInt(page, 10) || 1;
   limit = Math.min(parseInt(limit, 10) || 25, 100);
 
-  const where = { orgId, ...sessionScopeWhere(scope, callerId) };
-  if (userId) where.userId = userId;
-  if (serverId) where.serverId = serverId;
-  if (status) where.status = status;
-  if (authMethod) where.authMethod = authMethod;
-  if (protocol) where.sessionType = protocol;
-  if (environment) where.server = { environment };
+  const base = { orgId, ...sessionScopeWhere(scope, callerId) };
+  if (status) base.status = status;
   if (startDate || endDate) {
-    where.startedAt = {};
-    if (startDate) where.startedAt.gte = new Date(startDate);
-    if (endDate) where.startedAt.lte = new Date(endDate);
+    base.startedAt = {};
+    if (startDate) base.startedAt.gte = new Date(startDate);
+    if (endDate) base.startedAt.lte = endOfDayInclusive(endDate);
   }
+  const extra = buildExtraClauses({ serverId, userId, authMethod, protocol, environment, clientIp, customerId, search });
+  const where = extra.length > 0 ? { AND: [base, ...extra] } : base;
 
   const [items, total] = await Promise.all([
     prisma.session.findMany({
       where,
       skip: (page - 1) * limit,
       take: limit,
-      orderBy: { startedAt: 'desc' },
+      orderBy: buildOrderBy(sortBy, sortDir),
       include: SESSION_INCLUDE,
     }),
     prisma.session.count({ where }),
@@ -232,20 +296,29 @@ export async function list({
 // ---------------------------------------------------------------------------
 
 /**
- * Return all ACTIVE sessions for an org.
+ * Return all ACTIVE sessions for an org, honoring the same filter set as
+ * list() (minus `status`, which is forced to ACTIVE). Deliberately
+ * unpaginated — this tab shows "what's live right now", which is expected to
+ * be small; DataTable paginates the returned array client-side rather than
+ * showing page counts for a server page it never actually fetched.
  *
  * @param {string} orgId
  * @param {{mode: string, customerIds: string[]}} [scope=UNSCOPED]
  * @param {string} [callerId] - the authenticated caller's own user id, so a
  *   scoped caller keeps seeing their own active Quick Connect sessions (no
  *   server) alongside sessions on servers in their customer scope.
+ * @param {object} [filters] - serverId, userId, authMethod, protocol, environment, clientIp, customerId, search
  * @returns {Promise<object[]>}
  */
-export async function listActive(orgId, scope = UNSCOPED, callerId) {
+export async function listActive(orgId, scope = UNSCOPED, callerId, filters = {}) {
   if (!orgId) throw new ApiError(400, 'orgId is required');
 
+  const base = { orgId, status: 'ACTIVE', ...sessionScopeWhere(scope, callerId) };
+  const extra = buildExtraClauses(filters);
+  const where = extra.length > 0 ? { AND: [base, ...extra] } : base;
+
   return prisma.session.findMany({
-    where: { orgId, status: 'ACTIVE', ...sessionScopeWhere(scope, callerId) },
+    where,
     orderBy: { startedAt: 'desc' },
     include: SESSION_INCLUDE,
   });

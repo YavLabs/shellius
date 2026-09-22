@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { ArrowLeft, Pencil, Trash2, Plus, X, UsersRound, Search, Building2, AlertTriangle } from 'lucide-react';
 import Modal from '@/components/shared/Modal';
@@ -22,6 +22,7 @@ import { listUsers } from '@/services/userService';
 import { listCustomers } from '@/services/customerService';
 import { useAuth } from '@/context/AuthContext';
 import { useBreadcrumbs } from '@/context/BreadcrumbContext';
+import useAutoRefresh from '@/hooks/useAutoRefresh';
 
 function GroupDetail() {
   const { id } = useParams();
@@ -37,8 +38,9 @@ function GroupDetail() {
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [confirmRemove, setConfirmRemove] = useState(null);
 
+  const loadedRef = useRef(false);
   const fetch = useCallback(async () => {
-    setLoading(true);
+    if (!loadedRef.current) setLoading(true);
     setError('');
     try {
       const data = await getGroup(id);
@@ -47,10 +49,12 @@ function GroupDetail() {
       setError(err.response?.data?.error?.message || err.message || 'Failed to load group');
     } finally {
       setLoading(false);
+      loadedRef.current = true;
     }
   }, [id]);
 
   useEffect(() => { fetch(); }, [fetch]);
+  const { refresh, refreshing, lastUpdated } = useAutoRefresh(fetch);
 
   const handleDelete = async () => {
     await deleteGroup(id);
@@ -100,6 +104,9 @@ function GroupDetail() {
         icon={UsersRound}
         title={group.name}
         subtitle={group.description}
+        onRefresh={refresh}
+        refreshing={refreshing}
+        lastUpdated={lastUpdated}
         actions={[
           { key: 'edit', label: 'Edit', icon: Pencil, variant: 'outline', onClick: () => setEditOpen(true), hidden: !canManage },
           { key: 'delete', label: 'Delete', icon: Trash2, variant: 'destructive', onClick: () => setConfirmDelete(true), hidden: !canManage },

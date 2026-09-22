@@ -8,6 +8,7 @@ import {
   Loader2,
   MinusCircle,
   Radar,
+  RotateCw,
   ShieldCheck,
   Terminal,
   XCircle,
@@ -109,6 +110,12 @@ function BulkInstallModal({ open, serverIds = [], onClose, onDone, preselectIds 
 
   // Run
   const [statuses, setStatuses] = useState({}); // id -> {status, error}
+  // The hosts this run is about, frozen when it starts. The results list is
+  // drawn from this, never from the (live) plan and selection.
+  const [runTargets, setRunTargets] = useState([]);
+  // Retrying failed hosts with different credentials: the auth step shows
+  // the credentials section for every host, not only those with none.
+  const [retryMode, setRetryMode] = useState(false);
   const [logs, setLogs] = useState({}); // id -> [lines]
   const [openLog, setOpenLog] = useState(null);
   const [running, setRunning] = useState(false);
@@ -129,6 +136,8 @@ function BulkInstallModal({ open, serverIds = [], onClose, onDone, preselectIds 
 
   const reset = useCallback(() => {
     setStep('plan');
+    setRunTargets([]);
+    setRetryMode(false);
     setPlan(null);
     setChosen([]);
     setStatuses({});
@@ -139,12 +148,22 @@ function BulkInstallModal({ open, serverIds = [], onClose, onDone, preselectIds 
     setRunning(false);
   }, []);
 
+  // By value, not identity: the page behind the modal reloads its server
+  // list when a run finishes (onDone), which hands us a NEW array with the
+  // same ids. Keyed on identity, that silently re-planned and reset the
+  // selection, and the results list — drawn from the selection — swapped in
+  // hosts nobody picked.
+  const idsKey = serverIds.join(',');
+  const serverIdsRef = useRef(serverIds);
+  serverIdsRef.current = serverIds;
+  const stepRef = useRef('plan');
+
   const loadPlan = useCallback(async () => {
     setPlanLoading(true);
     setError('');
     try {
       const data = await planBulkInstall({
-        serverIds,
+        serverIds: serverIdsRef.current,
         mode,
         // The plan has to know whether a fallback exists, or it would skip
         // every host without a bound identity before the user has had the
@@ -164,10 +183,12 @@ function BulkInstallModal({ open, serverIds = [], onClose, onDone, preselectIds 
     }
     // preselectIds is read on each (re)plan; it is set together with `open`.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [serverIds, mode]);
+  }, [idsKey, mode]);
 
   useEffect(() => {
-    if (!open) return;
+    // Only while choosing. A plan rebuilt mid-run or after it would replace
+    // the hosts the results are about.
+    if (!open || stepRef.current !== 'plan') return;
     loadPlan();
   }, [open, loadPlan]);
 
@@ -183,6 +204,10 @@ function BulkInstallModal({ open, serverIds = [], onClose, onDone, preselectIds 
     else setMode(initialMode);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, reset]);
+
+  useEffect(() => {
+    stepRef.current = step;
+  }, [step]);
 
   // Stop the run if the modal goes away — an abandoned bulk install is N
   // unattended SSH sessions, not a background convenience.
@@ -221,7 +246,9 @@ function BulkInstallModal({ open, serverIds = [], onClose, onDone, preselectIds 
   const setMany = (ids, on) =>
     setChosen((prev) => (on ? [...new Set([...prev, ...ids])] : prev.filter((x) => !ids.includes(x))));
 
-  const start = async () => {
+  const start = async (targetsOverride) => {
+    const batch = targetsOverride || selectedTargets;
+    const isRetry = step === 'run' || retryMode;
     setStep('run');
     stoppedRef.current = false;
     setSudoFixes({});
@@ -229,15 +256,30 @@ function BulkInstallModal({ open, serverIds = [], onClose, onDone, preselectIds 
     setRunning(true);
     setError('');
     setSummary(null);
-    setStatuses(Object.fromEntries(selectedTargets.map((t) => [t.id, { status: 'queued' }])));
-    setLogs({});
+    if (isRetry && runTargets.length) {
+      // A retry re-runs only the failed hosts; the ones that succeeded keep
+      // their result on screen.
+      const ids = new Set(batch.map((t) => t.id));
+      setRunTargets((prev) => [...prev.filter((t) => !ids.has(t.id)), ...batch]);
+      setStatuses((prev) => ({ ...prev, ...Object.fromEntries(batch.map((t) => [t.id, { status: 'queued' }])) }));
+      setLogs((prev) => {
+        const next = { ...prev };
+        for (const t of batch) next[t.id] = [...(prev[t.id] || []), '[shellius] ── Retrying ──'];
+        return next;
+      });
+    } else {
+      setRunTargets(batch);
+      setStatuses(Object.fromEntries(batch.map((t) => [t.id, { status: 'queued' }])));
+      setLogs({});
+    }
+    setRetryMode(false);
 
     const append = (id, message) =>
       setLogs((prev) => ({ ...prev, [id]: [...(prev[id] || []), message] }));
 
     const handle = runBulkInstall(
       {
-        serverIds: selectedTargets.map((t) => t.id),
+        serverIds: batch.map((t) => t.id),
         mode,
         concurrency,
         useServerIdentity,
@@ -319,18 +361,24 @@ function BulkInstallModal({ open, serverIds = [], onClose, onDone, preselectIds 
    * batch: the other hosts already succeeded, and a bulk re-run would
    * reinstall on all of them to fix one.
    */
-  const retryWithSudo = async (target, secretOverride) => {
-    const secret = secretOverride ?? sudoFixes[target.id];
-    if (!secret) return;
+  const retryWithSudo = async (target, secretOverride, { requireSecret = true } = {}) => {
+    const secret = secretOverride ?? sudoFixes[target.id] ?? '';
+    if (requireSecret && !secret) return;
     setRetrying((p) => ({ ...p, [target.id]: true }));
     setStatuses((p) => ({ ...p, [target.id]: { status: 'running' } }));
-    setLogs((p) => ({ ...p, [target.id]: [...(p[target.id] || []), '[shellius] Retrying with the sudo password you supplied'] }));
+    setLogs((p) => ({
+      ...p,
+      [target.id]: [
+        ...(p[target.id] || []),
+        secret ? '[shellius] Retrying with the sudo password you supplied' : '[shellius] Retrying',
+      ],
+    }));
     try {
       const result = await provisionServer(target.id, {
         mode,
-        sudoPassword: secret,
+        sudoPassword: secret || undefined,
         // Kept only if this install succeeds with it — see the backend.
-        rememberSudoPassword: canSaveSudo && rememberSudo,
+        rememberSudoPassword: !!secret && canSaveSudo && rememberSudo,
         // Same way in as the batch used for this host.
         useCertificate: target.credentialSource === 'certificate' || undefined,
         credentialId: target.credentialSource === 'server' ? target.credential?.id : credentialId || undefined,
@@ -359,7 +407,7 @@ function BulkInstallModal({ open, serverIds = [], onClose, onDone, preselectIds 
 
   /** One password for every host still waiting on sudo — they often share it. */
   const retryAllWaiting = async (secret) => {
-    const waiting = selectedTargets.filter((t) => {
+    const waiting = runTargets.filter((t) => {
       const st = statuses[t.id];
       return st?.status === 'failed' && isSudoCode(st.code) && !retrying[t.id];
     });
@@ -397,7 +445,18 @@ function BulkInstallModal({ open, serverIds = [], onClose, onDone, preselectIds 
     if (step === 'auth') {
       return (
         <div className="flex items-center justify-end gap-2">
-          <Button variant="outline" onClick={() => setStep('plan')}>
+          <Button
+            variant="outline"
+            onClick={() => {
+              // A retry came from the results; going back returns there.
+              if (retryMode) {
+                setRetryMode(false);
+                setStep('run');
+              } else {
+                setStep('plan');
+              }
+            }}
+          >
             Back
           </Button>
           {method === 'manual' ? (
@@ -406,7 +465,7 @@ function BulkInstallModal({ open, serverIds = [], onClose, onDone, preselectIds 
             </Button>
           ) : (
             <Button
-              onClick={start}
+              onClick={() => start()}
               disabled={needingFallback.length > 0 && !fallbackReady}
               title={
                 needingFallback.length > 0 && !fallbackReady
@@ -421,8 +480,33 @@ function BulkInstallModal({ open, serverIds = [], onClose, onDone, preselectIds 
       );
     }
     if (step === 'run') {
+      const failedTargets = runTargets.filter((t) => statuses[t.id]?.status === 'failed' || statuses[t.id]?.status === 'stopped');
+      const anyRetrying = Object.values(retrying).some(Boolean);
       return (
-        <div className="flex items-center justify-end gap-2">
+        <div className="flex flex-wrap items-center justify-end gap-2">
+          {!running && failedTargets.length > 0 && (
+            <>
+              <Button
+                variant="outline"
+                disabled={anyRetrying}
+                onClick={() => {
+                  // Same hosts, different way in: back to the auth step with
+                  // only the failed ones selected, credentials always shown.
+                  setChosen(failedTargets.map((t) => t.id));
+                  setRetryMode(true);
+                  setMethod('auto');
+                  setStep('auth');
+                }}
+              >
+                <KeyRound className="mr-1.5 h-4 w-4" />
+                Retry with different credentials…
+              </Button>
+              <Button variant="outline" disabled={anyRetrying} onClick={() => start(failedTargets)}>
+                <RotateCw className="mr-1.5 h-4 w-4" />
+                Retry {failedTargets.length} failed
+              </Button>
+            </>
+          )}
           {running ? (
             <Button
               variant="outline"
@@ -534,6 +618,17 @@ function BulkInstallModal({ open, serverIds = [], onClose, onDone, preselectIds 
 
       {step === 'auth' && (
         <div className="space-y-5">
+          {retryMode && (
+            <div role="status" className="flex items-start gap-2 rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2.5 text-sm text-amber-800 dark:text-amber-200">
+              <RotateCw className="mt-0.5 h-4 w-4 shrink-0" />
+              <p>
+                Retrying {selectedTargets.length} host{selectedTargets.length === 1 ? '' : 's'} that failed:{' '}
+                {selectedTargets.map((t) => t.displayName || t.hostname).join(', ')}. Choose how to get in below. Each
+                host&rsquo;s own method (saved identity or certificate) is still tried first; what you enter here is used
+                when it fails. Hosts that succeeded are not touched.
+              </p>
+            </div>
+          )}
           <section className="space-y-2">
             <h4 className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground/70">
               How to install
@@ -627,10 +722,12 @@ function BulkInstallModal({ open, serverIds = [], onClose, onDone, preselectIds 
                 </span>
               </label>
 
-              {needingFallback.length > 0 && (
+              {(needingFallback.length > 0 || retryMode) && (
                 <section className="space-y-3">
                   <h4 className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground/70">
-                    Credentials for the remaining {needingFallback.length}
+                    {retryMode
+                      ? 'Credentials to use for these hosts'
+                      : `Credentials for the remaining ${needingFallback.length}`}
                   </h4>
                   <SearchableSelect
                     value={credentialId}
@@ -760,7 +857,7 @@ function BulkInstallModal({ open, serverIds = [], onClose, onDone, preselectIds 
             </div>
           )}
           <div className="max-h-[22rem] space-y-1 overflow-y-auto rounded-lg border border-border p-2">
-            {selectedTargets.map((t) => {
+            {runTargets.map((t) => {
               const st = statuses[t.id] || { status: 'queued' };
               const lines = logs[t.id] || [];
               const isOpen = openLog === t.id;
@@ -880,6 +977,58 @@ function BulkInstallModal({ open, serverIds = [], onClose, onDone, preselectIds 
                           </button>
                         )}
                       </div>
+                    </div>
+                  )}
+
+                  {isOpen && !needsSudo && st.status === 'failed' && !running && (
+                    <div className="mx-2 mb-2 space-y-2 rounded-md border border-border bg-muted/30 p-3">
+                      <p className="text-xs leading-relaxed text-foreground">
+                        {/auth/i.test(st.error || '')
+                          ? 'Shellius could not log in to this host with the method it used. Retry, or use different credentials for it.'
+                          : 'Retry just this host — the others are not touched. Add a sudo password if its sudo asks for one.'}
+                      </p>
+                      <form
+                        className="flex flex-wrap items-center gap-2"
+                        onSubmit={(e) => {
+                          e.preventDefault();
+                          retryWithSudo(t, undefined, { requireSecret: false });
+                        }}
+                      >
+                        <PasswordInput
+                          value={sudoFixes[t.id] || ''}
+                          onChange={(e) => setSudoFixes((p) => ({ ...p, [t.id]: e.target.value }))}
+                          placeholder="sudo password (optional)"
+                          autoComplete="new-password"
+                          disabled={isRetrying}
+                          className="h-8 min-w-0 flex-1 rounded-md border border-input bg-background px-3 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
+                        />
+                        <Button type="submit" size="sm" className="h-8" disabled={isRetrying}>
+                          {isRetrying ? (
+                            <>
+                              <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" /> Retrying…
+                            </>
+                          ) : (
+                            <>
+                              <RotateCw className="mr-1.5 h-3.5 w-3.5" /> Retry this host
+                            </>
+                          )}
+                        </Button>
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant="ghost"
+                          className="h-8"
+                          disabled={isRetrying}
+                          onClick={() => {
+                            setChosen([t.id]);
+                            setRetryMode(true);
+                            setMethod('auto');
+                            setStep('auth');
+                          }}
+                        >
+                          Different credentials…
+                        </Button>
+                      </form>
                     </div>
                   )}
 

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useImperativeHandle, useMemo, useState, forwardRef } from 'react';
+import { useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState, forwardRef } from 'react';
 import { Pencil, Trash2, PlugZap, Eye, KeyRound, Lock, Server } from 'lucide-react';
 import { authTypeTone } from '@/lib/badgeTones';
 import DataTable from '@/components/shared/DataTable';
@@ -31,9 +31,12 @@ const IdentitiesTab = forwardRef(function IdentitiesTab({ canManage, scope = 'or
 
   const [authTypeFilter, setAuthTypeFilter] = useState('');
   const [usageFilter, setUsageFilter] = useState('');
+  const [linkedKeyFilter, setLinkedKeyFilter] = useState('');
+  const [inUseFilter, setInUseFilter] = useState('');
 
+  const loadedRef = useRef(false);
   const fetch = useCallback(async () => {
-    setLoading(true);
+    if (!loadedRef.current) setLoading(true);
     setError('');
     try {
       const data = await listCredentials({ scope });
@@ -44,6 +47,7 @@ const IdentitiesTab = forwardRef(function IdentitiesTab({ canManage, scope = 'or
       return [];
     } finally {
       setLoading(false);
+      loadedRef.current = true;
     }
   }, [scope]);
 
@@ -57,6 +61,7 @@ const IdentitiesTab = forwardRef(function IdentitiesTab({ canManage, scope = 'or
       setFormOpen(true);
     },
     highlight: (id) => setDetailId(id),
+    refresh: fetch,
   }));
 
   const handleDelete = async (force = false) => {
@@ -84,6 +89,14 @@ const IdentitiesTab = forwardRef(function IdentitiesTab({ canManage, scope = 'or
     }
   };
 
+  // Specific keys actually linked to an identity here, for the "Linked key"
+  // filter's per-key options.
+  const linkedKeyOptions = useMemo(() => {
+    const byId = new Map();
+    for (const c of credentials) if (c.sshKey?.id) byId.set(c.sshKey.id, c.sshKey.name);
+    return [...byId.entries()].map(([value, label]) => ({ value, label }));
+  }, [credentials]);
+
   const filterDefs = [
     {
       key: 'authType',
@@ -106,11 +119,39 @@ const IdentitiesTab = forwardRef(function IdentitiesTab({ canManage, scope = 'or
         { value: 'never', label: 'Never used' },
       ],
     },
+    {
+      key: 'linkedKey',
+      label: 'Linked key',
+      placeholder: 'Any',
+      searchable: linkedKeyOptions.length > 8,
+      options: [
+        { value: '', label: 'Any' },
+        { value: 'has', label: 'Has a linked key' },
+        { value: 'none', label: 'No linked key' },
+        ...linkedKeyOptions,
+      ],
+    },
+    ...(scope === 'personal'
+      ? []
+      : [
+          {
+            key: 'inUse',
+            label: 'Used by servers',
+            placeholder: 'Any',
+            options: [
+              { value: '', label: 'Any' },
+              { value: 'used', label: 'In use' },
+              { value: 'unused', label: 'Unused' },
+            ],
+          },
+        ]),
   ];
-  const filterValues = { authType: authTypeFilter, usage: usageFilter };
+  const filterValues = { authType: authTypeFilter, usage: usageFilter, linkedKey: linkedKeyFilter, inUse: inUseFilter };
   const applyFilters = (next) => {
     setAuthTypeFilter(next.authType ?? '');
     setUsageFilter(next.usage ?? '');
+    setLinkedKeyFilter(next.linkedKey ?? '');
+    setInUseFilter(next.inUse ?? '');
   };
 
   const filteredCredentials = useMemo(() => {
@@ -118,9 +159,14 @@ const IdentitiesTab = forwardRef(function IdentitiesTab({ canManage, scope = 'or
       if (authTypeFilter && (c.authType || '').toLowerCase() !== authTypeFilter) return false;
       if (usageFilter === 'used' && !c.lastUsedAt) return false;
       if (usageFilter === 'never' && c.lastUsedAt) return false;
+      if (linkedKeyFilter === 'has' && !c.sshKey) return false;
+      if (linkedKeyFilter === 'none' && c.sshKey) return false;
+      if (linkedKeyFilter && linkedKeyFilter !== 'has' && linkedKeyFilter !== 'none' && c.sshKey?.id !== linkedKeyFilter) return false;
+      if (inUseFilter === 'used' && !(c.serverCount > 0)) return false;
+      if (inUseFilter === 'unused' && c.serverCount > 0) return false;
       return true;
     });
-  }, [credentials, authTypeFilter, usageFilter]);
+  }, [credentials, authTypeFilter, usageFilter, linkedKeyFilter, inUseFilter]);
 
   const columns = [
     {

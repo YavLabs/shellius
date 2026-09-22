@@ -22,7 +22,13 @@ import {
   Shield,
   Radar,
 } from 'lucide-react';
-import { SshTrustBadge, CollectorBadge } from '@/components/servers/HostAgentStatus';
+import {
+  SshTrustBadge,
+  CollectorBadge,
+  SSH_TRUST_FILTER_OPTIONS,
+  COLLECTOR_FILTER_OPTIONS,
+} from '@/components/servers/HostAgentStatus';
+import useAutoRefresh from '@/hooks/useAutoRefresh';
 import DataTable from '@/components/shared/DataTable';
 import { CardIcon, MobileCardSkeleton } from '@/components/mobile/MobileCard';
 import Modal from '@/components/shared/Modal';
@@ -41,7 +47,6 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
-import SearchableSelect from '@/components/ui/SearchableSelect';
 import {
   getCustomer,
   updateCustomer,
@@ -62,7 +67,7 @@ import useIsMobile from '@/hooks/useIsMobile';
 import SectionHeading from '@/components/common/SectionHeading';
 import { useAuth } from '@/context/AuthContext';
 import { can } from '@/lib/permissions';
-import { ENVIRONMENT_LABELS } from '@/lib/labels';
+import { ENVIRONMENT_LABELS, HEALTH_STATUS_LABELS } from '@/lib/labels';
 
 // ---------------------------------------------------------------------------
 // Sub-components
@@ -154,6 +159,8 @@ function HeroSkeleton() {
 }
 
 const ENVIRONMENTS = ['demo', 'dev', 'staging', 'prod'];
+const PROTOCOLS = ['ssh', 'rdp', 'both'];
+const HEALTH_STATUSES = ['healthy', 'unhealthy', 'unknown', 'maintenance'];
 
 const ENV_DOT_COLORS = {
   demo: 'bg-muted-foreground/60',
@@ -187,25 +194,51 @@ function CustomerDetail() {
   const [addServerOpen, setAddServerOpen] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
 
-  // server table filters
-  const [envFilter, setEnvFilter] = useState('');
+  // server table filters — a Filters drawer (see filterDefs below), applied
+  // client-side since this page loads the customer's whole server list.
+  const [serverFilters, setServerFilters] = useState({
+    environment: '',
+    protocol: '',
+    healthStatus: '',
+    sshTrust: '',
+    collector: '',
+    osType: '',
+  });
   const [posture, setPosture] = useState(null);
 
-  const loadData = useCallback(async () => {
-    setLoading(true);
+  // The list API caps pageSize at 100 — a customer with more servers than
+  // that used to silently lose the rest with no indication anything was
+  // missing. Page through until every server is in.
+  const loadAllServers = useCallback(async (customerId) => {
+    const pageSize = 100;
+    let page = 1;
+    let items = [];
+    // Bounded at 50 pages (5,000 servers) so a bug elsewhere can never spin
+    // this into an infinite loop against the API.
+    for (let i = 0; i < 50; i += 1) {
+      const data = await listServers({ customerId, page, pageSize });
+      items = items.concat(data.items || []);
+      if (items.length >= (data.total ?? items.length) || (data.items || []).length < pageSize) break;
+      page += 1;
+    }
+    return items;
+  }, []);
+
+  const loadData = useCallback(async ({ quiet = false } = {}) => {
+    if (!quiet) setLoading(true);
     setError('');
     try {
       const [c, s, srv, sessions] = await Promise.all([
         getCustomer(id),
         getCustomerStats(id).catch(() => null),
-        listServers({ customerId: id, page: 1, pageSize: 200 }).catch(() => ({ items: [] })),
+        loadAllServers(id).catch(() => []),
         can(user, 'sessions.view_all')
           ? listSessions({ customerId: id, status: 'ACTIVE', page: 1, pageSize: 1 }).catch(() => null)
           : null,
       ]);
       setCustomer(c);
       setStats(s);
-      setServers(srv.items || []);
+      setServers(srv || []);
       // sessions response envelope: { data: { items, total } } or { items, total }
       const sessionTotal =
         sessions?.data?.total ?? sessions?.data?.data?.total ?? sessions?.total ?? 0;
@@ -215,11 +248,18 @@ function CustomerDetail() {
     } finally {
       setLoading(false);
     }
-  }, [id]);
+  }, [id, user, loadAllServers]);
 
   useEffect(() => {
     loadData();
   }, [loadData]);
+
+  // Same as the Servers list: poll quietly while a host here is mid-install.
+  const pendingHere = servers.some(
+    (sv) => sv.collector?.state === 'awaiting_report' || sv.sshTrust?.state === 'installing'
+  );
+  const quietLoad = useCallback(() => loadData({ quiet: true }), [loadData]);
+  const { refresh, refreshing, lastUpdated } = useAutoRefresh(quietLoad, { interval: 15000, enabled: pendingHere });
 
   const handleEdit = async (payload) => {
     await updateCustomer(id, payload);
@@ -281,11 +321,26 @@ function CustomerDetail() {
     getPostureSummary({ customerId: id }).then(setPosture).catch(() => setPosture(null));
   }, [id, canViewPosture]);
 
-  // Filtered servers for table
+  // Distinct OS types actually present, for the OS filter's options.
+  const osTypeOptions = useMemo(() => {
+    const seen = new Set();
+    for (const s of servers) if (s.osType) seen.add(s.osType);
+    return [...seen].sort();
+  }, [servers]);
+
+  // Filtered servers for table — client-side, since the whole customer's
+  // server list is already loaded.
   const filteredServers = useMemo(() => {
-    if (!envFilter) return servers;
-    return servers.filter((s) => s.environment === envFilter);
-  }, [servers, envFilter]);
+    return servers.filter((s) => {
+      if (serverFilters.environment && s.environment !== serverFilters.environment) return false;
+      if (serverFilters.protocol && s.protocol !== serverFilters.protocol) return false;
+      if (serverFilters.healthStatus && s.healthStatus !== serverFilters.healthStatus) return false;
+      if (serverFilters.sshTrust && s.sshTrust?.state !== serverFilters.sshTrust) return false;
+      if (serverFilters.collector && s.collector?.state !== serverFilters.collector) return false;
+      if (serverFilters.osType && s.osType !== serverFilters.osType) return false;
+      return true;
+    });
+  }, [servers, serverFilters]);
 
   // Server table columns
   const serverColumns = [
@@ -435,21 +490,60 @@ function CustomerDetail() {
     },
   ];
 
-  // Environment filter slot for DataTable
-  const filterSlot = (
-    <SearchableSelect
-      className="w-[160px]"
-      value={envFilter || ''}
-      onChange={(v) => setEnvFilter(v)}
-      placeholder="All environments"
-      searchable={false}
-      clearable={false}
-      options={[
+  // Filters drawer for the server table — client-side (the whole customer's
+  // server list is already loaded), replacing the old single Environment
+  // dropdown with the same Environment / Protocol / Health / SSH trust /
+  // Collector / OS filters the fleet-wide Servers page offers.
+  const serverFilterDefs = [
+    {
+      key: 'environment',
+      label: 'Environment',
+      placeholder: 'All environments',
+      options: [
         { value: '', label: 'All environments' },
         ...ENVIRONMENTS.map((e) => ({ value: e, label: ENVIRONMENT_LABELS[e] || e })),
-      ]}
-    />
-  );
+      ],
+    },
+    {
+      key: 'protocol',
+      label: 'Protocol',
+      placeholder: 'All protocols',
+      options: [
+        { value: '', label: 'All protocols' },
+        ...PROTOCOLS.map((p) => ({ value: p, label: p.toUpperCase() })),
+      ],
+    },
+    {
+      key: 'healthStatus',
+      label: 'Health',
+      placeholder: 'All health',
+      options: [
+        { value: '', label: 'All health' },
+        ...HEALTH_STATUSES.map((h) => ({ value: h, label: HEALTH_STATUS_LABELS[h] || h })),
+      ],
+    },
+    { key: 'sshTrust', label: 'SSH trust', placeholder: 'Any SSH trust', options: SSH_TRUST_FILTER_OPTIONS },
+    { key: 'collector', label: 'Posture collector', placeholder: 'Any collector state', options: COLLECTOR_FILTER_OPTIONS },
+    {
+      key: 'osType',
+      label: 'OS',
+      placeholder: 'All OS types',
+      options: [
+        { value: '', label: 'All OS types' },
+        ...osTypeOptions.map((o) => ({ value: o, label: o })),
+      ],
+    },
+  ];
+  const applyServerFilters = (next) => {
+    setServerFilters({
+      environment: next.environment ?? '',
+      protocol: next.protocol ?? '',
+      healthStatus: next.healthStatus ?? '',
+      sshTrust: next.sshTrust ?? '',
+      collector: next.collector ?? '',
+      osType: next.osType ?? '',
+    });
+  };
 
   // ---------------------------------------------------------------------------
   // Loading state
@@ -531,6 +625,7 @@ function CustomerDetail() {
           subtitle={customer.description || <span className="font-mono">{customer.slug}</span>}
           actions={[
             { key: 'add-server', label: 'Add server', icon: Plus, onClick: () => setAddServerOpen(true), hidden: !canAddServer },
+            { key: 'refresh', label: refreshing ? 'Refreshing…' : 'Refresh', icon: RefreshCw, variant: 'outline', onClick: refresh, spin: refreshing, disabled: refreshing },
             { key: 'edit', label: 'Edit customer', icon: Pencil, variant: 'outline', onClick: () => setEditOpen(true), hidden: !canManage },
             { key: 'delete', label: 'Delete customer', icon: Trash2, variant: 'destructive', onClick: () => setConfirmDelete(true), hidden: !canDelete },
           ]}
@@ -570,6 +665,16 @@ function CustomerDetail() {
 
         {/* Action group */}
         <div className="flex shrink-0 items-center gap-2">
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={refresh}
+            disabled={refreshing}
+            title={lastUpdated ? `Updated ${relativeTime(lastUpdated)}` : 'Reload this customer’s data'}
+          >
+            <RefreshCw className={`mr-1.5 h-3.5 w-3.5 ${refreshing ? 'animate-spin' : ''}`} />
+            Refresh
+          </Button>
           {canAddServer && (
             <Button size="sm" onClick={() => setAddServerOpen(true)}>
               <Plus className="mr-1.5 h-3.5 w-3.5" />
@@ -663,7 +768,7 @@ function CustomerDetail() {
       <section className="space-y-3">
         <SectionHeading
           title="Servers"
-          count={`${filteredServers.length}${envFilter ? ` of ${servers.length}` : ''}`}
+          count={`${filteredServers.length}${filteredServers.length !== servers.length ? ` of ${servers.length}` : ''}`}
           action={
             canAddServer ? (
               <Button size="sm" variant="outline" onClick={() => setAddServerOpen(true)}>
@@ -677,12 +782,14 @@ function CustomerDetail() {
           columns={serverColumns}
           data={filteredServers}
           emptyMessage={
-            envFilter
-              ? `No ${envFilter} servers for this customer.`
+            filteredServers.length !== servers.length
+              ? 'No servers match these filters.'
               : 'No servers yet. Add one to get started.'
           }
           searchPlaceholder="Search hostname or IP..."
-          filters={filterSlot}
+          filterDefs={serverFilterDefs}
+          filterValues={serverFilters}
+          onFilterChange={applyServerFilters}
           onRowClick={(r) => navigate(`/servers/${r.id}`, { state: fromState(`/customers/${id}`, customer?.name || 'customer') })}
           mobile={{ accent: (r) => envAccent(r.environment) }}
         />

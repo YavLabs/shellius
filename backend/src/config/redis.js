@@ -1,5 +1,6 @@
 import Redis from 'ioredis';
 import config from './index.js';
+import { trackHandle } from './handles.js';
 
 const options = {
   maxRetriesPerRequest: null,
@@ -28,5 +29,7 @@ redis.on('connect', () => {
     console.log('[redis] Connected');
   }
 });
+
+trackHandle(() => redis.quit().catch(() => redis.disconnect()));
 
 export default redis;

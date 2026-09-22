@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { ChevronRight, Radar, ServerOff, ShieldAlert, ShieldCheck } from 'lucide-react';
 import Skeleton from '@/components/ui/Skeleton';
@@ -59,15 +59,16 @@ function Stat({ icon: Icon, label, value, tone, onClick, loading }) {
   );
 }
 
-function NeedsAttentionWidget({ onInstall }) {
+function NeedsAttentionWidget({ onInstall, refreshKey = 0 }) {
   const navigate = useNavigate();
   const isMobile = useIsMobile();
   const [summary, setSummary] = useState(null);
   const [rows, setRows] = useState([]);
   const [loading, setLoading] = useState(true);
+  const loadedRef = useRef(false);
 
   const load = useCallback(async () => {
-    setLoading(true);
+    if (!loadedRef.current) setLoading(true);
     try {
       const s = await getPostureSummary();
       setSummary(s);
@@ -97,12 +98,14 @@ function NeedsAttentionWidget({ onInstall }) {
       /* The dashboard degrades to its other widgets rather than erroring. */
     } finally {
       setLoading(false);
+      loadedRef.current = true;
     }
   }, []);
 
   useEffect(() => {
     load();
-  }, [load]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [load, refreshKey]);
 
   const critical = summary?.findings?.critical ?? 0;
   const high = summary?.findings?.high ?? 0;

@@ -1,11 +1,14 @@
 import { useCallback, useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { ArrowUpCircle, Check, Cpu, Database, Download, Gauge, HardDrive, Info, Radar, ShieldAlert, ShieldCheck, Volume1, VolumeX, Wifi } from 'lucide-react';
+import { ArrowUpCircle, Check, Cpu, Database, Download, Gauge, HardDrive, Info, Radar, Search, ShieldAlert, ShieldCheck, Volume1, VolumeX, Wifi } from 'lucide-react';
 import CollectorHealthBanner from '@/components/posture/CollectorHealthBanner';
 import SudoPasswordRow from '@/components/posture/SudoPasswordRow';
 import { collectorStateOf, isOlderVersion } from '@/lib/collectorHealth';
 import { groupListeners, bindNote } from '@/lib/listenerGroups';
+import { describeListener, RUNTIMES } from '@/lib/serviceIdentity';
+import ServiceCell, { RuntimeChip } from '@/components/posture/ServiceCell';
 import DataTable from '@/components/shared/DataTable';
+import FilterControl from '@/components/shared/FilterControl';
 import { PostureTile, PostureTileGrid } from '@/components/posture/PostureTiles';
 import { severityAccent } from '@/lib/mobileCard';
 import ExpectableMarker from '@/components/posture/ExpectableMarker';
@@ -17,6 +20,7 @@ import ListenerDetailModal from '@/components/posture/ListenerDetailModal';
 import ExportDialog from '@/components/posture/ExportDialog';
 import ExpectedPortDialog from '@/components/posture/ExpectedPortDialog';
 import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
 import { can } from '@/lib/permissions';
 import { useAuth } from '@/context/AuthContext';
 import EmptyState from '@/components/ui/EmptyState';
@@ -222,6 +226,9 @@ function ServerPostureTab({
   onBootstrap,
   onViewFindings,
   onViewPorts,
+  onCheckNow,
+  checking = false,
+  lastChecked = null,
 }) {
   const navigate = useNavigate();
   const isPhone = useIsMobile();
@@ -248,11 +255,16 @@ function ServerPostureTab({
   // wrong — nothing on the page said a muted finding existed at all.
   const [openSections, setOpenSections] = useState({ open: true });
   const [severityFilter, setSeverityFilter] = useState('');
-  const [statusFilter, setStatusFilter] = useState('');
   const [codeFilter, setCodeFilter] = useState('');
+  // Message, code or port — the same free-text idea every other list on the
+  // site offers, missing here before: the filter toolbar had no search box
+  // at all.
+  const [findingSearch, setFindingSearch] = useState('');
   // Ports view filters.
   const [reachFilter, setReachFilter] = useState('');
-  const [ownerKindFilter, setOwnerKindFilter] = useState('');
+  const [typeFilter, setTypeFilter] = useState('');
+  const [bindFilter, setBindFilter] = useState('');
+  const [portFindingSeverityFilter, setPortFindingSeverityFilter] = useState('');
   const [portStateFilter, setPortStateFilter] = useState('');
   const [protoFilter, setProtoFilter] = useState('');
   const { user } = useAuth();
@@ -341,6 +353,9 @@ function ServerPostureTab({
         collector={collector}
         snapshot={snapshot}
         onReinstall={canBootstrap && onBootstrap ? () => onBootstrap('posture') : undefined}
+        onCheckNow={onCheckNow}
+        checking={checking}
+        lastChecked={lastChecked}
       />
     );
   }
@@ -419,13 +434,27 @@ function ServerPostureTab({
   // What the table shows. Counts on the cards stay whole-tab totals so the
   // numbers do not move when you filter by them — a card that recomputed to
   // match its own filter would always read as the full count.
+  //
+  // No Status filter here: the sections below (Open/Expected/Acknowledged/
+  // Muted/Resolved) already partition every finding by status. A second,
+  // independent status filter applied on top of a section already
+  // committed to one status meant picking "Muted" made every section but
+  // Muted show zero rows — not "no muted findings", but every OTHER section
+  // reporting a false empty.
+  const matchesSearch = (f) => {
+    if (!findingSearch) return true;
+    const needle = findingSearch.toLowerCase();
+    return [f.message, f.code, String(f.port ?? '')]
+      .filter(Boolean)
+      .some((v) => String(v).toLowerCase().includes(needle));
+  };
   const matchesFilters = (f) =>
     (!severityFilter || f.severity === severityFilter) &&
-    (!statusFilter || f.status === statusFilter) &&
-    (!codeFilter || f.code === codeFilter);
+    (!codeFilter || f.code === codeFilter) &&
+    matchesSearch(f);
   const visibleFindings = findings.filter(matchesFilters);
   const findingCodes = [...new Set(findings.map((f) => f.code))].sort();
-  const filtersActive = !!(severityFilter || statusFilter || codeFilter);
+  const filtersActive = !!(severityFilter || codeFilter || findingSearch);
 
   const selectedFindings = visibleFindings.filter((f) => selected.includes(f.id));
   // Marking a port expected only resolves exposure findings. A selection of
@@ -475,17 +504,25 @@ function ServerPostureTab({
   // Surfaced through the "Expected, not listening" filter option rather than
   // a second amber line under the host's own stale banner.
 
-  const ownerKinds = [...new Set(portRows.map((r) => r.ownerKind).filter(Boolean))].sort();
+  // Runtime types actually present — the same grouping the Type column
+  // renders (describeListener().runtime), not the raw ownerKind values, so
+  // "Docker" is one option instead of container/docker-proxy/docker being
+  // three.
+  const portTypes = [...new Set(portRows.filter((r) => r.listening).map((r) => describeListener(r).runtime.key))].sort();
   const visiblePorts = portRows.filter((r) => {
     if (reachFilter && r.reachability !== reachFilter) return false;
-    if (ownerKindFilter && r.ownerKind !== ownerKindFilter) return false;
+    if (typeFilter && (!r.listening || describeListener(r).runtime.key !== typeFilter)) return false;
     if (protoFilter && (r.proto || '').toLowerCase() !== protoFilter) return false;
+    if (bindFilter && r.bindClass !== bindFilter) return false;
+    if (portFindingSeverityFilter && !r.findings.some((f) => f.severity === portFindingSeverityFilter)) return false;
     if (portStateFilter === 'findings' && r.findings.length === 0) return false;
     if (portStateFilter === 'expected' && !r.expected) return false;
     if (portStateFilter === 'stale' && (r.listening || !r.expected)) return false;
     return true;
   });
-  const portFiltersActive = !!(reachFilter || ownerKindFilter || protoFilter || portStateFilter);
+  const portFiltersActive = !!(
+    reachFilter || typeFilter || protoFilter || bindFilter || portFindingSeverityFilter || portStateFilter
+  );
 
   const handleBulkAcknowledge = async () => {
     setBusyId('bulk');
@@ -571,17 +608,6 @@ function ServerPostureTab({
       ],
     },
     {
-      key: 'status',
-      label: 'Status',
-      placeholder: 'All statuses',
-      options: [
-        { value: '', label: 'All statuses' },
-        { value: 'open', label: 'Open' },
-        { value: 'acknowledged', label: 'Acknowledged' },
-        { value: 'muted', label: 'Muted' },
-      ],
-    },
-    {
       key: 'code',
       label: 'Finding type',
       placeholder: 'All types',
@@ -589,10 +615,9 @@ function ServerPostureTab({
       options: [{ value: '', label: 'All types' }, ...findingCodes.map((c) => ({ value: c, label: c }))],
     },
   ];
-  const findingFilterValues = { severity: severityFilter, status: statusFilter, code: codeFilter };
+  const findingFilterValues = { severity: severityFilter, code: codeFilter };
   const applyFindingFilters = (next) => {
     setSeverityFilter(next.severity ?? '');
-    setStatusFilter(next.status ?? '');
     setCodeFilter(next.code ?? '');
   };
 
@@ -611,10 +636,13 @@ function ServerPostureTab({
       ],
     },
     {
-      key: 'ownerKind',
-      label: 'Owner',
-      placeholder: 'All owners',
-      options: [{ value: '', label: 'All owners' }, ...ownerKinds.map((k) => ({ value: k, label: k }))],
+      key: 'type',
+      label: 'Type',
+      placeholder: 'All types',
+      options: [
+        { value: '', label: 'All types' },
+        ...portTypes.map((k) => ({ value: k, label: RUNTIMES[k]?.label || k })),
+      ],
     },
     {
       key: 'proto',
@@ -624,6 +652,27 @@ function ServerPostureTab({
         { value: '', label: 'All protocols' },
         { value: 'tcp', label: 'TCP' },
         { value: 'udp', label: 'UDP' },
+      ],
+    },
+    {
+      key: 'bind',
+      label: 'Bind',
+      placeholder: 'All binds',
+      options: [
+        { value: '', label: 'All binds' },
+        { value: 'wildcard', label: 'Wildcard (0.0.0.0 / ::)' },
+        { value: 'loopback', label: 'Loopback' },
+        { value: 'private', label: 'Private network' },
+        { value: 'specific', label: 'Specific address' },
+      ],
+    },
+    {
+      key: 'findingSeverity',
+      label: 'Finding severity',
+      placeholder: 'Any severity',
+      options: [
+        { value: '', label: 'Any severity' },
+        ...SEVERITY_TILES.map((t) => ({ value: t.key, label: t.label })),
       ],
     },
     {
@@ -643,28 +692,83 @@ function ServerPostureTab({
   ];
   const portFilterValues = {
     reachability: reachFilter,
-    ownerKind: ownerKindFilter,
+    type: typeFilter,
     proto: protoFilter,
+    bind: bindFilter,
+    findingSeverity: portFindingSeverityFilter,
     portState: portStateFilter,
   };
   const applyPortFilters = (next) => {
     setReachFilter(next.reachability ?? '');
-    setOwnerKindFilter(next.ownerKind ?? '');
+    setTypeFilter(next.type ?? '');
     setProtoFilter(next.proto ?? '');
+    setBindFilter(next.bind ?? '');
+    setPortFindingSeverityFilter(next.findingSeverity ?? '');
     setPortStateFilter(next.portState ?? '');
   };
 
   const listenerColumns = [
     {
+      key: 'service',
+      label: 'Service',
+      // One readable cell instead of three raw columns (Service / Owner /
+      // Source): the service's name, a runtime chip, the recognised protocol
+      // when it adds something, and where it is defined underneath.
+      sortAccessor: (r) => (r.listening ? describeListener(r).name.toLowerCase() : ''),
+      searchAccessor: (r) => {
+        if (!r.listening) return '';
+        const d = describeListener(r);
+        return [d.name, d.runtime.label, d.protocol, d.subtext, d.id, d.details.user, d.details.command].join(' ');
+      },
+      // Phones lead with the service's name, as the desktop column does.
+      mobile: { slot: 'title', render: (r) => (r.listening ? describeListener(r).name : 'Nothing listening') },
+      render: (r) =>
+        r.listening ? (
+          <ServiceCell listener={r} />
+        ) : (
+          <span className="text-sm text-muted-foreground">Nothing listening{r.expected ? ' — marked expected' : ''}</span>
+        ),
+    },
+    {
+      key: 'type',
+      label: 'Type',
+      className: 'w-32',
+      sortAccessor: (r) => (r.listening ? describeListener(r).runtime.label : ''),
+      searchAccessor: (r) => (r.listening ? describeListener(r).runtime.label : ''),
+      mobile: { slot: 'meta', order: 3, render: (r) => (r.listening ? <RuntimeChip runtime={describeListener(r).runtime} /> : null) },
+      render: (r) => (r.listening ? <RuntimeChip runtime={describeListener(r).runtime} /> : <span className="text-xs text-muted-foreground">—</span>),
+    },
+    {
       key: 'port',
       label: 'Port',
-      mobile: { slot: 'title', render: (r) => `${(r.proto || '').toUpperCase()}/${r.port}${r.containerPort && r.containerPort !== r.port ? ` → ${r.containerPort}` : ''}` },
+      className: 'w-24',
+      sortAccessor: (r) => r.port,
+      mobile: {
+        slot: 'secondary',
+        render: (r) => {
+          const port = `${(r.proto || '').toUpperCase()}/${r.port}${r.containerPort && r.containerPort !== r.port ? ` → ${r.containerPort}` : ''}`;
+          const protocol = r.listening ? describeListener(r).protocol : '';
+          return protocol ? `${port} · ${protocol}` : port;
+        },
+      },
       render: (r) => (
-        <span className="font-mono text-sm">
-          {(r.proto || '').toUpperCase()}/{r.port}
+        <span className="font-mono text-sm" title={r.containerPort && r.containerPort !== r.port ? `Host port ${r.port} → container port ${r.containerPort}` : undefined}>
+          {r.port}
           {r.containerPort && r.containerPort !== r.port && (
             <span className="text-muted-foreground"> → {r.containerPort}</span>
           )}
+        </span>
+      ),
+    },
+    {
+      key: 'proto',
+      label: 'Protocol',
+      className: 'w-24',
+      hideBelow: 'sm',
+      mobile: 'hidden',
+      render: (r) => (
+        <span className="inline-flex items-center rounded border border-border px-1.5 py-px font-mono text-[11px] uppercase text-muted-foreground">
+          {r.proto}
         </span>
       ),
     },
@@ -701,72 +805,11 @@ function ServerPostureTab({
       },
       render: (r) => {
         if (!r.listening) {
-          return (
-            <span className="text-xs text-amber-600 dark:text-amber-400">Not listening</span>
-          );
+          return <Badge tone="warning">Not listening</Badge>;
         }
         const { tone, label } = reachabilityTone(r.reachability);
         return <Badge tone={tone}>{label}</Badge>;
       },
-    },
-    {
-      key: 'service',
-      label: 'Service',
-      // Search what the cell actually shows, so "docker" or "pm2" finds the
-      // rows the column now labels that way.
-      searchAccessor: (r) => (r.listening ? serviceLabel(r).text : ''),
-      // What is behind the port, then who owns it. "systemd unit" on its own
-      // — the inferred label — said less than the card had room for, while
-      // the owner sat in an unlabelled chip below reading like a second,
-      // contradictory service name.
-      mobile: {
-        slot: 'secondary',
-        render: (r) => {
-          if (!r.listening) return 'Nothing listening on this port';
-          const owner = r.ownerKind ? `${r.ownerKind}/${r.ownerName || '-'}` : null;
-          const service = serviceLabel(r).text;
-          return owner && owner !== service ? `${service} · ${owner}` : service;
-        },
-      },
-      render: (r) => {
-        if (!r.listening) return <span className="text-muted-foreground">—</span>;
-        const { text, inferred } = serviceLabel(r);
-        return (
-          <span className={inferred ? 'text-muted-foreground' : 'text-foreground'} title={text}>
-            {text}
-          </span>
-        );
-      },
-    },
-    {
-      key: 'owner',
-      label: 'Owner',
-      // Carried by the card's secondary line (see 'service') rather than a
-      // chip that repeated it.
-      mobile: 'hidden',
-      render: (r) => (
-        <div className="max-w-[14rem]">
-          <p className="truncate text-sm text-foreground">
-            {r.ownerKind ? `${r.ownerKind}/${r.ownerName || '-'}` : <span className="text-muted-foreground">Unattributed</span>}
-          </p>
-          {(r.ownerDetail || r.ownerUser) && (
-            <p className="truncate text-[11px] text-muted-foreground">
-              {[r.ownerDetail, r.ownerUser ? `user: ${r.ownerUser}` : null].filter(Boolean).join(' · ')}
-            </p>
-          )}
-        </div>
-      ),
-    },
-    {
-      key: 'sourcePath',
-      label: 'Source',
-      hideBelow: 'lg',
-      mobile: 'hidden',
-      render: (r) => (
-        <span className="max-w-[12rem] truncate font-mono text-[11px] text-muted-foreground" title={r.sourcePath}>
-          {r.sourcePath || '-'}
-        </span>
-      ),
     },
     {
       key: 'status',
@@ -932,6 +975,9 @@ function ServerPostureTab({
         collector={collector}
         snapshot={snapshot}
         onReinstall={canBootstrap && onBootstrap ? () => onBootstrap('posture') : undefined}
+        onCheckNow={onCheckNow}
+        checking={checking}
+        lastChecked={lastChecked}
       />
 
       {view === 'overview' && (
@@ -1086,7 +1132,7 @@ function ServerPostureTab({
                         {(r.proto || '').toUpperCase()}/{r.port}
                       </span>
                       <span className="mt-0.5 block truncate text-[11px] text-muted-foreground">
-                        {r.listening ? serviceLabel(r).text : 'Nothing listening on this port'}
+                        {r.listening ? `${describeListener(r).name} · ${describeListener(r).runtime.label}` : 'Nothing listening on this port'}
                       </span>
                     </span>
                     <span className="flex shrink-0 items-center gap-1">
@@ -1103,6 +1149,26 @@ function ServerPostureTab({
                 </li>
               ))}
           </ul>
+        </section>
+      )}
+
+      {/* No resource samples at all: say why instead of leaving a gap.
+          Collectors before 1.1.2 never measured CPU / memory / disk / load. */}
+      {view === 'overview' && metrics.length === 0 && (
+        <section className="flex flex-col gap-2 rounded-lg border border-dashed border-border px-4 py-3 text-sm sm:flex-row sm:items-center sm:justify-between">
+          <div className="flex items-start gap-2 text-muted-foreground">
+            <Gauge className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" />
+            <p>
+              <span className="font-medium text-foreground">No resource usage yet.</span> CPU, memory, disk and load are
+              reported by collector 1.1.2 and later
+              {collector.version ? ` — this host runs ${collector.version}` : ''}.
+            </p>
+          </div>
+          {canBootstrap && onBootstrap && isOlderVersion(collector.version, '1.1.2') && (
+            <Button size="sm" variant="outline" onClick={() => onBootstrap('posture')} className="shrink-0">
+              <ArrowUpCircle className="mr-1.5 h-3.5 w-3.5" /> Update collector
+            </Button>
+          )}
         </section>
       )}
 
@@ -1180,63 +1246,83 @@ function ServerPostureTab({
         {allFindings.length === 0 ? (
           <EmptyState icon={ShieldCheck} title="No findings" description="This host is clean as of the last snapshot." />
         ) : (
-          /* Sections, not tabs. Muted, acknowledged and expected findings
-             used to be reachable only through a filter nobody thought to
-             set, so a host with ten muted findings looked identical to one
-             with none. Every count is on screen; only the queue is open. */
-          <div className="space-y-2">
-            {FINDING_SECTION_META.map((sec) => {
-              const rows = sectioned[sec.key] || [];
-              const visible = rows.filter(matchesFilters);
-              return (
-                <FindingSection
-                  key={sec.key}
-                  title={sec.title}
-                  description={sec.description}
-                  count={rows.length}
-                  tone={sec.tone}
-                  open={!!openSections[sec.key]}
-                  onToggle={() => setOpenSections((p) => ({ ...p, [sec.key]: !p[sec.key] }))}
-                >
-                  {visible.length === 0 ? (
-                    // A filtered view with nothing in it must never be
-                    // mistaken for an empty section (spec §9.14).
-                    <p className="py-6 text-center text-sm text-muted-foreground">
-                      None of the {rows.length} finding{rows.length === 1 ? '' : 's'} here match the
-                      current filters.
-                    </p>
-                  ) : (
-                    <DataTable
-                      columns={findingColumns}
-                      data={visible}
-                      filterDefs={sec.key === 'open' ? findingFilterDefs : undefined}
-                      filterValues={findingFilterValues}
-                      onFilterChange={applyFindingFilters}
-                      toolbarActions={
-                        canExport && sec.key === 'open' ? (
-                          <Button variant="outline" size="sm" onClick={() => setExportDataset('findings')}>
-                            <Download className="mr-1.5 h-4 w-4" /> Export
-                          </Button>
-                        ) : null
-                      }
-                      onRowClick={setDetailFinding}
-                      showSearch={false}
-                      emptyMessage="Nothing here"
-                      selectable={canMute || canExpect}
-                      selectedIds={selected}
-                      onSelectionChange={setSelected}
-                      bulkActions={bulkBar}
-                      // Severity is the column the phone card drops, so it
-                      // has to come back as the card's own colour —
-                      // otherwise the one thing that ranks a finding is the
-                      // one thing a phone never shows.
-                      mobile={{ accent: (r) => severityAccent(r.severity), titleClamp: 2 }}
-                    />
-                  )}
-                </FindingSection>
-              );
-            })}
-          </div>
+          <>
+            {/* Above every section, not inside one: the Filters drawer used to
+                live in the Open section's own table toolbar, which meant it
+                vanished the moment Open was collapsed or empty — the exact
+                state a filter left it in half the time (spec §9.14: a
+                filtered view must stay visibly filterable). One toolbar
+                narrows every section at once. */}
+            <div className="flex flex-wrap items-center gap-2">
+              <div className="relative min-w-0 flex-1 max-w-sm max-sm:max-w-none max-sm:basis-full">
+                <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+                <Input
+                  value={findingSearch}
+                  onChange={(e) => setFindingSearch(e.target.value)}
+                  placeholder="Search message, code or port..."
+                  aria-label="Search findings"
+                  className="pl-9 h-9"
+                  type="search"
+                />
+              </div>
+              <FilterControl defs={findingFilterDefs} values={findingFilterValues} onChange={applyFindingFilters} />
+              {canExport && (
+                <div className="sm:ml-auto">
+                  <Button variant="outline" size="sm" onClick={() => setExportDataset('findings')}>
+                    <Download className="mr-1.5 h-4 w-4" /> Export
+                  </Button>
+                </div>
+              )}
+            </div>
+
+            {/* Sections, not tabs. Muted, acknowledged and expected findings
+                used to be reachable only through a filter nobody thought to
+                set, so a host with ten muted findings looked identical to one
+                with none. Every count is on screen; only the queue is open. */}
+            <div className="space-y-2">
+              {FINDING_SECTION_META.map((sec) => {
+                const rows = sectioned[sec.key] || [];
+                const visible = rows.filter(matchesFilters);
+                return (
+                  <FindingSection
+                    key={sec.key}
+                    title={sec.title}
+                    description={sec.description}
+                    count={rows.length}
+                    tone={sec.tone}
+                    open={!!openSections[sec.key]}
+                    onToggle={() => setOpenSections((p) => ({ ...p, [sec.key]: !p[sec.key] }))}
+                  >
+                    {visible.length === 0 ? (
+                      // A filtered view with nothing in it must never be
+                      // mistaken for an empty section (spec §9.14).
+                      <p className="py-6 text-center text-sm text-muted-foreground">
+                        None of the {rows.length} finding{rows.length === 1 ? '' : 's'} here match the
+                        current filters.
+                      </p>
+                    ) : (
+                      <DataTable
+                        columns={findingColumns}
+                        data={visible}
+                        onRowClick={setDetailFinding}
+                        showSearch={false}
+                        emptyMessage="Nothing here"
+                        selectable={canMute || canExpect}
+                        selectedIds={selected}
+                        onSelectionChange={setSelected}
+                        bulkActions={bulkBar}
+                        // Severity is the column the phone card drops, so it
+                        // has to come back as the card's own colour —
+                        // otherwise the one thing that ranks a finding is the
+                        // one thing a phone never shows.
+                        mobile={{ accent: (r) => severityAccent(r.severity), titleClamp: 2 }}
+                      />
+                    )}
+                  </FindingSection>
+                );
+              })}
+            </div>
+          </>
         )}
         {canExpect && allFindings.some(canMarkExpected) && (
           <p className="flex items-center gap-1.5 text-xs text-muted-foreground">

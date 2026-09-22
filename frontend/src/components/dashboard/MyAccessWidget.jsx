@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Shield, ShieldAlert, Server, ChevronRight, MoreHorizontal, KeyRound, Plus } from 'lucide-react';
 import EnvironmentBadge from '@/components/shared/EnvironmentBadge';
@@ -104,14 +104,15 @@ function AccessRow({ entry }) {
 
 const LIMIT = 10;
 
-function MyAccessWidget({ wide = false }) {
+function MyAccessWidget({ wide = false, refreshKey = 0 }) {
   const [entries, setEntries] = useState([]);
   const [showAll, setShowAll] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  const loadedRef = useRef(false);
 
   useEffect(() => {
-    setLoading(true);
+    if (!loadedRef.current) setLoading(true);
     setError('');
     getMyAccess()
       .then((data) => {
@@ -134,8 +135,11 @@ function MyAccessWidget({ wide = false }) {
       .catch((err) => {
         setError(err.response?.data?.error?.message || 'Failed to load accessible servers');
       })
-      .finally(() => setLoading(false));
-  }, []);
+      .finally(() => {
+        setLoading(false);
+        loadedRef.current = true;
+      });
+  }, [refreshKey]);
 
   const totalCount = entries.length;
   const isMobile = useIsMobile();

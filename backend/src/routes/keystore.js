@@ -11,6 +11,8 @@ import { canBypassProdApproval, isVaultEnabled } from '../services/orgService.js
 import audit from '../middleware/audit.js';
 import * as keystoreService from '../services/keystoreService.js';
 import * as keyDeploymentService from '../services/keyDeploymentService.js';
+import { DEPLOYMENT_STATUSES } from '../services/keyDeploymentService.js';
+import { NONE } from '../utils/groupTree.js';
 import { userRateLimiter } from '../middleware/rateLimiter.js';
 
 const router = express.Router();
@@ -428,12 +430,28 @@ const createDeploymentSchema = Joi.object({
   }),
 });
 
+// Every group dimension is accepted back as a list filter (NONE = empty), so
+// a group opens to exactly the rows /deployments/groups counted for it.
+const deploymentFilterKeys = {
+  batchId: Joi.string().max(100),
+  sshKeyId: Joi.string().max(100),
+  serverId: Joi.string().max(100),
+  customerId: Joi.string().max(100),
+  status: Joi.string().valid(...DEPLOYMENT_STATUSES, NONE),
+  action: Joi.string().valid('deploy', 'remove', 'rotate', NONE),
+  deployedById: Joi.string().max(100),
+  search: Joi.string().trim().max(200).allow(''),
+};
+
 const listDeploymentsQuerySchema = Joi.object({
-  batchId: Joi.string(),
-  sshKeyId: Joi.string(),
-  serverId: Joi.string(),
+  ...deploymentFilterKeys,
   page: Joi.number().integer().min(1).default(1),
   pageSize: Joi.number().integer().min(1).max(100).default(25),
+});
+
+const groupDeploymentsQuerySchema = Joi.object({
+  ...deploymentFilterKeys,
+  groupBy: Joi.string().max(200).allow('').default(''),
 });
 
 router.post(
@@ -454,6 +472,18 @@ router.get(
   asyncHandler(async (req, res) => {
     const limit = parseInt(req.query.limit, 10) || 20;
     const result = await keyDeploymentService.listBatches(req.orgId, { limit }, req.scope);
+    res.json({ success: true, data: result });
+  })
+);
+
+// Group tree over the whole filtered set (utils/groupTree.js). Registered
+// before any /deployments/:id route.
+router.get(
+  '/deployments/groups',
+  requirePermission('keystore.view'),
+  validateQuery(groupDeploymentsQuerySchema),
+  asyncHandler(async (req, res) => {
+    const result = await keyDeploymentService.groupDeployments(req.orgId, req.query, req.scope);
     res.json({ success: true, data: result });
   })
 );

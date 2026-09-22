@@ -30,7 +30,7 @@ const COLLECTOR = path.resolve(__dirname, '..', '..', '..', '..', 'scripts', 'po
 // it — a developer's own firewall must never leak into a fixture.
 const REAL_TOOLS = [
   'bash', 'awk', 'sed', 'grep', 'tr', 'cat', 'head', 'tail', 'sort', 'paste', 'cut', 'mktemp', 'rm',
-  'date', 'readlink', 'stat', 'id', 'wc', 'basename', 'env', 'xargs', 'find', 'uniq', 'python3',
+  'date', 'readlink', 'stat', 'id', 'wc', 'basename', 'env', 'xargs', 'find', 'uniq', 'python3', 'sleep',
 ];
 
 function which(tool) {
@@ -144,7 +144,7 @@ describe('posture collector ↔ ingest contract', () => {
     expect(stderr).toBe('');
     const snap = validate(json);
 
-    expect(snap.agentVersion).toBe('1.1.1');
+    expect(snap.agentVersion).toBe('1.1.2');
     // The NAT-only publish is present, with the source the API used to refuse.
     const nat = snap.listeners.find((l) => l.port === 9000);
     expect(nat).toMatchObject({ source: 'nat', containerPort: 9000 });
@@ -334,6 +334,11 @@ describe('collector 1.1.1 — what dev-demos-03 showed', () => {
     });
     expect(json).not.toBeNull();
     expect(stderr).toBe('');
+    // Real counters over a real second: a number between 0 and 100.
+    const cpu = validate(json).metrics.cpuPct;
+    expect(typeof cpu).toBe('number');
+    expect(cpu).toBeGreaterThanOrEqual(0);
+    expect(cpu).toBeLessThanOrEqual(100);
   });
 
   it('asks systemctl without sudo, once per unit — not once per socket through sudo', () => {
@@ -369,4 +374,28 @@ describe('collector 1.1.1 — what dev-demos-03 showed', () => {
     expect(snap.degradedReasons).toEqual([]);
     expect(snap.notes.join(' ')).toMatch(/container id could not be resolved/);
   });
+});
+
+describe('collector 1.1.2 — resource metrics', () => {
+  // The API and the Server page had room for CPU / memory / disk / load all
+  // along; the collector never sent them, so every real host's Resources
+  // panel was empty (only the demo seed produced any).
+  it('reports memory, disk and load from /proc and df, as numbers the API accepts', () => {
+    const { json } = runCollector({
+      stubs: {
+        ss: 'exit 0',
+        iptables: 'case "$*" in "-S INPUT") echo "-P INPUT ACCEPT";; "-t nat -S") echo "-P PREROUTING ACCEPT";; *) exit 1;; esac',
+        df: 'printf "Filesystem 1024-blocks Used Available Capacity Mounted on\\n/dev/sda1 100 57 43 57%% /\\n"',
+      },
+      files: {
+        'proc/meminfo': 'MemTotal:       8000000 kB\nMemFree:         500000 kB\nMemAvailable:   4000000 kB\n',
+        'proc/loadavg': '0.42 0.30 0.25 1/300 12345\n',
+        'proc/stat': 'cpu  1000 0 1000 8000 0 0 0 0 0 0\n',
+      },
+    });
+    const snap = validate(json);
+    expect(snap.metrics).toMatchObject({ memPct: 50, diskPct: 57, load1: 0.42 });
+    // Same counters in both samples: no window, so no CPU figure — null, not 0.
+    expect(snap.metrics.cpuPct).toBeNull();
+  }, 15000);
 });

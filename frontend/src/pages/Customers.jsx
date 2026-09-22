@@ -1,6 +1,6 @@
-import { useState, useEffect, useCallback, useMemo } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
-import { Plus, Building2, Server, Eye, Pencil, Trash2, RefreshCw } from 'lucide-react';
+import { Plus, Building2, Server, Eye, Pencil, Trash2 } from 'lucide-react';
 import Badge from '@/components/shared/Badge';
 import Modal from '@/components/shared/Modal';
 import ConfirmDialog from '@/components/shared/ConfirmDialog';
@@ -15,6 +15,16 @@ import { useAuth } from '@/context/AuthContext';
 import { can } from '@/lib/permissions';
 import { listCustomers, createCustomer, updateCustomer } from '@/services/customerService';
 import DeleteCustomerDialog from '@/components/customers/DeleteCustomerDialog';
+import useAutoRefresh from '@/hooks/useAutoRefresh';
+import useUrlFilters from '@/hooks/useUrlFilters';
+
+// Column key -> backend sortBy for listCustomers.
+const SORT_KEY_TO_BACKEND = {
+  name: 'name',
+  slug: 'slug',
+  servers: 'servers',
+  status: 'status',
+};
 
 function Customers() {
   const navigate = useNavigate();
@@ -23,6 +33,7 @@ function Customers() {
   const canManage = can(user, 'customers.update');
   const canDelete = can(user, 'customers.delete');
   const [customers, setCustomers] = useState([]);
+  const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [createOpen, setCreateOpen] = useState(false);
@@ -30,8 +41,18 @@ function Customers() {
   const [confirm, setConfirm] = useState(null);
   const [deleteTarget, setDeleteTarget] = useState(null);
   const [searchParams, setSearchParams] = useSearchParams();
-  const [statusFilter, setStatusFilter] = useState('');
-  const [hasServersFilter, setHasServersFilter] = useState('');
+
+  const [f, setF] = useUrlFilters({
+    q: '',
+    status: '',
+    hasServers: '',
+    sortBy: '',
+    sortDir: 'asc',
+    page: '1',
+    pageSize: '20',
+  });
+  const page = parseInt(f.page, 10) || 1;
+  const pageSize = parseInt(f.pageSize, 10) || 20;
 
   // Deep link: /customers?action=new — open the create modal on mount.
   useEffect(() => {
@@ -48,18 +69,38 @@ function Customers() {
     setLoading(true);
     setError('');
     try {
-      const data = await listCustomers({ page: 1, pageSize: 200 });
+      const params = { page, pageSize };
+      if (f.q) params.search = f.q;
+      if (f.status) params.isActive = f.status === 'active';
+      if (f.hasServers) params.hasServers = f.hasServers;
+      if (f.sortBy) {
+        params.sortBy = SORT_KEY_TO_BACKEND[f.sortBy] || f.sortBy;
+        params.sortDir = f.sortDir;
+      }
+      const data = await listCustomers(params);
       setCustomers(data.items || []);
+      setTotal(data.total || 0);
     } catch (err) {
       setError(err.response?.data?.error?.message || err.message || 'Failed to load customers');
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [page, pageSize, f.q, f.status, f.hasServers, f.sortBy, f.sortDir]);
 
   useEffect(() => {
     fetch();
   }, [fetch]);
+  const { refresh, refreshing, lastUpdated } = useAutoRefresh(fetch);
+
+  const handleSearchChange = useCallback((q) => {
+    setF({ q, page: '1' });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const handleSortChange = useCallback((sortBy, sortDir) => {
+    setF({ sortBy, sortDir });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const handleCreate = async (payload) => {
     await createCustomer(payload);
@@ -97,30 +138,15 @@ function Customers() {
       ],
     },
   ];
-  const filterValues = { status: statusFilter, hasServers: hasServersFilter };
+  const filterValues = { status: f.status, hasServers: f.hasServers };
   const applyFilters = (next) => {
-    setStatusFilter(next.status ?? '');
-    setHasServersFilter(next.hasServers ?? '');
+    setF({ status: next.status ?? '', hasServers: next.hasServers ?? '', page: '1' });
   };
-
-  // Client-side list (all customers load at once, page-size 200) — filter
-  // here rather than server-side, matching how the search box already works.
-  const filteredCustomers = useMemo(() => {
-    return customers.filter((c) => {
-      if (statusFilter === 'active' && !c.isActive) return false;
-      if (statusFilter === 'inactive' && c.isActive) return false;
-      const count = c._count?.servers ?? 0;
-      if (hasServersFilter === 'yes' && count === 0) return false;
-      if (hasServersFilter === 'no' && count > 0) return false;
-      return true;
-    });
-  }, [customers, statusFilter, hasServersFilter]);
 
   const columns = [
     {
       key: 'name',
       label: 'Name',
-      sortable: true,
       mobile: { slot: 'title', render: (c) => c.name },
       render: (c) => (
         <button
@@ -136,7 +162,6 @@ function Customers() {
     {
       key: 'slug',
       label: 'Slug',
-      sortable: true,
       mobile: 'hidden',
       render: (c) => <code className="text-xs text-muted-foreground">{c.slug}</code>,
     },
@@ -144,6 +169,7 @@ function Customers() {
       key: 'description',
       label: 'Description',
       hideBelow: 'md',
+      sortable: false,
       mobile: {
         slot: 'secondary',
         render: (c) => (c.description ? <span className="line-clamp-2">{c.description}</span> : null),
@@ -155,7 +181,6 @@ function Customers() {
     {
       key: 'servers',
       label: 'Servers',
-      sortable: true,
       searchAccessor: (c) => String(c._count?.servers ?? 0),
       // Phones: next to the "⋯" menu (DataTable `mobile.corner`).
       mobile: 'hidden',
@@ -208,8 +233,10 @@ function Customers() {
         title="Customers"
         subtitle="Organize servers and access by tenant."
         helpKey="customers"
+        onRefresh={refresh}
+        refreshing={refreshing}
+        lastUpdated={lastUpdated}
         actions={[
-          { key: 'refresh', label: 'Refresh', icon: RefreshCw, variant: 'outline', onClick: () => fetch(), disabled: loading, spin: loading },
           { key: 'add', label: 'Add Customer', icon: Plus, onClick: () => setCreateOpen(true), hidden: !canCreate },
         ]}
       />
@@ -222,7 +249,7 @@ function Customers() {
 
       <DataTable
         columns={columns}
-        data={filteredCustomers}
+        data={customers}
         loading={loading}
         emptyMessage="No customers yet. Create your first customer to get started."
         emptyState={
@@ -231,10 +258,20 @@ function Customers() {
           ) : undefined
         }
         searchPlaceholder="Search customers..."
+        initialSearch={f.q}
+        onSearchChange={handleSearchChange}
         filterDefs={filterDefs}
         filterValues={filterValues}
         onFilterChange={applyFilters}
         onRowClick={(c) => navigate(`/customers/${c.id}`)}
+        serverSort={{ sortKey: f.sortBy, sortDir: f.sortDir, onSortChange: handleSortChange }}
+        serverPagination={{
+          page,
+          total,
+          onPageChange: (p) => setF({ page: String(p) }),
+          pageSize,
+          onPageSizeChange: (size) => setF({ pageSize: String(size), page: '1' }),
+        }}
         mobile={{
           leading: () => <CardIcon icon={Building2} />,
           corner: (c) => (

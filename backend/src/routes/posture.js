@@ -66,8 +66,23 @@ const findingsQuerySchema = Joi.object({
   customerId: Joi.string(),
   environment: Joi.string().valid(...ENVIRONMENTS),
   serverId: Joi.string(),
+  // Finding type — the finding's `code` (PORT_EXPOSED, FIREWALL_INACTIVE, …).
+  code: Joi.string().max(100).allow(''),
+  // `tcp/443`, a bare `443`, or `__none__` (no port) — also what a "Port"
+  // group carries, so a group opens to exactly the rows it counted.
+  port: Joi.string().max(20).pattern(/^(__none__|([a-z0-9]{1,8}\/)?\d{1,5})$/i).allow(''),
+  lastSeenFrom: Joi.date().iso(),
+  lastSeenTo: Joi.date().iso(),
+  // Free text: message, code, ownerLabel, service, server hostname/displayName, port.
+  q: Joi.string().max(200).allow(''),
   page: Joi.number().integer().min(1).default(1),
   limit: Joi.number().integer().min(1).max(100).default(25),
+});
+
+// The list's own filters (status/section included), plus the levels. Paging
+// does not apply: the tree covers the whole filtered set.
+const findingGroupsQuerySchema = findingsQuerySchema.fork(['page', 'limit'], (s) => s.strip()).keys({
+  groupBy: Joi.string().max(200).required(),
 });
 
 const muteSchema = Joi.object({
@@ -124,6 +139,13 @@ router.use(authenticate, tenant);
 const summaryQuerySchema = Joi.object({
   customerId: Joi.string(),
   environment: Joi.string().valid(...ENVIRONMENTS),
+  // Matching the findings page's own filters, so the section/severity tiles
+  // it sits above never disagree with the rows underneath them.
+  serverId: Joi.string(),
+  code: Joi.string().max(100).allow(''),
+  lastSeenFrom: Joi.date().iso(),
+  lastSeenTo: Joi.date().iso(),
+  q: Joi.string().max(200).allow(''),
 });
 
 router.get(
@@ -134,6 +156,11 @@ router.get(
     const data = await postureQueryService.getSummary(req.orgId, req.scope, {
       customerId: req.query.customerId,
       environment: req.query.environment,
+      serverId: req.query.serverId,
+      code: req.query.code,
+      lastSeenFrom: req.query.lastSeenFrom,
+      lastSeenTo: req.query.lastSeenTo,
+      q: req.query.q,
     });
     res.json({ success: true, data });
   })
@@ -178,6 +205,22 @@ router.get(
         meta: { total: result.total, page: result.page, limit: result.limit },
       },
     });
+  })
+);
+
+// ---------------------------------------------------------------------------
+// GET /api/posture/findings/groups — nested group counts over the whole
+// filtered set; leaves load their rows through GET /findings with the
+// group's values as filters. Registered before any /findings/:id route.
+// ---------------------------------------------------------------------------
+
+router.get(
+  '/findings/groups',
+  requirePermission('posture.read'),
+  validateQuery(findingGroupsQuerySchema),
+  asyncHandler(async (req, res) => {
+    const data = await postureQueryService.getFindingGroups(req.orgId, req.query, req.scope);
+    res.json({ success: true, data });
   })
 );
 
@@ -313,14 +356,31 @@ const exportSchema = Joi.object({
     code: Joi.string().max(64),
     environment: Joi.string().max(32),
     customerId: Joi.string(),
+    // Findings-page filters (findings dataset). An export from that page has
+    // to carry the same filters the page is showing.
+    lastSeenFrom: Joi.date().iso(),
+    lastSeenTo: Joi.date().iso(),
     // Service-inventory filters (listeners dataset). Exporting from that page
     // has to carry the same filters the page is showing.
     proto: Joi.string().max(8),
     reachability: Joi.string().max(16),
     ownerKind: Joi.string().max(32),
+    ownerKinds: Joi.string().max(200),
     port: Joi.number().integer().min(0).max(65535),
+    portMin: Joi.number().integer().min(0).max(65535),
+    portMax: Joi.number().integer().min(0).max(65535),
     serviceKey: Joi.string().max(160),
+    // Missing here used to mean an export could never say "stopped services
+    // only" or "listening ports only" the way the page's State filter can —
+    // the file and the screen disagreed on rows, not just field names.
+    state: Joi.string().valid('running', 'stopped', 'internal', 'exposed'),
+    hasFindings: Joi.boolean(),
+    findingSeverity: Joi.string().uppercase().valid('CRITICAL', 'HIGH', 'MEDIUM', 'LOW', 'INFO'),
     q: Joi.string().max(200).allow(''),
+    // The listeners page's column sort, so the file comes out in the order
+    // the screen shows. Whitelisted in postureInventoryService.
+    sortBy: Joi.string().max(32).allow(''),
+    sortDir: Joi.string().valid('asc', 'desc').allow(''),
   }).default({}),
 });
 
@@ -482,6 +542,10 @@ const inventoryQuerySchema = Joi.object({
   proto: Joi.string().max(8).allow(''),
   reachability: Joi.string().max(16).allow(''),
   ownerKind: Joi.string().max(32).allow(''),
+  // csv of ownerKind values — lets the Type filter group container +
+  // docker-proxy + docker under one "Docker" option without the backend
+  // needing to know the frontend's grouping.
+  ownerKinds: Joi.string().max(200).allow(''),
   port: Joi.number().integer().min(0).max(65535).allow(''),
   portMin: Joi.number().integer().min(0).max(65535),
   portMax: Joi.number().integer().min(0).max(65535),
@@ -493,9 +557,23 @@ const inventoryQuerySchema = Joi.object({
   // still declare ports and still have firewall rules.
   state: Joi.string().valid('running', 'stopped', 'internal', 'exposed').allow(''),
   hasFindings: Joi.boolean(),
+  // Rows with at least one OPEN finding of this severity.
+  findingSeverity: Joi.string().uppercase().valid(...SEVERITIES).allow(''),
+  // Group-by leaves narrow with these (postureInventoryService
+  // LISTENER_GROUP_DIMS): the recognised protocol (`__none__` = none
+  // recognised) and the row's single, non-overlapping status.
+  service: Joi.string().max(64).allow(''),
+  status: Joi.string().valid('exposed', 'internal', 'stopped').allow(''),
+  // Column sort (listeners). Unknown keys fall back to the default order.
+  sortBy: Joi.string().max(32).allow(''),
+  sortDir: Joi.string().valid('asc', 'desc').allow(''),
   page: Joi.number().integer().min(1),
   limit: Joi.number().integer().min(1).max(200),
 }).unknown(false);
+
+const inventoryGroupsQuerySchema = inventoryQuerySchema.keys({
+  groupBy: Joi.string().max(200).required(),
+});
 
 // GET /api/posture/inventory/services — one row per distinct service.
 router.get(
@@ -504,6 +582,20 @@ router.get(
   validateQuery(inventoryQuerySchema),
   asyncHandler(async (req, res) => {
     const data = await postureInventoryService.listServices(req.orgId, req.query, req.scope);
+    res.json({ success: true, data });
+  })
+);
+
+// GET /api/posture/inventory/listeners/groups?groupBy=a,b — the group tree
+// (counts over the WHOLE filtered set) for the grouped view. Same permission,
+// same filters and the same customer scope as the list below; each leaf's
+// rows then come from the list with the group's values as filters.
+router.get(
+  '/inventory/listeners/groups',
+  requirePermission('posture.read'),
+  validateQuery(inventoryGroupsQuerySchema),
+  asyncHandler(async (req, res) => {
+    const data = await postureInventoryService.listListenerGroups(req.orgId, req.query, req.scope);
     res.json({ success: true, data });
   })
 );

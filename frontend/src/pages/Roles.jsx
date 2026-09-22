@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import {
   AlertTriangle,
@@ -35,6 +35,7 @@ import RoleMatrix from '@/components/roles/RoleMatrix';
 import { useAuth } from '@/context/AuthContext';
 import { getPermissionCatalog, getRole, listRoles, resetRole, updateRole } from '@/services/roleService';
 import { cn } from '@/lib/utils';
+import useAutoRefresh from '@/hooks/useAutoRefresh';
 
 const BASE_LABEL = { member: 'Member', manager: 'Manager', admin: 'Admin', super_admin: 'Super admin' };
 const errMsg = (err, fallback) => err?.response?.data?.error?.message || err?.message || fallback;
@@ -210,6 +211,13 @@ function RoleDetail({ id, catalog, roles, reloadList }) {
     load();
   }, [load]);
 
+  // Reloads this role plus the shared catalogue/role list (for the user
+  // count and policy refs shown in the subtitle).
+  const loadAll = useCallback(async () => {
+    await Promise.all([load(), reloadList()]);
+  }, [load, reloadList]);
+  const { refresh, refreshing, lastUpdated } = useAutoRefresh(loadAll);
+
   const grantable = useMemo(() => new Set(user?.permissions || []), [user?.permissions]);
   const dirty = role && draft.join() !== role.permissions.join();
   const canEdit = !!role?.editable && can('roles.manage');
@@ -287,6 +295,9 @@ function RoleDetail({ id, catalog, roles, reloadList }) {
             </p>
           </>
         }
+        onRefresh={refresh}
+        refreshing={refreshing}
+        lastUpdated={lastUpdated}
         actions={[
           // Phones: every role action goes into the header's "⋯" menu (desktop keeps the buttons below).
           { key: 'edit', label: 'Edit details', icon: Pencil, variant: 'outline', onClick: () => setEditMeta(true), hidden: !can('roles.manage') || !canEdit, desktop: null },
@@ -464,6 +475,7 @@ function Roles() {
   const [copyFrom, setCopyFrom] = useState(null);
   const [deleting, setDeleting] = useState(null);
   const { can } = useAuth();
+  const { refresh, refreshing, lastUpdated } = useAutoRefresh(reload);
 
   if (id) {
     return (
@@ -478,6 +490,9 @@ function Roles() {
         title="Roles"
         subtitle="What each role can do. Every user has one role."
         helpKey="roles"
+        onRefresh={refresh}
+        refreshing={refreshing}
+        lastUpdated={lastUpdated}
         actions={[
           // Phones: the List / Matrix switch goes into the "⋯" menu (desktop keeps the controls below).
           {

@@ -11,4 +11,6 @@ module.exports = {
   transformIgnorePatterns: ['/node_modules/'],
   // Use the built-in jest ESM support (no babel needed)
   transform: {},
+  // Close the connections each file's imports opened (src/config/handles.js).
+  setupFilesAfterEnv: ['<rootDir>/test/closeHandles.js'],
 };
