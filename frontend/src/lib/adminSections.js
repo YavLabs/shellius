@@ -13,6 +13,7 @@ import {
   Radar,
   ShieldHalf,
   Bot,
+  ScrollText,
 } from 'lucide-react';
 import { canAny } from '@/lib/permissions';
 
@@ -148,6 +149,15 @@ export const ADMIN_SECTIONS = [
     icon: Radar,
     anyOf: ['posture.settings'],
     keywords: ['posture', 'exposure', 'findings', 'firewall', 'collector', 'alert rules', 'retention'],
+  },
+  {
+    key: 'audit-sinks',
+    group: 'organization',
+    label: 'Audit sinks',
+    description: 'Send the audit log to a SIEM, bucket or digest email',
+    icon: ScrollText,
+    anyOf: ['audit.sinks'],
+    keywords: ['audit', 'sink', 'siem', 'webhook', 'syslog', 's3', 'splunk', 'datadog', 'panther', 'digest', 'export'],
   },
   {
     key: 'email',

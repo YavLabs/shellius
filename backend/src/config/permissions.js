@@ -841,6 +841,20 @@ export const PERMISSIONS = [
     since: 7,
   },
 
+  {
+    key: 'audit.retention',
+    group: 'sessions',
+    label: 'Set audit retention',
+    description:
+      'Decide how long audit entries are kept, and whether they are archived before being deleted. Audit history is otherwise kept forever.',
+    sensitive: true,
+    defaults: SA,
+    current: SA,
+    delegable: false,
+    endpoints: ['GET/PUT /api/audit/retention', 'GET /api/audit/archives'],
+    since: 7,
+  },
+
   // ------------------------------------------------------------------- tokens
   {
     key: 'tokens.personal',

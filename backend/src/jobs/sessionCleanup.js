@@ -12,7 +12,7 @@
  *   RECORDING_RETENTION_DAYS  — days to keep .cast files (default: 30)
  *   RECORDINGS_DIR            — recording storage directory (default: ./data/recordings)
  *
- * TODO(phase-10): auditArchive.js — optional compression of old AuditLog rows
+ * Audit retention lives in auditArchive.js (was TODO(phase-10) here).
  */
 
 import fs from 'fs';

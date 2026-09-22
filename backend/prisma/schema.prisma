@@ -95,6 +95,8 @@ model Organization {
   postureSettings   PostureSettings?
   apiTokens         ApiToken[]
   auditSinks        AuditSink[]
+  auditSettings     AuditSettings?
+  auditArchives     AuditArchive[]
 
   @@map("organizations")
 }
@@ -930,6 +932,61 @@ model AuditSinkDelivery {
   @@index([sinkId, startedAt])
   @@index([orgId, startedAt])
   @@map("audit_sink_deliveries")
+}
+
+/// How long an organization keeps its audit log, and whether it is archived
+/// before anything is deleted.
+///
+/// Its own model rather than Organization.settings, because PUT /api/org
+/// deliberately restricts which fields it will write so that settings cannot
+/// be changed around their own permission (orgService ALLOWED_UPDATE_FIELDS).
+model AuditSettings {
+  id             String  @id @default(cuid())
+  orgId          String  @unique @map("org_id")
+  /// null = keep everything, which stays the default. Deleting audit history
+  /// is never something that starts happening on its own.
+  retentionDays  Int?    @map("retention_days")
+  archiveEnabled Boolean @default(false) @map("archive_enabled")
+  archiveEncrypt Boolean @default(true) @map("archive_encrypt")
+  archiveBucket  String? @map("archive_bucket")
+  archivePrefix  String  @default("audit-archive") @map("archive_prefix")
+  /// Delete past retention even with no archive to fall back on. Off, and
+  /// deliberately awkward to turn on.
+  deleteWithoutArchive Boolean @default(false) @map("delete_without_archive")
+
+  lastArchiveAt    DateTime? @map("last_archive_at")
+  lastArchiveError String?   @map("last_archive_error") @db.Text
+  createdAt        DateTime  @default(now()) @map("created_at")
+  updatedAt        DateTime  @updatedAt @map("updated_at")
+
+  organization Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+
+  @@map("audit_settings")
+}
+
+/// One archived, immutable NDJSON object: the receipt that makes deleting
+/// the rows it covers safe. Records a checksum so the archive can be shown
+/// to be intact without reading all of it back.
+model AuditArchive {
+  id          String   @id @default(cuid())
+  orgId       String   @map("org_id")
+  objectKey   String   @map("object_key")
+  bucket      String?
+  format      String   @default("ndjson.gz")
+  encrypted   Boolean  @default(false)
+  rangeStart  DateTime @map("range_start")
+  rangeEnd    DateTime @map("range_end")
+  rowCount    Int      @map("row_count")
+  bytes       Int
+  sha256      String
+  deletedRows Int?     @map("deleted_rows")
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  organization Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+
+  @@unique([orgId, objectKey])
+  @@index([orgId, rangeStart])
+  @@map("audit_archives")
 }
 
 /// A long-lived bearer credential for non-interactive callers. Two kinds,

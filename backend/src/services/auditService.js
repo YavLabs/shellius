@@ -124,6 +124,12 @@ export const ACTIONS = {
     delete: 'service_account.delete',
     role_changed: 'service_account.role_changed',
   },
+  audit_retention: {
+    update: 'audit_retention.update',
+    applied: 'audit_retention.applied',
+    archive_created: 'audit_retention.archive_created',
+    archive_downloaded: 'audit_retention.archive_downloaded',
+  },
   audit_sink: {
     create: 'audit_sink.create',
     update: 'audit_sink.update',

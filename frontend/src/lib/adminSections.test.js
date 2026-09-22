@@ -36,6 +36,7 @@ describe('sections table', () => {
       ['organization', 'ca', 'ca.view'],
       ['organization', 'quick-connect', 'quick_connect.settings'],
       ['organization', 'posture', 'posture.settings'],
+      ['organization', 'audit-sinks', 'audit.sinks'],
       ['integrations', 'email', 'settings.smtp'],
       ['integrations', 'storage', 'settings.storage'],
     ]);
