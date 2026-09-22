@@ -402,6 +402,12 @@ model AuditLog {
 
   @@index([orgId, createdAt])
   @@index([actorId])
+  // (orgId, createdAt, id) is a total order, so a sequential reader's
+  // keyset predicate uses this index directly instead of sorting.
+  @@index([orgId, createdAt, id])
+  // A sink that only wants some actions, and the existing facets() query.
+  @@index([orgId, action])
+  @@index([orgId, resourceType])
   @@map("audit_logs")
 }
 

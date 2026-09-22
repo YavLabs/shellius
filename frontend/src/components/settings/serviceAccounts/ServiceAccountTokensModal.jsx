@@ -1,22 +1,42 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { KeyRound, Loader2, Plus, Trash2 } from 'lucide-react';
 import Modal from '@/components/shared/Modal';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import { SwitchField } from '@/components/ui/switch';
 import ConfirmDialog from '@/components/shared/ConfirmDialog';
 import TokenRevealDialog from '@/components/settings/tokens/TokenRevealDialog';
-import { formatTokenExpiry, tokenStatus, tokenStatusBadge, TOKEN_EXPIRY_OPTIONS } from '@/components/settings/tokens/tokenHelpers';
+import TokenScopePicker from '@/components/settings/tokens/TokenScopePicker';
+import { formatTokenExpiry, summarizeScopes, tokenStatus, tokenStatusBadge, TOKEN_EXPIRY_OPTIONS } from '@/components/settings/tokens/tokenHelpers';
 import { createServiceAccountToken, getServiceAccount, revokeServiceAccountToken } from '@/services/apiTokenService';
+import { getPermissionCatalog } from '@/services/roleService';
 import { formatDateTime, relativeTime } from '@/utils/time';
 
 const inputCls =
   'h-9 w-full rounded-md border border-input bg-background px-3 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring';
 
-function CreateTokenForm({ serviceAccountId, onCreated, onCancel }) {
+function CreateTokenForm({ serviceAccountId, rolePermissions, onCreated, onCancel }) {
   const [name, setName] = useState('');
   const [expiresInDays, setExpiresInDays] = useState('365');
   const [error, setError] = useState('');
   const [saving, setSaving] = useState(false);
+
+  // Opt-in scope limit — empty scopes = the service account's full role
+  // permissions, the existing backend default. `grantable` is the service
+  // account's own role permissions (GET /service-accounts/:id
+  // `rolePermissions`), same idea as the personal picker using the caller's
+  // own permissions: a token can never be scoped wider than its holder.
+  const [limiting, setLimiting] = useState(false);
+  const [scopes, setScopes] = useState([]);
+  const [catalog, setCatalog] = useState(null);
+  const [catalogError, setCatalogError] = useState('');
+  const grantable = useMemo(() => new Set(rolePermissions || []), [rolePermissions]);
+
+  useEffect(() => {
+    getPermissionCatalog()
+      .then(setCatalog)
+      .catch(() => setCatalogError('Could not load the permission list. Try again.'));
+  }, []);
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -29,6 +49,7 @@ function CreateTokenForm({ serviceAccountId, onCreated, onCancel }) {
     try {
       const body = { name: name.trim() };
       if (expiresInDays) body.expiresInDays = Number(expiresInDays);
+      if (limiting && scopes.length > 0) body.scopes = scopes;
       const result = await createServiceAccountToken(serviceAccountId, body);
       onCreated(result);
     } catch (err) {
@@ -76,6 +97,26 @@ function CreateTokenForm({ serviceAccountId, onCreated, onCancel }) {
           ))}
         </select>
       </div>
+
+      <SwitchField
+        label="Limit this token"
+        description="Narrow it to a subset of the service account's permissions, instead of everything its role allows."
+        checked={limiting}
+        onCheckedChange={(next) => {
+          setLimiting(next);
+          if (!next) setScopes([]);
+        }}
+        disabled={!catalog}
+        bordered
+      />
+      {limiting && catalog && <TokenScopePicker catalog={catalog} value={scopes} onChange={setScopes} grantable={grantable} />}
+      {limiting && catalog && scopes.length === 0 && (
+        <p className="text-xs text-amber-600 dark:text-amber-400">
+          Select at least one permission — with none checked this token still gets the full role.
+        </p>
+      )}
+      {catalogError && <p className="text-xs text-muted-foreground">{catalogError}</p>}
+
       <div className="flex justify-end gap-2">
         <Button type="button" variant="outline" size="sm" onClick={onCancel}>
           Cancel
@@ -105,6 +146,7 @@ function TokenRow({ token, onRevoke, busy }) {
           {' · '}
           {token.lastUsedAt ? `Last used ${relativeTime(token.lastUsedAt)}` : 'Never used'}
         </p>
+        <p className="mt-1 text-xs text-muted-foreground">Scope: {summarizeScopes(token.scopes)}</p>
         {token.revokedAt && (
           <p className="mt-1 text-xs text-muted-foreground">Revoked {formatDateTime(token.revokedAt)}</p>
         )}
@@ -136,6 +178,7 @@ function TokenRow({ token, onRevoke, busy }) {
  */
 export default function ServiceAccountTokensModal({ open, onClose, serviceAccount, onChanged }) {
   const [tokens, setTokens] = useState([]);
+  const [rolePermissions, setRolePermissions] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [creating, setCreating] = useState(false);
@@ -149,6 +192,7 @@ export default function ServiceAccountTokensModal({ open, onClose, serviceAccoun
     return getServiceAccount(serviceAccount.id)
       .then((account) => {
         setTokens(account?.tokens || []);
+        setRolePermissions(account?.rolePermissions || []);
         setError('');
         onChanged?.(account);
       })
@@ -218,7 +262,12 @@ export default function ServiceAccountTokensModal({ open, onClose, serviceAccoun
           )}
 
           {creating ? (
-            <CreateTokenForm serviceAccountId={serviceAccount.id} onCreated={handleCreated} onCancel={() => setCreating(false)} />
+            <CreateTokenForm
+              serviceAccountId={serviceAccount.id}
+              rolePermissions={rolePermissions}
+              onCreated={handleCreated}
+              onCancel={() => setCreating(false)}
+            />
           ) : (
             <Button type="button" size="sm" onClick={() => setCreating(true)}>
               <Plus className="mr-1.5 h-4 w-4" />

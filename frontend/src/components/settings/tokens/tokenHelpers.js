@@ -70,3 +70,57 @@ export const TOKEN_EXPIRY_OPTIONS = [
   { value: '365', label: '1 year' },
   { value: '', label: 'Never expires' },
 ];
+
+// ---------------------------------------------------------------------------
+// Scopes — a token's `scopes` are permission keys from the same catalogue
+// the role editor uses (GET /api/roles/catalog, see roleService.js and
+// pages/Roles.jsx > components/roles/PermissionGrid.jsx). An empty array is
+// the backend default and means "everything this identity's role allows" —
+// TokenScopePicker.jsx is the opt-in way to narrow that down.
+// ---------------------------------------------------------------------------
+
+/**
+ * Permissions a token is allowed to be scoped to: the catalogue minus
+ * anything marked non-delegable (GET /api/roles/catalog returns
+ * `delegable` on every permission; the backend rejects any non-delegable
+ * key in a token's scopes). `p.delegable` defaults to `true` when absent, so
+ * this still degrades sensibly against an older catalogue response.
+ */
+export function delegablePermissions(catalog) {
+  return (catalog?.permissions || []).filter((p) => p.delegable !== false);
+}
+
+/**
+ * catalog.permissions grouped under catalog.groups (role-editor grouping),
+ * filtered to delegable permissions, an optional `grantable` allow-list
+ * (e.g. the token owner's own permissions — pass null/undefined for no
+ * extra restriction) and an optional case-insensitive search query against
+ * the key/label/description. Empty groups are dropped.
+ */
+export function groupPermissionsForPicker(catalog, { query = '', grantable = null } = {}) {
+  const q = String(query || '').trim().toLowerCase();
+  const allowed = delegablePermissions(catalog).filter((p) => !grantable || grantable.has(p.key));
+  return (catalog?.groups || [])
+    .map((g) => ({
+      ...g,
+      items: allowed.filter(
+        (p) =>
+          p.group === g.key &&
+          (!q || p.key.toLowerCase().includes(q) || p.label.toLowerCase().includes(q) || (p.description || '').toLowerCase().includes(q))
+      ),
+    }))
+    .filter((g) => g.items.length > 0);
+}
+
+/**
+ * Row-list summary for a token's scopes:
+ *   []                  → "Full access"
+ *   <= maxKeys entries   → the keys themselves, comma-joined
+ *   more                 → "N scopes"
+ */
+export function summarizeScopes(scopes, { maxKeys = 3 } = {}) {
+  const list = (scopes || []).filter(Boolean);
+  if (list.length === 0) return 'Full access';
+  if (list.length <= maxKeys) return list.join(', ');
+  return `${list.length} scopes`;
+}

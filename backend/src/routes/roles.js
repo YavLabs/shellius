@@ -49,17 +49,24 @@ const meta = (req) => ({ ipAddress: req.ip, userAgent: req.headers['user-agent']
 
 router.use(authenticate, tenant);
 
-// GET /api/roles/catalog — permission catalogue for the role editor
+// GET /api/roles/catalog — permission catalogue for the role editor, and for
+// the API-token scope picker. `tokens.personal` is enough to read it: anyone
+// who can mint a token for themselves needs the list in order to narrow it,
+// and the catalogue is a description of the product, not of this org.
 router.get(
   '/catalog',
-  requireAnyPermission('roles.view', 'users.assign_role'),
+  requireAnyPermission('roles.view', 'users.assign_role', 'tokens.personal'),
   asyncHandler(async (req, res) => {
-    const permissions = PERMISSIONS.map(({ key, group, label, description, sensitive }) => ({
+    const permissions = PERMISSIONS.map(({ key, group, label, description, sensitive, delegable }) => ({
       key,
       group,
       label,
       description,
       sensitive,
+      // False for permissions an API token may never hold, so the scope
+      // picker can leave them out instead of offering a choice the server
+      // will reject.
+      delegable,
     }));
     res.json({ success: true, data: { groups: PERMISSION_GROUPS, permissions, systemRoles: SYSTEM_ROLES } });
   })

@@ -919,6 +919,92 @@ async function enrichAuditItems(items, orgId) {
 }
 
 // ---------------------------------------------------------------------------
+// Keyset reader — for anything that has to walk the whole log in order
+// (sinks, the archive job, streaming exports) rather than show a page of it.
+// ---------------------------------------------------------------------------
+
+/**
+ * How far behind "now" a sequential reader stays, in milliseconds.
+ *
+ * A row's created_at is set when the INSERT runs, but the row only becomes
+ * visible when its transaction commits. A reader that walked right up to the
+ * current instant could therefore pass a timestamp and only afterwards have
+ * a row with that timestamp appear — and since the cursor has moved on, that
+ * row would never be read. Staying a few seconds back closes the window.
+ *
+ * auditService.log writes a single un-batched insert outside any long
+ * transaction, so five seconds is generous.
+ */
+export const READ_LAG_MS = Number(process.env.AUDIT_READ_LAG_MS || 5000);
+
+/**
+ * Walk an org's audit log in ascending order, in batches.
+ *
+ * Ordering is `(createdAt, id)`. That pair is a total order because `id` is
+ * unique, which is what makes the cursor exact: rows sharing a millisecond
+ * are always visited in the same sequence, and the cursor remembers both
+ * halves, so a batch boundary can't skip or repeat one. `id` is a tiebreak
+ * here and nothing else — cuid is not a reliable clock and isn't used as one.
+ *
+ * @param {object} params
+ * @param {string} params.orgId
+ * @param {{createdAt: Date, id: string}|null} [params.after]  exclusive cursor
+ * @param {{actions?: string[], resourceTypes?: string[]}} [params.filters]
+ * @param {number} [params.batchSize]
+ * @param {Date}   [params.until]  read no further than this instant
+ * @yields {object[]} a batch of AuditLog rows
+ */
+export async function* stream({ orgId, after = null, filters = {}, batchSize = 500, until = null }) {
+  const ceiling = until ?? new Date(Date.now() - READ_LAG_MS);
+  let cursor = after;
+
+  for (;;) {
+    const where = { orgId, createdAt: { lte: ceiling } };
+    if (filters.actions?.length) where.action = { in: filters.actions };
+    if (filters.resourceTypes?.length) where.resourceType = { in: filters.resourceTypes };
+
+    // (createdAt, id) > (cursor.createdAt, cursor.id), expressed the way
+    // Prisma can: a later timestamp, or the same one with a greater id.
+    if (cursor) {
+      where.AND = [
+        {
+          OR: [
+            { createdAt: { gt: cursor.createdAt } },
+            { createdAt: cursor.createdAt, id: { gt: cursor.id } },
+          ],
+        },
+      ];
+    }
+
+    const rows = await prisma.auditLog.findMany({
+      where,
+      orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
+      take: batchSize,
+    });
+
+    if (rows.length === 0) return;
+    yield rows;
+    if (rows.length < batchSize) return;
+
+    const last = rows[rows.length - 1];
+    cursor = { createdAt: last.createdAt, id: last.id };
+  }
+}
+
+/** How many rows a reader at `after` still has to catch up on. */
+export async function lagFrom({ orgId, after = null, filters = {} }) {
+  const where = { orgId, createdAt: { lte: new Date(Date.now() - READ_LAG_MS) } };
+  if (filters.actions?.length) where.action = { in: filters.actions };
+  if (filters.resourceTypes?.length) where.resourceType = { in: filters.resourceTypes };
+  if (after) {
+    where.AND = [
+      { OR: [{ createdAt: { gt: after.createdAt } }, { createdAt: after.createdAt, id: { gt: after.id } }] },
+    ];
+  }
+  return prisma.auditLog.count({ where });
+}
+
+// ---------------------------------------------------------------------------
 // exportAll — returns a Buffer for download
 // ---------------------------------------------------------------------------
 

@@ -52,6 +52,11 @@ export function toPublic(row, { tokens = null } = {}) {
     roleId: row.roleId,
     roleName: row.assignedRole?.name ?? null,
     roleKey: row.assignedRole?.key ?? null,
+    // What the role actually grants, so a token scope picker can offer only
+    // permissions this account has — asking for more is silently ignored at
+    // request time (scopes are intersected with the live role), which is
+    // safe but confusing to choose.
+    rolePermissions: row.assignedRole?.permissions ?? [],
     accessScope: row.accessScope,
     customerIds: (row.customerScopes || []).map((s) => s.customerId),
     tokenCount: row._count?.apiTokens ?? (tokens ? tokens.length : undefined),

@@ -32,7 +32,12 @@ export const revokeMyToken = (id) => api.delete(`/tokens/${id}`).then((r) => dat
 /** GET /api/service-accounts (service_accounts.view) → ServiceAccount[] */
 export const listServiceAccounts = () => api.get('/service-accounts').then((r) => data(r) ?? []);
 
-/** GET /api/service-accounts/:id → ServiceAccount (includes tokens: Token[]) */
+/**
+ * GET /api/service-accounts/:id → ServiceAccount, plus `tokens: Token[]` and
+ * `rolePermissions: string[]` (the assigned role's own permission keys —
+ * used as the `grantable` allow-list in the service-account token scope
+ * picker, same idea as a personal token using the caller's own permissions).
+ */
 export const getServiceAccount = (id) => api.get(`/service-accounts/${id}`).then((r) => data(r));
 
 /** POST /api/service-accounts (service_accounts.manage) { name, description?, roleId, accessScope?, customerIds? } */

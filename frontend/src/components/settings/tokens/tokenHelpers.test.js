@@ -1,9 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import {
+  delegablePermissions,
   formatTokenExpiry,
+  groupPermissionsForPicker,
   isTokenExpired,
   isTokenRevoked,
   isTokenUsable,
+  summarizeScopes,
   tokenStatus,
   tokenStatusBadge,
   TOKEN_EXPIRY_OPTIONS,
@@ -103,5 +106,80 @@ describe('TOKEN_EXPIRY_OPTIONS', () => {
       expect(Number.isInteger(Number(o.value))).toBe(true);
       expect(Number(o.value)).toBeGreaterThan(0);
     }
+  });
+});
+
+// Small stand-in for GET /api/roles/catalog's shape (groups + flat permissions).
+const CATALOG = {
+  groups: [
+    { key: 'servers', label: 'Servers' },
+    { key: 'keystore', label: 'Keystore' },
+    { key: 'org', label: 'Organization' },
+  ],
+  permissions: [
+    { key: 'servers.view', group: 'servers', label: 'View servers', description: 'See server inventory' },
+    { key: 'servers.create', group: 'servers', label: 'Create servers', description: 'Add new servers' },
+    { key: 'keystore.view', group: 'keystore', label: 'View keystore', description: 'See stored credentials' },
+    { key: 'ca.rotate', group: 'org', label: 'Rotate CA', description: 'Rotate the certificate authority', delegable: false },
+  ],
+};
+
+describe('delegablePermissions', () => {
+  it('drops permissions explicitly marked non-delegable', () => {
+    expect(delegablePermissions(CATALOG).map((p) => p.key)).toEqual(['servers.view', 'servers.create', 'keystore.view']);
+  });
+
+  it('treats a missing delegable flag as delegable (degrades to "everything" until the API adds the field)', () => {
+    const catalog = { permissions: [{ key: 'a.b', group: 'g' }] };
+    expect(delegablePermissions(catalog).map((p) => p.key)).toEqual(['a.b']);
+  });
+
+  it('handles an empty/missing catalog', () => {
+    expect(delegablePermissions(null)).toEqual([]);
+    expect(delegablePermissions({})).toEqual([]);
+  });
+});
+
+describe('groupPermissionsForPicker', () => {
+  it('groups delegable permissions under their catalogue group, dropping empty groups', () => {
+    const groups = groupPermissionsForPicker(CATALOG);
+    expect(groups.map((g) => g.key)).toEqual(['servers', 'keystore']);
+    expect(groups.find((g) => g.key === 'servers').items.map((p) => p.key)).toEqual(['servers.view', 'servers.create']);
+  });
+
+  it('excludes non-delegable permissions from every group', () => {
+    const groups = groupPermissionsForPicker(CATALOG);
+    expect(groups.some((g) => g.items.some((p) => p.key === 'ca.rotate'))).toBe(false);
+  });
+
+  it('restricts to a grantable allow-list when given one', () => {
+    const grantable = new Set(['servers.view']);
+    const groups = groupPermissionsForPicker(CATALOG, { grantable });
+    expect(groups.map((g) => g.key)).toEqual(['servers']);
+    expect(groups[0].items.map((p) => p.key)).toEqual(['servers.view']);
+  });
+
+  it('applies a case-insensitive search across key, label and description', () => {
+    expect(groupPermissionsForPicker(CATALOG, { query: 'KEYSTORE' })[0].items.map((p) => p.key)).toEqual(['keystore.view']);
+    expect(groupPermissionsForPicker(CATALOG, { query: 'inventory' })[0].items.map((p) => p.key)).toEqual(['servers.view']);
+    expect(groupPermissionsForPicker(CATALOG, { query: 'no-such-thing' })).toEqual([]);
+  });
+});
+
+describe('summarizeScopes', () => {
+  it('reads "Full access" for an empty or missing scope list', () => {
+    expect(summarizeScopes([])).toBe('Full access');
+    expect(summarizeScopes(undefined)).toBe('Full access');
+    expect(summarizeScopes(null)).toBe('Full access');
+  });
+
+  it('lists the keys when there are few', () => {
+    expect(summarizeScopes(['servers.view'])).toBe('servers.view');
+    expect(summarizeScopes(['servers.view', 'keystore.view'])).toBe('servers.view, keystore.view');
+  });
+
+  it('falls back to a count once past maxKeys', () => {
+    expect(summarizeScopes(['a', 'b', 'c', 'd'])).toBe('4 scopes');
+    expect(summarizeScopes(['a', 'b'], { maxKeys: 1 })).toBe('2 scopes');
   });
 });

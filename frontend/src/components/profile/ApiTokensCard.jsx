@@ -1,11 +1,15 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { KeyRound, Loader2, Plus, RotateCw, Trash2 } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import { SwitchField } from '@/components/ui/switch';
 import ConfirmDialog from '@/components/shared/ConfirmDialog';
 import TokenRevealDialog from '@/components/settings/tokens/TokenRevealDialog';
-import { formatTokenExpiry, tokenStatus, tokenStatusBadge, TOKEN_EXPIRY_OPTIONS } from '@/components/settings/tokens/tokenHelpers';
+import TokenScopePicker from '@/components/settings/tokens/TokenScopePicker';
+import { formatTokenExpiry, summarizeScopes, tokenStatus, tokenStatusBadge, TOKEN_EXPIRY_OPTIONS } from '@/components/settings/tokens/tokenHelpers';
 import { createMyToken, listMyTokens, revokeMyToken, rotateMyToken } from '@/services/apiTokenService';
+import { getPermissionCatalog } from '@/services/roleService';
+import { useAuth } from '@/context/AuthContext';
 import { formatDateTime, relativeTime } from '@/utils/time';
 
 const inputCls =
@@ -23,13 +27,34 @@ function SectionCard({ title, description, children }) {
   );
 }
 
-/** New-token form — name, optional description and an "expires in" picker. */
+/** New-token form — name, optional description, an "expires in" picker and an opt-in scope limit. */
 function CreateTokenForm({ onCreated, onCancel }) {
+  const { user } = useAuth();
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
   const [expiresInDays, setExpiresInDays] = useState('90');
   const [error, setError] = useState('');
   const [saving, setSaving] = useState(false);
+
+  // Opt-in scope limit — off by default (empty scopes = full owner
+  // permissions, the existing backend behaviour). GET /roles/catalog accepts
+  // tokens.personal (as well as roles.view / users.assign_role), so anyone
+  // who can mint a personal token can load it; a catalogue load failure here
+  // is a genuine error (network, server), not a permission gap, and just
+  // disables the limit toggle rather than blocking token creation.
+  const [limiting, setLimiting] = useState(false);
+  const [scopes, setScopes] = useState([]);
+  const [catalog, setCatalog] = useState(null);
+  const [catalogError, setCatalogError] = useState('');
+  const [catalogLoading, setCatalogLoading] = useState(true);
+  const grantable = useMemo(() => new Set(user?.permissions || []), [user?.permissions]);
+
+  useEffect(() => {
+    getPermissionCatalog()
+      .then(setCatalog)
+      .catch(() => setCatalogError('Could not load the permission list. Try again.'))
+      .finally(() => setCatalogLoading(false));
+  }, []);
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -43,6 +68,7 @@ function CreateTokenForm({ onCreated, onCancel }) {
       const body = { name: name.trim() };
       if (description.trim()) body.description = description.trim();
       if (expiresInDays) body.expiresInDays = Number(expiresInDays);
+      if (limiting && scopes.length > 0) body.scopes = scopes;
       const result = await createMyToken(body);
       onCreated(result);
     } catch (err) {
@@ -107,6 +133,28 @@ function CreateTokenForm({ onCreated, onCancel }) {
         This token can do only what your current role can do — if your role changes later, so does what it can
         access.
       </p>
+
+      <SwitchField
+        label="Limit this token"
+        description="Narrow it to a subset of your permissions, instead of everything your role allows."
+        checked={limiting}
+        onCheckedChange={(next) => {
+          setLimiting(next);
+          if (!next) setScopes([]);
+        }}
+        disabled={!catalog}
+        bordered
+      />
+      {limiting && catalog && (
+        <TokenScopePicker catalog={catalog} value={scopes} onChange={setScopes} grantable={grantable} />
+      )}
+      {limiting && catalog && scopes.length === 0 && (
+        <p className="text-xs text-amber-600 dark:text-amber-400">
+          Select at least one permission — with none checked this token still gets your full role.
+        </p>
+      )}
+      {!catalogLoading && catalogError && <p className="text-xs text-muted-foreground">{catalogError}</p>}
+
       <div className="flex justify-end gap-2 pt-1">
         <Button type="button" variant="outline" size="sm" onClick={onCancel}>
           Cancel
@@ -139,6 +187,7 @@ function TokenRow({ token, onRotate, onRevoke, busy }) {
           {token.lastUsedAt ? `Last used ${relativeTime(token.lastUsedAt)}` : 'Never used'}
           {token.lastUsedIp ? ` from ${token.lastUsedIp}` : ''}
         </p>
+        <p className="mt-1 text-xs text-muted-foreground">Scope: {summarizeScopes(token.scopes)}</p>
         {token.revokedAt && (
           <p className="mt-1 text-xs text-muted-foreground">Revoked {formatDateTime(token.revokedAt)}</p>
         )}
