@@ -39,6 +39,7 @@ export function PostureTile({
   onClick,
   to,
   title,
+  loading = false,
 }) {
   const interactive = (!!onClick && !disabled) || !!to;
   const className = cn(
@@ -56,10 +57,15 @@ export function PostureTile({
         {Icon && <Icon className={cn('h-3.5 w-3.5 shrink-0', tint)} aria-hidden="true" />}
         <span className="truncate">{label}</span>
       </span>
-      <span className="mt-0.5 block text-lg font-semibold leading-tight tabular-nums text-foreground sm:mt-1 sm:text-2xl">
-        {value}
-        {suffix}
-      </span>
+      {loading ? (
+        // Same height as the number it stands in for, so nothing jumps.
+        <span className="mt-1 block h-6 w-10 animate-pulse rounded bg-muted sm:mt-1.5 sm:h-7" aria-label="Loading" />
+      ) : (
+        <span className="mt-0.5 block text-lg font-semibold leading-tight tabular-nums text-foreground sm:mt-1 sm:text-2xl">
+          {value}
+          {suffix}
+        </span>
+      )}
     </>
   );
 

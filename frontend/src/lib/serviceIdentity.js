@@ -48,45 +48,61 @@ function runtimeOf(l) {
   return RUNTIMES[kind] || RUNTIMES.unknown;
 }
 
+const WILDCARD_BINDS = new Set(['0.0.0.0', '::', '[::]', '*', '']);
+
+/** A specific bind address is worth saying; a wildcard is the Bind column's job. */
+function bindPart(l) {
+  const b = clean(l?.bind);
+  return b && !WILDCARD_BINDS.has(b) ? `on ${b}` : '';
+}
+
+const joinParts = (...parts) => parts.filter(Boolean).join(' · ');
+
 /**
  * @param {object} l  a HostListener row (ownerKind, ownerName, ownerRef,
- *   ownerDetail, ownerUser, sourcePath, service, pid, process?, containerName?,
- *   containerImage?)
+ *   ownerDetail, ownerUser, sourcePath, service, pid, bind, process?) plus
+ *   what the server joined from the host's inventory (containerName,
+ *   containerId, containerImage, pm2Name, pm2Script, pm2Home, declaredBy)
  */
 export function describeListener(l) {
-  const runtime = runtimeOf(l);
+  let runtime = runtimeOf(l);
   const service = clean(l?.service);
   const ownerName = clean(l?.ownerName);
   const detail = clean(l?.ownerDetail);
   const source = clean(l?.sourcePath);
   let name = '';
-  let subtext = source;
+  let subtext = '';
   let id = '';
+  let inferred = false;
 
   switch (l?.ownerKind) {
     case 'systemd':
     case 'systemd-user':
+      // The unit is the id; its file (else its binary) is where it comes from.
       name = unitBase(ownerName) || service;
-      id = ownerName;
+      subtext = joinParts(source || detail, bindPart(l));
       break;
     case 'pm2': {
-      name = ownerName || service;
+      // The app's pm2 name — the inventory's, when the socket owner only
+      // showed the launcher (`serve`) — and its pm2 id.
+      name = clean(l?.pm2Name) || ownerName || service;
       const ref = clean(l?.ownerRef);
       id = ref ? ref.split('@')[0] : '';
-      if (!subtext) subtext = detail;
+      subtext = joinParts(source || clean(l?.pm2Script) || detail, bindPart(l));
       break;
     }
     case 'container': {
       const cid = ownerName.replace(/^(docker|podman):/, '');
       name = clean(l?.containerName) || service || `container ${cid}`;
-      id = cid;
-      if (!subtext) subtext = clean(l?.containerImage) || `container ${cid}`;
+      id = clean(l?.containerId) || cid;
+      subtext = joinParts(source || clean(l?.containerImage), bindPart(l));
       break;
     }
     case 'docker-proxy': {
       const target = proxyTarget(detail);
       name = clean(l?.containerName) || service || (target ? `container ${target}` : 'Docker published port');
-      if (!subtext) subtext = target ? `→ container ${target}` : '';
+      id = clean(l?.containerId);
+      subtext = joinParts(source || clean(l?.containerImage), target ? `→ ${target}` : '', bindPart(l));
       break;
     }
     case 'docker':
@@ -95,23 +111,36 @@ export function describeListener(l) {
         // A port found only as a NAT rule: "runtime:172.17.0.3:9000".
         const target = ownerName.replace(/^runtime:/, '');
         name = clean(l?.containerName) || service || `container ${target}`;
-        if (!subtext) subtext = `→ container ${target} (NAT rule)`;
+        id = clean(l?.containerId);
+        subtext = joinParts(source || clean(l?.containerImage), `→ ${target} (NAT rule)`);
       } else {
         // From the service inventory (container scan): ownerName IS the
         // container's name, ownerDetail its image, ownerRef its id.
         name = ownerName || service || 'container';
-        id = clean(l?.ownerRef);
-        if (!subtext) subtext = detail || (id ? `container ${id}` : '');
+        id = clean(l?.ownerRef).slice(0, 12);
+        subtext = joinParts(source || detail, bindPart(l));
       }
       break;
     }
     case 'process':
       name = ownerName || clean(l?.process) || service;
-      if (!subtext) subtext = detail;
+      id = l?.pid ? `pid ${l.pid}` : '';
+      subtext = joinParts(detail, bindPart(l));
       break;
-    default:
-      name = service || clean(l?.process) || (ownerName && ownerName !== 'unknown' ? ownerName : '') || 'Unknown process';
-      if (!subtext) subtext = detail;
+    default: {
+      const declared = l?.declaredBy;
+      if (declared?.name) {
+        // Nobody could be seen holding the socket, but exactly one service on
+        // the host declares this port — say so, as a lead rather than a fact.
+        name = declared.name;
+        runtime = RUNTIMES[declared.kind] || runtime;
+        inferred = true;
+        subtext = joinParts(`declared by this ${runtime.label} service — owner not confirmed`, bindPart(l));
+      } else {
+        name = service || clean(l?.process) || (ownerName && ownerName !== 'unknown' ? ownerName : '') || 'Unknown process';
+        subtext = joinParts(detail, bindPart(l));
+      }
+    }
   }
 
   // The recognised protocol, only when it says something the name does not:
@@ -124,11 +153,15 @@ export function describeListener(l) {
     protocol,
     subtext,
     id,
+    inferred,
     details: {
       user: clean(l?.ownerUser),
       pid: l?.pid ?? null,
       command: detail,
       source,
+      image: clean(l?.containerImage),
+      script: clean(l?.pm2Script),
+      pm2Home: clean(l?.pm2Home),
       reference: clean(l?.ownerRef) || ownerName,
     },
   };

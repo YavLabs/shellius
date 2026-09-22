@@ -1054,3 +1054,48 @@ describe('withContainerNames', () => {
     expect(out[2]).toBe(rows[2]);
   });
 });
+
+describe('withServiceIdentity', () => {
+  const services = [
+    { serverId: 's1', kind: 'docker', ref: 'fe07ecd8db89aa', name: 'op-dashboard', detail: 'openpanel/dashboard:2', sourcePath: '/srv/op/docker-compose.yml', ports: [{ proto: 'tcp', port: 3005, containerPort: 3000, bind: '0.0.0.0' }] },
+    { serverId: 's1', kind: 'pm2', ref: 'ithadmin:ksb-fe', name: 'ksb-fe', detail: '/usr/lib/node_modules/serve/build/main.js', sourcePath: '/home/ithadmin/.pm2', statusText: 'online (pid 4242)', ports: [] },
+    { serverId: 's1', kind: 'systemd', ref: 'grafana.service', name: 'grafana', ports: [{ proto: 'tcp', port: 9000 }] },
+  ];
+
+  it('names a docker-proxy port from the container that publishes it', async () => {
+    const { withServiceIdentity } = await import('../postureInventoryService.js');
+    const [r] = withServiceIdentity([{ serverId: 's1', ownerKind: 'docker-proxy', ownerName: 'docker-proxy', ownerDetail: '-> 172.27.0.2:3000', proto: 'tcp', port: 3005 }], services);
+    expect(r).toMatchObject({ containerName: 'op-dashboard', containerId: 'fe07ecd8db89', containerImage: 'openpanel/dashboard:2', sourcePath: '/srv/op/docker-compose.yml' });
+  });
+
+  it('names a pm2 app by its running pid, even when the socket owner looked like its launcher', async () => {
+    const { withServiceIdentity } = await import('../postureInventoryService.js');
+    const [r] = withServiceIdentity([{ serverId: 's1', ownerKind: 'pm2', ownerName: 'serve', ownerRef: '#3', pid: 4242, proto: 'tcp', port: 3004 }], services);
+    expect(r).toMatchObject({ pm2Name: 'ksb-fe', pm2Script: '/usr/lib/node_modules/serve/build/main.js', pm2Home: '/home/ithadmin/.pm2' });
+  });
+
+  it('an unknown owner is "declared by" the one service that declares the port', async () => {
+    const { withServiceIdentity } = await import('../postureInventoryService.js');
+    const [r, other] = withServiceIdentity(
+      [
+        { serverId: 's1', ownerKind: 'unknown', ownerName: 'unknown', proto: 'tcp', port: 9000 },
+        { serverId: 's2', ownerKind: 'unknown', ownerName: 'unknown', proto: 'tcp', port: 9000 },
+      ],
+      services
+    );
+    expect(r.declaredBy).toEqual({ kind: 'systemd', name: 'grafana', ref: 'grafana.service' });
+    // Another host's inventory never names this host's port.
+    expect(other.declaredBy).toBeUndefined();
+  });
+
+  it('never overwrites what the collector itself reported, and leaves systemd alone', async () => {
+    const { withServiceIdentity } = await import('../postureInventoryService.js');
+    const rows = [
+      { serverId: 's1', ownerKind: 'docker-proxy', proto: 'tcp', port: 3005, sourcePath: '/own/path' },
+      { serverId: 's1', ownerKind: 'systemd', ownerName: 'ssh.service', proto: 'tcp', port: 22 },
+    ];
+    const out = withServiceIdentity(rows, services);
+    expect(out[0].sourcePath).toBe('/own/path');
+    expect(out[1]).toBe(rows[1]);
+  });
+});

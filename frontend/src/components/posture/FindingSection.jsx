@@ -30,7 +30,9 @@ function FindingSection({
   };
   // An empty section is still worth showing — "0 muted" is information, and
   // a section that vanishes when empty teaches people it does not exist.
+  // null = the count has not loaded yet: a placeholder, not "0".
   const empty = count === 0;
+  const countLoading = count === null || count === undefined;
   return (
     <section className="overflow-hidden rounded-lg border border-border bg-card">
       <button
@@ -57,14 +59,18 @@ function FindingSection({
             <span className={cn('truncate text-sm font-semibold', empty ? 'text-muted-foreground' : 'text-foreground')}>
               {title}
             </span>
-            <span
-              className={cn(
-                'shrink-0 rounded-full px-1.5 py-0.5 text-[10px] font-medium tabular-nums',
-                empty ? 'bg-muted text-muted-foreground' : TONES[tone] || TONES.neutral
-              )}
-            >
-              {count}
-            </span>
+            {countLoading ? (
+              <span className="h-4 w-6 shrink-0 animate-pulse rounded-full bg-muted" aria-label="Loading count" />
+            ) : (
+              <span
+                className={cn(
+                  'shrink-0 rounded-full px-1.5 py-0.5 text-[10px] font-medium tabular-nums',
+                  empty ? 'bg-muted text-muted-foreground' : TONES[tone] || TONES.neutral
+                )}
+              >
+                {count}
+              </span>
+            )}
           </span>
           {/* Truncated while collapsed; read in full once opened — a
               description cut off mid-instruction is worse than none. */}
