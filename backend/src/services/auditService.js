@@ -5,6 +5,7 @@
  * and CSV/JSON export. Never throws upstream on log failure.
  */
 
+import { Prisma } from '@prisma/client';
 import prisma from '../config/db.js';
 import logger, { redactValue } from '../utils/logger.js';
 import { endOfDayInclusive } from '../utils/dateRange.js';
@@ -190,23 +191,27 @@ export async function list({ orgId, filters = {}, page = 1, limit = 25 } = {}) {
   page = Math.max(1, parseInt(page, 10) || 1);
   limit = Math.min(100, Math.max(1, parseInt(limit, 10) || 25));
 
-  const { action, actorId, resourceType, resourceId, startDate, endDate, search } = filters;
+  const { action, actorId, resourceType, resourceId, ip, startDate, endDate, search } = filters;
 
   const where = { orgId };
   if (action) where.action = action;
   if (actorId) where.actorId = actorId;
   if (resourceType) where.resourceType = resourceType;
   if (resourceId) where.resourceId = resourceId;
+  if (ip) where.ipAddress = { contains: ip, mode: 'insensitive' };
   if (startDate || endDate) {
     where.createdAt = {};
     if (startDate) where.createdAt.gte = new Date(startDate);
     if (endDate) where.createdAt.lte = endOfDayInclusive(endDate);
   }
 
-  // Search: ILIKE across action + resourceType + metadata::text
-  // Use Prisma OR with mode:'insensitive' for action/resourceType.
-  // Metadata text search requires a raw query; we handle it as a separate
-  // path that combines ORM-level filters with a raw metadata search.
+  // Search: ILIKE across action, resourceType, metadata::text, ip_address,
+  // the actor's name/email (joined), and a handful of common resource
+  // labels (Server hostname/display name, Customer name, User name/email —
+  // joined by resource_type/resource_id since resourceId is a polymorphic
+  // FK with no single table to join generically). Metadata/ip/action
+  // require a raw query; ORM-level filters can't express an OR across a
+  // join, so the whole search path is raw SQL.
   if (search) {
     const term = `%${search}%`;
     const skip = (page - 1) * limit;
@@ -214,50 +219,53 @@ export async function list({ orgId, filters = {}, page = 1, limit = 25 } = {}) {
     // Collect extra filter conditions as raw SQL fragments (safe: only string interpolation
     // of validated field names, values bound via parameterized inputs)
     const extraConditions = buildExtraConditions(filters);
+    const searchFragment = auditSearchFragment(term);
 
     const [rows, countRows] = await Promise.all([
       prisma.$queryRaw`
-        SELECT id,
-               org_id       AS "orgId",
-               actor_id     AS "actorId",
-               action,
-               resource_type AS "resourceType",
-               resource_id  AS "resourceId",
-               metadata,
-               ip_address   AS "ipAddress",
-               created_at   AS "createdAt"
-        FROM   audit_logs
-        WHERE  org_id = ${orgId}
-          AND  (
-                 action        ILIKE ${term}
-              OR resource_type ILIKE ${term}
-              OR metadata::text ILIKE ${term}
-               )
-          AND  (${extraConditions.action}       IS NULL OR action        = ${extraConditions.action})
-          AND  (${extraConditions.actorId}      IS NULL OR actor_id      = ${extraConditions.actorId})
-          AND  (${extraConditions.resourceType} IS NULL OR resource_type = ${extraConditions.resourceType})
-          AND  (${extraConditions.resourceId}   IS NULL OR resource_id   = ${extraConditions.resourceId})
-          AND  (${extraConditions.startDate}::timestamptz IS NULL OR created_at >= ${extraConditions.startDate}::timestamptz)
-          AND  (${extraConditions.endDate}::timestamptz   IS NULL OR created_at <= ${extraConditions.endDate}::timestamptz)
-        ORDER BY created_at DESC
+        SELECT al.id,
+               al.org_id       AS "orgId",
+               al.actor_id     AS "actorId",
+               al.action,
+               al.resource_type AS "resourceType",
+               al.resource_id  AS "resourceId",
+               al.metadata,
+               al.ip_address   AS "ipAddress",
+               al.created_at   AS "createdAt"
+        FROM   audit_logs al
+        LEFT JOIN users ru ON al.actor_id = ru.id
+        LEFT JOIN servers rs ON al.resource_type = 'Server' AND rs.id = al.resource_id
+        LEFT JOIN customers rc ON al.resource_type = 'Customer' AND rc.id = al.resource_id
+        LEFT JOIN users rru ON al.resource_type = 'User' AND rru.id = al.resource_id
+        WHERE  al.org_id = ${orgId}
+          AND  (${searchFragment})
+          AND  (${extraConditions.action}::text       IS NULL OR al.action        = ${extraConditions.action}::text)
+          AND  (${extraConditions.actorId}::text      IS NULL OR al.actor_id      = ${extraConditions.actorId}::text)
+          AND  (${extraConditions.resourceType}::text IS NULL OR al.resource_type = ${extraConditions.resourceType}::text)
+          AND  (${extraConditions.resourceId}::text   IS NULL OR al.resource_id   = ${extraConditions.resourceId}::text)
+          AND  (${extraConditions.ip}::text           IS NULL OR al.ip_address   ILIKE ${extraConditions.ip}::text)
+          AND  (${extraConditions.startDate}::timestamptz IS NULL OR al.created_at >= ${extraConditions.startDate}::timestamptz)
+          AND  (${extraConditions.endDate}::timestamptz   IS NULL OR al.created_at <= ${extraConditions.endDate}::timestamptz)
+        ORDER BY al.created_at DESC
         LIMIT  ${limit}
         OFFSET ${skip}
       `,
       prisma.$queryRaw`
         SELECT COUNT(*)::int AS total
-        FROM   audit_logs
-        WHERE  org_id = ${orgId}
-          AND  (
-                 action        ILIKE ${term}
-              OR resource_type ILIKE ${term}
-              OR metadata::text ILIKE ${term}
-               )
-          AND  (${extraConditions.action}       IS NULL OR action        = ${extraConditions.action})
-          AND  (${extraConditions.actorId}      IS NULL OR actor_id      = ${extraConditions.actorId})
-          AND  (${extraConditions.resourceType} IS NULL OR resource_type = ${extraConditions.resourceType})
-          AND  (${extraConditions.resourceId}   IS NULL OR resource_id   = ${extraConditions.resourceId})
-          AND  (${extraConditions.startDate}::timestamptz IS NULL OR created_at >= ${extraConditions.startDate}::timestamptz)
-          AND  (${extraConditions.endDate}::timestamptz   IS NULL OR created_at <= ${extraConditions.endDate}::timestamptz)
+        FROM   audit_logs al
+        LEFT JOIN users ru ON al.actor_id = ru.id
+        LEFT JOIN servers rs ON al.resource_type = 'Server' AND rs.id = al.resource_id
+        LEFT JOIN customers rc ON al.resource_type = 'Customer' AND rc.id = al.resource_id
+        LEFT JOIN users rru ON al.resource_type = 'User' AND rru.id = al.resource_id
+        WHERE  al.org_id = ${orgId}
+          AND  (${searchFragment})
+          AND  (${extraConditions.action}::text       IS NULL OR al.action        = ${extraConditions.action}::text)
+          AND  (${extraConditions.actorId}::text      IS NULL OR al.actor_id      = ${extraConditions.actorId}::text)
+          AND  (${extraConditions.resourceType}::text IS NULL OR al.resource_type = ${extraConditions.resourceType}::text)
+          AND  (${extraConditions.resourceId}::text   IS NULL OR al.resource_id   = ${extraConditions.resourceId}::text)
+          AND  (${extraConditions.ip}::text           IS NULL OR al.ip_address   ILIKE ${extraConditions.ip}::text)
+          AND  (${extraConditions.startDate}::timestamptz IS NULL OR al.created_at >= ${extraConditions.startDate}::timestamptz)
+          AND  (${extraConditions.endDate}::timestamptz   IS NULL OR al.created_at <= ${extraConditions.endDate}::timestamptz)
       `,
     ]);
 
@@ -279,6 +287,58 @@ export async function list({ orgId, filters = {}, page = 1, limit = 25 } = {}) {
 
   const enriched = await enrichAuditItems(items, orgId);
   return { items: enriched, total, page, limit };
+}
+
+// ---------------------------------------------------------------------------
+// facets — distinct action / resourceType values actually present for the
+// org, so the frontend's Action/Resource type pickers offer only what exists
+// (rather than a hard-coded list that drifts from ACTIONS above — it was
+// missing ~13 real resource types and had a stale 'Policy' the backend never
+// writes, since the model is `AccessPolicy`).
+// ---------------------------------------------------------------------------
+
+/**
+ * @param {string} orgId
+ * @returns {Promise<{ actions: string[], resourceTypes: string[] }>}
+ */
+export async function facets({ orgId }) {
+  const [actions, resourceTypes] = await Promise.all([
+    prisma.auditLog.findMany({ where: { orgId }, distinct: ['action'], select: { action: true }, orderBy: { action: 'asc' } }),
+    // resourceType is a required (non-nullable) column — no `not: null` needed.
+    prisma.auditLog.findMany({
+      where: { orgId },
+      distinct: ['resourceType'],
+      select: { resourceType: true },
+      orderBy: { resourceType: 'asc' },
+    }),
+  ]);
+  return {
+    actions: actions.map((a) => a.action).filter(Boolean),
+    resourceTypes: resourceTypes.map((r) => r.resourceType).filter(Boolean),
+  };
+}
+
+/**
+ * The search OR-clause shared by list()'s search path and exportAll() —
+ * action/resourceType/metadata text, ip address, the actor's name/email, and
+ * the handful of joined resource labels (see the `list()` query's LEFT
+ * JOINs — same aliases: ru = actor, rs = Server, rc = Customer, rru = User
+ * as a resource).
+ */
+function auditSearchFragment(term) {
+  return Prisma.sql`
+    al.action        ILIKE ${term}
+    OR al.resource_type ILIKE ${term}
+    OR al.metadata::text ILIKE ${term}
+    OR al.ip_address    ILIKE ${term}
+    OR ru.name  ILIKE ${term}
+    OR ru.email ILIKE ${term}
+    OR rs.hostname     ILIKE ${term}
+    OR rs.display_name ILIKE ${term}
+    OR rc.name  ILIKE ${term}
+    OR rru.name  ILIKE ${term}
+    OR rru.email ILIKE ${term}
+  `;
 }
 
 // ---------------------------------------------------------------------------
@@ -559,28 +619,65 @@ async function enrichAuditItems(items, orgId) {
 /**
  * @param {object} params
  * @param {string}  params.orgId
- * @param {object}  [params.filters]   Same shape as list() filters (search excluded)
+ * @param {object}  [params.filters]   Same shape as list() filters, including `search`
  * @param {'csv'|'json'} params.format
  * @returns {Promise<{ buffer: Buffer, contentType: string, filename: string }>}
  */
 export async function exportAll({ orgId, filters = {}, format = 'json' }) {
-  const { action, actorId, resourceType, resourceId, startDate, endDate } = filters;
+  const { action, actorId, resourceType, resourceId, ip, startDate, endDate, search } = filters;
 
-  const where = { orgId };
-  if (action) where.action = action;
-  if (actorId) where.actorId = actorId;
-  if (resourceType) where.resourceType = resourceType;
-  if (resourceId) where.resourceId = resourceId;
-  if (startDate || endDate) {
-    where.createdAt = {};
-    if (startDate) where.createdAt.gte = new Date(startDate);
-    if (endDate) where.createdAt.lte = endOfDayInclusive(endDate);
+  let rows;
+  if (search) {
+    // Same joined search as list()'s search path (see auditSearchFragment),
+    // just without LIMIT/OFFSET — an export must reflect exactly what the
+    // page's search box matched, not the unfiltered log.
+    const term = `%${search}%`;
+    const extraConditions = buildExtraConditions(filters);
+    const searchFragment = auditSearchFragment(term);
+    rows = await prisma.$queryRaw`
+      SELECT al.id,
+             al.org_id       AS "orgId",
+             al.actor_id     AS "actorId",
+             al.action,
+             al.resource_type AS "resourceType",
+             al.resource_id  AS "resourceId",
+             al.metadata,
+             al.ip_address   AS "ipAddress",
+             al.created_at   AS "createdAt"
+      FROM   audit_logs al
+      LEFT JOIN users ru ON al.actor_id = ru.id
+      LEFT JOIN servers rs ON al.resource_type = 'Server' AND rs.id = al.resource_id
+      LEFT JOIN customers rc ON al.resource_type = 'Customer' AND rc.id = al.resource_id
+      LEFT JOIN users rru ON al.resource_type = 'User' AND rru.id = al.resource_id
+      WHERE  al.org_id = ${orgId}
+        AND  (${searchFragment})
+        AND  (${extraConditions.action}::text       IS NULL OR al.action        = ${extraConditions.action}::text)
+        AND  (${extraConditions.actorId}::text      IS NULL OR al.actor_id      = ${extraConditions.actorId}::text)
+        AND  (${extraConditions.resourceType}::text IS NULL OR al.resource_type = ${extraConditions.resourceType}::text)
+        AND  (${extraConditions.resourceId}::text   IS NULL OR al.resource_id   = ${extraConditions.resourceId}::text)
+        AND  (${extraConditions.ip}::text           IS NULL OR al.ip_address   ILIKE ${extraConditions.ip}::text)
+        AND  (${extraConditions.startDate}::timestamptz IS NULL OR al.created_at >= ${extraConditions.startDate}::timestamptz)
+        AND  (${extraConditions.endDate}::timestamptz   IS NULL OR al.created_at <= ${extraConditions.endDate}::timestamptz)
+      ORDER BY al.created_at DESC
+    `;
+  } else {
+    const where = { orgId };
+    if (action) where.action = action;
+    if (actorId) where.actorId = actorId;
+    if (resourceType) where.resourceType = resourceType;
+    if (resourceId) where.resourceId = resourceId;
+    if (ip) where.ipAddress = { contains: ip, mode: 'insensitive' };
+    if (startDate || endDate) {
+      where.createdAt = {};
+      if (startDate) where.createdAt.gte = new Date(startDate);
+      if (endDate) where.createdAt.lte = endOfDayInclusive(endDate);
+    }
+
+    rows = await prisma.auditLog.findMany({
+      where,
+      orderBy: { createdAt: 'desc' },
+    });
   }
-
-  const rows = await prisma.auditLog.findMany({
-    where,
-    orderBy: { createdAt: 'desc' },
-  });
 
   const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
 
@@ -637,9 +734,10 @@ function buildExtraConditions(filters) {
     actorId: filters.actorId ?? null,
     resourceType: filters.resourceType ?? null,
     resourceId: filters.resourceId ?? null,
+    ip: filters.ip ? `%${filters.ip}%` : null,
     startDate: filters.startDate ?? null,
     endDate: filters.endDate ?? null,
   };
 }
 
-export default { ACTIONS, log, list, exportAll };
+export default { ACTIONS, log, list, exportAll, facets };

@@ -32,14 +32,34 @@ const SESSION_STATUSES = ['ACTIVE', 'ENDED', 'TERMINATED'];
 const listQuerySchema = Joi.object({
   userId: Joi.string(),
   serverId: Joi.string(),
+  customerId: Joi.string(),
   status: Joi.string().valid(...SESSION_STATUSES),
   authMethod: Joi.string().valid('certificate', 'credential', 'quick_connect'),
   protocol: Joi.string().valid('SSH', 'RDP'),
   environment: Joi.string().valid('demo', 'dev', 'staging', 'prod'),
+  clientIp: Joi.string().trim().max(64),
+  search: Joi.string().trim().max(200).allow(''),
+  // Whitelisted — anything else is rejected here, before the service ever
+  // sees it (sessionService.list's buildOrderBy mirrors this list).
+  sortBy: Joi.string().valid('startedAt', 'status', 'user', 'server').default('startedAt'),
+  sortDir: Joi.string().valid('asc', 'desc').default('desc'),
   startDate: Joi.date().iso(),
   endDate: Joi.date().iso(),
   page: Joi.number().integer().min(1).default(1),
   limit: Joi.number().integer().min(1).max(100).default(25),
+});
+
+// The active tab has no status/date-range filters (forced ACTIVE, "right
+// now" has no date range) but shares the rest.
+const activeQuerySchema = Joi.object({
+  userId: Joi.string(),
+  serverId: Joi.string(),
+  customerId: Joi.string(),
+  authMethod: Joi.string().valid('certificate', 'credential', 'quick_connect'),
+  protocol: Joi.string().valid('SSH', 'RDP'),
+  environment: Joi.string().valid('demo', 'dev', 'staging', 'prod'),
+  clientIp: Joi.string().trim().max(64),
+  search: Joi.string().trim().max(200).allow(''),
 });
 
 // ---------------------------------------------------------------------------
@@ -61,10 +81,15 @@ router.get(
       orgId: req.orgId,
       userId: req.query.userId,
       serverId: req.query.serverId,
+      customerId: req.query.customerId,
       status: req.query.status,
       authMethod: req.query.authMethod,
       protocol: req.query.protocol,
       environment: req.query.environment,
+      clientIp: req.query.clientIp,
+      search: req.query.search,
+      sortBy: req.query.sortBy,
+      sortDir: req.query.sortDir,
       startDate: req.query.startDate,
       endDate: req.query.endDate,
       page: req.query.page,
@@ -83,10 +108,22 @@ router.get(
 router.get(
   '/active',
   requirePermission('sessions.view_all'),
+  validateQuery(activeQuerySchema),
   asyncHandler(async (req, res) => {
-    const sessions = await sessionService.listActive(req.orgId, req.scope, req.user.userId);
+    const sessions = await sessionService.listActive(req.orgId, req.scope, req.user.userId, {
+      userId: req.query.userId,
+      serverId: req.query.serverId,
+      customerId: req.query.customerId,
+      authMethod: req.query.authMethod,
+      protocol: req.query.protocol,
+      environment: req.query.environment,
+      clientIp: req.query.clientIp,
+      search: req.query.search,
+    });
     // Match the shape of GET /api/sessions so the frontend can treat
-    // both responses identically (`data.items`).
+    // both responses identically (`data.items`). Deliberately unpaginated —
+    // see sessionService.listActive — so `total`/`page`/`pageSize` describe
+    // the whole (filtered) result, not a server page.
     res.json({
       success: true,
       data: {

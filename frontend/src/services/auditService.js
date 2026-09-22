@@ -8,6 +8,15 @@ export const listAudit = (params) =>
   api.get('/audit', { params }).then((r) => r.data);
 
 /**
+ * Distinct action / resourceType values actually present for the org — the
+ * backend's source of truth for the Action / Resource type pickers, so they
+ * never drift from what's actually written (see routes/audit.js `/facets`).
+ * Returns { actions: string[], resourceTypes: string[] }.
+ */
+export const getAuditFacets = () =>
+  api.get('/audit/facets').then((r) => r.data?.data ?? { actions: [], resourceTypes: [] });
+
+/**
  * Export audit log entries as CSV or JSON.
  * Triggers a browser download via a temporary anchor element.
  *

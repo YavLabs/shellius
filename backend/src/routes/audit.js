@@ -25,6 +25,7 @@ const listQuerySchema = Joi.object({
   actorId: Joi.string(),
   resourceType: Joi.string().max(100),
   resourceId: Joi.string(),
+  ip: Joi.string().trim().max(64),
   startDate: Joi.string().isoDate(),
   endDate: Joi.string().isoDate(),
   search: Joi.string().max(200),
@@ -37,8 +38,10 @@ const exportQuerySchema = Joi.object({
   actorId: Joi.string(),
   resourceType: Joi.string().max(100),
   resourceId: Joi.string(),
+  ip: Joi.string().trim().max(64),
   startDate: Joi.string().isoDate(),
   endDate: Joi.string().isoDate(),
+  search: Joi.string().max(200),
   format: Joi.string().valid('csv', 'json').default('json'),
 });
 
@@ -71,6 +74,23 @@ router.get(
       data: { items: result.items },
       meta: { page: result.page, limit: result.limit, total: result.total },
     });
+  })
+);
+
+// ---------------------------------------------------------------------------
+// GET /api/audit/facets — admin+; distinct action/resourceType values
+// actually present for the org, so the frontend's pickers never drift from
+// what the backend really writes (the old hard-coded lists had a stale
+// 'Policy' — the model is `AccessPolicy` — and were missing ~13 real types).
+// MUST be registered before /:id-shaped routes if any are added later.
+// ---------------------------------------------------------------------------
+
+router.get(
+  '/facets',
+  requirePermission('audit.view'),
+  asyncHandler(async (req, res) => {
+    const result = await auditService.facets({ orgId: req.orgId });
+    res.json({ success: true, data: result });
   })
 );
 
