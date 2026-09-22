@@ -43,6 +43,13 @@ Tracked here as work lands on `main`; moved into a dated section on release
 
 - Services & ports export stopped at 200 rows.
 - Services & ports could show a port twice under a type or reachability filter.
+- Grouped lists no longer load the flat list first and then flash into groups.
+- **Phones:**
+  - The list toolbar wraps instead of cutting Sort to "S…".
+  - Posture search gets its own row.
+  - Service cards lead with the service name.
+  - Server cards show the collector state.
+- The backend test suite exits on its own. Redis, queue and database connections are closed after each file.
 
 ### Added
 
@@ -70,7 +77,7 @@ Tracked here as work lands on `main`; moved into a dated section on release
   - Groups are collapsible and show their counts. A group loads its rows, paged, only when opened.
   - The grouping is saved in the URL and remembered per list.
 - **Column sorting on Services & ports**, over all matching rows. The sort is kept in the URL and used by the export.
-- **Audit log search by any resource's name:** policies, groups, roles, shared Keystore identities and keys, deployments, access requests, certificates, sessions and more. These resources also get labels in the list. Personal vault items are never looked up by name.
+- **Audit log search by any resource's name:** policies, groups, roles, shared Keystore identities and keys, deployments, access requests, certificates, sessions and more. These resources also get labels in the list. Personal vault items are never looked up by name. Deletes now save the resource's name in the audit entry, so deleted resources stay searchable by name. This applies from this release on.
 
 ### Changed
 

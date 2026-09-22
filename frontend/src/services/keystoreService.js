@@ -80,9 +80,6 @@ export const listDeployments = (params) =>
     pageSize: r.data.meta?.pageSize ?? 25,
   }));
 
-export const listDeploymentBatches = (params) =>
-  api.get('/keystore/deployments/batches', { params }).then((r) => r.data.data?.batches ?? []);
-
 // Group tree over the whole filtered set: { groupBy, tree, active }, where
 // `active` counts matching rows still pending/running. Takes the list's
 // filters plus `groupBy` ('batch,status').
