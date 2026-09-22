@@ -52,6 +52,17 @@ describe('useGroupBy defaultKeys', () => {
     await waitFor(() => expect(fromUrl()).toEqual(['status', 'batch']));
   });
 
+  it('returns the remembered levels on the first render (no flat fetch first)', () => {
+    localStorage.setItem(KEY, 'status');
+    const seen = [];
+    render(
+      <MemoryRouter initialEntries={['/x']}>
+        <Probe onKeys={(k) => seen.push(k)} />
+      </MemoryRouter>
+    );
+    expect(seen[0]).toEqual(['status']);
+  });
+
   it('without defaultKeys it behaves as before (flat)', async () => {
     const keys = run('/x');
     await new Promise((r) => setTimeout(r, 0));
