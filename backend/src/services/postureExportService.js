@@ -312,7 +312,9 @@ async function loadFindings(
  * was exported from.
  */
 async function loadListeners(orgId, scope, filters = {}) {
-  const data = await listInventoryListeners(orgId, { ...filters, page: 1, limit: MAX_ROWS }, scope);
+  const data = await listInventoryListeners(orgId, { ...filters, page: 1, limit: MAX_ROWS }, scope, {
+    maxLimit: MAX_ROWS,
+  });
   return data.items;
 }
 
