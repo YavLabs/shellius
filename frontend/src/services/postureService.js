@@ -114,5 +114,14 @@ export const listInventoryServices = (params) =>
 export const listInventoryListeners = (params) =>
   api.get('/posture/inventory/listeners', { params }).then((r) => r.data?.data ?? r.data);
 
+/**
+ * The listeners view's group tree over the WHOLE filtered set:
+ * `{ groupBy, tree, total, truncated }`. Takes the list's own filters plus
+ * `groupBy` ('customer,environment'); a group's rows then come from
+ * listInventoryListeners with the group's values added as filters.
+ */
+export const listInventoryListenerGroups = (params) =>
+  api.get('/posture/inventory/listeners/groups', { params }).then((r) => r.data?.data ?? r.data);
+
 export const getInventoryFacets = () =>
   api.get('/posture/inventory/facets').then((r) => r.data?.data ?? r.data);

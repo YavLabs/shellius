@@ -1,6 +1,7 @@
 import prisma from '../config/db.js';
 import ApiError from '../utils/ApiError.js';
 import { UNSCOPED, relationScopeWhere } from '../lib/scope.js';
+import { NONE, buildGroupTree, parseGroupBy } from '../utils/groupTree.js';
 
 /**
  * The fleet's service inventory — every listening port on every reporting
@@ -64,6 +65,33 @@ export function parseOwnerKinds(ownerKind, ownerKinds) {
   return set.size ? [...set] : null;
 }
 
+const isNone = (v) => v === NONE;
+
+// A predicate no row satisfies. Used when a group-by level hands back NONE
+// for a column that can never be empty (a listener always has a server, a
+// server always has a customer and an environment): that group cannot
+// exist, so opening it must show nothing rather than throw on a `null`
+// Prisma would reject for a required column.
+const MATCH_NOTHING = { id: { in: [] } };
+
+/**
+ * The server-relation predicates shared by listeners and host services.
+ * Returned as a list to be ANDed — see the note in buildWhere().
+ */
+function serverRelationFilters(scope, { serverId, serverIds, customerId, environment }) {
+  const serverFilters = [];
+  const relFilter = relationScopeWhere(scope, 'server');
+  if (relFilter.server) serverFilters.push(relFilter.server);
+  if (serverId) serverFilters.push(isNone(serverId) ? MATCH_NOTHING : { id: serverId });
+  else if (Array.isArray(serverIds) && serverIds.length) serverFilters.push({ id: { in: serverIds } });
+  if (customerId) serverFilters.push(isNone(customerId) ? MATCH_NOTHING : { customerId });
+  if (environment) serverFilters.push(isNone(environment) ? MATCH_NOTHING : { environment });
+  // Terminated hosts keep their rows for audit; they are not part of "what is
+  // running right now".
+  serverFilters.push({ isActive: true });
+  return serverFilters;
+}
+
 function buildWhere(orgId, scope, filters = {}) {
   const {
     proto,
@@ -73,19 +101,26 @@ function buildWhere(orgId, scope, filters = {}) {
     port,
     portMin,
     portMax,
-    serverId,
-    serverIds,
-    customerId,
-    environment,
+    service,
   } = filters;
 
   const where = { orgId };
 
-  if (proto) where.proto = proto;
-  if (reachability) where.reachability = reachability;
+  // NONE on a column a listener always has (proto, ownerKind) matches no
+  // listener. NONE on reachability / service is NOT pushed down here: it is
+  // matched in memory after the merge (a declared port's reachability and
+  // service ARE empty), and the sockets must still be loaded for that merge
+  // — a socket filtered out at the query would stop shadowing the
+  // declaration of the same port, which would then appear in its place.
+  if (proto) where.proto = isNone(proto) ? { in: [] } : proto;
+  if (reachability && !isNone(reachability)) where.reachability = reachability;
+  if (service && !isNone(service)) where.service = service;
   const kinds = parseOwnerKinds(ownerKind, ownerKinds);
-  if (kinds) where.ownerKind = kinds.length === 1 ? kinds[0] : { in: kinds };
-  if (port !== undefined && port !== null && port !== '') where.port = Number(port);
+  if (kinds) {
+    const real = kinds.filter((k) => !isNone(k));
+    where.ownerKind = real.length === 1 ? real[0] : { in: real };
+  }
+  if (port !== undefined && port !== null && port !== '') where.port = isNone(port) ? { in: [] } : Number(port);
   else if (portMin != null || portMax != null) {
     where.port = {};
     if (portMin != null) where.port.gte = Number(portMin);
@@ -102,16 +137,7 @@ function buildWhere(orgId, scope, filters = {}) {
   // §6.3). `AND` keeps the two predicates as separate conditions that must
   // both hold, so an out-of-scope customerId/serverId can only ever narrow
   // the result to nothing.
-  const serverFilters = [];
-  const relFilter = relationScopeWhere(scope, 'server');
-  if (relFilter.server) serverFilters.push(relFilter.server);
-  if (serverId) serverFilters.push({ id: serverId });
-  else if (Array.isArray(serverIds) && serverIds.length) serverFilters.push({ id: { in: serverIds } });
-  if (customerId) serverFilters.push({ customerId });
-  if (environment) serverFilters.push({ environment });
-  // Terminated hosts keep their rows for audit; they are not part of "what is
-  // running right now".
-  serverFilters.push({ isActive: true });
+  const serverFilters = serverRelationFilters(scope, filters);
   where.server = serverFilters.length === 1 ? serverFilters[0] : { AND: serverFilters };
 
   return where;
@@ -200,18 +226,15 @@ async function loadHostServices(orgId, scope, filters = {}) {
   // `customerId: { in: [...] }` must never share a plain merge with a
   // caller-supplied `customerId`, or the caller's value silently replaces
   // the scope instead of narrowing within it.
-  const serverFilters = [{ isActive: true }];
-  const relFilter = relationScopeWhere(scope, 'server');
-  if (relFilter.server) serverFilters.push(relFilter.server);
-  if (serverId) serverFilters.push({ id: serverId });
-  else if (Array.isArray(serverIds) && serverIds.length) serverFilters.push({ id: { in: serverIds } });
-  if (customerId) serverFilters.push({ customerId });
-  if (environment) serverFilters.push({ environment });
+  const serverFilters = serverRelationFilters(scope, { serverId, serverIds, customerId, environment });
   where.server = serverFilters.length === 1 ? serverFilters[0] : { AND: serverFilters };
   // `kind` on HostService is the same vocabulary as `ownerKind` on a
   // listener (docker/podman/pm2/systemd), so one filter drives both views.
   const kinds = parseOwnerKinds(ownerKind, ownerKinds);
-  if (kinds) where.kind = kinds.length === 1 ? kinds[0] : { in: kinds };
+  if (kinds) {
+    const real = kinds.filter((k) => !isNone(k));
+    where.kind = real.length === 1 ? real[0] : { in: real };
+  }
 
   const rows = await prisma.hostService.findMany({
     where,
@@ -224,7 +247,9 @@ async function loadHostServices(orgId, scope, filters = {}) {
   if (port || proto) {
     return rows.filter((r) =>
       (Array.isArray(r.ports) ? r.ports : []).some(
-        (dp) => (!port || Number(dp.port) === Number(port)) && (!proto || dp.proto === proto)
+        (dp) =>
+          (!port || Number(dp.port) === Number(port)) &&
+          (!proto || (isNone(proto) ? !dp.proto : dp.proto === proto))
       )
     );
   }
@@ -314,15 +339,30 @@ async function attachContainerNames(orgId, rows) {
 }
 
 /**
- * GET /api/posture/inventory/listeners — the flat port list across the fleet.
+ * Where a row stands, as ONE value — the State column's reading of it and
+ * the `status` filter / group level. Unlike the older `state` filter (whose
+ * `internal` and `stopped` overlap on a stopped container's internal port),
+ * these three never overlap, so a group of them opens to exactly its count.
  */
-export async function listListeners(orgId, query = {}, scope = UNSCOPED) {
-  if (!orgId) throw new ApiError(400, 'orgId is required');
+export function listenerStatus(row) {
+  if (row.listening === false) return 'stopped';
+  return row.containerInternal ? 'internal' : 'exposed';
+}
 
-  const page = Math.max(parseInt(query.page, 10) || 1, 1);
-  const limit = Math.min(Math.max(parseInt(query.limit, 10) || 25, 1), 200);
+const isTrue = (v) => v === true || v === 'true';
+const isFalse = (v) => v === false || v === 'false';
 
+/**
+ * Every row the listeners view shows for these filters — the whole filtered
+ * set, before sorting and paging. The list, its export and its group tree
+ * all read this, so a group's count, the rows it opens to and the rows a
+ * file carries can never disagree.
+ *
+ * @returns {Promise<{ rows: object[], truncated: boolean, findingsAttached: boolean }>}
+ */
+async function collectListenerRows(orgId, query, scope, { withFindings = false } = {}) {
   const where = buildWhere(orgId, scope, query);
+  const reach = query.reachability;
 
   // Free text spans a computed label and several columns, so it is applied
   // after the indexed predicates rather than as a pile of ORed `contains`.
@@ -334,8 +374,10 @@ export async function listListeners(orgId, query = {}, scope = UNSCOPED) {
       take: MAX_ROWS,
     }),
     // A reachability filter for a HOST reachability is asking only about
-    // host sockets; CONTAINER is the one value that lives on declarations.
-    query.reachability && query.reachability !== 'CONTAINER'
+    // host sockets; CONTAINER and "none" are the values that live on
+    // declarations. A recognised-service filter likewise: a declaration
+    // never carries one.
+    (reach && reach !== 'CONTAINER' && !isNone(reach)) || (query.service && !isNone(query.service))
       ? Promise.resolve([])
       : loadHostServices(orgId, scope, query),
   ]);
@@ -346,44 +388,293 @@ export async function listListeners(orgId, query = {}, scope = UNSCOPED) {
   // a different namespace entirely, so it never collides and is never
   // dropped: 3000/tcp inside a container and 3000/tcp on the host are two
   // facts, not one.
-  const listeningKeys = new Set(listenerRows.map((r) => `${r.serverId}:${r.proto}:${r.port}`));
+  //
+  // Whether a socket shadows a declaration cannot depend on filters that
+  // only narrow sockets (type, reachability, recognised service): a
+  // docker-proxy socket on 8000 still shadows the docker declaration of
+  // 8000 when the list is narrowed to ownerKind=docker — otherwise opening
+  // a "docker" group would show a declared row that no group counted.
+  const narrowsSockets = !!(query.ownerKind || query.ownerKinds || reach || query.service);
+  const shadowRows =
+    services.length && narrowsSockets
+      ? await prisma.hostListener.findMany({
+          where: buildWhere(orgId, scope, {
+            ...query,
+            ownerKind: undefined,
+            ownerKinds: undefined,
+            reachability: undefined,
+            service: undefined,
+          }),
+          select: { serverId: true, proto: true, port: true },
+          take: MAX_ROWS,
+        })
+      : listenerRows;
+  const listeningKeys = new Set(shadowRows.map((r) => `${r.serverId}:${r.proto}:${r.port}`));
   const declared = services
     .flatMap(declaredPortRows)
     .filter((r) => r.containerInternal || !listeningKeys.has(`${r.serverId}:${r.proto}:${r.port}`));
 
-  const all = [
-    ...listenerRows.map((r) => ({ ...r, listening: true })),
-    ...(query.reachability === 'CONTAINER' ? declared.filter((r) => r.containerInternal) : declared),
-  ].sort((a, b) => a.port - b.port || String(a.proto).localeCompare(String(b.proto)));
+  const all = [...listenerRows.map((r) => ({ ...r, listening: true })), ...declared].sort(
+    (a, b) => a.port - b.port || String(a.proto).localeCompare(String(b.proto))
+  );
 
   let rows = query.q ? all.filter((r) => matchesQuery(r, query.q)) : all;
+  // Reachability and recognised service are empty on declarations, so they
+  // are matched here, on the merged rows, where NONE means "empty".
+  if (reach) rows = rows.filter((r) => (isNone(reach) ? !r.reachability : r.reachability === reach));
+  if (query.service) {
+    rows = rows.filter((r) => (isNone(query.service) ? !r.service : r.service === query.service));
+  }
   if (query.state === 'stopped') rows = rows.filter((r) => !r.listening);
   else if (query.state === 'running') rows = rows.filter((r) => r.listening);
   else if (query.state === 'internal') rows = rows.filter((r) => r.containerInternal);
   else if (query.state === 'exposed') rows = rows.filter((r) => r.listening && !r.containerInternal);
+  if (query.status) rows = rows.filter((r) => listenerStatus(r) === query.status);
   if (query.serviceKey) rows = rows.filter((r) => serviceKey(r).key === query.serviceKey);
-  const wantsFindingsFilter =
-    query.hasFindings === true || query.hasFindings === 'true' || !!query.findingSeverity;
-  if (wantsFindingsFilter) {
-    const withFindings = await attachFindings(orgId, rows);
-    rows = withFindings.filter((r) => {
-      if ((query.hasFindings === true || query.hasFindings === 'true') && r.findings.length === 0) return false;
-      if (query.findingSeverity && !r.findings.some((f) => f.severity === query.findingSeverity)) return false;
-      return true;
-    });
-    const total = rows.length;
-    return {
-      items: await attachContainerNames(orgId, rows.slice((page - 1) * limit, page * limit)),
-      meta: { total, page, limit, truncated: listenerRows.length >= MAX_ROWS },
-    };
+
+  const truncated = listenerRows.length >= MAX_ROWS;
+  const wantsFindingsFilter = isTrue(query.hasFindings) || isFalse(query.hasFindings) || !!query.findingSeverity;
+  if (!wantsFindingsFilter && !withFindings) return { rows, truncated, findingsAttached: false };
+
+  rows = await attachFindings(orgId, rows);
+  rows = rows.filter((r) => {
+    if (isTrue(query.hasFindings) && r.findings.length === 0) return false;
+    if (isFalse(query.hasFindings) && r.findings.length > 0) return false;
+    if (query.findingSeverity && !r.findings.some((f) => f.severity === query.findingSeverity)) return false;
+    return true;
+  });
+  return { rows, truncated, findingsAttached: true };
+}
+
+// ---------------------------------------------------------------------------
+// Sorting — a whitelist, never a caller-supplied field name
+// ---------------------------------------------------------------------------
+
+const ENV_ORDER = ['prod', 'staging', 'dev', 'demo'];
+const REACH_ORDER = ['INTERNET', 'LAN', 'FIREWALLED', 'LOOPBACK', 'CONTAINER', 'UNKNOWN'];
+const STATUS_ORDER = ['exposed', 'internal', 'stopped'];
+
+const lower = (v) => (v === null || v === undefined ? '' : String(v).toLowerCase());
+const rankIn = (order) => (v) => {
+  const i = order.indexOf(v);
+  return i === -1 ? order.length : i;
+};
+
+/**
+ * The name the Service column shows (frontend lib/serviceIdentity
+ * describeListener), close enough to sort by: the container's own name when
+ * the container scan knows it, the unit without its suffix, else what the
+ * socket calls itself.
+ */
+export function listenerDisplayName(r) {
+  const clean = (v) => (v && v !== '-' ? String(v) : '');
+  switch (r.ownerKind) {
+    case 'systemd':
+    case 'systemd-user':
+      return clean(r.ownerName).replace(/\.(service|scope|socket)$/, '') || clean(r.service);
+    case 'container':
+    case 'docker-proxy':
+      return clean(r.containerName) || clean(r.service) || clean(r.ownerName);
+    case 'docker':
+    case 'podman':
+    case 'pm2':
+      return clean(r.containerName) || clean(r.ownerName) || clean(r.service);
+    case 'process':
+      return clean(r.ownerName) || clean(r.process) || clean(r.service);
+    default:
+      return clean(r.service) || clean(r.process) || (r.ownerName !== 'unknown' ? clean(r.ownerName) : '');
   }
+}
+
+/**
+ * sortBy → how to read the value it sorts on. Everything here is computed on
+ * the merged rows (host sockets + declared ports are one list built in
+ * memory, so there is no single table to ORDER BY). Keys match the page's
+ * column keys.
+ */
+export const LISTENER_SORTS = {
+  service: (r) => lower(listenerDisplayName(r)),
+  type: (r) => lower(r.ownerKind),
+  port: (r) => r.port,
+  proto: (r) => lower(r.proto),
+  bind: (r) => lower(r.bind),
+  state: (r) => rankIn(STATUS_ORDER)(listenerStatus(r)),
+  server: (r) => lower(r.server?.displayName || r.server?.hostname),
+  customer: (r) => lower(r.server?.customer?.name),
+  environment: (r) => rankIn(ENV_ORDER)(r.server?.environment),
+  reachability: (r) => rankIn(REACH_ORDER)(r.reachability),
+  findings: (r) => (r.findings || []).length,
+};
+
+/** `sortBy`/`sortDir` → `{ key, dir }`, or null (the default order) for anything not whitelisted. */
+export function parseListenerSort(sortBy, sortDir) {
+  if (!sortBy || !Object.prototype.hasOwnProperty.call(LISTENER_SORTS, sortBy)) return null;
+  return { key: sortBy, dir: String(sortDir).toLowerCase() === 'desc' ? 'desc' : 'asc' };
+}
+
+const compareValues = (a, b) =>
+  typeof a === 'number' && typeof b === 'number' ? a - b : String(a).localeCompare(String(b));
+
+/**
+ * Sort rows by a parsed sort. Ties fall back to port, protocol, then id, so
+ * a page boundary never lands in a different place between two requests.
+ */
+export function sortListenerRows(rows, sort) {
+  if (!sort) return rows;
+  const read = LISTENER_SORTS[sort.key];
+  const sign = sort.dir === 'desc' ? -1 : 1;
+  return [...rows].sort(
+    (a, b) =>
+      sign * compareValues(read(a), read(b)) ||
+      a.port - b.port ||
+      String(a.proto).localeCompare(String(b.proto)) ||
+      String(a.id).localeCompare(String(b.id))
+  );
+}
+
+/**
+ * GET /api/posture/inventory/listeners — the flat port list across the fleet.
+ *
+ * `opts.maxLimit` lifts the page-size cap for internal callers (the export
+ * reads the whole filtered set through here); the HTTP route never sets it.
+ */
+export async function listListeners(orgId, query = {}, scope = UNSCOPED, { maxLimit = 200 } = {}) {
+  if (!orgId) throw new ApiError(400, 'orgId is required');
+
+  const page = Math.max(parseInt(query.page, 10) || 1, 1);
+  const limit = Math.min(Math.max(parseInt(query.limit, 10) || 25, 1), maxLimit);
+  const sort = parseListenerSort(query.sortBy, query.sortDir);
+
+  const collected = await collectListenerRows(orgId, query, scope, {
+    withFindings: sort?.key === 'findings',
+  });
+  let { rows } = collected;
+
+  // The Service column shows a container's scanned name, so sorting on it
+  // needs the names for every row, not just this page's.
+  const named = sort?.key === 'service';
+  if (named) rows = await attachContainerNames(orgId, rows);
+  rows = sortListenerRows(rows, sort);
 
   const total = rows.length;
-  const pageRows = await attachContainerNames(orgId, rows.slice((page - 1) * limit, page * limit));
-  return {
-    items: await attachFindings(orgId, pageRows),
-    meta: { total, page, limit, truncated: listenerRows.length >= MAX_ROWS },
+  let pageRows = rows.slice((page - 1) * limit, page * limit);
+  if (!named) pageRows = await attachContainerNames(orgId, pageRows);
+  if (!collected.findingsAttached) pageRows = await attachFindings(orgId, pageRows);
+  return { items: pageRows, meta: { total, page, limit, truncated: collected.truncated } };
+}
+
+// ---------------------------------------------------------------------------
+// Group by
+// ---------------------------------------------------------------------------
+
+/**
+ * The levels the listeners view can be grouped by, and the list filter each
+ * one hands back when a group is opened:
+ *
+ *   server → serverId        customer → customerId   environment → environment
+ *   type → ownerKind         protocol → service      port → port
+ *   proto → proto            reachability → reachability
+ *   status → status          findings → hasFindings
+ */
+export const LISTENER_GROUP_DIMS = [
+  'server',
+  'customer',
+  'environment',
+  'type',
+  'protocol',
+  'port',
+  'proto',
+  'reachability',
+  'status',
+  'findings',
+];
+
+const STATUS_LABELS = {
+  exposed: 'Listening on the host',
+  internal: 'Container-internal',
+  stopped: 'Installed, stopped',
+};
+
+function groupValue(dim, r) {
+  switch (dim) {
+    case 'server':
+      return r.serverId;
+    case 'customer':
+      return r.server?.customer?.id;
+    case 'environment':
+      return r.server?.environment;
+    case 'type':
+      return r.ownerKind;
+    case 'protocol':
+      return r.service;
+    case 'port':
+      return r.port;
+    case 'proto':
+      return r.proto;
+    case 'reachability':
+      return r.reachability;
+    case 'status':
+      return listenerStatus(r);
+    case 'findings':
+      return (r.findings || []).length > 0 ? 'true' : 'false';
+    default:
+      return null;
+  }
+}
+
+/**
+ * GET /api/posture/inventory/listeners/groups — the group tree over the
+ * WHOLE filtered set (same filters, same customer scope as the list; built
+ * from the very rows the list pages through), not over one page of it.
+ *
+ * Not a Prisma `groupBy`: the list is host sockets merged in memory with
+ * services' declared ports, then filtered in memory (search, state,
+ * findings). A count over HostListener alone would disagree with the rows a
+ * group opens to, so the tree folds the same rows the list pages.
+ */
+export async function listListenerGroups(orgId, query = {}, scope = UNSCOPED) {
+  if (!orgId) throw new ApiError(400, 'orgId is required');
+  const groupBy = parseGroupBy(query.groupBy, LISTENER_GROUP_DIMS);
+  if (groupBy.length === 0) return { groupBy, tree: [], total: 0, truncated: false };
+
+  const { rows, truncated } = await collectListenerRows(orgId, query, scope, {
+    withFindings: groupBy.includes('findings'),
+  });
+
+  // Labels come off the rows themselves: every server and customer named
+  // here was loaded through the scoped query, so nothing out of scope can
+  // be named.
+  const serverLabels = new Map();
+  const customerLabels = new Map();
+  for (const r of rows) {
+    if (r.server) serverLabels.set(r.server.id, r.server.displayName || r.server.hostname);
+    if (r.server?.customer) customerLabels.set(r.server.customer.id, r.server.customer.name);
+  }
+  const ports = [...new Set(rows.map((r) => r.port))].sort((a, b) => a - b).map(String);
+  const orNone = (fallback) => (v) => (v === NONE ? fallback : v);
+
+  const DIMS = {
+    server: { key: 'server', label: (v) => (v === NONE ? 'No server' : serverLabels.get(v) || v) },
+    customer: { key: 'customer', label: (v) => (v === NONE ? 'No customer' : customerLabels.get(v) || v) },
+    environment: { key: 'environment', order: ENV_ORDER, label: orNone('No environment') },
+    type: { key: 'type', label: orNone('Unknown') },
+    protocol: { key: 'protocol', label: orNone('Not recognised') },
+    port: { key: 'port', order: ports, label: orNone('No port') },
+    proto: { key: 'proto', label: (v) => (v === NONE ? 'No protocol' : v.toUpperCase()) },
+    reachability: { key: 'reachability', order: REACH_ORDER, label: orNone('Not listening') },
+    status: { key: 'status', order: STATUS_ORDER, label: (v) => STATUS_LABELS[v] || v },
+    findings: {
+      key: 'findings',
+      order: ['true', 'false'],
+      label: (v) => (v === 'true' ? 'Has open findings' : 'No open findings'),
+    },
   };
+
+  const tree = buildGroupTree(
+    rows.map((r) => ({ values: Object.fromEntries(groupBy.map((d) => [d, groupValue(d, r)])) })),
+    groupBy.map((d) => DIMS[d])
+  );
+  return { groupBy, tree, total: rows.length, truncated };
 }
 
 /**
@@ -600,4 +891,14 @@ export async function listFacets(orgId, scope = UNSCOPED) {
   };
 }
 
-export default { listListeners, listServices, listFacets, serviceKey, matchesQuery, parseOwnerKinds };
+export default {
+  listListeners,
+  listListenerGroups,
+  listServices,
+  listFacets,
+  serviceKey,
+  matchesQuery,
+  parseOwnerKinds,
+  parseListenerSort,
+  sortListenerRows,
+};

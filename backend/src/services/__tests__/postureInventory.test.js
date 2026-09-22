@@ -22,6 +22,7 @@ import prisma from '../../config/db.js';
 import * as inventory from '../postureInventoryService.js';
 import { planBulkInstall } from '../bulkBootstrapService.js';
 import { UNSCOPED } from '../../lib/scope.js';
+import { NONE } from '../../utils/groupTree.js';
 import { dbReachable, createTestOrg, cleanupOrg } from './testDbHelper.js';
 
 let seq = 0;
@@ -84,6 +85,45 @@ describe('matchesQuery', () => {
   it('an empty query matches everything', () => {
     expect(inventory.matchesQuery({ service: 'x' }, '')).toBe(true);
     expect(inventory.matchesQuery({ service: 'x' }, undefined)).toBe(true);
+  });
+});
+
+describe('listener sort whitelist', () => {
+  it('accepts every column the page can sort, and nothing else', () => {
+    for (const key of ['service', 'type', 'port', 'proto', 'bind', 'state', 'server', 'customer', 'environment', 'reachability', 'findings']) {
+      expect(inventory.parseListenerSort(key, 'asc')).toEqual({ key, dir: 'asc' });
+    }
+    expect(inventory.parseListenerSort('ownerName', 'asc')).toBeNull();
+    expect(inventory.parseListenerSort('__proto__', 'asc')).toBeNull();
+    expect(inventory.parseListenerSort('constructor', 'asc')).toBeNull();
+    expect(inventory.parseListenerSort('', 'asc')).toBeNull();
+    expect(inventory.parseListenerSort(undefined)).toBeNull();
+  });
+
+  it('defaults the direction to ascending', () => {
+    expect(inventory.parseListenerSort('port', 'sideways')).toEqual({ key: 'port', dir: 'asc' });
+    expect(inventory.parseListenerSort('port', 'DESC')).toEqual({ key: 'port', dir: 'desc' });
+  });
+
+  const rows = [
+    { id: 'c', port: 443, proto: 'tcp', server: { hostname: 'b-host', customer: { name: 'Beta' }, environment: 'dev' }, reachability: 'LAN', listening: true },
+    { id: 'a', port: 22, proto: 'tcp', server: { hostname: 'a-host', customer: { name: 'Acme' }, environment: 'prod' }, reachability: 'INTERNET', listening: true },
+    { id: 'b', port: 22, proto: 'tcp', server: { hostname: 'c-host', customer: { name: 'Acme' }, environment: 'staging' }, reachability: null, listening: false },
+  ];
+
+  it('an unknown sort keeps the rows in the order they came', () => {
+    expect(inventory.sortListenerRows(rows, inventory.parseListenerSort('nope'))).toBe(rows);
+  });
+
+  it('sorts by server, customer, environment and reachability, ties broken by port then id', () => {
+    const ids = (key, dir = 'asc') => inventory.sortListenerRows(rows, { key, dir }).map((r) => r.id);
+    expect(ids('server')).toEqual(['a', 'c', 'b']);
+    expect(ids('server', 'desc')).toEqual(['b', 'c', 'a']);
+    expect(ids('customer')).toEqual(['a', 'b', 'c']);
+    expect(ids('environment')).toEqual(['a', 'b', 'c']); // prod, staging, dev
+    expect(ids('reachability')).toEqual(['a', 'c', 'b']); // INTERNET, LAN, none last
+    expect(ids('state')).toEqual(['a', 'c', 'b']); // listening before stopped
+    expect(ids('port', 'desc')).toEqual(['c', 'a', 'b']);
   });
 });
 
@@ -352,6 +392,88 @@ describe('inventory + bulk plan (DB)', () => {
     if (!(await dbReachable())) return console.warn('DB unreachable — skipping');
     const out = await inventory.listListeners(org.id, { customerId: customerB.id }, scopedTo([customerA.id]));
     expect(out.items).toHaveLength(0);
+  });
+
+  // ---- group by ----------------------------------------------------------
+
+  // Every leaf of a tree, with the list filters that open it.
+  const PARAM_FOR = {
+    server: 'serverId',
+    customer: 'customerId',
+    type: 'ownerKind',
+    protocol: 'service',
+    findings: 'hasFindings',
+  };
+  const leaves = (nodes, filters = {}) =>
+    nodes.flatMap((n) => {
+      const next = { ...filters, [PARAM_FOR[n.dim] || n.dim]: n.value };
+      return n.children ? leaves(n.children, next) : [{ node: n, filters: next }];
+    });
+
+  it('groups honour customer scope: a scoped caller only sees their own customers', async () => {
+    if (!(await dbReachable())) return console.warn('DB unreachable — skipping');
+    const out = await inventory.listListenerGroups(
+      org.id,
+      { groupBy: 'customer,server' },
+      scopedTo([customerA.id])
+    );
+    expect(out.tree.map((n) => n.value)).toEqual([customerA.id]);
+    expect(out.tree[0].label).toBe('Acme');
+    const serverIds = out.tree[0].children.map((n) => n.value);
+    expect(serverIds).not.toContain(betaHost.id);
+  });
+
+  it('groups honour customer scope even when the caller names an out-of-scope customer', async () => {
+    if (!(await dbReachable())) return console.warn('DB unreachable — skipping');
+    const out = await inventory.listListenerGroups(
+      org.id,
+      { groupBy: 'customer', customerId: customerB.id },
+      scopedTo([customerA.id])
+    );
+    expect(out.tree).toEqual([]);
+    expect(out.total).toBe(0);
+  });
+
+  it('every group opens, through the list, to exactly the rows it counted', async () => {
+    if (!(await dbReachable())) return console.warn('DB unreachable — skipping');
+    for (const groupBy of ['customer,environment', 'type,protocol', 'reachability,port', 'status,findings,proto']) {
+      const out = await inventory.listListenerGroups(org.id, { groupBy }, UNSCOPED);
+      const all = await inventory.listListeners(org.id, { limit: 200 }, UNSCOPED);
+      expect(out.total).toBe(all.meta.total);
+      for (const { node, filters } of leaves(out.tree)) {
+        const page = await inventory.listListeners(org.id, { ...filters, limit: 200 }, UNSCOPED);
+        expect({ groupBy, value: node.value, total: page.meta.total }).toEqual({
+          groupBy,
+          value: node.value,
+          total: node.count,
+        });
+      }
+    }
+  });
+
+  it('the NONE group of an optional value (no recognised protocol) opens to those rows', async () => {
+    if (!(await dbReachable())) return console.warn('DB unreachable — skipping');
+    const out = await inventory.listListenerGroups(org.id, { groupBy: 'protocol' }, UNSCOPED);
+    const none = out.tree.find((n) => n.value === NONE);
+    expect(none).toBeDefined();
+    const rows = await inventory.listListeners(org.id, { service: NONE, limit: 200 }, UNSCOPED);
+    expect(rows.meta.total).toBe(none.count);
+    expect(rows.items.every((r) => !r.service)).toBe(true);
+  });
+
+  it('NONE on a column that is never empty matches nothing instead of throwing', async () => {
+    if (!(await dbReachable())) return console.warn('DB unreachable — skipping');
+    for (const f of [{ customerId: NONE }, { environment: NONE }, { serverId: NONE }, { ownerKind: NONE }]) {
+      const out = await inventory.listListeners(org.id, f, UNSCOPED);
+      expect(out.meta.total).toBe(0);
+    }
+  });
+
+  it('sorts the whole filtered set by a whitelisted column, server-side', async () => {
+    if (!(await dbReachable())) return console.warn('DB unreachable — skipping');
+    const desc = await inventory.listListeners(org.id, { sortBy: 'port', sortDir: 'desc', limit: 1 }, UNSCOPED);
+    const all = await inventory.listListeners(org.id, { limit: 200 }, UNSCOPED);
+    expect(desc.items[0].port).toBe(Math.max(...all.items.map((r) => r.port)));
   });
 
   // ---- bulk install plan -------------------------------------------------
@@ -728,6 +850,26 @@ describe('running services with no host port', () => {
     expect(internal.items.map((r) => r.port)).toEqual([5432]);
   });
 
+  it('groups declared ports too: status and an empty reachability open to their exact rows', async () => {
+    if (!(await dbReachable())) return console.warn('DB unreachable — skipping');
+    const out = await inventory.listListenerGroups(org.id, { groupBy: 'status,reachability', serverId: host.id }, UNSCOPED);
+    const byStatus = Object.fromEntries(out.tree.map((n) => [n.value, n]));
+    expect(byStatus.exposed.count).toBe(1); // 8000, the socket
+    expect(byStatus.internal.count).toBe(1); // 5432, inside the container
+    expect(byStatus.stopped.count).toBe(1); // 9100, declared by a stopped container
+    expect(byStatus.stopped.children.map((n) => n.value)).toEqual([NONE]);
+    for (const s of out.tree) {
+      for (const r of s.children) {
+        const rows = await inventory.listListeners(
+          org.id,
+          { serverId: host.id, status: s.value, reachability: r.value },
+          UNSCOPED
+        );
+        expect(rows.meta.total).toBe(r.count);
+      }
+    }
+  });
+
   it('groups a running container into the services view even with no host port', async () => {
     if (!(await dbReachable())) return console.warn('DB unreachable — skipping');
     const out = await inventory.listServices(org.id, { serverId: host.id }, UNSCOPED);
@@ -738,6 +880,50 @@ describe('running services with no host port', () => {
     expect(db.ports).toContain(5432);
     // Declared, not observed on the host — it must not read as exposed.
     expect(db.internetExposed).toBe(0);
+  });
+
+  // Last in this block: it adds a port the assertions above do not expect.
+  it('a type group opens to its counted rows even when another kind owns the socket', async () => {
+    if (!(await dbReachable())) return console.warn('DB unreachable — skipping');
+    // docker-proxy holds the socket for 7000; the docker scan declares it.
+    const extraListener = await prisma.hostListener.create({
+      data: {
+        orgId: org.id,
+        serverId: host.id,
+        snapshotId: snapshot.id,
+        proto: 'tcp',
+        bind: '0.0.0.0',
+        port: 7000,
+        bindClass: 'wildcard',
+        reachability: 'INTERNET',
+        ownerKind: 'docker-proxy',
+        ownerName: 'docker-proxy',
+      },
+    });
+    const extraService = await prisma.hostService.create({
+      data: {
+        orgId: org.id,
+        serverId: host.id,
+        snapshotId: snapshot.id,
+        kind: 'docker',
+        name: 'web',
+        state: 'running',
+        running: true,
+        ports: [{ proto: 'tcp', port: 7000, containerPort: 80, bind: '0.0.0.0' }],
+      },
+    });
+    try {
+      const out = await inventory.listListenerGroups(org.id, { groupBy: 'type', serverId: host.id }, UNSCOPED);
+      for (const n of out.tree) {
+        const rows = await inventory.listListeners(org.id, { serverId: host.id, ownerKind: n.value }, UNSCOPED);
+        expect({ kind: n.value, total: rows.meta.total }).toEqual({ kind: n.value, total: n.count });
+      }
+      const docker = await inventory.listListeners(org.id, { serverId: host.id, ownerKind: 'docker' }, UNSCOPED);
+      expect(docker.items.some((r) => r.port === 7000)).toBe(false);
+    } finally {
+      await prisma.hostListener.delete({ where: { id: extraListener.id } });
+      await prisma.hostService.delete({ where: { id: extraService.id } });
+    }
   });
 });
 

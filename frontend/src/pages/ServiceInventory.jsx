@@ -11,6 +11,7 @@ import {
 } from 'lucide-react';
 import PageHeader from '@/components/common/PageHeader';
 import DataTable from '@/components/shared/DataTable';
+import GroupedView, { GroupLeafTable } from '@/components/shared/GroupedView';
 import EmptyState from '@/components/ui/EmptyState';
 import MetricCard from '@/components/dashboard/MetricCard';
 import EnvironmentBadge from '@/components/shared/EnvironmentBadge';
@@ -27,6 +28,7 @@ import { fromState } from '@/hooks/useBackTarget';
 import { useBreadcrumbs } from '@/context/BreadcrumbContext';
 import {
   getInventoryFacets,
+  listInventoryListenerGroups,
   listInventoryListeners,
   listInventoryServices,
 } from '@/services/postureService';
@@ -35,6 +37,8 @@ import BulkInstallModal from '@/components/servers/BulkInstallModal';
 import { ENVIRONMENT_LABELS } from '@/lib/labels';
 import useAutoRefresh from '@/hooks/useAutoRefresh';
 import useUrlFilters from '@/hooks/useUrlFilters';
+import useGroupBy from '@/hooks/useGroupBy';
+import { NONE, groupFilters } from '@/lib/grouping';
 import { describeListener } from '@/lib/serviceIdentity';
 import ServiceCell, { RuntimeChip } from '@/components/posture/ServiceCell';
 
@@ -78,6 +82,65 @@ const TYPE_GROUPS = [
   { key: 'unknown', label: 'Unknown', ownerKinds: ['unknown'] },
 ];
 
+/**
+ * Group-by levels for the port list (backend postureInventoryService
+ * LISTENER_GROUP_DIMS). The tree is counted over the whole filtered set on
+ * the server; a group's rows come from the ordinary list call with each
+ * level's value added as the filter below (GROUP_PARAM; the key itself when
+ * absent).
+ */
+const GROUP_OPTIONS = [
+  { value: 'server', label: 'Server' },
+  { value: 'customer', label: 'Customer' },
+  { value: 'environment', label: 'Environment' },
+  { value: 'type', label: 'Type' },
+  { value: 'protocol', label: 'Service protocol' },
+  { value: 'port', label: 'Port' },
+  { value: 'proto', label: 'Transport' },
+  { value: 'reachability', label: 'Reachability' },
+  { value: 'status', label: 'State' },
+  { value: 'findings', label: 'Findings' },
+];
+
+const GROUP_PARAM = {
+  server: 'serverId',
+  customer: 'customerId',
+  type: 'ownerKind',
+  protocol: 'service',
+  findings: 'hasFindings',
+};
+
+const groupDimLabel = (dim) => GROUP_OPTIONS.find((o) => o.value === dim)?.label || dim;
+
+/** A group header's label: the same chip or badge the column shows. */
+function renderGroupLabel(node) {
+  if (node.value === NONE) return <span className="text-muted-foreground">{node.label}</span>;
+  switch (node.dim) {
+    case 'environment':
+      return <EnvironmentBadge environment={node.value} />;
+    case 'type': {
+      const runtime = describeListener({ ownerKind: node.value }).runtime;
+      return (
+        <>
+          <RuntimeChip runtime={runtime} />
+          {/* container / docker-proxy both read "Docker": say which one. */}
+          {runtime.key !== node.value && (
+            <span className="font-mono text-xs text-muted-foreground">{node.value}</span>
+          )}
+        </>
+      );
+    }
+    case 'reachability': {
+      const { tone, label } = reachabilityTone(node.value);
+      return <Badge tone={tone}>{label}</Badge>;
+    }
+    case 'port':
+      return <span className="font-mono">{node.label}</span>;
+    default:
+      return node.label;
+  }
+}
+
 const FILTER_DEFAULTS = {
   q: '',
   proto: '',
@@ -96,6 +159,9 @@ const FILTER_DEFAULTS = {
   // instances" action) arrives with — kept separate from the Filters drawer,
   // shown as its own dismissible banner below.
   service: '',
+  // Column sort, server-side (whitelisted by the backend).
+  sortBy: '',
+  sortDir: 'asc',
   page: '1',
 };
 
@@ -129,6 +195,12 @@ function ServiceInventory() {
   const [error, setError] = useState('');
   const [pageSize, setPageSize] = useState(25);
   const [exportOpen, setExportOpen] = useState(false);
+  const [groupKeys, setGroupKeys] = useGroupBy('shellius.services.groupBy', GROUP_OPTIONS);
+  const grouped = groupKeys.length > 0;
+  const groupSig = groupKeys.join(',');
+  const [groups, setGroups] = useState({ tree: null, loading: false, error: '' });
+  // Bumped by every refresh (button or auto) so open groups re-read their rows.
+  const [refreshTick, setRefreshTick] = useState(0);
 
   useBreadcrumbs([{ label: 'Services & ports' }]);
 
@@ -159,30 +231,52 @@ function ServiceInventory() {
     ]
   );
 
+  // The column sort, in the URL like every other filter. The backend
+  // whitelists the key; an unknown one falls back to the default order.
+  const sortParams = useMemo(
+    () => (f.sortBy ? { sortBy: f.sortBy, sortDir: f.sortDir === 'desc' ? 'desc' : 'asc' } : {}),
+    [f.sortBy, f.sortDir]
+  );
+
   const load = useCallback(async (isFirstLoad) => {
     if (isFirstLoad) setLoading(true);
     setError('');
+    if (grouped) setGroups((g) => ({ ...g, loading: true, error: '' }));
     try {
       // The grouped call feeds the tiles only. One grid was showing the same
       // rows twice under two tab names — but "how many distinct services"
       // still has to come from the grouping, not from a page of ports.
-      const [rows, grouped] = await Promise.all([
-        listInventoryListeners({ ...filters, page, limit: pageSize }),
+      // While grouped, the group tree replaces the flat page: it is counted
+      // over the whole filtered set, and each open group loads its own rows.
+      const [rows, summaryData, tree] = await Promise.all([
+        grouped ? Promise.resolve(null) : listInventoryListeners({ ...filters, ...sortParams, page, limit: pageSize }),
         listInventoryServices(filters),
+        grouped
+          ? listInventoryListenerGroups({ ...filters, groupBy: groupSig }).catch((err) => {
+              setGroups({
+                tree: null,
+                loading: false,
+                error: err.response?.data?.error?.message || err.message || 'Could not load the groups',
+              });
+              return undefined;
+            })
+          : Promise.resolve(undefined),
       ]);
-      setListeners(rows);
-      setServices(grouped);
+      if (rows) setListeners(rows);
+      setServices(summaryData);
+      if (tree) setGroups({ tree: tree.tree || [], loading: false, error: '' });
     } catch (err) {
       setError(err.response?.data?.error?.message || err.message || 'Could not load the inventory');
+      if (grouped) setGroups((g) => ({ ...g, loading: false }));
     } finally {
       setLoading(false);
     }
-  }, [filters, page, pageSize]);
+  }, [filters, sortParams, page, pageSize, grouped, groupSig]);
 
   useEffect(() => {
-    load(listeners === null);
+    load(listeners === null && services === null);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [filters, page, pageSize]);
+  }, [filters, sortParams, page, pageSize, groupSig]);
 
   const fetchFacets = useCallback(async () => {
     await Promise.all([
@@ -195,6 +289,7 @@ function ServiceInventory() {
   useEffect(() => { fetchFacets(); }, [fetchFacets]);
 
   const loadAll = useCallback(async () => {
+    setRefreshTick((n) => n + 1);
     await Promise.all([load(false), fetchFacets()]);
   }, [load, fetchFacets]);
   const { refresh, refreshing, lastUpdated } = useAutoRefresh(loadAll);
@@ -220,7 +315,15 @@ function ServiceInventory() {
 
   const setPage = useCallback((n) => setF({ page: String(n) }), [setF]);
 
-  const resetFilters = () => clearF(['page']);
+  // Clearing filters keeps the column sort: it is how the reader looks at
+  // the rows, not which rows they asked for.
+  const resetFilters = () => clearF(['page', 'sortBy', 'sortDir']);
+
+  const handleSortChange = useCallback(
+    (sortBy, sortDir) => setF({ sortBy, sortDir, page: '1' }),
+    [setF]
+  );
+  const serverSort = { sortKey: f.sortBy, sortDir: f.sortDir === 'desc' ? 'desc' : 'asc', onSortChange: handleSortChange };
 
   // Declarative: DataTable renders these behind one "Filters" button, in a
   // drawer, as a draft until Apply. Six selects in a row above the table
@@ -553,6 +656,57 @@ function ServiceInventory() {
   // & ports" rather than dropping you on the servers list.
   const openServer = (id) =>
     navigate(`/servers/${id}?tab=ports`, { state: fromState('/services', 'Services & ports') });
+  const onRowClick = (r) => r.server?.id && openServer(r.server.id);
+  const mobileOptions = {
+    accent: (r) =>
+      r.listening === false
+        ? { tone: 'warning' }
+        : r.reachability === 'INTERNET'
+          ? { tone: 'danger' }
+          : null,
+  };
+
+  // A group's rows: the page's own list call, with every level's value on
+  // the way down added as a filter. A Type level names one raw ownerKind,
+  // which must REPLACE the Type filter's ownerKinds set rather than join it
+  // (the backend unions the two) — the group was counted under that filter,
+  // so its kind is already inside it.
+  const leafFilters = (path) => {
+    const g = groupFilters(path, GROUP_PARAM);
+    const out = { ...filters, ...g };
+    if ('ownerKind' in g) delete out.ownerKinds;
+    return out;
+  };
+  const leafReloadKey = `${refreshTick}|${JSON.stringify(filters)}|${f.sortBy}|${f.sortDir}`;
+
+  const groupedContent = (
+    <GroupedView
+      tree={groups.tree}
+      loading={groups.loading}
+      error={groups.error}
+      dimLabel={groupDimLabel}
+      renderLabel={renderGroupLabel}
+      emptyMessage={filtered ? 'No results match these filters.' : 'No services reported yet.'}
+      renderLeaf={(node, path) => (
+        <GroupLeafTable
+          columns={listenerColumns}
+          serverSort={serverSort}
+          onRowClick={onRowClick}
+          mobile={mobileOptions}
+          reloadKey={leafReloadKey}
+          fetchPage={({ page: leafPage, pageSize: leafSize }) =>
+            listInventoryListeners({ ...leafFilters(path), ...sortParams, page: leafPage, limit: leafSize }).then(
+              (r) => ({ items: r?.items || [], total: r?.meta?.total ?? 0 })
+            )
+          }
+        />
+      )}
+    />
+  );
+
+  const nothingReported = grouped
+    ? Array.isArray(groups.tree) && groups.tree.length === 0
+    : (listeners?.items || []).length === 0;
 
   return (
     <div className="space-y-5 p-6 max-md:p-4 sm:space-y-6">
@@ -648,7 +802,7 @@ function ServiceInventory() {
           MyHosts / Roles / Posture. A FILTERED zero stays inside the table
           (see `filteredEmptyState` below), so the toolbar (search + Filters)
           is never the thing that disappears along with the rows. */}
-      {!loading && !filtered && (listeners?.items || []).length === 0 ? (
+      {!loading && !filtered && nothingReported ? (
         emptyState
       ) : (
       <DataTable
@@ -663,7 +817,10 @@ function ServiceInventory() {
         searchPlaceholder="Search service, port, host, owner or customer..."
         initialSearch={q}
         onSearchChange={(value) => patchFilters({ q: value })}
-        onRowClick={(r) => r.server?.id && openServer(r.server.id)}
+        onRowClick={onRowClick}
+        serverSort={serverSort}
+        grouping={{ keys: groupKeys, onChange: setGroupKeys, options: GROUP_OPTIONS }}
+        groupedContent={groupedContent}
         serverPagination={{
           page,
           total: listeners?.meta?.total ?? 0,
@@ -674,21 +831,14 @@ function ServiceInventory() {
             setF({ page: '1' });
           },
         }}
-        mobile={{
-          accent: (r) =>
-            r.listening === false
-              ? { tone: 'warning' }
-              : r.reachability === 'INTERNET'
-                ? { tone: 'danger' }
-                : null,
-        }}
+        mobile={mobileOptions}
       />
       )}
 
       <ExportDialog
         open={exportOpen}
         dataset="listeners"
-        filters={filters}
+        filters={{ ...filters, ...sortParams }}
         serverCount={summary?.servers ?? 1}
         scopeLabel="the listening ports matching these filters"
         onClose={() => setExportOpen(false)}

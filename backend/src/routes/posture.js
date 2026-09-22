@@ -352,6 +352,10 @@ const exportSchema = Joi.object({
     hasFindings: Joi.boolean(),
     findingSeverity: Joi.string().uppercase().valid('CRITICAL', 'HIGH', 'MEDIUM', 'LOW', 'INFO'),
     q: Joi.string().max(200).allow(''),
+    // The listeners page's column sort, so the file comes out in the order
+    // the screen shows. Whitelisted in postureInventoryService.
+    sortBy: Joi.string().max(32).allow(''),
+    sortDir: Joi.string().valid('asc', 'desc').allow(''),
   }).default({}),
 });
 
@@ -530,9 +534,21 @@ const inventoryQuerySchema = Joi.object({
   hasFindings: Joi.boolean(),
   // Rows with at least one OPEN finding of this severity.
   findingSeverity: Joi.string().uppercase().valid(...SEVERITIES).allow(''),
+  // Group-by leaves narrow with these (postureInventoryService
+  // LISTENER_GROUP_DIMS): the recognised protocol (`__none__` = none
+  // recognised) and the row's single, non-overlapping status.
+  service: Joi.string().max(64).allow(''),
+  status: Joi.string().valid('exposed', 'internal', 'stopped').allow(''),
+  // Column sort (listeners). Unknown keys fall back to the default order.
+  sortBy: Joi.string().max(32).allow(''),
+  sortDir: Joi.string().valid('asc', 'desc').allow(''),
   page: Joi.number().integer().min(1),
   limit: Joi.number().integer().min(1).max(200),
 }).unknown(false);
+
+const inventoryGroupsQuerySchema = inventoryQuerySchema.keys({
+  groupBy: Joi.string().max(200).required(),
+});
 
 // GET /api/posture/inventory/services — one row per distinct service.
 router.get(
@@ -541,6 +557,20 @@ router.get(
   validateQuery(inventoryQuerySchema),
   asyncHandler(async (req, res) => {
     const data = await postureInventoryService.listServices(req.orgId, req.query, req.scope);
+    res.json({ success: true, data });
+  })
+);
+
+// GET /api/posture/inventory/listeners/groups?groupBy=a,b — the group tree
+// (counts over the WHOLE filtered set) for the grouped view. Same permission,
+// same filters and the same customer scope as the list below; each leaf's
+// rows then come from the list with the group's values as filters.
+router.get(
+  '/inventory/listeners/groups',
+  requirePermission('posture.read'),
+  validateQuery(inventoryGroupsQuerySchema),
+  asyncHandler(async (req, res) => {
+    const data = await postureInventoryService.listListenerGroups(req.orgId, req.query, req.scope);
     res.json({ success: true, data });
   })
 );
