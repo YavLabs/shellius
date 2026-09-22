@@ -21,6 +21,7 @@ import {
   startQuickConnectHistoryPruneWorker,
 } from './quickConnectHistoryPrune.js';
 import { registerPosturePruneJob, startPosturePruneWorker } from './posturePrune.js';
+import { registerAuditExportJob, startAuditExportWorker } from './auditExport.js';
 import { registerPostureEscalateJob, startPostureEscalateWorker } from './postureEscalate.js';
 import { seedDefaultPolicies } from './seedDefaultPolicies.js';
 import {
@@ -58,6 +59,9 @@ export async function startAllJobs() {
 
   await registerPosturePruneJob();
   startPosturePruneWorker();
+
+  await registerAuditExportJob();
+  startAuditExportWorker();
 
   await registerPostureEscalateJob();
   startPostureEscalateWorker();

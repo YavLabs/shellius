@@ -1,6 +1,4 @@
-import dns from 'dns';
-import net from 'net';
-import { promisify } from 'util';
+import { guardSsrf, isPrivateIp } from '../utils/ssrf.js';
 import prisma from '../config/db.js';
 import runtimeConfig from '../config/index.js';
 import ApiError from '../utils/ApiError.js';
@@ -94,7 +92,6 @@ export function envAllowedDomains() {
     .filter(Boolean);
 }
 
-const dnsLookup = promisify(dns.lookup);
 
 // ---------------------------------------------------------------------------
 // SSRF guard helpers
@@ -112,67 +109,10 @@ const dnsLookup = promisify(dns.lookup);
  * @param {string} ip
  * @returns {boolean}
  */
-function isPrivateIp(ip) {
-  if (net.isIPv4(ip)) {
-    const parts = ip.split('.').map(Number);
-    const [a, b] = parts;
-    if (a === 10) return true;                          // 10.0.0.0/8
-    if (a === 172 && b >= 16 && b <= 31) return true;  // 172.16.0.0/12
-    if (a === 192 && b === 168) return true;            // 192.168.0.0/16
-    if (a === 127) return true;                         // 127.0.0.0/8
-    if (a === 169 && b === 254) return true;            // 169.254.0.0/16
-    return false;
-  }
-
-  if (net.isIPv6(ip)) {
-    const normalized = ip.toLowerCase();
-    if (normalized === '::1') return true;              // loopback
-    // fc00::/7 covers fc00:: through fdff::
-    if (/^f[cd]/.test(normalized)) return true;
-    return false;
-  }
-
-  return false;
-}
-
-/**
- * Resolve the hostname of a URL and throw if it points to a private range.
- *
- * @param {string} rawUrl
- * @returns {Promise<void>}
- */
-// Exported so other modules (e.g. routes/sso.js discover(), githubOAuth.js)
-// can reuse the same SSRF defense.
-export async function guardSsrf(rawUrl) {
-  let parsed;
-  try {
-    parsed = new URL(rawUrl);
-  } catch {
-    throw new ApiError(400, 'Invalid URL');
-  }
-
-  const { hostname } = parsed;
-
-  // Reject bare IP literals that are private without a DNS round-trip
-  if (net.isIP(hostname)) {
-    if (isPrivateIp(hostname)) {
-      throw new ApiError(400, 'SSRF guard: private IP addresses are not allowed');
-    }
-    return;
-  }
-
-  let resolvedIp;
-  try {
-    const result = await dnsLookup(hostname);
-    resolvedIp = result.address;
-  } catch {
-    throw new ApiError(400, `SSRF guard: could not resolve hostname '${hostname}'`);
-  }
-
-  if (isPrivateIp(resolvedIp)) {
-    throw new ApiError(400, 'SSRF guard: hostname resolves to a private IP address');
-  }
-}
+// SSRF protection moved to utils/ssrf.js so the audit webhook sink and
+// directory sync use the same rules. Re-exported here because routes/sso.js,
+// githubOAuth.js and this module's tests already import it from this path.
+export { guardSsrf, isPrivateIp };
 
 // ---------------------------------------------------------------------------
 // Mask helper — never expose the raw encrypted secret

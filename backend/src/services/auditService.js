@@ -124,6 +124,18 @@ export const ACTIONS = {
     delete: 'service_account.delete',
     role_changed: 'service_account.role_changed',
   },
+  audit_sink: {
+    create: 'audit_sink.create',
+    update: 'audit_sink.update',
+    delete: 'audit_sink.delete',
+    activate: 'audit_sink.activate',
+    deactivate: 'audit_sink.deactivate',
+    test: 'audit_sink.test',
+    // A sink that stopped on its own. An audit pipeline that has quietly
+    // died is worse than one that is loudly broken, so this is its own
+    // action rather than a field on `update`.
+    disabled: 'audit_sink.disabled',
+  },
 };
 
 // ---------------------------------------------------------------------------

@@ -823,6 +823,24 @@ export const PERMISSIONS = [
     findings: ['F-16'],
   },
 
+  {
+    key: 'audit.sinks',
+    group: 'sessions',
+    label: 'Configure audit destinations',
+    description:
+      'Send this organization\u2019s audit log to a webhook, object storage, syslog or a scheduled digest.',
+    sensitive: true,
+    defaults: SA,
+    current: SA,
+    delegable: false,
+    endpoints: [
+      'GET/POST /api/settings/audit-sinks',
+      'GET/PUT/DELETE /api/settings/audit-sinks/:id',
+      'POST /api/settings/audit-sinks/:id/test',
+    ],
+    since: 7,
+  },
+
   // ------------------------------------------------------------------- tokens
   {
     key: 'tokens.personal',

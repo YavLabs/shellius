@@ -94,6 +94,7 @@ model Organization {
   postureAlertRules PostureAlertRule[]
   postureSettings   PostureSettings?
   apiTokens         ApiToken[]
+  auditSinks        AuditSink[]
 
   @@map("organizations")
 }
@@ -852,6 +853,83 @@ model Notification {
   @@index([userId, createdAt])
   @@index([orgId])
   @@map("notifications")
+}
+
+/// Somewhere an organization's audit log is copied to, so it can live in the
+/// SIEM or object store their security team already watches.
+///
+/// Shaped like EmailProvider on purpose: one row per destination, every
+/// type-specific setting (secrets included) in a single AES-256-GCM blob
+/// that the API never returns, and a test button. Unlike EmailProvider there
+/// is no one-active-per-org rule — an org may stream to several at once.
+model AuditSink {
+  id              String  @id @default(cuid())
+  orgId           String  @map("org_id")
+  name            String
+  type            String // webhook | s3 | syslog | email_digest
+  configEncrypted String? @map("config_encrypted") @db.Text
+  /// Optional narrowing: { actions: [], resourceTypes: [] }. Empty = all.
+  filters         Json?
+  isActive        Boolean @default(false) @map("is_active")
+  batchSize       Int     @default(500) @map("batch_size")
+
+  // Durable cursor into audit_logs, ordered by (created_at, id). Streaming
+  // sinks only — a digest works on a time window instead.
+  cursorCreatedAt DateTime? @map("cursor_created_at")
+  cursorId        String?   @map("cursor_id")
+
+  lastRunAt           DateTime? @map("last_run_at")
+  lastOkAt            DateTime? @map("last_ok_at")
+  lastError           String?   @map("last_error") @db.Text
+  consecutiveFailures Int       @default(0) @map("consecutive_failures")
+  backoffUntil        DateTime? @map("backoff_until")
+  /// Set when the worker gives up, so the UI can say why it stopped rather
+  /// than just showing it as off.
+  disabledReason      String?   @map("disabled_reason")
+
+  lastTestAt    DateTime? @map("last_test_at")
+  lastTestOk    Boolean?  @map("last_test_ok")
+  lastTestError String?   @map("last_test_error") @db.Text
+
+  createdById String?  @map("created_by_id")
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  organization Organization        @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  deliveries   AuditSinkDelivery[]
+
+  @@index([orgId])
+  @@index([isActive, backoffUntil])
+  @@map("audit_sinks")
+}
+
+/// One attempted batch, so an operator can answer "did those entries ship?"
+/// without reading the destination. Pruned by the archive job.
+model AuditSinkDelivery {
+  id            String    @id @default(cuid())
+  sinkId        String    @map("sink_id")
+  orgId         String    @map("org_id")
+  /// Derived from the row range, so a retry of the same batch reuses it —
+  /// the receiver's idempotency key, since delivery is at-least-once.
+  batchId       String    @map("batch_id")
+  fromCreatedAt DateTime  @map("from_created_at")
+  toCreatedAt   DateTime  @map("to_created_at")
+  firstLogId    String    @map("first_log_id")
+  lastLogId     String    @map("last_log_id")
+  count         Int
+  status        String // ok | failed
+  attempt       Int       @default(1)
+  objectKey     String?   @map("object_key") // s3 only
+  error         String?   @db.Text
+  durationMs    Int?      @map("duration_ms")
+  startedAt     DateTime  @default(now()) @map("started_at")
+  finishedAt    DateTime? @map("finished_at")
+
+  sink AuditSink @relation(fields: [sinkId], references: [id], onDelete: Cascade)
+
+  @@index([sinkId, startedAt])
+  @@index([orgId, startedAt])
+  @@map("audit_sink_deliveries")
 }
 
 /// A long-lived bearer credential for non-interactive callers. Two kinds,
