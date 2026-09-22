@@ -1151,6 +1151,26 @@ function ServerPostureTab({
         </section>
       )}
 
+      {/* No resource samples at all: say why instead of leaving a gap.
+          Collectors before 1.1.2 never measured CPU / memory / disk / load. */}
+      {view === 'overview' && metrics.length === 0 && (
+        <section className="flex flex-col gap-2 rounded-lg border border-dashed border-border px-4 py-3 text-sm sm:flex-row sm:items-center sm:justify-between">
+          <div className="flex items-start gap-2 text-muted-foreground">
+            <Gauge className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" />
+            <p>
+              <span className="font-medium text-foreground">No resource usage yet.</span> CPU, memory, disk and load are
+              reported by collector 1.1.2 and later
+              {collector.version ? ` — this host runs ${collector.version}` : ''}.
+            </p>
+          </div>
+          {canBootstrap && onBootstrap && isOlderVersion(collector.version, '1.1.2') && (
+            <Button size="sm" variant="outline" onClick={() => onBootstrap('posture')} className="shrink-0">
+              <ArrowUpCircle className="mr-1.5 h-3.5 w-3.5" /> Update collector
+            </Button>
+          )}
+        </section>
+      )}
+
       {view === 'overview' && metrics.length > 0 && (
         <div>
           <SectionHeading
