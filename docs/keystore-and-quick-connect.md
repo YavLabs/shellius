@@ -131,7 +131,8 @@ Mutations are audited.
   (BullMQ `key-deployments` queue). `rotate` = deploy new key → verify login
   with the new key → remove old key → (optionally) repoint every Credential
   that used `oldSshKeyId` to the new key.
-- `GET /keystore/deployments?batchId=&sshKeyId=&serverId=&page=&pageSize=` → `{ deployments, meta: { total, page, pageSize } }`
+- `GET /keystore/deployments?batchId=&sshKeyId=&serverId=&customerId=&status=&action=&deployedById=&search=&page=&pageSize=` → `{ deployments, meta: { total, page, pageSize } }`. Org keys only (`sshKey.ownerId` null), customer-scoped; `__none__` = "is empty" (only `deployedById` can be).
+- `GET /keystore/deployments/groups?groupBy=batch,status&<list filters>` → `{ groupBy, tree, active }` — nested group counts over the whole filtered set (`utils/groupTree.js`; levels `batch|key|server|customer|status|action|deployedBy`, max 3). Batch nodes carry `meta: { batchId, createdAt, action, sshKey, deployedBy, counts }`; `active` = matching rows still pending/running. The UI's "Export to servers" tab groups by `batch` by default.
 - `GET /keystore/deployments/batches?limit=20` → `{ batches: [{ batchId, action, sshKey:{id,name}, createdAt, deployedBy, counts:{pending,running,success,failed,total} }] }`
 - `POST /keystore/deployments/:id/retry` (admin) → `{ deployment }`
 

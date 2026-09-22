@@ -44,6 +44,7 @@ import { resolveCredentialAuth, toKeyDeploymentDTO } from './keystoreService.js'
 import { log as auditLog } from './auditService.js';
 import { createQueue } from '../config/queue.js';
 import { UNSCOPED, assertServerInScope, relationScopeWhere } from '../lib/scope.js';
+import { NONE, parseGroupBy, buildGroupTree } from '../utils/groupTree.js';
 
 const QUEUE_NAME = 'key-deployments';
 export const deploymentQueue = createQueue(QUEUE_NAME);
@@ -270,11 +271,33 @@ export async function createBatch(
 // list / batches / retry
 // ---------------------------------------------------------------------------
 
-export async function listDeployments(orgId, { batchId, sshKeyId, serverId, search, page = 1, pageSize = 25 } = {}, scope = UNSCOPED) {
-  const where = { orgId, ...relationScopeWhere(scope, 'server') };
-  if (batchId) where.batchId = batchId;
-  if (sshKeyId) where.sshKeyId = sshKeyId;
-  if (serverId) where.serverId = serverId;
+// Which deployments a list or group query covers. One builder for both, so
+// a group opens (through the list, with its values as filters) to exactly the
+// rows it counted. Keystore rule: only org keys (ownerId null) — personal
+// keys can never be deployed, and this keeps it true of anything listed.
+export const DEPLOYMENT_STATUSES = ['running', 'pending', 'failed', 'success'];
+export const DEPLOYMENT_GROUP_DIMS = ['batch', 'key', 'server', 'customer', 'status', 'action', 'deployedBy'];
+
+// NONE on a required column matches nothing (it can never be empty); on a
+// nullable one it means "is empty".
+const noneOr = (value, { nullable = false } = {}) => {
+  if (value !== NONE) return value;
+  return nullable ? null : { in: [] };
+};
+
+export function buildDeploymentWhere(
+  orgId,
+  { batchId, sshKeyId, serverId, customerId, status, action, deployedById, search } = {},
+  scope = UNSCOPED
+) {
+  const where = { orgId, sshKey: { ownerId: null }, AND: [relationScopeWhere(scope, 'server')] };
+  if (batchId) where.batchId = noneOr(batchId);
+  if (sshKeyId) where.sshKeyId = noneOr(sshKeyId);
+  if (serverId) where.serverId = noneOr(serverId);
+  if (customerId) where.AND.push({ server: { customerId: noneOr(customerId) } });
+  if (status) where.status = noneOr(status);
+  if (action) where.action = noneOr(action);
+  if (deployedById) where.deployedById = noneOr(deployedById, { nullable: true });
   if (search) {
     where.OR = [
       { server: { hostname: { contains: search, mode: 'insensitive' } } },
@@ -282,6 +305,11 @@ export async function listDeployments(orgId, { batchId, sshKeyId, serverId, sear
       { sshKey: { name: { contains: search, mode: 'insensitive' } } },
     ];
   }
+  return where;
+}
+
+export async function listDeployments(orgId, { page = 1, pageSize = 25, ...filters } = {}, scope = UNSCOPED) {
+  const where = buildDeploymentWhere(orgId, filters, scope);
 
   const p = Math.max(1, parseInt(page, 10) || 1);
   const ps = Math.min(100, Math.max(1, parseInt(pageSize, 10) || 25));
@@ -353,6 +381,173 @@ export async function listBatches(orgId, { limit = 20 } = {}, scope = UNSCOPED) 
     });
   }
   return { batches: results };
+}
+
+// ---------------------------------------------------------------------------
+// group tree — GET /keystore/deployments/groups (utils/groupTree.js)
+// ---------------------------------------------------------------------------
+
+const DIM_COLUMN = {
+  batch: 'batchId',
+  key: 'sshKeyId',
+  server: 'serverId',
+  customer: 'serverId', // resolved through the server; no column of its own
+  status: 'status',
+  action: 'action',
+  deployedBy: 'deployedById',
+};
+const ACTION_ORDER = ['deploy', 'rotate', 'remove'];
+const ACTION_LABELS = { deploy: 'Export', rotate: 'Rotate', remove: 'Remove' };
+const STATUS_LABELS = { running: 'Running', pending: 'Waiting', failed: 'Failed', success: 'Succeeded' };
+
+const batchTime = (d) => `${new Date(d).toISOString().slice(0, 16).replace('T', ' ')} UTC`;
+const byId = (rows) => new Map(rows.map((r) => [r.id, r]));
+const asGroupValue = (v) => (v === null || v === undefined || v === '' ? NONE : String(v));
+
+/**
+ * Groups and counts over the WHOLE filtered set, nested in `groupBy` order.
+ * Same filters, scope and org-key rule as listDeployments. Batch nodes also
+ * carry `meta` (when, key, action, who started it, and the status counts of
+ * the rows under that node) so an export run's summary survives as a group
+ * header.
+ *
+ * @returns {Promise<{ groupBy: string[], tree: Array, active: number }>}
+ *   `active` — matching rows still pending/running (the client polls on it).
+ */
+export async function groupDeployments(orgId, { groupBy, ...filters } = {}, scope = UNSCOPED) {
+  const keys = parseGroupBy(groupBy, DEPLOYMENT_GROUP_DIMS);
+  if (keys.length === 0) return { groupBy: [], tree: [], active: 0 };
+
+  const where = buildDeploymentWhere(orgId, filters, scope);
+  const by = [...new Set([...keys.map((k) => DIM_COLUMN[k]), 'status'])];
+  const counted = await prisma.keyDeployment.groupBy({ by, where, _count: { _all: true } });
+
+  const ids = (col) => [...new Set(counted.map((r) => r[col]).filter(Boolean))];
+  const need = (k) => keys.includes(k);
+
+  const [keysById, serversById, usersById, batchRows] = await Promise.all([
+    need('key')
+      ? prisma.sshKey
+          .findMany({ where: { orgId, ownerId: null, id: { in: ids('sshKeyId') } }, select: { id: true, name: true } })
+          .then(byId)
+      : new Map(),
+    need('server') || need('customer')
+      ? prisma.server
+          .findMany({
+            where: { orgId, id: { in: ids('serverId') } },
+            select: { id: true, hostname: true, displayName: true, customerId: true },
+          })
+          .then(byId)
+      : new Map(),
+    need('deployedBy') ? loadUsersById(orgId, ids('deployedById')) : new Map(),
+    // A batch is one key, one action, one actor — so this is one row per
+    // batch, with when it started.
+    need('batch')
+      ? prisma.keyDeployment.groupBy({
+          by: ['batchId', 'sshKeyId', 'action', 'deployedById'],
+          where: { orgId, batchId: { in: ids('batchId') }, AND: [relationScopeWhere(scope, 'server')] },
+          _min: { createdAt: true },
+        })
+      : [],
+  ]);
+
+  const customerIds = [...new Set([...serversById.values()].map((s) => s.customerId).filter(Boolean))];
+  const customersById = need('customer')
+    ? byId(await prisma.customer.findMany({ where: { orgId, id: { in: customerIds } }, select: { id: true, name: true } }))
+    : new Map();
+
+  // Batch metadata: the earliest row wins should a batch ever span several.
+  const batchInfo = new Map();
+  for (const b of batchRows) {
+    const cur = batchInfo.get(b.batchId);
+    if (!cur || b._min.createdAt < cur.createdAt) {
+      batchInfo.set(b.batchId, { createdAt: b._min.createdAt, sshKeyId: b.sshKeyId, action: b.action, deployedById: b.deployedById });
+    }
+  }
+  let batchKeys = new Map();
+  let batchUsers = new Map();
+  if (batchInfo.size) {
+    const infos = [...batchInfo.values()];
+    [batchKeys, batchUsers] = await Promise.all([
+      prisma.sshKey
+        .findMany({
+          where: { orgId, ownerId: null, id: { in: [...new Set(infos.map((i) => i.sshKeyId))] } },
+          select: { id: true, name: true },
+        })
+        .then(byId),
+      loadUsersById(orgId, infos.map((i) => i.deployedById)),
+    ]);
+  }
+
+  const rows = counted.map((r) => ({
+    count: r._count._all,
+    status: r.status,
+    values: {
+      batch: r.batchId,
+      key: r.sshKeyId,
+      server: r.serverId,
+      customer: r.serverId ? serversById.get(r.serverId)?.customerId ?? null : null,
+      status: r.status,
+      action: r.action,
+      deployedBy: r.deployedById ?? null,
+    },
+  }));
+
+  const batchLabel = (v) => {
+    const info = batchInfo.get(v);
+    if (!info) return v === NONE ? 'No export run' : 'Export run';
+    const keyName = batchKeys.get(info.sshKeyId)?.name || 'SSH key';
+    return `${batchTime(info.createdAt)} · ${keyName} · ${ACTION_LABELS[info.action] || info.action}`;
+  };
+
+  const dimDefs = {
+    batch: {
+      key: 'batch',
+      label: batchLabel,
+      // Newest run first, like the old batch list.
+      order: [...batchInfo.entries()].sort((a, b) => b[1].createdAt - a[1].createdAt).map(([id]) => id),
+    },
+    key: { key: 'key', label: (v) => (v === NONE ? 'No key' : keysById.get(v)?.name || 'Unknown key') },
+    server: { key: 'server', label: (v) => (v === NONE ? 'No server' : serversById.get(v)?.hostname || 'Unknown server') },
+    customer: { key: 'customer', label: (v) => (v === NONE ? 'No customer' : customersById.get(v)?.name || 'Unknown customer') },
+    status: { key: 'status', label: (v) => STATUS_LABELS[v] || v, order: DEPLOYMENT_STATUSES },
+    action: { key: 'action', label: (v) => ACTION_LABELS[v] || v, order: ACTION_ORDER },
+    deployedBy: {
+      key: 'deployedBy',
+      label: (v) => (v === NONE ? 'System' : usersById.get(v)?.name || usersById.get(v)?.email || 'Unknown user'),
+    },
+  };
+
+  const tree = buildGroupTree(rows, keys.map((k) => dimDefs[k]));
+
+  // Batch headers keep the old batch card's summary: status counts of the
+  // rows under THIS node (a batch nested under a server counts only those).
+  const annotate = (nodes, members) => {
+    for (const n of nodes) {
+      const mine = members.filter((r) => asGroupValue(r.values[n.dim]) === n.value);
+      const info = n.dim === 'batch' ? batchInfo.get(n.value) : null;
+      if (info) {
+        const counts = { pending: 0, running: 0, success: 0, failed: 0, total: 0 };
+        for (const r of mine) {
+          counts[r.status] = (counts[r.status] || 0) + r.count;
+          counts.total += r.count;
+        }
+        n.meta = {
+          batchId: n.value,
+          createdAt: info.createdAt,
+          action: info.action,
+          sshKey: batchKeys.get(info.sshKeyId) || null,
+          deployedBy: info.deployedById ? batchUsers.get(info.deployedById) || null : null,
+          counts,
+        };
+      }
+      if (n.children) annotate(n.children, mine);
+    }
+  };
+  annotate(tree, rows);
+
+  const active = rows.reduce((n, r) => n + (r.status === 'pending' || r.status === 'running' ? r.count : 0), 0);
+  return { groupBy: keys, tree, active };
 }
 
 export async function retryDeployment(orgId, id, actorId, scope = UNSCOPED) {
@@ -725,6 +920,8 @@ export default {
   createBatch,
   listDeployments,
   listBatches,
+  groupDeployments,
+  buildDeploymentWhere,
   retryDeployment,
   processDeployment,
   reapStaleRunning,
