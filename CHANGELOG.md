@@ -9,6 +9,17 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 Tracked here as work lands on `main`; moved into a dated section on release
 (`node scripts/version.mjs bump <major|minor|patch>`).
 
+## [1.7.6] - 2026-09-22
+
+### Fixed
+
+- **Services & ports and a server's Ports tab now name the real service.** Hosts on older collectors showed half an answer; each port is now matched to the host's own service inventory:
+  - A container port shows the container's name and short ID, with its compose file (or image) and the address it forwards to underneath — instead of `container 172.27.0.2:3000`.
+  - A pm2 port shows the app's name and pm2 ID, with its working directory or script underneath — instead of the launcher's name (`serve`) and a node command line.
+  - A port nobody was seen holding, but which exactly one service declares, is named after that service in italics and marked "owner not confirmed".
+  - A specific bind address is shown in the subtext.
+- **Posture shows a loading skeleton.** The summary tiles, the coverage line and the section counts were a blank gap and "0" counts until the summary arrived.
+
 ## [1.7.5] - 2026-09-22
 
 ### Security
