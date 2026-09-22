@@ -9,6 +9,8 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 Tracked here as work lands on `main`; moved into a dated section on release
 (`node scripts/version.mjs bump <major|minor|patch>`).
 
+## [1.7.5] - 2026-09-22
+
 ### Security
 
 - **Services & ports leaked across customers.** A user limited to some customers could see another customer's entire port inventory by putting that customer's ID in the filter. The Type/Protocol filter counts also included every customer's hosts. Both are fixed, with tests.
