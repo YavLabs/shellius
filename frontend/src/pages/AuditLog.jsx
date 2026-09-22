@@ -3,7 +3,7 @@ import {
   ChevronDown,
   ChevronUp,
   Download,
-  Filter,
+  Filter as FilterIcon,
   X,
   ScrollText,
   Search,
@@ -12,18 +12,12 @@ import { Badge } from '@/components/ui/badge';
 import { auditCategoryTone } from '@/lib/badgeTones';
 import UserCell from '@/components/shared/UserCell';
 import EntityLink from '@/components/EntityLink';
-import DataTable from '@/components/shared/DataTable';
+import EntityPicker from '@/components/shared/EntityPicker';
 import PageHeader from '@/components/common/PageHeader';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import SearchableSelect from '@/components/ui/SearchableSelect';
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from '@/components/ui/dropdown-menu';
-import { listAudit, exportAudit } from '@/services/auditService';
+import { listAudit, exportAudit, getAuditFacets } from '@/services/auditService';
 import { useAuth } from '@/context/AuthContext';
 import { relativeTime, formatDateTime } from '@/utils/time';
 import { formatLabel } from '@/utils/format';
@@ -32,80 +26,23 @@ import useIsMobile from '@/hooks/useIsMobile';
 import FilterControl from '@/components/shared/FilterControl';
 import useMobilePages from '@/hooks/useMobilePages';
 import useAutoRefresh from '@/hooks/useAutoRefresh';
+import useUrlFilters from '@/hooks/useUrlFilters';
 import { MobileCard, MobileCardList, MobileCardSkeleton, MobileEmptyCard } from '@/components/mobile/MobileCard';
 import { MobileFiltersButton, MobileLoadMore, MobileSearch } from '@/components/mobile/MobileListControls';
 import Avatar from '@/components/ui/Avatar';
 
 // ---------------------------------------------------------------------------
-// Action category configuration
+// Action category (for the badge's color only) — the action's own prefix
+// before the first '.', e.g. 'access_request.submit' → 'access_request'.
+// This used to be a second, hand-maintained list of every action; it drifted
+// (missing ~13 real resource types, a stale 'Policy' where the backend
+// writes 'AccessPolicy') and doubled as the Action filter's option list. The
+// filter options now come from the backend's own facets (see below); an
+// unrecognised prefix here just falls back to a neutral badge tone.
 // ---------------------------------------------------------------------------
 
-const ACTION_CATEGORIES = {
-  auth: {
-    label: 'Auth',
-    actions: ['auth.login', 'auth.logout', 'auth.sso', 'auth.device_approve'],
-  },
-  user: {
-    label: 'User',
-    actions: ['user.create', 'user.update', 'user.delete'],
-  },
-  group: {
-    label: 'Group',
-    actions: ['group.create', 'group.update', 'group.delete'],
-  },
-  server: {
-    label: 'Server',
-    actions: ['server.create', 'server.update', 'server.delete', 'server.health_check'],
-  },
-  customer: {
-    label: 'Customer',
-    actions: ['customer.create', 'customer.update', 'customer.delete'],
-  },
-  policy: {
-    label: 'Policy',
-    actions: ['policy.create', 'policy.update', 'policy.delete'],
-  },
-  access_request: {
-    label: 'Access Request',
-    actions: [
-      'access_request.submit',
-      'access_request.approve',
-      'access_request.deny',
-      'access_request.expire',
-      'access_request.revoke',
-    ],
-  },
-  cert: {
-    label: 'Certificate',
-    actions: ['cert.issue', 'cert.revoke'],
-  },
-  ca: {
-    label: 'CA',
-    actions: ['ca.generate', 'ca.rotate'],
-  },
-  session: {
-    label: 'Session',
-    actions: ['session.start', 'session.end', 'session.terminate'],
-  },
-  org: {
-    label: 'Org',
-    actions: ['org.update'],
-  },
-  connector: {
-    label: 'Connector',
-    actions: ['connector.create', 'connector.sync'],
-  },
-};
-
-const ACTION_CATEGORY_MAP = {};
-for (const [key, cat] of Object.entries(ACTION_CATEGORIES)) {
-  for (const action of cat.actions) {
-    ACTION_CATEGORY_MAP[action] = key;
-  }
-}
-
 function ActionBadge({ action }) {
-  const category = ACTION_CATEGORY_MAP[action];
+  const category = (action || '').split('.')[0];
   return <Badge tone={auditCategoryTone(category)}>{action}</Badge>;
 }
 
@@ -127,12 +64,6 @@ function ResourceRef({ item }) {
   );
 }
 
-
-const RESOURCE_TYPES = [
-  'User', 'Group', 'Customer', 'Server', 'Certificate', 'CaKeyPair',
-  'Policy', 'AccessRequest', 'Session', 'CloudConnector', 'Organization',
-];
-
 function MetadataPanel({ metadata }) {
   if (!metadata) {
     return <span className="text-xs text-muted-foreground italic">No metadata</span>;
@@ -144,27 +75,63 @@ function MetadataPanel({ metadata }) {
   );
 }
 
+const AUDIT_FILTER_DEFAULTS = {
+  q: '',
+  action: '',
+  resourceType: '',
+  actorId: '',
+  ip: '',
+  resourceId: '',
+  startDate: '',
+  endDate: '',
+  page: '1',
+};
+
 function AuditLog() {
   const { user } = useAuth();
   const canExport = can(user, 'audit.export');
   const isMobile = useIsMobile();
 
+  const [f, setF] = useUrlFilters(AUDIT_FILTER_DEFAULTS);
+  const page = parseInt(f.page, 10) || 1;
+
   const [items, setItems] = useState([]);
   const [total, setTotal] = useState(0);
-  const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(25);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
 
-  const [search, setSearch] = useState('');
-  const [actionFilter, setActionFilter] = useState('');
-  const [resourceTypeFilter, setResourceTypeFilter] = useState('');
-  const [actorSearch, setActorSearch] = useState('');
-  const [startDate, setStartDate] = useState('');
-  const [endDate, setEndDate] = useState('');
+  // Distinct action / resourceType values actually present for the org
+  // (routes/audit.js GET /facets) — the pickers below offer exactly what the
+  // backend can write, never a hard-coded list that drifts from it.
+  const [actions, setActions] = useState([]);
+  const [resourceTypes, setResourceTypes] = useState([]);
+  useEffect(() => {
+    getAuditFacets()
+      .then((d) => {
+        setActions(d.actions || []);
+        setResourceTypes(d.resourceTypes || []);
+      })
+      .catch(() => {});
+  }, []);
 
   const [expandedRow, setExpandedRow] = useState(null);
   const [exporting, setExporting] = useState(false);
+
+  // Debounced search — the search box used to fire one request per
+  // keystroke. DataTable's own search box debounces at 200ms; this page
+  // keeps a bespoke table (for the expand-row metadata viewer) so it isn't
+  // wired through DataTable, but the same debounce applies here directly.
+  const [searchRaw, setSearchRaw] = useState(f.q);
+  useEffect(() => {
+    const t = setTimeout(() => {
+      if (searchRaw !== f.q) setF({ q: searchRaw, page: '1' });
+    }, 250);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchRaw]);
+  // Keep the box in sync when the URL changes from elsewhere (Clear, back/forward).
+  useEffect(() => { setSearchRaw(f.q); }, [f.q]);
 
   const loadedRef = useRef(false);
   const fetchData = useCallback(async () => {
@@ -172,12 +139,14 @@ function AuditLog() {
     setError('');
     try {
       const params = { page, limit: pageSize };
-      if (search) params.search = search;
-      if (actionFilter) params.action = actionFilter;
-      if (resourceTypeFilter) params.resourceType = resourceTypeFilter;
-      if (actorSearch) params.actorId = actorSearch;
-      if (startDate) params.startDate = startDate;
-      if (endDate) params.endDate = endDate;
+      if (f.q) params.search = f.q;
+      if (f.action) params.action = f.action;
+      if (f.resourceType) params.resourceType = f.resourceType;
+      if (f.actorId) params.actorId = f.actorId;
+      if (f.ip) params.ip = f.ip;
+      if (f.resourceId) params.resourceId = f.resourceId;
+      if (f.startDate) params.startDate = f.startDate;
+      if (f.endDate) params.endDate = f.endDate;
 
       const resp = await listAudit(params);
       setItems(resp.data?.items || []);
@@ -188,26 +157,23 @@ function AuditLog() {
       setLoading(false);
       loadedRef.current = true;
     }
-  }, [page, pageSize, search, actionFilter, resourceTypeFilter, actorSearch, startDate, endDate]);
+  }, [page, pageSize, f.q, f.action, f.resourceType, f.actorId, f.ip, f.resourceId, f.startDate, f.endDate]);
 
   useEffect(() => { fetchData(); }, [fetchData]);
   const { refresh, refreshing, lastUpdated } = useAutoRefresh(fetchData);
-
-  const handleFilterChange = (setter) => (value) => {
-    setter(value);
-    setPage(1);
-    setExpandedRow(null);
-  };
 
   const handleExport = async (format) => {
     setExporting(true);
     try {
       const params = {};
-      if (actionFilter) params.action = actionFilter;
-      if (resourceTypeFilter) params.resourceType = resourceTypeFilter;
-      if (actorSearch) params.actorId = actorSearch;
-      if (startDate) params.startDate = startDate;
-      if (endDate) params.endDate = endDate;
+      if (f.q) params.search = f.q;
+      if (f.action) params.action = f.action;
+      if (f.resourceType) params.resourceType = f.resourceType;
+      if (f.actorId) params.actorId = f.actorId;
+      if (f.ip) params.ip = f.ip;
+      if (f.resourceId) params.resourceId = f.resourceId;
+      if (f.startDate) params.startDate = f.startDate;
+      if (f.endDate) params.endDate = f.endDate;
       await exportAudit(format, params);
     } catch (err) {
       setError(err.message || 'Export failed.');
@@ -217,17 +183,22 @@ function AuditLog() {
   };
 
   const clearFilters = () => {
-    setSearch('');
-    setActionFilter('');
-    setResourceTypeFilter('');
-    setActorSearch('');
-    setStartDate('');
-    setEndDate('');
-    setPage(1);
+    setSearchRaw('');
+    setF({
+      q: '', action: '', resourceType: '', actorId: '', ip: '', resourceId: '', startDate: '', endDate: '', page: '1',
+    });
     setExpandedRow(null);
   };
 
-  const hasFilters = search || actionFilter || resourceTypeFilter || actorSearch || startDate || endDate;
+  // Row-level "filter to this resource" — jump straight to every other
+  // event on the same resource without hand-typing its id.
+  const filterToResource = (item) => {
+    if (!item.resourceId) return;
+    setF({ resourceId: item.resourceId, resourceType: item.resourceType || '', page: '1' });
+    setExpandedRow(null);
+  };
+
+  const hasFilters = f.q || f.action || f.resourceType || f.actorId || f.ip || f.resourceId || f.startDate || f.endDate;
   const totalPages = Math.max(1, Math.ceil(total / pageSize));
 
   // AuditLog uses a bespoke table to support expand-row metadata viewer.
@@ -235,65 +206,15 @@ function AuditLog() {
   // `serverPagination` for the standard pagination footer. The table body
   // is rendered manually to support the expand/collapse row pattern.
 
-  const columns = [
-    {
-      key: 'createdAt',
-      label: 'Timestamp',
-      sortable: false,
-      render: (item) => (
-        <span className="text-xs text-muted-foreground whitespace-nowrap" title={formatDateTime(item.createdAt)}>
-          {relativeTime(item.createdAt)}
-        </span>
-      ),
-    },
-    {
-      key: 'action',
-      label: 'Action',
-      render: (item) => <ActionBadge action={item.action} />,
-    },
-    {
-      key: 'actor',
-      label: 'Actor',
-      render: (item) => (
-        <UserCell
-          user={item.actorId ? { name: item.actorName, email: item.actorEmail, avatarUrl: item.actorAvatarUrl } : null}
-          fallback="System"
-        />
-      ),
-    },
-    {
-      key: 'resource',
-      label: 'Resource',
-      render: (item) => (
-        <span className="text-xs text-foreground">
-          {item.resourceLabel || item.resourceType || '-'}
-        </span>
-      ),
-    },
-    {
-      key: 'ipAddress',
-      label: 'IP',
-      render: (item) => (
-        <span className="font-mono text-xs text-muted-foreground">{item.ipAddress || '-'}</span>
-      ),
-    },
-    {
-      key: '_expand',
-      label: '',
-      className: 'w-8',
-      render: (item) => {
-        const isExpanded = expandedRow === item.id;
-        return isExpanded ? (
-          <ChevronUp className="h-3.5 w-3.5 text-muted-foreground" />
-        ) : (
-          <ChevronDown className="h-3.5 w-3.5 text-muted-foreground" />
-        );
-      },
-    },
-  ];
+  // Action options sorted alphabetically so same-prefix actions cluster
+  // together (e.g. every access_request.* action sits next to the others) —
+  // a lightweight stand-in for real grouping; the drawer's select is already
+  // searchable, so typing "access" narrows straight to the cluster.
+  const actionOptions = [...actions].sort().map((a) => ({ value: a, label: formatLabel(a) }));
+  const resourceTypeOptions = [...resourceTypes].sort().map((t) => ({ value: t, label: t }));
 
   // Mobile: the non-search filters, stacked in the Filters sheet.
-  const mobileFilterCount = [actionFilter, resourceTypeFilter, actorSearch, startDate, endDate].filter(Boolean).length;
+  const mobileFilterCount = [f.action, f.resourceType, f.actorId, f.ip, f.resourceId, f.startDate, f.endDate].filter(Boolean).length;
   const dateInputCls =
     'flex h-11 w-full rounded-md border border-input bg-background px-3 py-2 text-base text-foreground focus:outline-none focus:ring-2 focus:ring-ring';
   const mobileFilters = (
@@ -301,47 +222,57 @@ function AuditLog() {
       <div>
         <label className="mb-1 block text-xs text-muted-foreground">Action</label>
         <SearchableSelect
-          value={actionFilter}
-          onChange={(v) => handleFilterChange(setActionFilter)(v)}
-          searchable={false}
+          value={f.action}
+          onChange={(v) => setF({ action: v, page: '1' })}
+          placeholder="All actions"
+          searchable
           clearable={false}
-          options={[
-            { value: '', label: 'All actions' },
-            ...Object.entries(ACTION_CATEGORIES).flatMap(([, cat]) =>
-              cat.actions.map((action) => ({ value: action, label: formatLabel(action) }))
-            ),
-          ]}
+          options={[{ value: '', label: 'All actions' }, ...actionOptions]}
         />
       </div>
       <div>
         <label className="mb-1 block text-xs text-muted-foreground">Resource type</label>
         <SearchableSelect
-          value={resourceTypeFilter}
-          onChange={(v) => handleFilterChange(setResourceTypeFilter)(v)}
+          value={f.resourceType}
+          onChange={(v) => setF({ resourceType: v, page: '1' })}
           placeholder="All types"
-          searchable={false}
+          searchable
           clearable={false}
-          options={[{ value: '', label: 'All types' }, ...RESOURCE_TYPES.map((t) => ({ value: t, label: t }))]}
+          options={[{ value: '', label: 'All types' }, ...resourceTypeOptions]}
         />
       </div>
       <div>
-        <label className="mb-1 block text-xs text-muted-foreground">Actor ID</label>
+        <label className="mb-1 block text-xs text-muted-foreground">Actor</label>
+        <EntityPicker kind="users" value={f.actorId} onChange={(v) => setF({ actorId: v, page: '1' })} anyLabel="Any actor" />
+      </div>
+      <div>
+        <label className="mb-1 block text-xs text-muted-foreground">IP address</label>
         <Input
           type="text"
-          value={actorSearch}
-          onChange={(e) => handleFilterChange(setActorSearch)(e.target.value)}
-          placeholder="User ID..."
+          value={f.ip}
+          onChange={(e) => setF({ ip: e.target.value, page: '1' })}
+          placeholder="Contains…"
+          className="h-11 text-base"
+        />
+      </div>
+      <div>
+        <label className="mb-1 block text-xs text-muted-foreground">Resource ID</label>
+        <Input
+          type="text"
+          value={f.resourceId}
+          onChange={(e) => setF({ resourceId: e.target.value, page: '1' })}
+          placeholder="Exact resource id…"
           className="h-11 text-base"
         />
       </div>
       <div className="grid grid-cols-2 gap-3">
         <div className="min-w-0">
           <label className="mb-1 block text-xs text-muted-foreground">From</label>
-          <input type="date" value={startDate} onChange={(e) => handleFilterChange(setStartDate)(e.target.value)} className={dateInputCls} />
+          <input type="date" value={f.startDate} onChange={(e) => setF({ startDate: e.target.value, page: '1' })} className={dateInputCls} />
         </div>
         <div className="min-w-0">
           <label className="mb-1 block text-xs text-muted-foreground">To</label>
-          <input type="date" value={endDate} onChange={(e) => handleFilterChange(setEndDate)(e.target.value)} className={dateInputCls} />
+          <input type="date" value={f.endDate} onChange={(e) => setF({ endDate: e.target.value, page: '1' })} className={dateInputCls} />
         </div>
       </div>
     </>
@@ -353,9 +284,9 @@ function AuditLog() {
   const mobileList = (
     <div className="space-y-3">
       <MobileSearch
-        value={search}
-        onChange={(v) => handleFilterChange(setSearch)(v)}
-        placeholder="Search actions, resources..."
+        value={searchRaw}
+        onChange={setSearchRaw}
+        placeholder="Search actions, actors, resources, IPs..."
       />
       <div className="flex items-center gap-2">
         <MobileFiltersButton filters={mobileFilters} activeCount={mobileFilterCount} onReset={clearFilters} />
@@ -421,7 +352,16 @@ function AuditLog() {
                     )}
                     {item.resourceId && (
                       <>
-                        <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Resource ID</p>
+                        <div className="mb-1 flex items-center justify-between">
+                          <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Resource ID</p>
+                          <button
+                            type="button"
+                            onClick={() => filterToResource(item)}
+                            className="inline-flex items-center gap-1 text-xs text-primary hover:underline"
+                          >
+                            <FilterIcon className="h-3 w-3" /> Filter to this
+                          </button>
+                        </div>
                         <p className="mb-3 break-all font-mono text-xs text-foreground">{item.resourceId}</p>
                       </>
                     )}
@@ -440,7 +380,7 @@ function AuditLog() {
           total={total}
           hasMore={page < totalPages}
           loading={loading}
-          onMore={() => setPage(page + 1)}
+          onMore={() => setF({ page: String(page + 1) })}
         />
       )}
     </div>
@@ -453,45 +393,48 @@ function AuditLog() {
   // space where the log should be. Search stays on the toolbar; the rest
   // moved into the shared drawer.
   const filterDefs = [
-    { key: 'actorSearch', label: 'Actor ID', type: 'text', placeholder: 'User ID…' },
+    { key: 'actorId', label: 'Actor', type: 'entity', entity: 'users', placeholder: 'Any actor' },
     {
       key: 'action',
       label: 'Action',
       placeholder: 'All actions',
       searchable: true,
-      options: [
-        { value: '', label: 'All actions' },
-        ...Object.entries(ACTION_CATEGORIES).flatMap(([, cat]) =>
-          cat.actions.map((action) => ({ value: action, label: formatLabel(action) }))
-        ),
-      ],
+      options: [{ value: '', label: 'All actions' }, ...actionOptions],
     },
     {
       key: 'resourceType',
       label: 'Resource type',
       placeholder: 'All types',
       searchable: true,
-      options: [{ value: '', label: 'All types' }, ...RESOURCE_TYPES.map((t) => ({ value: t, label: t }))],
+      options: [{ value: '', label: 'All types' }, ...resourceTypeOptions],
     },
+    { key: 'ip', label: 'IP address', type: 'text', placeholder: 'Contains…' },
+    { key: 'resourceId', label: 'Resource ID', type: 'text', placeholder: 'Exact resource id…' },
     { key: 'startDate', label: 'From', type: 'date' },
     { key: 'endDate', label: 'To', type: 'date' },
   ];
 
   const filterValues = {
-    actorSearch,
-    action: actionFilter,
-    resourceType: resourceTypeFilter,
-    startDate,
-    endDate,
+    actorId: f.actorId,
+    action: f.action,
+    resourceType: f.resourceType,
+    ip: f.ip,
+    resourceId: f.resourceId,
+    startDate: f.startDate,
+    endDate: f.endDate,
   };
 
   const applyFilters = (next) => {
-    setActorSearch(next.actorSearch ?? '');
-    setActionFilter(next.action ?? '');
-    setResourceTypeFilter(next.resourceType ?? '');
-    setStartDate(next.startDate ?? '');
-    setEndDate(next.endDate ?? '');
-    setPage(1);
+    setF({
+      actorId: next.actorId ?? '',
+      action: next.action ?? '',
+      resourceType: next.resourceType ?? '',
+      ip: next.ip ?? '',
+      resourceId: next.resourceId ?? '',
+      startDate: next.startDate ?? '',
+      endDate: next.endDate ?? '',
+      page: '1',
+    });
   };
 
   const desktopToolbar = (
@@ -499,10 +442,10 @@ function AuditLog() {
       <div className="relative min-w-0 flex-1 max-w-sm">
         <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
         <Input
-          value={search}
-          onChange={(e) => handleFilterChange(setSearch)(e.target.value)}
-          placeholder="Search actions, resources..."
-          aria-label="Search actions, resources"
+          value={searchRaw}
+          onChange={(e) => setSearchRaw(e.target.value)}
+          placeholder="Search actions, actors, resources, IPs..."
+          aria-label="Search actions, actors, resources, IPs"
           className="h-9 pl-9"
           type="search"
         />
@@ -618,8 +561,18 @@ function AuditLog() {
                           />
                         </td>
                         <td className="px-4 py-3">
-                          <span className="text-xs text-foreground">
+                          <span className="flex items-center gap-1.5 text-xs text-foreground">
                             <ResourceRef item={item} />
+                            {item.resourceId && (
+                              <button
+                                type="button"
+                                title="Filter to this resource"
+                                onClick={(e) => { e.stopPropagation(); filterToResource(item); }}
+                                className="shrink-0 rounded p-0.5 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+                              >
+                                <FilterIcon className="h-3 w-3" />
+                              </button>
+                            )}
                           </span>
                         </td>
                         <td className="px-4 py-3">
@@ -685,8 +638,8 @@ function AuditLog() {
         total={total}
         pageSize={pageSize}
         totalPages={totalPages}
-        onPageChange={setPage}
-        onPageSizeChange={(size) => { setPageSize(size); setPage(1); }}
+        onPageChange={(p) => setF({ page: String(p) })}
+        onPageSizeChange={(size) => { setPageSize(size); setF({ page: '1' }); }}
       />
       </>)}
     </div>
