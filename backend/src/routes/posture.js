@@ -68,12 +68,21 @@ const findingsQuerySchema = Joi.object({
   serverId: Joi.string(),
   // Finding type — the finding's `code` (PORT_EXPOSED, FIREWALL_INACTIVE, …).
   code: Joi.string().max(100).allow(''),
+  // `tcp/443`, a bare `443`, or `__none__` (no port) — also what a "Port"
+  // group carries, so a group opens to exactly the rows it counted.
+  port: Joi.string().max(20).pattern(/^(__none__|([a-z0-9]{1,8}\/)?\d{1,5})$/i).allow(''),
   lastSeenFrom: Joi.date().iso(),
   lastSeenTo: Joi.date().iso(),
   // Free text: message, code, ownerLabel, service, server hostname/displayName, port.
   q: Joi.string().max(200).allow(''),
   page: Joi.number().integer().min(1).default(1),
   limit: Joi.number().integer().min(1).max(100).default(25),
+});
+
+// The list's own filters (status/section included), plus the levels. Paging
+// does not apply: the tree covers the whole filtered set.
+const findingGroupsQuerySchema = findingsQuerySchema.fork(['page', 'limit'], (s) => s.strip()).keys({
+  groupBy: Joi.string().max(200).required(),
 });
 
 const muteSchema = Joi.object({
@@ -196,6 +205,22 @@ router.get(
         meta: { total: result.total, page: result.page, limit: result.limit },
       },
     });
+  })
+);
+
+// ---------------------------------------------------------------------------
+// GET /api/posture/findings/groups — nested group counts over the whole
+// filtered set; leaves load their rows through GET /findings with the
+// group's values as filters. Registered before any /findings/:id route.
+// ---------------------------------------------------------------------------
+
+router.get(
+  '/findings/groups',
+  requirePermission('posture.read'),
+  validateQuery(findingGroupsQuerySchema),
+  asyncHandler(async (req, res) => {
+    const data = await postureQueryService.getFindingGroups(req.orgId, req.query, req.scope);
+    res.json({ success: true, data });
   })
 );
 

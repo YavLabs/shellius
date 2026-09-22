@@ -18,6 +18,14 @@ export const getPostureSummary = (params) =>
 export const listFindings = (params) =>
   api.get('/posture/findings', { params }).then((r) => r.data?.data ?? r.data);
 
+/**
+ * The findings list's group tree over the whole filtered set:
+ * `params` = the list's own filters (section/status included) + `groupBy`
+ * ('severity,server'). Returns `{ groupBy, tree }`.
+ */
+export const getFindingGroups = (params) =>
+  api.get('/posture/findings/groups', { params }).then((r) => r.data?.data ?? r.data);
+
 export const getServerPosture = (serverId) =>
   api.get(`/posture/servers/${serverId}`).then((r) => r.data?.data ?? r.data);
 

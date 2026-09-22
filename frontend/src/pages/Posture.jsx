@@ -10,6 +10,7 @@ import SeverityBadge from '@/components/posture/SeverityBadge';
 import FindingStatusBadge from '@/components/posture/FindingStatusBadge';
 import FleetFindingsSection from '@/components/posture/FleetFindingsSection';
 import FilterControl from '@/components/shared/FilterControl';
+import GroupByControl from '@/components/shared/GroupByControl';
 import MuteDialog from '@/components/posture/MuteDialog';
 import CollectorCoverageModal from '@/components/posture/CollectorCoverageModal';
 import FindingDetailModal from '@/components/posture/FindingDetailModal';
@@ -37,6 +38,8 @@ import { severityAccent } from '@/lib/mobileCard';
 import { POSTURE_ALERTS_EVENT } from '@/hooks/usePostureAlertCount';
 import useAutoRefresh from '@/hooks/useAutoRefresh';
 import useUrlFilters from '@/hooks/useUrlFilters';
+import useGroupBy from '@/hooks/useGroupBy';
+import { FINDING_GROUP_OPTIONS } from '@/lib/findingGroups';
 import { relativeTime, formatDateTime } from '@/utils/time';
 import { ENVIRONMENT_LABELS } from '@/lib/labels';
 
@@ -124,6 +127,9 @@ function Posture() {
     lastSeenFrom: '', lastSeenTo: '', q: '',
   });
   const { severity, customerId, environment, serverId, code, lastSeenFrom, lastSeenTo, q } = f;
+  // One grouping for every section (`?group=severity,server`); each open
+  // section groups its own findings by it, over the whole filtered set.
+  const [groupKeys, setGroupKeys] = useGroupBy('shellius.posture.groupBy', FINDING_GROUP_OPTIONS);
   const [customers, setCustomers] = useState([]);
 
   // Debounced so a keystroke does not refetch the summary and every open
@@ -786,6 +792,7 @@ function Posture() {
               />
             </div>
             <FilterControl defs={filterDefs} values={filterValues} onChange={applyFilters} />
+            <GroupByControl groupKeys={groupKeys} onChange={setGroupKeys} options={FINDING_GROUP_OPTIONS} />
           </div>
 
           <div className="space-y-2">
@@ -809,6 +816,7 @@ function Posture() {
                 onSelectionChange={handleSelection}
                 bulkActions={bulkActionsSlot}
                 reloadKey={reloadKey}
+                groupKeys={groupKeys}
                 mobile={{
                   accent: (r) => severityAccent(r.severity),
                   // Finding messages are sentences; one truncated line left
