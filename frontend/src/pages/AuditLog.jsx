@@ -286,7 +286,7 @@ function AuditLog() {
       <MobileSearch
         value={searchRaw}
         onChange={setSearchRaw}
-        placeholder="Search actions, actors, resources, IPs..."
+        placeholder="Search actions, actors, resource names, IPs..."
       />
       <div className="flex items-center gap-2">
         <MobileFiltersButton filters={mobileFilters} activeCount={mobileFilterCount} onReset={clearFilters} />
@@ -444,8 +444,8 @@ function AuditLog() {
         <Input
           value={searchRaw}
           onChange={(e) => setSearchRaw(e.target.value)}
-          placeholder="Search actions, actors, resources, IPs..."
-          aria-label="Search actions, actors, resources, IPs"
+          placeholder="Search actions, actors, resource names, IPs..."
+          aria-label="Search actions, actors, resource names, IPs"
           className="h-9 pl-9"
           type="search"
         />
