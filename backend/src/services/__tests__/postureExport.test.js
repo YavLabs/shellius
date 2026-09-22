@@ -258,3 +258,155 @@ describe('export + expected ports (DB)', () => {
     ).rejects.toMatchObject({ statusCode: 404 });
   });
 });
+
+// ---------------------------------------------------------------------------
+// Listeners export — delegates to postureInventoryService.listListeners, the
+// exact function the Services & ports page calls (docs/plans notes for
+// Task 1.7.5). Worth pinning here specifically:
+//   - Reachability=CONTAINER exports the container-internal DECLARED ports,
+//     the same synthetic rows the page shows — these never exist as their
+//     own HostListener row, so a hand-rolled export query never saw them.
+//   - `q` matches the same fields the page's search box does, including
+//     customer name and IP address.
+//   - customer scope holds for the listeners dataset too.
+// ---------------------------------------------------------------------------
+
+describe('listeners export (DB)', () => {
+  let org;
+  let customerA;
+  let customerB;
+  let serverA;
+  let serverB;
+  let snapA;
+
+  beforeAll(async () => {
+    if (!(await dbReachable())) return;
+    org = await createTestOrg();
+    customerA = await prisma.customer.create({
+      data: { orgId: org.id, name: `Acme Corp ${unique()}`, slug: `acme-${unique()}` },
+    });
+    customerB = await prisma.customer.create({
+      data: { orgId: org.id, name: `Beta Inc ${unique()}`, slug: `beta-${unique()}` },
+    });
+    serverA = await prisma.server.create({
+      data: {
+        orgId: org.id,
+        customerId: customerA.id,
+        hostname: `lst-a-${unique()}.example.com`,
+        ipAddress: '10.9.9.1',
+        environment: 'prod',
+      },
+    });
+    serverB = await prisma.server.create({
+      data: {
+        orgId: org.id,
+        customerId: customerB.id,
+        hostname: `lst-b-${unique()}.example.com`,
+        ipAddress: '10.9.9.2',
+        environment: 'dev',
+      },
+    });
+    snapA = await prisma.hostSnapshot.create({
+      data: { orgId: org.id, serverId: serverA.id, collectedAt: new Date(), receivedAt: new Date() },
+    });
+    await prisma.hostSnapshot.create({
+      data: { orgId: org.id, serverId: serverB.id, collectedAt: new Date(), receivedAt: new Date() },
+    });
+
+    // A host-published listener on A.
+    await prisma.hostListener.create({
+      data: {
+        orgId: org.id,
+        serverId: serverA.id,
+        snapshotId: snapA.id,
+        proto: 'tcp',
+        bind: '0.0.0.0',
+        port: 80,
+        bindClass: 'wildcard',
+        reachability: 'INTERNET',
+        ownerKind: 'docker',
+        ownerName: 'nginx',
+      },
+    });
+    // A container-internal declared port — only ever exists via HostService,
+    // never as its own HostListener row.
+    await prisma.hostService.create({
+      data: {
+        orgId: org.id,
+        serverId: serverA.id,
+        snapshotId: snapA.id,
+        kind: 'docker',
+        name: 'billing-api',
+        ref: 'abcdef123456',
+        state: 'running',
+        running: true,
+        ports: [{ port: 9000, proto: 'tcp', bind: 'container' }],
+      },
+    });
+  });
+
+  afterAll(async () => {
+    if (!(await dbReachable()) || !org) return;
+    await prisma.hostService.deleteMany({ where: { orgId: org.id } });
+    await prisma.hostListener.deleteMany({ where: { orgId: org.id } });
+    await prisma.hostSnapshot.deleteMany({ where: { orgId: org.id } });
+    await prisma.server.deleteMany({ where: { orgId: org.id } });
+    await prisma.customer.deleteMany({ where: { orgId: org.id } });
+    await cleanupOrg(org.id);
+  });
+
+  const buildListeners = (overrides) =>
+    postureExportService.buildExport({
+      orgId: org.id,
+      scope: UNSCOPED,
+      dataset: 'listeners',
+      format: 'json',
+      ...overrides,
+    });
+
+  it('Reachability=CONTAINER exports the declared container-internal port, not an empty file', async () => {
+    if (!(await dbReachable())) return console.warn('DB unreachable — skipping');
+    const out = await buildListeners({ filters: { reachability: 'CONTAINER' } });
+    const parsed = JSON.parse(out.buffer.toString('utf8'));
+    expect(parsed.items).toHaveLength(1);
+    expect(parsed.items[0].port).toBe(9000);
+    expect(parsed.items[0].reachability).toBe('CONTAINER');
+  });
+
+  it('`q` matches customer name and IP address, same as the page', async () => {
+    if (!(await dbReachable())) return console.warn('DB unreachable — skipping');
+    const byCustomer = await buildListeners({ filters: { q: customerA.name } });
+    expect(JSON.parse(byCustomer.buffer.toString('utf8')).items.map((r) => r.port)).toContain(80);
+
+    const byIp = await buildListeners({ filters: { q: '10.9.9.1' } });
+    expect(JSON.parse(byIp.buffer.toString('utf8')).items.map((r) => r.port)).toContain(80);
+
+    const noMatch = await buildListeners({ filters: { q: '10.9.9.2' } });
+    expect(JSON.parse(noMatch.buffer.toString('utf8')).items).toHaveLength(0);
+  });
+
+  it('never exports a listener outside the caller’s customer scope', async () => {
+    if (!(await dbReachable())) return console.warn('DB unreachable — skipping');
+    const out = await buildListeners({ scope: scopedTo([customerB.id]) });
+    const parsed = JSON.parse(out.buffer.toString('utf8'));
+    expect(parsed.items).toHaveLength(0);
+  });
+
+  it('never exports a listener for an out-of-scope serverId filter', async () => {
+    if (!(await dbReachable())) return console.warn('DB unreachable — skipping');
+    const out = await buildListeners({
+      scope: scopedTo([customerB.id]),
+      filters: { serverId: serverA.id },
+    });
+    const parsed = JSON.parse(out.buffer.toString('utf8'));
+    expect(parsed.items).toHaveLength(0);
+  });
+
+  it('honours the `state` filter (running only)', async () => {
+    if (!(await dbReachable())) return console.warn('DB unreachable — skipping');
+    const out = await buildListeners({ filters: { state: 'exposed' } });
+    const parsed = JSON.parse(out.buffer.toString('utf8'));
+    expect(parsed.items.every((r) => r.reachability !== 'CONTAINER')).toBe(true);
+    expect(parsed.items.map((r) => r.port)).toContain(80);
+  });
+});

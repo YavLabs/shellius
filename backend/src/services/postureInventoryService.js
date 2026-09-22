@@ -57,15 +57,34 @@ export function serviceKey(listener) {
   };
 }
 
-function buildWhere(orgId, scope, filters = {}) {
-  const { proto, reachability, ownerKind, port, portMin, portMax, serverId, customerId, environment } =
-    filters;
+/** `ownerKind`/`ownerKinds` (csv or array) → an array of exact values, or null for "no filter". */
+export function parseOwnerKinds(ownerKind, ownerKinds) {
+  const csv = Array.isArray(ownerKinds) ? ownerKinds : String(ownerKinds || '').split(',');
+  const set = new Set([...(ownerKind ? [ownerKind] : []), ...csv].map((v) => String(v || '').trim()).filter(Boolean));
+  return set.size ? [...set] : null;
+}
 
-  const where = { orgId, ...relationScopeWhere(scope, 'server') };
+function buildWhere(orgId, scope, filters = {}) {
+  const {
+    proto,
+    reachability,
+    ownerKind,
+    ownerKinds,
+    port,
+    portMin,
+    portMax,
+    serverId,
+    serverIds,
+    customerId,
+    environment,
+  } = filters;
+
+  const where = { orgId };
 
   if (proto) where.proto = proto;
   if (reachability) where.reachability = reachability;
-  if (ownerKind) where.ownerKind = ownerKind;
+  const kinds = parseOwnerKinds(ownerKind, ownerKinds);
+  if (kinds) where.ownerKind = kinds.length === 1 ? kinds[0] : { in: kinds };
   if (port !== undefined && port !== null && port !== '') where.port = Number(port);
   else if (portMin != null || portMax != null) {
     where.port = {};
@@ -73,22 +92,39 @@ function buildWhere(orgId, scope, filters = {}) {
     if (portMax != null) where.port.lte = Number(portMax);
   }
 
-  // Server-side predicates live on the relation so scope and the caller's
-  // own filters are ANDed rather than overwriting one another.
-  const serverWhere = {};
-  if (serverId) serverWhere.id = serverId;
-  if (customerId) serverWhere.customerId = customerId;
-  if (environment) serverWhere.environment = environment;
+  // Server-side predicates live on the relation, ANDed as an array rather
+  // than merged into one object. A plain `{ ...scopeWhere.server,
+  // ...callerWhere }` merge is a real leak here: scope's own predicate is
+  // `{ customerId: { in: [...] } }`, and a caller-supplied `customerId` is a
+  // bare string on the SAME key — the later spread silently overwrites the
+  // former, so a scoped caller naming any other customerId outright replaces
+  // their own scope instead of narrowing within it (customer-scope-spec
+  // §6.3). `AND` keeps the two predicates as separate conditions that must
+  // both hold, so an out-of-scope customerId/serverId can only ever narrow
+  // the result to nothing.
+  const serverFilters = [];
+  const relFilter = relationScopeWhere(scope, 'server');
+  if (relFilter.server) serverFilters.push(relFilter.server);
+  if (serverId) serverFilters.push({ id: serverId });
+  else if (Array.isArray(serverIds) && serverIds.length) serverFilters.push({ id: { in: serverIds } });
+  if (customerId) serverFilters.push({ customerId });
+  if (environment) serverFilters.push({ environment });
   // Terminated hosts keep their rows for audit; they are not part of "what is
   // running right now".
-  serverWhere.isActive = true;
-  where.server = { ...(where.server || {}), ...serverWhere };
+  serverFilters.push({ isActive: true });
+  where.server = serverFilters.length === 1 ? serverFilters[0] : { AND: serverFilters };
 
   return where;
 }
 
-/** Free-text match across the fields the row actually displays. */
-function matchesQuery(row, q) {
+/**
+ * Free-text match across the fields the row actually displays.
+ *
+ * Exported so the export path (postureExportService) filters `q` on
+ * EXACTLY the same fields the page does — a customer name or IP address
+ * that narrows the screen must narrow the file the same way.
+ */
+export function matchesQuery(row, q) {
   if (!q) return true;
   const needle = q.toLowerCase();
   return [
@@ -154,21 +190,28 @@ async function attachFindings(orgId, rows) {
  *             exists to answer, and leaving them out answers it wrongly.
  */
 async function loadHostServices(orgId, scope, filters = {}) {
-  const { serverId, customerId, environment, ownerKind, port, proto, state } = filters;
+  const { serverId, serverIds, customerId, environment, ownerKind, ownerKinds, port, proto, state } = filters;
   const where = {
     orgId,
     ...(state === 'stopped' ? { running: false } : {}),
     ...(state === 'running' ? { running: true } : {}),
-    ...relationScopeWhere(scope, 'server'),
   };
-  const serverWhere = { isActive: true };
-  if (serverId) serverWhere.id = serverId;
-  if (customerId) serverWhere.customerId = customerId;
-  if (environment) serverWhere.environment = environment;
-  where.server = { ...(where.server || {}), ...serverWhere };
+  // Same `AND`-array reasoning as buildWhere() above: scope's own
+  // `customerId: { in: [...] }` must never share a plain merge with a
+  // caller-supplied `customerId`, or the caller's value silently replaces
+  // the scope instead of narrowing within it.
+  const serverFilters = [{ isActive: true }];
+  const relFilter = relationScopeWhere(scope, 'server');
+  if (relFilter.server) serverFilters.push(relFilter.server);
+  if (serverId) serverFilters.push({ id: serverId });
+  else if (Array.isArray(serverIds) && serverIds.length) serverFilters.push({ id: { in: serverIds } });
+  if (customerId) serverFilters.push({ customerId });
+  if (environment) serverFilters.push({ environment });
+  where.server = serverFilters.length === 1 ? serverFilters[0] : { AND: serverFilters };
   // `kind` on HostService is the same vocabulary as `ownerKind` on a
   // listener (docker/podman/pm2/systemd), so one filter drives both views.
-  if (ownerKind) where.kind = ownerKind;
+  const kinds = parseOwnerKinds(ownerKind, ownerKinds);
+  if (kinds) where.kind = kinds.length === 1 ? kinds[0] : { in: kinds };
 
   const rows = await prisma.hostService.findMany({
     where,
@@ -319,9 +362,15 @@ export async function listListeners(orgId, query = {}, scope = UNSCOPED) {
   else if (query.state === 'internal') rows = rows.filter((r) => r.containerInternal);
   else if (query.state === 'exposed') rows = rows.filter((r) => r.listening && !r.containerInternal);
   if (query.serviceKey) rows = rows.filter((r) => serviceKey(r).key === query.serviceKey);
-  if (query.hasFindings === true || query.hasFindings === 'true') {
+  const wantsFindingsFilter =
+    query.hasFindings === true || query.hasFindings === 'true' || !!query.findingSeverity;
+  if (wantsFindingsFilter) {
     const withFindings = await attachFindings(orgId, rows);
-    rows = withFindings.filter((r) => r.findings.length > 0);
+    rows = withFindings.filter((r) => {
+      if ((query.hasFindings === true || query.hasFindings === 'true') && r.findings.length === 0) return false;
+      if (query.findingSeverity && !r.findings.some((f) => f.severity === query.findingSeverity)) return false;
+      return true;
+    });
     const total = rows.length;
     return {
       items: await attachContainerNames(orgId, rows.slice((page - 1) * limit, page * limit)),
@@ -377,6 +426,7 @@ export async function listServices(orgId, query = {}, scope = UNSCOPED) {
         internetExposed: 0,
         openFindings: 0,
         criticalOrHigh: 0,
+        severityCounts: {},
         // A service that runs on one host and is stopped on another is ONE
         // row with both counts, not two rows that look like two services.
         runningOn: new Set(),
@@ -397,6 +447,7 @@ export async function listServices(orgId, query = {}, scope = UNSCOPED) {
     if (row.reachability === 'INTERNET') g.internetExposed += 1;
     g.openFindings += row.findings.length;
     g.criticalOrHigh += row.findings.filter((f) => f.severity === 'CRITICAL' || f.severity === 'HIGH').length;
+    for (const f of row.findings) g.severityCounts[f.severity] = (g.severityCounts[f.severity] || 0) + 1;
     if (row.server) {
       g.servers.set(row.server.id, {
         id: row.server.id,
@@ -450,12 +501,19 @@ export async function listServices(orgId, query = {}, scope = UNSCOPED) {
     internetExposed: g.internetExposed,
     openFindings: g.openFindings,
     criticalOrHigh: g.criticalOrHigh,
+    severityCounts: g.severityCounts,
     runningOn: g.runningOn.size,
     stoppedOn: g.stoppedOn.size,
   }));
 
   if (query.state === 'stopped') items = items.filter((i) => i.stoppedOn > 0);
   else if (query.state === 'running') items = items.filter((i) => i.runningOn > 0);
+  if (query.hasFindings === true || query.hasFindings === 'true') {
+    items = items.filter((i) => i.openFindings > 0);
+  }
+  if (query.findingSeverity) {
+    items = items.filter((i) => (i.severityCounts[query.findingSeverity] || 0) > 0);
+  }
 
   if (query.q) {
     const needle = String(query.q).toLowerCase();
@@ -490,25 +548,56 @@ export async function listServices(orgId, query = {}, scope = UNSCOPED) {
   };
 }
 
-/** Distinct values for the filter selects, computed from what is in scope. */
+/**
+ * Distinct values for the filter selects, computed from what is in scope.
+ *
+ * NOTE: the scope predicate must be MERGED onto `where.server`, not
+ * overwritten by the `isActive` filter — a literal `server: { isActive:
+ * true }` placed after `...relationScopeWhere(scope, 'server')` replaces the
+ * whole `server` key, silently dropping the customerId scope for a scoped
+ * caller (docs/rbac/customer-scope-spec.md §6.3: an aggregate is still a
+ * leak). Every query below builds `where.server` by merging, never spreading
+ * a scope object and then re-assigning the same key.
+ */
 export async function listFacets(orgId, scope = UNSCOPED) {
   if (!orgId) throw new ApiError(400, 'orgId is required');
-  const where = { orgId, ...relationScopeWhere(scope, 'server'), server: { isActive: true } };
-  const [protos, kinds, reach] = await Promise.all([
+  const where = { orgId, ...relationScopeWhere(scope, 'server') };
+  where.server = { ...(where.server || {}), isActive: true };
+
+  const [protos, kinds, reach, serviceKinds] = await Promise.all([
     prisma.hostListener.groupBy({ by: ['proto'], where, _count: { _all: true } }),
     prisma.hostListener.groupBy({ by: ['ownerKind'], where, _count: { _all: true } }),
     prisma.hostListener.groupBy({ by: ['reachability'], where, _count: { _all: true } }),
+    // HostService rows carry stopped / declared-only services a socket scan
+    // never sees (a stopped `systemd-user` timer, a bare `process` entry
+    // with no live listener) — without this half, their `kind` never shows
+    // up as a Type option at all.
+    prisma.hostService.groupBy({ by: ['kind'], where, _count: { _all: true } }),
   ]);
   const shape = (rows, field) =>
     rows
       .filter((r) => r[field])
       .map((r) => ({ value: r[field], count: r._count._all }))
       .sort((a, b) => b.count - a.count);
+
+  // One kind can appear in both tables (a running `docker` container has a
+  // HostListener; the same host's stopped one only has a HostService) — the
+  // facet is the union, counts summed, not two competing rows for "docker".
+  const ownerKindCounts = new Map();
+  for (const r of shape(kinds, 'ownerKind')) {
+    ownerKindCounts.set(r.value, (ownerKindCounts.get(r.value) || 0) + r.count);
+  }
+  for (const r of shape(serviceKinds, 'kind')) {
+    ownerKindCounts.set(r.value, (ownerKindCounts.get(r.value) || 0) + r.count);
+  }
+
   return {
     protos: shape(protos, 'proto'),
-    ownerKinds: shape(kinds, 'ownerKind'),
+    ownerKinds: [...ownerKindCounts.entries()]
+      .map(([value, count]) => ({ value, count }))
+      .sort((a, b) => b.count - a.count),
     reachability: shape(reach, 'reachability'),
   };
 }
 
-export default { listListeners, listServices, listFacets, serviceKey };
+export default { listListeners, listServices, listFacets, serviceKey, matchesQuery, parseOwnerKinds };

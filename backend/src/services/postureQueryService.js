@@ -199,6 +199,80 @@ export async function listServerCoverage(orgId, scope, { state, page = 1, limit 
 }
 
 // ---------------------------------------------------------------------------
+// Shared findings predicate — used by both getSummary (tiles/sections) and
+// listFindings (rows), so the two can never disagree about what a filter
+// means. Built as an array of conditions ANDed together at the call site
+// (`{ AND: and }`), rather than one mutable `where` object: a section split
+// (listFindings) and a live/muted split (getSummary) each need to add their
+// own `OR` clause on top, and a single `where.OR = ...` assignment would
+// silently clobber this one's `OR` (the free-text search) if both existed
+// on the same object.
+// ---------------------------------------------------------------------------
+
+/**
+ * Free-text match for a finding: message, code, owner label, recognised
+ * service, server hostname/displayName, or an exact port number. Postgres
+ * `contains`/`insensitive` rather than an in-memory filter — the findings
+ * list and the summary counts are both server-paginated/aggregated queries,
+ * and loading every row to filter in JS would defeat that.
+ */
+export function findingsSearchWhere(q) {
+  const needle = typeof q === 'string' ? q.trim() : '';
+  if (!needle) return null;
+  const or = [
+    { message: { contains: needle, mode: 'insensitive' } },
+    { code: { contains: needle, mode: 'insensitive' } },
+    { ownerLabel: { contains: needle, mode: 'insensitive' } },
+    { service: { contains: needle, mode: 'insensitive' } },
+    { server: { hostname: { contains: needle, mode: 'insensitive' } } },
+    { server: { displayName: { contains: needle, mode: 'insensitive' } } },
+  ];
+  const asPort = Number(needle);
+  if (Number.isInteger(asPort) && asPort >= 0 && asPort <= 65535) or.push({ port: asPort });
+  return { OR: or };
+}
+
+/**
+ * The predicate every findings read shares: org, customer scope (ANDed,
+ * never overwritten by the caller's own filters — customer-scope-spec §6.3),
+ * plus serverId/code/lastSeenAt range/free text. Severity and the
+ * status/section partition are pushed on top by each caller, since they
+ * differ between a list (one partition) and a summary (every partition's
+ * count, computed from the same base).
+ */
+function buildFindingsWhere(orgId, scope, filters = {}) {
+  const { customerId, environment, serverId, code, lastSeenFrom, lastSeenTo, q } = filters;
+
+  const and = [{ orgId }];
+
+  const serverFilters = [];
+  const relFilter = relationScopeWhere(scope, 'server');
+  if (relFilter.server) serverFilters.push(relFilter.server);
+  // getSummary's server bucket counts active servers only; a finding on a
+  // deactivated host staying out of these counts keeps the two buckets
+  // describing the same population.
+  serverFilters.push({ isActive: true });
+  if (customerId) serverFilters.push({ customerId });
+  if (environment) serverFilters.push({ environment });
+  and.push({ server: serverFilters.length === 1 ? serverFilters[0] : { AND: serverFilters } });
+
+  if (serverId) and.push({ serverId });
+  if (code) and.push({ code });
+  if (lastSeenFrom || lastSeenTo) {
+    and.push({
+      lastSeenAt: {
+        ...(lastSeenFrom ? { gte: new Date(lastSeenFrom) } : {}),
+        ...(lastSeenTo ? { lte: new Date(lastSeenTo) } : {}),
+      },
+    });
+  }
+  const search = findingsSearchWhere(q);
+  if (search) and.push(search);
+
+  return and;
+}
+
+// ---------------------------------------------------------------------------
 // GET /api/posture/summary
 // ---------------------------------------------------------------------------
 
@@ -207,9 +281,15 @@ export async function listServerCoverage(orgId, scope, { state, page = 1, limit 
  *
  * `customerId` is a filter ON TOP of the caller's scope, never instead of
  * it — asking for a customer you cannot see returns that customer's empty
- * summary rather than its real one.
+ * summary rather than its real one. The same is true of every filter here:
+ * they narrow the findings inbox's tiles and section counts so they can
+ * never disagree with the (equally filtered) rows under them.
  */
-export async function getSummary(orgId, scope, { customerId, environment } = {}) {
+export async function getSummary(
+  orgId,
+  scope,
+  { customerId, environment, serverId, code, lastSeenFrom, lastSeenTo, q } = {}
+) {
   if (!orgId) throw new ApiError(400, 'orgId is required');
 
   const settings = await postureSettingsService.getSettings(orgId);
@@ -265,48 +345,46 @@ export async function getSummary(orgId, scope, { customerId, environment } = {})
   }
 
   // Findings bucket — computed AFTER the scope filter (customer-scope-spec
-  // §6.3: aggregates are the easiest place for a leak to slip through).
+  // §6.3: aggregates are the easiest place for a leak to slip through), and
+  // after every filter the findings page itself offers: severity, server,
+  // finding type, customer, environment, last-seen range, search. Sharing
+  // `buildFindingsWhere` with `listFindings` is what keeps the tiles and the
+  // rows under them from ever disagreeing.
   const now = new Date();
-  // Built as ONE `server` predicate rather than a scope spread plus an
-  // optional serverId list. The old shape only narrowed the findings when a
-  // customer or environment filter was set, so with no filters the servers
-  // bucket counted active hosts while the findings bucket counted every
-  // host in the org — the tiles and the table under them were describing
-  // different populations, and only a deactivated server made it visible.
-  const serverPredicate = { isActive: true };
-  const relFilter = relationScopeWhere(scope, 'server');
-  if (relFilter.server) Object.assign(serverPredicate, relFilter.server);
-  if (customerId) serverPredicate.customerId = customerId;
-  if (environment) serverPredicate.environment = environment;
-
-  const findingWhere = {
-    orgId,
-    resolvedAt: null,
-    server: serverPredicate,
-  };
-
+  const baseAnd = buildFindingsWhere(orgId, scope, {
+    customerId, environment, serverId, code, lastSeenFrom, lastSeenTo, q,
+  });
+  const unresolvedAnd = [...baseAnd, { resolvedAt: null }];
   // The findings inbox is sections now, not tabs, so every section needs its
   // count before it is expanded — a collapsed section with no number is a
   // door with nothing written on it.
-  const live = { ...findingWhere, OR: [{ mutedUntil: null }, { mutedUntil: { lte: now } }] };
-  const [severityGroups, mutedCount, acknowledgedCount, expectedCount, resolvedCount] = await Promise.all([
-    prisma.exposureFinding.groupBy({
-      by: ['severity'],
-      where: live,
-      _count: { _all: true },
-    }),
-    prisma.exposureFinding.count({ where: { ...findingWhere, mutedUntil: { gt: now } } }),
-    // Precedence, so the sections partition rather than overlap:
-    // muted > expected > acknowledged > open. An EXPECTED_PUBLIC finding
-    // that is also acknowledged belongs to Expected, counted once.
-    prisma.exposureFinding.count({
-      where: { ...live, acknowledgedAt: { not: null }, NOT: { code: 'EXPECTED_PUBLIC' } },
-    }),
-    prisma.exposureFinding.count({ where: { ...live, code: 'EXPECTED_PUBLIC' } }),
-    prisma.exposureFinding.count({
-      where: { orgId, server: serverPredicate, NOT: { resolvedAt: null } },
-    }),
-  ]);
+  const liveAnd = [...unresolvedAnd, { OR: [{ mutedUntil: null }, { mutedUntil: { lte: now } }] }];
+
+  // The Finding-type picker's options: every code present in scope, under
+  // every OTHER active filter but never narrowed by `code` itself — picking
+  // one code must not make the picker forget the rest exist.
+  const codesAnd = buildFindingsWhere(orgId, scope, {
+    customerId, environment, serverId, lastSeenFrom, lastSeenTo, q,
+  });
+
+  const [severityGroups, mutedCount, acknowledgedCount, expectedCount, resolvedCount, codeGroups] =
+    await Promise.all([
+      prisma.exposureFinding.groupBy({
+        by: ['severity'],
+        where: { AND: liveAnd },
+        _count: { _all: true },
+      }),
+      prisma.exposureFinding.count({ where: { AND: [...unresolvedAnd, { mutedUntil: { gt: now } }] } }),
+      // Precedence, so the sections partition rather than overlap:
+      // muted > expected > acknowledged > open. An EXPECTED_PUBLIC finding
+      // that is also acknowledged belongs to Expected, counted once.
+      prisma.exposureFinding.count({
+        where: { AND: [...liveAnd, { acknowledgedAt: { not: null } }, { NOT: { code: 'EXPECTED_PUBLIC' } }] },
+      }),
+      prisma.exposureFinding.count({ where: { AND: [...liveAnd, { code: 'EXPECTED_PUBLIC' }] } }),
+      prisma.exposureFinding.count({ where: { AND: [...baseAnd, { NOT: { resolvedAt: null } }] } }),
+      prisma.exposureFinding.groupBy({ by: ['code'], where: { AND: codesAnd }, _count: { _all: true } }),
+    ]);
 
   const findings = { critical: 0, high: 0, medium: 0, low: 0, info: 0, muted: mutedCount };
   for (const g of severityGroups) {
@@ -326,6 +404,11 @@ export async function getSummary(orgId, scope, { customerId, environment } = {})
     total: liveTotal,
   };
 
+  const codes = codeGroups
+    .filter((g) => g.code)
+    .map((g) => ({ value: g.code, count: g._count._all }))
+    .sort((a, b) => b.count - a.count);
+
   return {
     servers: {
       // `total` is the population coverage is measured against: hosts that
@@ -343,6 +426,7 @@ export async function getSummary(orgId, scope, { customerId, environment } = {})
     },
     findings,
     sections,
+    codes,
   };
 }
 
@@ -353,66 +437,51 @@ export async function getSummary(orgId, scope, { customerId, environment } = {})
 export async function listFindings(orgId, query = {}, scope) {
   if (!orgId) throw new ApiError(400, 'orgId is required');
 
-  const { severity, status, section, customerId, environment, serverId } = query;
+  const { severity, status, section, customerId, environment, serverId, code, lastSeenFrom, lastSeenTo, q } = query;
   const page = Math.max(parseInt(query.page, 10) || 1, 1);
   const limit = Math.min(Math.max(parseInt(query.limit, 10) || 25, 1), 100);
 
-  const where = { orgId };
+  // Same predicate getSummary's tiles are built from (org + scope, ANDed —
+  // never overwritten — with the caller's own server/customer/environment/
+  // code/date/search filters), so a section's rows and its count can never
+  // disagree.
+  const and = buildFindingsWhere(orgId, scope, {
+    customerId, environment, serverId, code, lastSeenFrom, lastSeenTo, q,
+  });
   // The column stores CRITICAL/HIGH/…; the UI keys its counts lowercase
   // because that is the shape getSummary returns. Normalising here as well
   // as at the route means any caller can pass either and a severity filter
   // can never silently match nothing.
-  if (severity) where.severity = String(severity).toUpperCase();
-  if (serverId) where.serverId = serverId;
-
-  // Scope + caller-chosen server filters must be ANDed, never overwrite one
-  // another — a scoped caller passing an out-of-scope customerId must still
-  // see nothing (same reasoning as serverService.listServers).
-  const serverFilters = [];
-  const relFilter = relationScopeWhere(scope, 'server');
-  if (relFilter.server) serverFilters.push(relFilter.server);
-  // getSummary counts active servers only. Without the same predicate here,
-  // a finding on a deactivated host is in the list but not in the tiles
-  // above it, and the two disagree for no reason a reader can see.
-  serverFilters.push({ isActive: true });
-  if (customerId) serverFilters.push({ customerId });
-  if (environment) serverFilters.push({ environment });
-  if (serverFilters.length === 1) where.server = serverFilters[0];
-  else if (serverFilters.length > 1) where.server = { AND: serverFilters };
+  if (severity) and.push({ severity: String(severity).toUpperCase() });
 
   const now = new Date();
   // `section` is the inbox's partition (see getSummary's `sections` and
   // frontend/src/lib/postureLabels.js findingSection) — the same precedence,
   // expressed once here so a section's rows and its count can never
   // disagree. `status` stays for callers that want the coarser buckets.
-  const live = () => {
-    where.resolvedAt = null;
-    where.OR = [{ mutedUntil: null }, { mutedUntil: { lte: now } }];
-  };
+  const live = () => and.push({ resolvedAt: null }, { OR: [{ mutedUntil: null }, { mutedUntil: { lte: now } }] });
   if (section === 'resolved') {
-    where.resolvedAt = { not: null };
+    and.push({ resolvedAt: { not: null } });
   } else if (section === 'muted') {
-    where.resolvedAt = null;
-    where.mutedUntil = { gt: now };
+    and.push({ resolvedAt: null }, { mutedUntil: { gt: now } });
   } else if (section === 'expected') {
     live();
-    where.code = 'EXPECTED_PUBLIC';
+    and.push({ code: 'EXPECTED_PUBLIC' });
   } else if (section === 'acknowledged') {
     live();
-    where.acknowledgedAt = { not: null };
-    where.NOT = { code: 'EXPECTED_PUBLIC' };
+    and.push({ acknowledgedAt: { not: null } }, { NOT: { code: 'EXPECTED_PUBLIC' } });
   } else if (section === 'open') {
     live();
-    where.acknowledgedAt = null;
-    where.NOT = { code: 'EXPECTED_PUBLIC' };
+    and.push({ acknowledgedAt: null }, { NOT: { code: 'EXPECTED_PUBLIC' } });
   } else if (status === 'resolved') {
-    where.resolvedAt = { not: null };
+    and.push({ resolvedAt: { not: null } });
   } else if (status === 'muted') {
-    where.resolvedAt = null;
-    where.mutedUntil = { gt: now };
+    and.push({ resolvedAt: null }, { mutedUntil: { gt: now } });
   } else if (status === 'open') {
     live();
   }
+
+  const where = { AND: and };
 
   const [items, total] = await Promise.all([
     prisma.exposureFinding.findMany({

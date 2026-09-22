@@ -1,13 +1,14 @@
 import { useCallback, useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { ArrowUpCircle, Check, Cpu, Database, Download, Gauge, HardDrive, Info, Radar, ShieldAlert, ShieldCheck, Volume1, VolumeX, Wifi } from 'lucide-react';
+import { ArrowUpCircle, Check, Cpu, Database, Download, Gauge, HardDrive, Info, Radar, Search, ShieldAlert, ShieldCheck, Volume1, VolumeX, Wifi } from 'lucide-react';
 import CollectorHealthBanner from '@/components/posture/CollectorHealthBanner';
 import SudoPasswordRow from '@/components/posture/SudoPasswordRow';
 import { collectorStateOf, isOlderVersion } from '@/lib/collectorHealth';
 import { groupListeners, bindNote } from '@/lib/listenerGroups';
-import { describeListener } from '@/lib/serviceIdentity';
+import { describeListener, RUNTIMES } from '@/lib/serviceIdentity';
 import ServiceCell, { RuntimeChip } from '@/components/posture/ServiceCell';
 import DataTable from '@/components/shared/DataTable';
+import FilterControl from '@/components/shared/FilterControl';
 import { PostureTile, PostureTileGrid } from '@/components/posture/PostureTiles';
 import { severityAccent } from '@/lib/mobileCard';
 import ExpectableMarker from '@/components/posture/ExpectableMarker';
@@ -19,6 +20,7 @@ import ListenerDetailModal from '@/components/posture/ListenerDetailModal';
 import ExportDialog from '@/components/posture/ExportDialog';
 import ExpectedPortDialog from '@/components/posture/ExpectedPortDialog';
 import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
 import { can } from '@/lib/permissions';
 import { useAuth } from '@/context/AuthContext';
 import EmptyState from '@/components/ui/EmptyState';
@@ -253,11 +255,16 @@ function ServerPostureTab({
   // wrong — nothing on the page said a muted finding existed at all.
   const [openSections, setOpenSections] = useState({ open: true });
   const [severityFilter, setSeverityFilter] = useState('');
-  const [statusFilter, setStatusFilter] = useState('');
   const [codeFilter, setCodeFilter] = useState('');
+  // Message, code or port — the same free-text idea every other list on the
+  // site offers, missing here before: the filter toolbar had no search box
+  // at all.
+  const [findingSearch, setFindingSearch] = useState('');
   // Ports view filters.
   const [reachFilter, setReachFilter] = useState('');
-  const [ownerKindFilter, setOwnerKindFilter] = useState('');
+  const [typeFilter, setTypeFilter] = useState('');
+  const [bindFilter, setBindFilter] = useState('');
+  const [portFindingSeverityFilter, setPortFindingSeverityFilter] = useState('');
   const [portStateFilter, setPortStateFilter] = useState('');
   const [protoFilter, setProtoFilter] = useState('');
   const { user } = useAuth();
@@ -427,13 +434,27 @@ function ServerPostureTab({
   // What the table shows. Counts on the cards stay whole-tab totals so the
   // numbers do not move when you filter by them — a card that recomputed to
   // match its own filter would always read as the full count.
+  //
+  // No Status filter here: the sections below (Open/Expected/Acknowledged/
+  // Muted/Resolved) already partition every finding by status. A second,
+  // independent status filter applied on top of a section already
+  // committed to one status meant picking "Muted" made every section but
+  // Muted show zero rows — not "no muted findings", but every OTHER section
+  // reporting a false empty.
+  const matchesSearch = (f) => {
+    if (!findingSearch) return true;
+    const needle = findingSearch.toLowerCase();
+    return [f.message, f.code, String(f.port ?? '')]
+      .filter(Boolean)
+      .some((v) => String(v).toLowerCase().includes(needle));
+  };
   const matchesFilters = (f) =>
     (!severityFilter || f.severity === severityFilter) &&
-    (!statusFilter || f.status === statusFilter) &&
-    (!codeFilter || f.code === codeFilter);
+    (!codeFilter || f.code === codeFilter) &&
+    matchesSearch(f);
   const visibleFindings = findings.filter(matchesFilters);
   const findingCodes = [...new Set(findings.map((f) => f.code))].sort();
-  const filtersActive = !!(severityFilter || statusFilter || codeFilter);
+  const filtersActive = !!(severityFilter || codeFilter || findingSearch);
 
   const selectedFindings = visibleFindings.filter((f) => selected.includes(f.id));
   // Marking a port expected only resolves exposure findings. A selection of
@@ -483,17 +504,25 @@ function ServerPostureTab({
   // Surfaced through the "Expected, not listening" filter option rather than
   // a second amber line under the host's own stale banner.
 
-  const ownerKinds = [...new Set(portRows.map((r) => r.ownerKind).filter(Boolean))].sort();
+  // Runtime types actually present — the same grouping the Type column
+  // renders (describeListener().runtime), not the raw ownerKind values, so
+  // "Docker" is one option instead of container/docker-proxy/docker being
+  // three.
+  const portTypes = [...new Set(portRows.filter((r) => r.listening).map((r) => describeListener(r).runtime.key))].sort();
   const visiblePorts = portRows.filter((r) => {
     if (reachFilter && r.reachability !== reachFilter) return false;
-    if (ownerKindFilter && r.ownerKind !== ownerKindFilter) return false;
+    if (typeFilter && (!r.listening || describeListener(r).runtime.key !== typeFilter)) return false;
     if (protoFilter && (r.proto || '').toLowerCase() !== protoFilter) return false;
+    if (bindFilter && r.bindClass !== bindFilter) return false;
+    if (portFindingSeverityFilter && !r.findings.some((f) => f.severity === portFindingSeverityFilter)) return false;
     if (portStateFilter === 'findings' && r.findings.length === 0) return false;
     if (portStateFilter === 'expected' && !r.expected) return false;
     if (portStateFilter === 'stale' && (r.listening || !r.expected)) return false;
     return true;
   });
-  const portFiltersActive = !!(reachFilter || ownerKindFilter || protoFilter || portStateFilter);
+  const portFiltersActive = !!(
+    reachFilter || typeFilter || protoFilter || bindFilter || portFindingSeverityFilter || portStateFilter
+  );
 
   const handleBulkAcknowledge = async () => {
     setBusyId('bulk');
@@ -579,17 +608,6 @@ function ServerPostureTab({
       ],
     },
     {
-      key: 'status',
-      label: 'Status',
-      placeholder: 'All statuses',
-      options: [
-        { value: '', label: 'All statuses' },
-        { value: 'open', label: 'Open' },
-        { value: 'acknowledged', label: 'Acknowledged' },
-        { value: 'muted', label: 'Muted' },
-      ],
-    },
-    {
       key: 'code',
       label: 'Finding type',
       placeholder: 'All types',
@@ -597,10 +615,9 @@ function ServerPostureTab({
       options: [{ value: '', label: 'All types' }, ...findingCodes.map((c) => ({ value: c, label: c }))],
     },
   ];
-  const findingFilterValues = { severity: severityFilter, status: statusFilter, code: codeFilter };
+  const findingFilterValues = { severity: severityFilter, code: codeFilter };
   const applyFindingFilters = (next) => {
     setSeverityFilter(next.severity ?? '');
-    setStatusFilter(next.status ?? '');
     setCodeFilter(next.code ?? '');
   };
 
@@ -619,10 +636,13 @@ function ServerPostureTab({
       ],
     },
     {
-      key: 'ownerKind',
-      label: 'Owner',
-      placeholder: 'All owners',
-      options: [{ value: '', label: 'All owners' }, ...ownerKinds.map((k) => ({ value: k, label: k }))],
+      key: 'type',
+      label: 'Type',
+      placeholder: 'All types',
+      options: [
+        { value: '', label: 'All types' },
+        ...portTypes.map((k) => ({ value: k, label: RUNTIMES[k]?.label || k })),
+      ],
     },
     {
       key: 'proto',
@@ -632,6 +652,27 @@ function ServerPostureTab({
         { value: '', label: 'All protocols' },
         { value: 'tcp', label: 'TCP' },
         { value: 'udp', label: 'UDP' },
+      ],
+    },
+    {
+      key: 'bind',
+      label: 'Bind',
+      placeholder: 'All binds',
+      options: [
+        { value: '', label: 'All binds' },
+        { value: 'wildcard', label: 'Wildcard (0.0.0.0 / ::)' },
+        { value: 'loopback', label: 'Loopback' },
+        { value: 'private', label: 'Private network' },
+        { value: 'specific', label: 'Specific address' },
+      ],
+    },
+    {
+      key: 'findingSeverity',
+      label: 'Finding severity',
+      placeholder: 'Any severity',
+      options: [
+        { value: '', label: 'Any severity' },
+        ...SEVERITY_TILES.map((t) => ({ value: t.key, label: t.label })),
       ],
     },
     {
@@ -651,14 +692,18 @@ function ServerPostureTab({
   ];
   const portFilterValues = {
     reachability: reachFilter,
-    ownerKind: ownerKindFilter,
+    type: typeFilter,
     proto: protoFilter,
+    bind: bindFilter,
+    findingSeverity: portFindingSeverityFilter,
     portState: portStateFilter,
   };
   const applyPortFilters = (next) => {
     setReachFilter(next.reachability ?? '');
-    setOwnerKindFilter(next.ownerKind ?? '');
+    setTypeFilter(next.type ?? '');
     setProtoFilter(next.proto ?? '');
+    setBindFilter(next.bind ?? '');
+    setPortFindingSeverityFilter(next.findingSeverity ?? '');
     setPortStateFilter(next.portState ?? '');
   };
 
@@ -1180,63 +1225,83 @@ function ServerPostureTab({
         {allFindings.length === 0 ? (
           <EmptyState icon={ShieldCheck} title="No findings" description="This host is clean as of the last snapshot." />
         ) : (
-          /* Sections, not tabs. Muted, acknowledged and expected findings
-             used to be reachable only through a filter nobody thought to
-             set, so a host with ten muted findings looked identical to one
-             with none. Every count is on screen; only the queue is open. */
-          <div className="space-y-2">
-            {FINDING_SECTION_META.map((sec) => {
-              const rows = sectioned[sec.key] || [];
-              const visible = rows.filter(matchesFilters);
-              return (
-                <FindingSection
-                  key={sec.key}
-                  title={sec.title}
-                  description={sec.description}
-                  count={rows.length}
-                  tone={sec.tone}
-                  open={!!openSections[sec.key]}
-                  onToggle={() => setOpenSections((p) => ({ ...p, [sec.key]: !p[sec.key] }))}
-                >
-                  {visible.length === 0 ? (
-                    // A filtered view with nothing in it must never be
-                    // mistaken for an empty section (spec §9.14).
-                    <p className="py-6 text-center text-sm text-muted-foreground">
-                      None of the {rows.length} finding{rows.length === 1 ? '' : 's'} here match the
-                      current filters.
-                    </p>
-                  ) : (
-                    <DataTable
-                      columns={findingColumns}
-                      data={visible}
-                      filterDefs={sec.key === 'open' ? findingFilterDefs : undefined}
-                      filterValues={findingFilterValues}
-                      onFilterChange={applyFindingFilters}
-                      toolbarActions={
-                        canExport && sec.key === 'open' ? (
-                          <Button variant="outline" size="sm" onClick={() => setExportDataset('findings')}>
-                            <Download className="mr-1.5 h-4 w-4" /> Export
-                          </Button>
-                        ) : null
-                      }
-                      onRowClick={setDetailFinding}
-                      showSearch={false}
-                      emptyMessage="Nothing here"
-                      selectable={canMute || canExpect}
-                      selectedIds={selected}
-                      onSelectionChange={setSelected}
-                      bulkActions={bulkBar}
-                      // Severity is the column the phone card drops, so it
-                      // has to come back as the card's own colour —
-                      // otherwise the one thing that ranks a finding is the
-                      // one thing a phone never shows.
-                      mobile={{ accent: (r) => severityAccent(r.severity), titleClamp: 2 }}
-                    />
-                  )}
-                </FindingSection>
-              );
-            })}
-          </div>
+          <>
+            {/* Above every section, not inside one: the Filters drawer used to
+                live in the Open section's own table toolbar, which meant it
+                vanished the moment Open was collapsed or empty — the exact
+                state a filter left it in half the time (spec §9.14: a
+                filtered view must stay visibly filterable). One toolbar
+                narrows every section at once. */}
+            <div className="flex flex-wrap items-center gap-2">
+              <div className="relative min-w-0 flex-1 max-w-sm">
+                <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+                <Input
+                  value={findingSearch}
+                  onChange={(e) => setFindingSearch(e.target.value)}
+                  placeholder="Search message, code or port..."
+                  aria-label="Search findings"
+                  className="pl-9 h-9"
+                  type="search"
+                />
+              </div>
+              <FilterControl defs={findingFilterDefs} values={findingFilterValues} onChange={applyFindingFilters} />
+              {canExport && (
+                <div className="sm:ml-auto">
+                  <Button variant="outline" size="sm" onClick={() => setExportDataset('findings')}>
+                    <Download className="mr-1.5 h-4 w-4" /> Export
+                  </Button>
+                </div>
+              )}
+            </div>
+
+            {/* Sections, not tabs. Muted, acknowledged and expected findings
+                used to be reachable only through a filter nobody thought to
+                set, so a host with ten muted findings looked identical to one
+                with none. Every count is on screen; only the queue is open. */}
+            <div className="space-y-2">
+              {FINDING_SECTION_META.map((sec) => {
+                const rows = sectioned[sec.key] || [];
+                const visible = rows.filter(matchesFilters);
+                return (
+                  <FindingSection
+                    key={sec.key}
+                    title={sec.title}
+                    description={sec.description}
+                    count={rows.length}
+                    tone={sec.tone}
+                    open={!!openSections[sec.key]}
+                    onToggle={() => setOpenSections((p) => ({ ...p, [sec.key]: !p[sec.key] }))}
+                  >
+                    {visible.length === 0 ? (
+                      // A filtered view with nothing in it must never be
+                      // mistaken for an empty section (spec §9.14).
+                      <p className="py-6 text-center text-sm text-muted-foreground">
+                        None of the {rows.length} finding{rows.length === 1 ? '' : 's'} here match the
+                        current filters.
+                      </p>
+                    ) : (
+                      <DataTable
+                        columns={findingColumns}
+                        data={visible}
+                        onRowClick={setDetailFinding}
+                        showSearch={false}
+                        emptyMessage="Nothing here"
+                        selectable={canMute || canExpect}
+                        selectedIds={selected}
+                        onSelectionChange={setSelected}
+                        bulkActions={bulkBar}
+                        // Severity is the column the phone card drops, so it
+                        // has to come back as the card's own colour —
+                        // otherwise the one thing that ranks a finding is the
+                        // one thing a phone never shows.
+                        mobile={{ accent: (r) => severityAccent(r.severity), titleClamp: 2 }}
+                      />
+                    )}
+                  </FindingSection>
+                );
+              })}
+            </div>
+          </>
         )}
         {canExpect && allFindings.some(canMarkExpected) && (
           <p className="flex items-center gap-1.5 text-xs text-muted-foreground">
