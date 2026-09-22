@@ -46,6 +46,7 @@ import { encrypt, decrypt } from '../../utils/crypto.js';
 import { ACTIONS, log as auditLog } from '../auditService.js';
 import * as notificationService from '../notificationService.js';
 import { revokeAllAccessFor } from '../userService.js';
+import { usersWithPermission } from '../roleService.js';
 import { getAdapter, ADAPTER_TYPES, adapterForConfig, describeAdapters } from './adapters/index.js';
 
 const RESOURCE = 'DirectorySync';
@@ -355,12 +356,13 @@ async function finishRun(row, run, patch, { orgId }) {
   return saved;
 }
 
-/** Tell the people who can do something about it. */
+/**
+ * Tell the people who can do something about it — which is the people who
+ * hold the permission that gates this feature, not a hardcoded list of role
+ * names. A custom role with `settings.sso` gets told too.
+ */
 async function notifyAdmins(orgId, { title, body, metadata }) {
-  const admins = await prisma.user.findMany({
-    where: { orgId, status: 'active', deletedAt: null, kind: 'human', role: { in: ['admin', 'super_admin'] } },
-    select: { id: true },
-  });
+  const admins = await usersWithPermission(orgId, 'settings.sso');
   for (const admin of admins) {
     await notificationService.create({
       orgId,

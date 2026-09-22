@@ -14,6 +14,7 @@
 import prisma from '../../config/db.js';
 import * as directorySyncService from '../directory/directorySyncService.js';
 import { encrypt } from '../../utils/crypto.js';
+import { syncSystemRoles } from '../roleService.js';
 import { dbReachable, createTestOrg, createTestUser, cleanupOrg } from './testDbHelper.js';
 
 const HOUR = 60 * 60 * 1000;
@@ -73,6 +74,9 @@ describe('directory sync (live DB)', () => {
   beforeAll(async () => {
     if (!(await dbReachable())) return;
     org = await createTestOrg();
+    // Notification recipients are chosen by permission, not by role name, so
+    // the org needs its built-in roles for anyone to be findable.
+    await syncSystemRoles(org.id);
     ssoConfig = await prisma.ssoConfig.create({
       data: {
         orgId: org.id,
@@ -101,6 +105,8 @@ describe('directory sync (live DB)', () => {
   afterAll(async () => {
     if (!org) return;
     await prisma.ssoConfig.deleteMany({ where: { orgId: org.id } });
+    await prisma.user.deleteMany({ where: { orgId: org.id } });
+    await prisma.role.deleteMany({ where: { orgId: org.id } });
     await cleanupOrg(org.id);
   });
 
@@ -401,7 +407,10 @@ describe('directory sync (live DB)', () => {
 
   test('an aborted run notifies the admins rather than failing silently', async () => {
     if (!(await dbReachable())) return console.warn('[skip] DB unreachable');
-    await createTestUser(org.id, { role: 'admin' });
+    // `settings.sso` is super-admin by default, and it is the permission that
+    // gates this feature — so it is super admins who get told, not every admin.
+    const saRole = await prisma.role.findFirst({ where: { orgId: org.id, key: 'super_admin' } });
+    await createTestUser(org.id, { role: 'super_admin', data: { roleId: saRole.id } });
     await makeSsoUser({ externalId: 'dir-1' });
     const sync = await makeSync();
 
