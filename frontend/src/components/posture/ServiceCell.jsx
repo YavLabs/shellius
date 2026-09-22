@@ -41,6 +41,10 @@ function tooltipFor(d) {
     `${d.name} (${d.runtime.label})`,
     d.protocol && `Service: ${d.protocol}`,
     d.id && `ID: ${d.id}`,
+    d.inferred && 'Owner not confirmed: matched by the port this service declares',
+    d.details.image && `Image: ${d.details.image}`,
+    d.details.script && `Script: ${d.details.script}`,
+    d.details.pm2Home && `PM2 home: ${d.details.pm2Home}`,
     d.details.user && `User: ${d.details.user}`,
     d.details.pid && `PID: ${d.details.pid}`,
     d.details.command && `Command: ${d.details.command}`,
@@ -55,7 +59,12 @@ export default function ServiceCell({ listener, className, showRuntime = false }
   return (
     <div className={cn('min-w-0 max-w-[26rem]', className)} title={tooltipFor(d)}>
       <div className="flex min-w-0 items-center gap-1.5">
-        <span className="truncate text-sm font-medium text-foreground">{d.name}</span>
+        <span className={cn('truncate text-sm font-medium', d.inferred ? 'italic text-muted-foreground' : 'text-foreground')}>
+          {d.name}
+        </span>
+        {d.id && (
+          <span className="shrink-0 rounded bg-muted px-1 py-px font-mono text-[10px] leading-4 text-muted-foreground">{d.id}</span>
+        )}
         {showRuntime && <RuntimeChip runtime={d.runtime} />}
         {d.protocol && (
           <span className="inline-flex shrink-0 items-center rounded border border-border px-1.5 py-px text-[10px] leading-4 text-muted-foreground">

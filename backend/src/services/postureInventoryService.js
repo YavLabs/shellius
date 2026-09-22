@@ -304,38 +304,111 @@ function declaredPortRows(service) {
 }
 
 /**
- * Name the container behind a port.
+ * Who is really behind a port, from the host's own service inventory.
  *
- * A socket owned by a container is attributed from its cgroup, which gives
- * an id and nothing else (no Docker socket, by design). When the host also
- * runs the container scan, the same container is in HostService with its
- * name and image — keyed by the same 12-character id. Pure: pass the rows
- * and the host's services; returns rows with containerName/containerImage.
+ * A socket's owner is worked out from the process (cgroup, ancestry), which
+ * on older collectors — and without the Docker socket, by design — often
+ * yields only half the answer: a container id with no name, a docker-proxy
+ * forwarding to 172.27.0.2:3000, a pm2 app named after its launcher
+ * (`serve`), or nothing at all. The same report's inventory (HostService)
+ * knows each container's name, id, image, compose file and published ports,
+ * and each pm2 app's name, script, home and running pid. This joins them:
+ *
+ *   container (cgroup id)   → by the 12-char id
+ *   docker-proxy / NAT rule → by the published (proto, host port)
+ *   pm2                     → by the running pid, else by the app name
+ *   unknown / process       → by the one service declaring (proto, port)
+ *
+ * Adds (never overwrites the collector's own facts): containerName,
+ * containerId, containerImage, pm2Name, pm2Script, pm2Home, sourcePath (when
+ * the row has none), declaredBy { kind, name, ref }. Pure; rows the
+ * inventory says nothing about are returned as the same objects.
  */
-export function withContainerNames(rows, services) {
+const svcPid = (svc) => {
+  const m = /pid (\d+)/.exec(svc.statusText || '');
+  return m ? Number(m[1]) : null;
+};
+const isContainerKind = (k) => k === 'docker' || k === 'podman';
+
+export function withServiceIdentity(rows, services) {
+  if (!services || services.length === 0) return rows;
   const byRef = new Map();
-  for (const svc of services || []) {
-    if ((svc.kind === 'docker' || svc.kind === 'podman') && svc.ref) {
-      byRef.set(`${svc.serverId}:${String(svc.ref).slice(0, 12)}`, svc);
+  const byPort = new Map(); // `${serverId}:${proto}:${port}` → [svc]
+  const pm2ByPid = new Map();
+  const pm2ByName = new Map();
+  for (const svc of services) {
+    if (isContainerKind(svc.kind) && svc.ref) byRef.set(`${svc.serverId}:${String(svc.ref).slice(0, 12)}`, svc);
+    if (svc.kind === 'pm2') {
+      const pid = svcPid(svc);
+      if (pid) pm2ByPid.set(`${svc.serverId}:${pid}`, svc);
+      pm2ByName.set(`${svc.serverId}:${svc.name}`, svc);
+    }
+    for (const p of Array.isArray(svc.ports) ? svc.ports : []) {
+      if (!p || !p.port) continue;
+      const key = `${svc.serverId}:${String(p.proto || 'tcp').toLowerCase()}:${Number(p.port)}`;
+      if (!byPort.has(key)) byPort.set(key, []);
+      byPort.get(key).push(svc);
     }
   }
-  if (byRef.size === 0) return rows;
+
+  const container = (svc) => ({
+    containerName: svc.name,
+    containerId: svc.ref ? String(svc.ref).slice(0, 12) : null,
+    containerImage: svc.detail || null,
+  });
+
   return rows.map((r) => {
-    if (r.ownerKind !== 'container') return r;
-    const id = String(r.ownerRef || r.ownerName || '').replace(/^(docker|podman):/, '').slice(0, 12);
-    const svc = byRef.get(`${r.serverId}:${id}`);
-    return svc ? { ...r, containerName: svc.name, containerImage: svc.detail || null } : r;
+    const portKey = `${r.serverId}:${String(r.proto || 'tcp').toLowerCase()}:${Number(r.port)}`;
+    const declared = byPort.get(portKey) || [];
+    const withSource = (extra, svc) => ({ ...r, ...extra, ...(r.sourcePath || !svc?.sourcePath ? {} : { sourcePath: svc.sourcePath }) });
+
+    switch (r.ownerKind) {
+      case 'container': {
+        const id = String(r.ownerRef || r.ownerName || '').replace(/^(docker|podman):/, '').slice(0, 12);
+        const svc = byRef.get(`${r.serverId}:${id}`);
+        return svc ? withSource(container(svc), svc) : r;
+      }
+      case 'docker-proxy':
+      case 'docker':
+      case 'podman': {
+        // A container scan row (ownerKind docker, name = container) already
+        // is the container; only proxies and NAT-only rows need a name.
+        if ((r.ownerKind === 'docker' || r.ownerKind === 'podman') && !/^runtime:/.test(r.ownerName || '')) return r;
+        const hits = declared.filter((s) => isContainerKind(s.kind));
+        return hits.length === 1 ? withSource(container(hits[0]), hits[0]) : r;
+      }
+      case 'pm2': {
+        const svc = (r.pid && pm2ByPid.get(`${r.serverId}:${r.pid}`)) || pm2ByName.get(`${r.serverId}:${r.ownerName}`);
+        if (!svc) return r;
+        return { ...r, pm2Name: svc.name, pm2Script: svc.detail || null, pm2Home: svc.sourcePath || null };
+      }
+      case 'systemd':
+      case 'systemd-user':
+        return r;
+      default: {
+        // Unknown owner: the one service that declares this port, if exactly
+        // one does. Shown as "declared by", not as a confirmed owner.
+        if (declared.length !== 1) return r;
+        const svc = declared[0];
+        return { ...r, declaredBy: { kind: svc.kind, name: svc.name, ref: svc.ref || null } };
+      }
+    }
   });
 }
 
+/** @deprecated kept for callers/tests written before withServiceIdentity. */
+export const withContainerNames = withServiceIdentity;
+
 async function attachContainerNames(orgId, rows) {
-  const serverIds = [...new Set(rows.filter((r) => r.ownerKind === 'container').map((r) => r.serverId))];
+  const serverIds = [...new Set(rows.filter((r) => r.ownerKind !== 'systemd' && r.ownerKind !== 'systemd-user').map((r) => r.serverId))];
   if (serverIds.length === 0) return rows;
-  const services = await prisma.hostService.findMany({
-    where: { orgId, serverId: { in: serverIds }, kind: { in: ['docker', 'podman'] } },
-    select: { serverId: true, kind: true, ref: true, name: true, detail: true },
+  // HostService holds only each host's latest inventory (ingest replaces
+  // it), so a container that has since been replaced cannot name a port.
+  const latest = await prisma.hostService.findMany({
+    where: { orgId, serverId: { in: serverIds } },
+    select: { serverId: true, kind: true, ref: true, name: true, detail: true, sourcePath: true, statusText: true, ports: true },
   });
-  return withContainerNames(rows, services);
+  return withServiceIdentity(rows, latest);
 }
 
 /**

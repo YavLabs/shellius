@@ -22,7 +22,7 @@ describe('describeListener', () => {
 
   it('docker-proxy: names it by the recognised service, points at the container', () => {
     const d = describeListener({ ownerKind: 'docker-proxy', ownerName: 'docker-proxy', ownerDetail: '-> 172.18.0.2:1433', service: 'MSSQL' });
-    expect(d).toMatchObject({ name: 'MSSQL', protocol: '', subtext: '→ container 172.18.0.2:1433' });
+    expect(d).toMatchObject({ name: 'MSSQL', protocol: '', subtext: '→ 172.18.0.2:1433' });
     expect(d.runtime.label).toBe('Docker');
   });
 
@@ -50,5 +50,45 @@ describe('describeListener', () => {
   });
   it('a NAT-only publish is named by the address it forwards to', () => {
     expect(describeListener({ ownerKind: 'docker', ownerName: 'runtime:172.17.0.3:9000' }).name).toBe('container 172.17.0.3:9000');
+  });
+
+  it('a docker-proxy port named from the inventory: container name + id, compose file · target', () => {
+    const d = describeListener({
+      ownerKind: 'docker-proxy',
+      ownerDetail: '-> 172.27.0.2:3000',
+      containerName: 'op-dashboard',
+      containerId: 'fe07ecd8db89',
+      containerImage: 'openpanel/dashboard:2',
+      sourcePath: '/srv/op/docker-compose.yml',
+    });
+    expect(d).toMatchObject({ name: 'op-dashboard', id: 'fe07ecd8db89', subtext: '/srv/op/docker-compose.yml · → 172.27.0.2:3000' });
+  });
+
+  it('pm2: the inventory app name over the launcher, the pm2 id, and the script instead of the command line', () => {
+    const d = describeListener({
+      ownerKind: 'pm2',
+      ownerName: 'serve',
+      ownerRef: '#3@/home/ithadmin/.pm2',
+      ownerDetail: 'node /home/ithadmin/.nvm/versions/node/v23.11.0/bin/serve -s build',
+      pm2Name: 'ksb-fe',
+      pm2Script: '/usr/lib/node_modules/serve/build/main.js',
+    });
+    expect(d).toMatchObject({ name: 'ksb-fe', id: '#3', subtext: '/usr/lib/node_modules/serve/build/main.js' });
+    // Its working directory wins when the collector reports one.
+    expect(describeListener({ ownerKind: 'pm2', ownerName: 'api', sourcePath: '/srv/api', ownerDetail: 'node x' }).subtext).toBe('/srv/api');
+  });
+
+  it('a specific bind address is shown; a wildcard is not', () => {
+    expect(describeListener({ ownerKind: 'systemd', ownerName: 'redis.service', sourcePath: '/lib/systemd/system/redis.service', bind: '127.0.0.1' }).subtext).toBe(
+      '/lib/systemd/system/redis.service · on 127.0.0.1'
+    );
+    expect(describeListener({ ownerKind: 'systemd', ownerName: 'nginx.service', bind: '0.0.0.0' }).subtext).toBe('');
+  });
+
+  it('an unknown owner declared by one service is named as a lead, not a fact', () => {
+    const d = describeListener({ ownerKind: 'unknown', ownerName: 'unknown', declaredBy: { kind: 'pm2', name: 'ksb-api', ref: 'u:ksb-api' } });
+    expect(d).toMatchObject({ name: 'ksb-api', inferred: true });
+    expect(d.runtime.label).toBe('pm2');
+    expect(d.subtext).toMatch(/owner not confirmed/);
   });
 });

@@ -319,7 +319,9 @@ function Posture() {
   };
 
   const coverage = summary?.servers;
-  const summaryTiles = summary && (
+  // Rendered before the first summary arrives too — as skeletons — so the
+  // page does not open as a blank gap that jumps when the numbers land.
+  const summaryTiles = (
     <div className="space-y-3">
       {/* Every severity, so the tiles add up to the sections below. Showing
           only Critical and High meant a list of four rows sat under tiles
@@ -328,7 +330,8 @@ function Posture() {
         <PostureTile
           icon={Radar}
           label="All open"
-          value={summaryLoading ? '—' : openTotal}
+          value={openTotal}
+          loading={summaryLoading}
           active={!severity}
           onClick={() => pickSeverity('')}
         />
@@ -338,9 +341,10 @@ function Posture() {
             icon={t.icon}
             tint={t.tint}
             label={t.label}
-            value={summaryLoading ? '—' : summary.findings?.[t.key] ?? 0}
+            value={summary?.findings?.[t.key] ?? 0}
+            loading={summaryLoading}
             active={severity === t.key}
-            disabled={!summaryLoading && (summary.findings?.[t.key] ?? 0) === 0 && severity !== t.key}
+            disabled={!summaryLoading && (summary?.findings?.[t.key] ?? 0) === 0 && severity !== t.key}
             onClick={() => pickSeverity(severity === t.key ? '' : t.key)}
           />
         ))}
@@ -351,6 +355,11 @@ function Posture() {
           two invites reading "0 critical" as good news on a fleet where 31
           of 32 hosts are not reporting at all. Which is exactly the number
           this line exists to keep in front of you. */}
+      {!coverage ? (
+        // A failed summary leaves no line at all rather than a placeholder
+        // that pulses forever.
+        summaryLoading && <div className="h-9 w-full animate-pulse rounded-md border border-border bg-muted/40" aria-label="Loading coverage" />
+      ) : (
       <button
         type="button"
         onClick={() => setCoverageOpen(true)}
@@ -400,6 +409,7 @@ function Posture() {
         )}
         <span className="ml-auto shrink-0 text-primary">Coverage →</span>
       </button>
+      )}
     </div>
   );
 
@@ -804,7 +814,7 @@ function Posture() {
                 title={sec.title}
                 description={sec.description}
                 tone={sec.tone}
-                count={summary?.sections?.[sec.key] ?? 0}
+                count={summary ? summary.sections?.[sec.key] ?? 0 : null}
                 filters={sectionFilters}
                 columns={columns}
                 open={!!openSections[sec.key]}
