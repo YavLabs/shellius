@@ -778,7 +778,7 @@ export const PERMISSIONS = [
     sensitive: true,
     defaults: SA,
     current: SA,
-    endpoints: ['/api/auth/sso/config*', '/api/auth/sso/providers*'],
+    endpoints: ['/api/auth/sso/config*', '/api/auth/sso/providers*', '/api/settings/directory-sync*'],
     findings: ['F-25'],
   },
   {
