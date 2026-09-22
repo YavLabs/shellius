@@ -71,6 +71,9 @@ export default function MobileDataList({
   bulkActions,
   onRowClick,
   options = {},
+  // Rendered in place of the cards and pager (a grouped view), under the
+  // same search / filters / group toolbar.
+  replaceContent,
 }) {
   const maxMeta = options?.maxMeta ?? DEFAULT_MAX_META;
   const maxPrimary = options?.maxPrimary ?? DEFAULT_MAX_PRIMARY;
@@ -216,7 +219,9 @@ export default function MobileDataList({
         )}
       </div>
 
-      {initialLoading ? (
+      {replaceContent ? (
+        replaceContent
+      ) : initialLoading ? (
         <MobileCardSkeleton count={Math.min(pageSize, 6)} withLeading={!!(options?.leading || layout.leading)} />
       ) : shown.length === 0 ? (
         <MobileEmptyCard>{emptyContent}</MobileEmptyCard>
@@ -238,7 +243,7 @@ export default function MobileDataList({
         )
       )}
 
-      {!initialLoading && total > 0 && (
+      {!replaceContent && !initialLoading && total > 0 && (
         <MobileLoadMore shown={shown.length} total={total} hasMore={hasMore} loading={loading} onMore={loadMore} />
       )}
 

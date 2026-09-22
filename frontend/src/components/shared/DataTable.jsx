@@ -25,6 +25,7 @@ import {
 import useIsMobile from '@/hooks/useIsMobile';
 import MobileDataList from '@/components/mobile/MobileDataList';
 import FilterControl from '@/components/shared/FilterControl';
+import GroupByControl from '@/components/shared/GroupByControl';
 
 const PAGE_SIZE_OPTIONS = [10, 20, 50, 100];
 
@@ -232,6 +233,17 @@ function DataTable({
   // Initial search text (e.g. a ?q= from the URL), so a linked or refreshed
   // page shows the query it is actually filtered by.
   initialSearch = '',
+
+  // Group by: { keys, onChange, options } puts the "Group" control in the
+  // toolbar beside Filters. While keys are set, `groupedContent` (the page's
+  // GroupedView) replaces the table and pager under the same toolbar, so
+  // search and filters keep narrowing what is grouped.
+  grouping,
+  groupedContent,
+
+  // false: no toolbar row at all — for the per-group tables inside a
+  // GroupedView, which share the page's toolbar.
+  toolbar = true,
 }) {
   const isMobile = useIsMobile();
   const hasFilterDefs = Array.isArray(filterDefs) && filterDefs.length > 0;
@@ -499,6 +511,11 @@ function DataTable({
   // -------------------------------------------------------------------
   // Mobile: card list instead of the table
   // -------------------------------------------------------------------
+  const groupControl = grouping?.options?.length ? (
+    <GroupByControl groupKeys={grouping.keys || []} onChange={grouping.onChange} options={grouping.options} />
+  ) : null;
+  const showGrouped = !!groupedContent && (grouping?.keys?.length || 0) > 0;
+
   if (isMobile) {
     const selectSort = (key) => {
       if (isServerSort) {
@@ -525,7 +542,17 @@ function DataTable({
         filterDefs={filterDefs}
         filterValues={filterValues}
         onFilterChange={onFilterChange}
-        toolbarActions={toolbarActions}
+        toolbarActions={
+          groupControl ? (
+            <>
+              {groupControl}
+              {toolbarActions}
+            </>
+          ) : (
+            toolbarActions
+          )
+        }
+        replaceContent={showGrouped ? groupedContent : undefined}
         activeFilterCount={activeFilterCount}
         onResetFilters={onResetFilters}
         sortKey={sortKey}
@@ -546,7 +573,7 @@ function DataTable({
         onSelectionChange={onSelectionChange}
         bulkActions={bulkActions}
         onRowClick={onRowClick}
-        options={searchAvailable ? mobile : { ...mobile, showSearch: false }}
+        options={searchAvailable && toolbar ? mobile : { ...mobile, showSearch: false }}
       />
     );
   }
@@ -562,6 +589,7 @@ function DataTable({
       {/* Toolbar: search, then the Filters button and its applied-count chip.
           Search stays on the row because it is the control people reach for
           without thinking; everything else moved behind the button. */}
+      {toolbar && (
       <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:flex-wrap">
         {searchAvailable && (
           <div className="relative min-w-0 flex-1 max-w-sm">
@@ -581,14 +609,20 @@ function DataTable({
         ) : (
           filters && <div className="flex flex-wrap items-center gap-2">{filters}</div>
         )}
+        {groupControl}
         {toolbarActions && (
           <div className="flex items-center gap-2 sm:ml-auto">{toolbarActions}</div>
         )}
       </div>
+      )}
 
       {/* Bulk actions bar */}
       {selectable && selectedIds.length > 0 && bulkActions && <div>{bulkActions}</div>}
 
+      {showGrouped ? (
+        groupedContent
+      ) : (
+      <>
       {/* Table */}
       <div className="overflow-hidden rounded-lg border border-border bg-card">
         <div className="overflow-x-auto">
@@ -852,6 +886,8 @@ function DataTable({
             </Button>
           </div>
         </div>
+      )}
+      </>
       )}
     </div>
   );
