@@ -4,6 +4,8 @@ import logger from '../utils/logger.js';
 import * as caService from './caService.js';
 import * as policyService from './policyService.js';
 import { UNSCOPED, assertServerInScope, relationScopeWhere } from '../lib/scope.js';
+import { isDisabledStatus } from '../lib/userStatus.js';
+import config from '../config/index.js';
 import { endOfDayInclusive } from '../utils/dateRange.js';
 
 // ---------------------------------------------------------------------------
@@ -454,11 +456,33 @@ export async function verify({ serial, principal, agentServer = null }) {
 
     const cert = await prisma.certificate.findUnique({
       where: { serial: serialBig },
+      include: { issuedTo: { select: { status: true } } },
     });
 
     if (!cert) return { valid: false, reason: 'certificate not found' };
     if (cert.status === 'REVOKED') return { valid: false, reason: 'certificate revoked' };
     if (cert.status === 'EXPIRED') return { valid: false, reason: 'certificate expired' };
+
+    // The account behind the certificate must still be allowed in. Revoking
+    // the certificate rows on suspension is the primary fix; this is the
+    // backstop for a certificate issued in the window between the status
+    // change and the revoke.
+    //
+    // A null issuedTo is not treated as a failure: direct issuance can
+    // legitimately leave issuedToId unset, and a hard-deleted user's
+    // certificates are SetNull'd — those are revoked by deleteUser instead,
+    // since there is no owner left here to judge.
+    //
+    // Free: the include rides along on the lookup that already happens, so
+    // this stays one query on a path that runs for every SSH connection.
+    if (config.certificates.checkUserStatus && cert.issuedTo && isDisabledStatus(cert.issuedTo.status)) {
+      logger.warn('certificateService.verify: certificate owner is disabled', {
+        certId: cert.id,
+        serial: serialBig.toString(),
+        status: cert.issuedTo.status,
+      });
+      return { valid: false, reason: 'certificate owner is not active' };
+    }
 
     const now = new Date();
     if (cert.validBefore <= now) {

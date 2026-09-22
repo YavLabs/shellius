@@ -6,6 +6,7 @@ import { envAllowedDomains, callbackUrlFor, safeDefaultRole, ENV_DEFAULTS, decry
 import { ssoDefaultRole, permissionsForUser } from './roleService.js';
 import { PRIVILEGED_PERMISSIONS } from '../config/permissions.js';
 import { passwordSignInBlocked } from './orgService.js';
+import { DISABLED_STATUSES } from '../lib/userStatus.js';
 
 // ---------------------------------------------------------------------------
 // Public status — legacy (first provider) + Revision 2 (multi-provider list)
@@ -123,7 +124,7 @@ export function ssoError(code, message, statusCode = 403) {
   return err;
 }
 
-const DISABLED_STATUSES = ['deleted', 'suspended', 'deactivated'];
+// Shared with ssoLinkService and certificateService — see lib/userStatus.js.
 
 /**
  * Does this user hold any privileged permission (config/permissions.js

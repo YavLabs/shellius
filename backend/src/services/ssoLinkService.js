@@ -37,12 +37,12 @@ import * as authService from './authService.js';
 import { linkIdentityToUser, deleteUserIdentity, listUserIdentities, ssoError, materializeEnvGoogle } from './ssoService.js';
 import { assertCanManageUser } from './userService.js';
 import { passwordSignInBlocked } from './orgService.js';
+import { DISABLED_STATUSES } from '../lib/userStatus.js';
 
 export const PENDING_LINK_TTL_SEC = 10 * 60;
 export const APPROVAL_LINK_TTL_SEC = 30 * 60;
 const MAX_CONFIRM_ATTEMPTS = 5;
 const APPROVAL_MAILS_PER_HOUR = 5;
-const DISABLED_STATUSES = ['deleted', 'suspended', 'deactivated'];
 
 const sha256 = (v) => crypto.createHash('sha256').update(String(v)).digest('hex');
 const linkKey = (token) => `sso:link:${sha256(token)}`;
