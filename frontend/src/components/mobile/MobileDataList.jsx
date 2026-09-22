@@ -184,7 +184,9 @@ export default function MobileDataList({
       <div className="space-y-2">
         {showSearch && <MobileSearch value={search} onChange={onSearch} placeholder={searchPlaceholder} />}
         {hasControls && (
-          <div className="flex min-w-0 items-center gap-2">
+          // Wraps: Filters + Sort + Group + a table action no longer fit one
+          // 390px row, and squeezing them truncated "Sort" to "S…".
+          <div className="flex min-w-0 flex-wrap items-center gap-2">
             {hasFilterDefs ? (
               // Same control as desktop; FilterDrawer renders as the app's
               // bottom sheet below `md`, so the two cannot drift apart.
@@ -205,7 +207,9 @@ export default function MobileDataList({
             {toolbarActions && (
               <div className="flex min-w-0 items-center gap-2 [&_button]:h-9">{toolbarActions}</div>
             )}
-            {selectable && (
+            {/* Grouped (replaceContent), each group selects its own rows; an
+                outer "All" would only see the empty flat page. */}
+            {selectable && !replaceContent && (
               <div className="ml-auto">
                 <MobileSelectAll
                   checked={allSelected}

@@ -780,7 +780,8 @@ function Posture() {
               apply to all of them — a severity filter that only narrowed
               "Open" would make the other counts lie. */}
           <div className="flex flex-wrap items-center gap-2">
-            <div className="relative min-w-0 flex-1 max-w-sm">
+            {/* Its own row on phones: beside Filters and Group it shrank to "Sea". */}
+            <div className="relative min-w-0 flex-1 max-w-sm max-sm:max-w-none max-sm:basis-full">
               <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
               <Input
                 value={searchDraft}

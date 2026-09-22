@@ -92,7 +92,7 @@ export default function SudoPasswordRow({ serverId, install, onChanged }) {
             </span>
           ) : (
             <span className="text-sm text-muted-foreground">
-              Not saved — installs as <span className="font-mono">{install.sshUser}</span> ask for it
+              Not saved — installs as <span className="font-mono">{install.sshUser}</span> will ask for it
             </span>
           )}
           {canManage && !editing && !confirmForget && (

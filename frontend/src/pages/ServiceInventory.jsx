@@ -500,13 +500,8 @@ function ServiceInventory() {
         const d = describeListener(r);
         return [d.name, d.runtime.label, d.protocol, d.subtext, d.id, d.details.user].join(' ');
       },
-      mobile: {
-        slot: 'secondary',
-        render: (r) => {
-          const d = describeListener(r);
-          return `${d.name} · ${d.runtime.label}${d.protocol ? ` · ${d.protocol}` : ''}`;
-        },
-      },
+      // Phones lead with the service's name too, as the desktop column does.
+      mobile: { slot: 'title', render: (r) => describeListener(r).name },
       render: (r) => <ServiceCell listener={r} />,
     },
     {
@@ -522,7 +517,13 @@ function ServiceInventory() {
       label: 'Port',
       className: 'w-24',
       sortAccessor: (r) => r.port,
-      mobile: { slot: 'title', render: (r) => `${(r.proto || '').toUpperCase()}/${r.port}` },
+      mobile: {
+        slot: 'secondary',
+        render: (r) => {
+          const d = describeListener(r);
+          return `${(r.proto || '').toUpperCase()}/${r.port} · ${d.runtime.label}${d.protocol ? ` · ${d.protocol}` : ''}`;
+        },
+      },
       render: (r) => <span className="font-mono text-sm">{r.port}</span>,
     },
     {

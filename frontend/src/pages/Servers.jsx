@@ -864,7 +864,7 @@ function Servers() {
           selectedIds={selected}
           onSelectionChange={setSelected}
           onRowClick={(r) => navigate(`/servers/${r.id}`)}
-          mobile={{ accent: (r) => envAccent(r.environment) }}
+          mobile={{ accent: (r) => envAccent(r.environment), maxMeta: 4 }}
           serverSort={{ sortKey: f.sortBy, sortDir: f.sortDir, onSortChange: handleSortChange }}
         />
       )}
@@ -937,7 +937,7 @@ function Servers() {
         onSelectionChange={setSelected}
         bulkActions={bulkActionsSlot}
         onRowClick={(r) => navigate(`/servers/${r.id}`)}
-        mobile={{ accent: (r) => envAccent(r.environment) }}
+        mobile={{ accent: (r) => envAccent(r.environment), maxMeta: 4 }}
         serverSort={{ sortKey: f.sortBy, sortDir: f.sortDir, onSortChange: handleSortChange }}
         serverPagination={{
           page,

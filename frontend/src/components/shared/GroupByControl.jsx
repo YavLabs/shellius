@@ -147,11 +147,14 @@ export default function GroupByControl({ groupKeys, onChange, options, max = MAX
         </PopoverContent>
       </Popover>
       {active && (
+        // Hidden on phones: the count on the button says grouping is on, the
+        // group headers say by what, and the popover has "Clear grouping" —
+        // a chip with no room for its text was an empty box with an ×.
         <span
-          className="flex min-w-0 items-center gap-1 rounded-md border border-border bg-muted/50 py-1 pl-2 pr-1 text-xs text-muted-foreground"
+          className="flex min-w-0 items-center gap-1 rounded-md border border-border bg-muted/50 py-1 pl-2 pr-1 text-xs text-muted-foreground max-sm:hidden"
           title={`Grouped by ${groupKeys.map(labelOf).join(' › ')}`}
         >
-          <span className="truncate max-sm:hidden">{groupKeys.map(labelOf).join(' › ')}</span>
+          <span className="truncate">{groupKeys.map(labelOf).join(' › ')}</span>
           <button
             type="button"
             onClick={() => onChange([])}

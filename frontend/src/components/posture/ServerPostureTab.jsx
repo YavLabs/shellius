@@ -720,14 +720,8 @@ function ServerPostureTab({
         const d = describeListener(r);
         return [d.name, d.runtime.label, d.protocol, d.subtext, d.id, d.details.user, d.details.command].join(' ');
       },
-      mobile: {
-        slot: 'secondary',
-        render: (r) => {
-          if (!r.listening) return 'Nothing listening on this port';
-          const d = describeListener(r);
-          return `${d.name} · ${d.runtime.label}${d.protocol ? ` · ${d.protocol}` : ''}`;
-        },
-      },
+      // Phones lead with the service's name, as the desktop column does.
+      mobile: { slot: 'title', render: (r) => (r.listening ? describeListener(r).name : 'Nothing listening') },
       render: (r) =>
         r.listening ? (
           <ServiceCell listener={r} />
@@ -749,7 +743,14 @@ function ServerPostureTab({
       label: 'Port',
       className: 'w-24',
       sortAccessor: (r) => r.port,
-      mobile: { slot: 'title', render: (r) => `${(r.proto || '').toUpperCase()}/${r.port}${r.containerPort && r.containerPort !== r.port ? ` → ${r.containerPort}` : ''}` },
+      mobile: {
+        slot: 'secondary',
+        render: (r) => {
+          const port = `${(r.proto || '').toUpperCase()}/${r.port}${r.containerPort && r.containerPort !== r.port ? ` → ${r.containerPort}` : ''}`;
+          const protocol = r.listening ? describeListener(r).protocol : '';
+          return protocol ? `${port} · ${protocol}` : port;
+        },
+      },
       render: (r) => (
         <span className="font-mono text-sm" title={r.containerPort && r.containerPort !== r.port ? `Host port ${r.port} → container port ${r.containerPort}` : undefined}>
           {r.port}
@@ -1253,7 +1254,7 @@ function ServerPostureTab({
                 filtered view must stay visibly filterable). One toolbar
                 narrows every section at once. */}
             <div className="flex flex-wrap items-center gap-2">
-              <div className="relative min-w-0 flex-1 max-w-sm">
+              <div className="relative min-w-0 flex-1 max-w-sm max-sm:max-w-none max-sm:basis-full">
                 <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
                 <Input
                   value={findingSearch}
