@@ -296,6 +296,7 @@ async function finalizePendingLink(token, pending, user, method, meta) {
       cfg,
       userId: user.id,
       subject: pending.subject,
+      externalId: pending.externalId || null,
       email: pending.email,
       name: pending.name,
       picture: pending.picture,
@@ -461,7 +462,7 @@ export async function assertCanStartConnect({ orgId, userId, providerId }) {
  * Callback tail for mode 'connect': link (cfg, subject) to the signed-in user
  * who started the flow. Never matches by email.
  */
-export async function completeConnect({ orgId, userId, cfg, subject, email, name, picture, ipAddress, userAgent }) {
+export async function completeConnect({ orgId, userId, cfg, subject, externalId = null, email, name, picture, ipAddress, userAgent }) {
   if (!subject) throw ssoError('sso_failed', 'Provider response is missing a subject');
   const allowedDomains = cfg.allowedDomains || [];
   if (allowedDomains.length > 0) {
@@ -473,7 +474,7 @@ export async function completeConnect({ orgId, userId, cfg, subject, email, name
   const user = await prisma.user.findFirst({ where: { id: userId, orgId } });
   if (!user || user.status !== 'active') throw ssoError('account_disabled', 'Account is not active');
 
-  await linkIdentityToUser({ orgId, cfg, userId, subject, email: email ? String(email).toLowerCase() : null, name, picture });
+  await linkIdentityToUser({ orgId, cfg, userId, subject, externalId, email: email ? String(email).toLowerCase() : null, name, picture });
   await recordIdentityLinked({
     user,
     method: 'connect',

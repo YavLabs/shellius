@@ -97,6 +97,7 @@ model Organization {
   auditSinks        AuditSink[]
   auditSettings     AuditSettings?
   auditArchives     AuditArchive[]
+  directorySyncs    DirectorySync[]
 
   @@map("organizations")
 }
@@ -180,6 +181,7 @@ model User {
   personalCredentials     Credential[]            @relation("PersonalCredentials")
   personalHosts           PersonalHost[]
   apiTokens               ApiToken[]              @relation("ApiTokensForUser")
+  directorySyncFindings   DirectorySyncFinding[]
   apiTokensIssued         ApiToken[]              @relation("ApiTokensIssuedBy")
   apiTokensRevoked        ApiToken[]              @relation("ApiTokensRevokedBy")
 
@@ -523,8 +525,9 @@ model SsoConfig {
   createdAt             DateTime @default(now()) @map("created_at")
   updatedAt             DateTime @updatedAt @map("updated_at")
 
-  organization Organization   @relation(fields: [orgId], references: [id], onDelete: Cascade)
-  identities   UserIdentity[]
+  organization  Organization   @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  identities    UserIdentity[]
+  directorySync DirectorySync?
 
   @@index([orgId])
   @@map("sso_configs")
@@ -539,6 +542,13 @@ model UserIdentity {
   ssoConfigId String    @map("sso_config_id")
   provider    String // oidc | github (denormalised from SsoConfig)
   subject     String // OIDC sub / GitHub numeric user id
+  /// The id this user has in the provider's DIRECTORY API, which is not always
+  /// the same value as `subject`. Microsoft Entra's `sub` is pairwise — unique
+  /// per application — so it never matches a Graph `/users` id; the directory
+  /// id is the `oid` claim instead. Null means "we do not know this user's
+  /// directory id", and directory sync must never treat that as "absent from
+  /// the directory". See docs/directory-sync.md.
+  externalId  String?   @map("external_id")
   email       String?
   lastLoginAt DateTime? @map("last_login_at")
   createdAt   DateTime  @default(now()) @map("created_at")
@@ -549,6 +559,7 @@ model UserIdentity {
   @@unique([ssoConfigId, subject])
   @@index([userId])
   @@index([orgId])
+  @@index([ssoConfigId, externalId])
   @@map("user_identities")
 }
 
@@ -667,6 +678,7 @@ enum NotificationType {
   ACCESS_REQUEST_REVOKED
   BREAK_GLASS_INVOKED
   POSTURE_FINDING
+  DIRECTORY_SYNC
 }
 
 enum PolicyEffect {
@@ -941,15 +953,15 @@ model AuditSinkDelivery {
 /// deliberately restricts which fields it will write so that settings cannot
 /// be changed around their own permission (orgService ALLOWED_UPDATE_FIELDS).
 model AuditSettings {
-  id             String  @id @default(cuid())
-  orgId          String  @unique @map("org_id")
+  id                   String  @id @default(cuid())
+  orgId                String  @unique @map("org_id")
   /// null = keep everything, which stays the default. Deleting audit history
   /// is never something that starts happening on its own.
-  retentionDays  Int?    @map("retention_days")
-  archiveEnabled Boolean @default(false) @map("archive_enabled")
-  archiveEncrypt Boolean @default(true) @map("archive_encrypt")
-  archiveBucket  String? @map("archive_bucket")
-  archivePrefix  String  @default("audit-archive") @map("archive_prefix")
+  retentionDays        Int?    @map("retention_days")
+  archiveEnabled       Boolean @default(false) @map("archive_enabled")
+  archiveEncrypt       Boolean @default(true) @map("archive_encrypt")
+  archiveBucket        String? @map("archive_bucket")
+  archivePrefix        String  @default("audit-archive") @map("archive_prefix")
   /// Delete past retention even with no archive to fall back on. Off, and
   /// deliberately awkward to turn on.
   deleteWithoutArchive Boolean @default(false) @map("delete_without_archive")
@@ -1649,4 +1661,122 @@ model PostureSettings {
   organization Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
 
   @@map("posture_settings")
+}
+
+// ---------------------------------------------------------------------------
+// Directory sync — reconciling Shellius accounts against the IdP's directory.
+//
+// OIDC has no directory API, so this is a per-provider adapter reading the
+// provider's own management API (Graph, Okta, Google Admin SDK, GitHub org
+// membership). See docs/directory-sync.md.
+// ---------------------------------------------------------------------------
+
+/// One directory reconciliation, bound to the SSO config whose users it judges.
+model DirectorySync {
+  id              String  @id @default(cuid())
+  orgId           String  @map("org_id")
+  ssoConfigId     String  @unique @map("sso_config_id")
+  adapter         String // entra | okta | google | github
+  configEncrypted String  @map("config_encrypted") @db.Text
+  isActive        Boolean @default(false) @map("is_active")
+
+  /// What a run does with someone the directory no longer has:
+  /// `flag` raises a finding and notifies; `suspend` also cuts their access.
+  action        String  @default("flag")
+  /// On by default, and turning it off is a deliberate act. A dry run reports
+  /// exactly what it would have done and changes nothing.
+  dryRun        Boolean @default(true) @map("dry_run")
+  intervalHours Int     @default(6) @map("interval_hours")
+
+  /// Safety valves. A run aborts rather than acting when the number of people
+  /// it would suspend exceeds EITHER of these — that shape means a broken
+  /// credential or a paging bug far more often than it means a mass layoff.
+  maxSuspendPercent Int @default(10) @map("max_suspend_percent")
+  maxSuspendCount   Int @default(25) @map("max_suspend_count")
+  /// Absence must persist across this many hours before anyone is acted on, so
+  /// a single bad directory read cannot suspend a soul.
+  graceHours        Int @default(24) @map("grace_hours")
+
+  lastRunAt     DateTime? @map("last_run_at")
+  lastRunStatus String?   @map("last_run_status")
+  lastError     String?   @map("last_error") @db.Text
+  createdById   String?   @map("created_by_id")
+  createdAt     DateTime  @default(now()) @map("created_at")
+  updatedAt     DateTime  @updatedAt @map("updated_at")
+
+  organization Organization           @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  ssoConfig    SsoConfig              @relation(fields: [ssoConfigId], references: [id], onDelete: Cascade)
+  runs         DirectorySyncRun[]
+  findings     DirectorySyncFinding[]
+
+  @@index([orgId])
+  @@map("directory_syncs")
+}
+
+/// One execution. Kept whether it acted, aborted or found nothing — the
+/// aborted ones are the interesting ones.
+model DirectorySyncRun {
+  id          String  @id @default(cuid())
+  orgId       String  @map("org_id")
+  syncId      String  @map("sync_id")
+  /// ok | aborted | failed
+  status      String
+  /// Why an aborted run stopped, in words an admin can act on.
+  abortReason String? @map("abort_reason") @db.Text
+  dryRun      Boolean @default(true) @map("dry_run")
+
+  directoryCount      Int @default(0) @map("directory_count")
+  /// How many local identities matched by each means. A run whose
+  /// `matchedByExternalId` is 0 while `matchedByEmail` is high is telling you
+  /// the directory ids have not been learned yet.
+  matchedByExternalId Int @default(0) @map("matched_by_external_id")
+  matchedByEmail      Int @default(0) @map("matched_by_email")
+  /// Identities with no directory id recorded yet, which are never judged.
+  unknownIdentities   Int @default(0) @map("unknown_identities")
+  candidates          Int @default(0)
+  flagged             Int @default(0)
+  suspended           Int @default(0)
+  skipped             Int @default(0)
+
+  startedAt  DateTime  @default(now()) @map("started_at")
+  finishedAt DateTime? @map("finished_at")
+  durationMs Int?      @map("duration_ms")
+  error      String?   @db.Text
+
+  sync     DirectorySync          @relation(fields: [syncId], references: [id], onDelete: Cascade)
+  findings DirectorySyncFinding[]
+
+  @@index([syncId, startedAt])
+  @@index([orgId])
+  @@map("directory_sync_runs")
+}
+
+/// A user the directory no longer vouches for. Open findings carry the grace
+/// period: `firstSeenAt` is when absence was first observed, and nothing is
+/// acted on until it has persisted past `graceHours`.
+model DirectorySyncFinding {
+  id     String  @id @default(cuid())
+  orgId  String  @map("org_id")
+  syncId String  @map("sync_id")
+  runId  String? @map("run_id")
+  userId String  @map("user_id")
+  /// missing | disabled — absent from the directory, or present and disabled.
+  reason String
+  /// open | resolved | acted | ignored
+  status String  @default("open")
+
+  firstSeenAt DateTime  @default(now()) @map("first_seen_at")
+  lastSeenAt  DateTime  @default(now()) @map("last_seen_at")
+  resolvedAt  DateTime? @map("resolved_at")
+  actedAt     DateTime? @map("acted_at")
+  /// What was done, or what was skipped and why (e.g. "last super admin").
+  outcome     String?   @db.Text
+
+  sync DirectorySync     @relation(fields: [syncId], references: [id], onDelete: Cascade)
+  run  DirectorySyncRun? @relation(fields: [runId], references: [id], onDelete: SetNull)
+  user User              @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([syncId, userId])
+  @@index([orgId, status])
+  @@map("directory_sync_findings")
 }

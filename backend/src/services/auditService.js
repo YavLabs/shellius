@@ -142,6 +142,25 @@ export const ACTIONS = {
     // action rather than a field on `update`.
     disabled: 'audit_sink.disabled',
   },
+  directory_sync: {
+    create: 'directory_sync.create',
+    update: 'directory_sync.update',
+    delete: 'directory_sync.delete',
+    test: 'directory_sync.test',
+    // One reconcile pass. `aborted` is deliberately separate from `failed`:
+    // aborted means the run read the directory, distrusted what it saw and
+    // refused to act — the single most important thing this feature does.
+    run: 'directory_sync.run',
+    aborted: 'directory_sync.aborted',
+    failed: 'directory_sync.failed',
+    // Per-user outcomes.
+    flagged: 'directory_sync.flagged',
+    deprovisioned: 'directory_sync.deprovisioned',
+    // Someone the directory has lost who was deliberately left alone, and why.
+    skipped: 'directory_sync.skipped',
+    // They came back, or were re-added, before the grace period ran out.
+    resolved: 'directory_sync.resolved',
+  },
 };
 
 // ---------------------------------------------------------------------------

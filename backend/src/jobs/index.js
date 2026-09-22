@@ -23,6 +23,7 @@ import {
 import { registerPosturePruneJob, startPosturePruneWorker } from './posturePrune.js';
 import { registerAuditExportJob, startAuditExportWorker } from './auditExport.js';
 import { registerAuditArchiveJob, startAuditArchiveWorker } from './auditArchive.js';
+import { registerDirectorySyncJob, startDirectorySyncWorker } from './directorySync.js';
 import { registerPostureEscalateJob, startPostureEscalateWorker } from './postureEscalate.js';
 import { seedDefaultPolicies } from './seedDefaultPolicies.js';
 import {
@@ -66,6 +67,9 @@ export async function startAllJobs() {
 
   await registerAuditArchiveJob();
   startAuditArchiveWorker();
+
+  await registerDirectorySyncJob();
+  startDirectorySyncWorker();
 
   await registerPostureEscalateJob();
   startPostureEscalateWorker();

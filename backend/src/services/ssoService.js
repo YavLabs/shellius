@@ -163,7 +163,7 @@ export async function linkConfirmationFor(user) {
  * belongs to a different user, and ssoError('already_connected') when this
  * user already has an identity for this provider. Returns the identity row.
  */
-export async function linkIdentityToUser({ orgId, cfg, userId, subject, email, name, picture, activate = false }) {
+export async function linkIdentityToUser({ orgId, cfg, userId, subject, externalId = null, email, name, picture, activate = false }) {
   const label = cfg.name || cfg.provider;
   const existing = await prisma.userIdentity.findUnique({
     where: { ssoConfigId_subject: { ssoConfigId: cfg.id, subject } },
@@ -193,6 +193,7 @@ export async function linkIdentityToUser({ orgId, cfg, userId, subject, email, n
         ssoConfigId: cfg.id,
         provider: cfg.provider,
         subject,
+        externalId: externalId || null,
         email: email || null,
         lastLoginAt: activate ? new Date() : null,
       },
@@ -233,7 +234,7 @@ export async function linkIdentityToUser({ orgId, cfg, userId, subject, email, n
  *   `ssoLinkedVia: 'auto'` when this sign-in newly linked the identity by
  *   email; or `{ pendingLink }` when the link must be confirmed first.
  */
-export async function reconcileSsoUser({ orgId, cfg, subject, email, emailVerified, name, picture }) {
+export async function reconcileSsoUser({ orgId, cfg, subject, externalId = null, email, emailVerified, name, picture }) {
   if (!subject) {
     throw ssoError('sso_failed', `${cfg.provider} response is missing a subject/sub claim`);
   }
@@ -296,6 +297,7 @@ export async function reconcileSsoUser({ orgId, cfg, subject, email, emailVerifi
             providerName: cfg.name || cfg.provider,
             presetId: cfg.presetId || null,
             subject,
+            externalId: externalId || null,
             email,
             name: name || null,
             picture: picture || null,
@@ -366,13 +368,21 @@ export async function reconcileSsoUser({ orgId, cfg, subject, email, emailVerifi
   // Upsert the UserIdentity row for THIS provider.
   await prisma.userIdentity.upsert({
     where: { ssoConfigId_subject: { ssoConfigId: cfg.id, subject } },
-    update: { userId: user.id, email: email || null, lastLoginAt: new Date() },
+    update: {
+      userId: user.id,
+      email: email || null,
+      lastLoginAt: new Date(),
+      // Only ever write a directory id we actually learned. A sign-in that
+      // yields none must not erase one an earlier sign-in established.
+      ...(externalId ? { externalId } : {}),
+    },
     create: {
       orgId,
       userId: user.id,
       ssoConfigId: cfg.id,
       provider: cfg.provider,
       subject,
+      externalId: externalId || null,
       email: email || null,
       lastLoginAt: new Date(),
     },
