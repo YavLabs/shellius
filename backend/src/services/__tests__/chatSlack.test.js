@@ -152,3 +152,49 @@ describe('slack adapter — rendering', () => {
     expect(actions.elements.some((e) => e.url)).toBe(true);
   });
 });
+
+// ---------------------------------------------------------------------------
+
+describe('generic webhook adapter', () => {
+  test('the signature is actually sent, not merely computed', async () => {
+    // It was once computed into a headers object that was never passed to the
+    // transport, so every payload arrived unsigned — something the unit tests
+    // did not notice and a stand-in collector did, immediately.
+    const { deliver, signBody } = await import('../notify/chat/webhook.js');
+    const realFetch = global.fetch;
+    let seen = null;
+    global.fetch = async (url, init) => {
+      seen = init;
+      return new Response('ok', { status: 200 });
+    };
+    try {
+      await deliver(
+        { url: 'https://example.com/hook', signingSecret: 'shh' },
+        { title: 'hello', summary: 'world', severity: 'info' },
+        { event: 'test' }
+      );
+      expect(seen.headers['X-Shellius-Signature']).toMatch(/^t=\d+,v1=[0-9a-f]{64}$/);
+      // And it verifies against the exact body that was sent.
+      const [, ts] = seen.headers['X-Shellius-Signature'].match(/^t=(\d+),/);
+      expect(signBody('shh', seen.body, Number(ts))).toBe(seen.headers['X-Shellius-Signature']);
+    } finally {
+      global.fetch = realFetch;
+    }
+  });
+
+  test('no secret means no signature header, not an empty one', async () => {
+    const { deliver } = await import('../notify/chat/webhook.js');
+    const realFetch = global.fetch;
+    let seen = null;
+    global.fetch = async (url, init) => {
+      seen = init;
+      return new Response('ok', { status: 200 });
+    };
+    try {
+      await deliver({ url: 'https://example.com/hook' }, { title: 'hi', severity: 'info' }, {});
+      expect(seen.headers['X-Shellius-Signature']).toBeUndefined();
+    } finally {
+      global.fetch = realFetch;
+    }
+  });
+});

@@ -82,7 +82,7 @@ export async function deliver(config, message, { event = null } = {}) {
     headers['X-Shellius-Signature'] = signBody(cfg.signingSecret, body, Math.floor(Date.now() / 1000));
   }
 
-  const res = await postForm(cfg.url, body, { contentType: 'application/json', label: 'Webhook' });
+  const res = await postForm(cfg.url, body, { contentType: 'application/json', headers, label: 'Webhook' });
   if (res.status === 429 || res.status === 408) {
     throw new RetryableChatError(`Webhook returned ${res.status}`, { retryAfterMs: res.retryAfterMs });
   }

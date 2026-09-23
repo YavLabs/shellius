@@ -63,8 +63,8 @@ export async function fetchJson(url, opts = {}) {
  * POST where the response is not JSON (an incoming webhook answers "ok").
  * Returns the status so the adapter can classify it itself.
  */
-export async function postForm(url, body, { contentType = 'application/json', label } = {}) {
-  const res = await send(url, { headers: { 'Content-Type': contentType }, body, label });
+export async function postForm(url, body, { contentType = 'application/json', headers = {}, label } = {}) {
+  const res = await send(url, { headers: { 'Content-Type': contentType, ...headers }, body, label });
   return { status: res.status, body: await res.text(), retryAfterMs: retryAfterMs(res) };
 }
 

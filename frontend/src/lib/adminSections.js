@@ -14,6 +14,7 @@ import {
   ShieldHalf,
   Bot,
   ScrollText,
+  MessageSquare,
 } from 'lucide-react';
 import { canAny } from '@/lib/permissions';
 
@@ -176,6 +177,15 @@ export const ADMIN_SECTIONS = [
     icon: HardDrive,
     anyOf: ['settings.storage'],
     keywords: ['storage', 's3', 'minio', 'azure blob', 'bucket', 'recordings'],
+  },
+  {
+    key: 'chat',
+    group: 'integrations',
+    label: 'Chat notifications',
+    description: 'Post requests and findings to Slack, Chat or Teams',
+    icon: MessageSquare,
+    anyOf: ['settings.notifications'],
+    keywords: ['chat', 'slack', 'google chat', 'teams', 'webhook', 'notifications', 'notify', 'approve', 'deny', 'break-glass'],
   },
 ];
 

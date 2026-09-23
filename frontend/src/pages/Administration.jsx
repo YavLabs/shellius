@@ -44,6 +44,7 @@ import EmailTab from '@/components/settings/email/EmailTab';
 import StorageTab from '@/components/settings/StorageTab';
 import ServiceAccountsTab from '@/components/settings/serviceAccounts/ServiceAccountsTab';
 import AuditSinksTab from '@/components/settings/auditSinks/AuditSinksTab';
+import ChatTab from '@/components/settings/chat/ChatTab';
 
 /**
  * What each section renders. `card: true` wraps a former standalone page
@@ -66,6 +67,7 @@ const SECTION_VIEWS = {
   posture: { render: () => <PostureSettings /> },
   email: { render: () => <EmailTab /> },
   storage: { render: () => <StorageTab /> },
+  chat: { render: () => <ChatTab /> },
 };
 
 // Same tint as the sidebar's active item.

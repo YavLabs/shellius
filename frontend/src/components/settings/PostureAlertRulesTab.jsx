@@ -26,6 +26,7 @@ const BASE_TIERS = ['member', 'manager', 'admin', 'super_admin'];
 const CHANNELS = [
   { value: 'inapp', label: 'In-app' },
   { value: 'email', label: 'Email' },
+  { value: 'chat', label: 'Chat' },
 ];
 
 const EMPTY_RULE = {
@@ -139,7 +140,7 @@ function RuleForm({ rule, customers, groups, onSave, onCancel, saving, error }) 
         </Field>
       </div>
 
-      <Field label="Channels">
+      <Field label="Channels" description="Chat goes to whichever chat destinations subscribe to posture findings (Administration → Chat notifications).">
         <SearchableSelect
           multiple
           value={form.channels}

@@ -39,6 +39,7 @@ describe('sections table', () => {
       ['organization', 'audit-sinks', 'audit.sinks'],
       ['integrations', 'email', 'settings.smtp'],
       ['integrations', 'storage', 'settings.storage'],
+      ['integrations', 'chat', 'settings.notifications'],
     ]);
   });
 
@@ -133,7 +134,7 @@ describe('search', () => {
     for (const q of ['okta', 'google', 'oidc', 'saml', 'github']) expect(find(q)).toContain('sso');
     for (const q of ['totp', '2fa', 'two-factor']) expect(find(q)).toContain('mfa');
     for (const q of ['certificate', 'ssh ca']) expect(find(q)).toContain('ca');
-    expect(find('integrations')).toEqual(['email', 'storage']);
+    expect(find('integrations')).toEqual(['email', 'storage', 'chat']);
   });
 
   it('returns nothing for a query that matches no section', () => {
