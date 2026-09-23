@@ -49,6 +49,38 @@ export async function canBypassProdApproval(orgId, permissions) {
 }
 
 // ---------------------------------------------------------------------------
+// Chat approvals (docs/chat-notifications.md)
+//
+// Organization.settings.notifications.chatApprovalsAllowProd — default OFF.
+//
+// Off, a production request posted to chat carries a link and no buttons; the
+// decision is made in Shellius. Turning it on is a deliberate choice, and a
+// defensible one: there is no MFA gate on approval in the web UI either, and a
+// Slack press needs a live Slack session, an explicitly linked identity and a
+// request signed within five minutes. What it does add is a message visible to
+// a whole channel, which is why a fresh install does not start this way.
+// ---------------------------------------------------------------------------
+
+function notificationSettingsOf(settings) {
+  return settings && typeof settings === 'object' && settings.notifications && typeof settings.notifications === 'object'
+    ? settings.notifications
+    : {};
+}
+
+export async function chatApprovalsAllowProd(orgId) {
+  const org = await prisma.organization.findUnique({ where: { id: orgId }, select: { settings: true } });
+  return notificationSettingsOf(org?.settings).chatApprovalsAllowProd === true;
+}
+
+export async function setChatApprovalsAllowProd(orgId, allow) {
+  const org = await prisma.organization.findUnique({ where: { id: orgId }, select: { settings: true } });
+  const settings = org?.settings && typeof org.settings === 'object' ? org.settings : {};
+  const notifications = { ...notificationSettingsOf(settings), chatApprovalsAllowProd: !!allow };
+  await prisma.organization.update({ where: { id: orgId }, data: { settings: { ...settings, notifications } } });
+  return !!allow;
+}
+
+// ---------------------------------------------------------------------------
 // Personal vault switch (docs/personal-vault.md)
 //
 // Organization.settings.vault.enabled — default on. Off: nobody can list,

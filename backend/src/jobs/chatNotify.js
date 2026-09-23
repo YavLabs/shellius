@@ -59,7 +59,7 @@ export async function pruneDeliveries() {
  * @param {object} ctx.adapter - overrides the registry; the seam the tests
  *   drive, since ESM namespace objects are frozen and cannot be patched.
  */
-export async function deliverOne({ deliveryId, message, attempt = 0 }, ctx = {}) {
+export async function deliverOne({ deliveryId, message, actions = [], attempt = 0 }, ctx = {}) {
   const delivery = await prisma.chatDelivery.findUnique({
     where: { id: deliveryId },
     include: { destination: true },
@@ -80,7 +80,7 @@ export async function deliverOne({ deliveryId, message, attempt = 0 }, ctx = {})
   const startedAt = Date.now();
 
   try {
-    const result = await adapter.deliver(decryptConfig(row), message, { event: delivery.event });
+    const result = await adapter.deliver(decryptConfig(row), message, { event: delivery.event, actions });
     await prisma.chatDelivery.update({
       where: { id: deliveryId },
       data: {
@@ -114,7 +114,7 @@ export async function deliverOne({ deliveryId, message, attempt = 0 }, ctx = {})
       const delay = err.retryAfterMs ?? 5000 * 2 ** attempt;
       await chatNotifyQueue.add(
         'deliver',
-        { deliveryId, message, attempt: attempt + 1 },
+        { deliveryId, message, actions, attempt: attempt + 1 },
         { delay, attempts: 1, jobId: `chat-${deliveryId}-${attempt + 1}` }
       );
       return { retrying: true, delay };

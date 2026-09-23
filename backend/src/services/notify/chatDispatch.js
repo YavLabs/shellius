@@ -18,9 +18,49 @@
 import prisma from '../../config/db.js';
 import logger from '../../utils/logger.js';
 import { destinationsFor } from './chatDestinationService.js';
+import { canAct } from './chat/index.js';
+import { chatApprovalsAllowProd } from '../orgService.js';
 
 /** Bound how long we will wait to hand work to the queue. */
 const ENQUEUE_TIMEOUT_MS = 2000;
+
+/**
+ * Approve / deny buttons for an event that has something to decide.
+ *
+ * Production is gated on an organization switch that defaults to off. When it
+ * is off the message still arrives, carrying its link — the decision is simply
+ * made in Shellius. When it is on, the production button carries Slack's own
+ * confirmation dialog naming the server, so a press is deliberate rather than
+ * a mis-tap in a busy channel.
+ */
+async function buildActions({ orgId, event, context }) {
+  if (event.key !== 'access_request.submitted') return [];
+  const requestId = context?.accessRequestId;
+  if (!requestId) return [];
+
+  const isProd = context.environment === 'prod';
+  if (isProd && !(await chatApprovalsAllowProd(orgId))) return [];
+
+  return [
+    {
+      id: 'approve_request',
+      label: 'Approve',
+      value: `approve:${requestId}`,
+      style: 'primary',
+      ...(isProd
+        ? {
+            confirm: {
+              title: 'Approve production access?',
+              text: `This grants access to ${context.serverName || 'a production server'} immediately.`,
+              ok: 'Approve',
+              danger: true,
+            },
+          }
+        : {}),
+    },
+    { id: 'deny_request', label: 'Deny', value: `deny:${requestId}`, style: 'danger' },
+  ];
+}
 
 /**
  * Fan one event out to every destination that wants it.
@@ -33,13 +73,19 @@ export async function dispatchChatEvent({ orgId, event, title, summary, fields, 
 
   const message = { title, summary, fields, url, severity: event.severity };
 
+  // Buttons, where the destination can carry them at all. Only Slack in app
+  // mode can: a webhook cannot receive the press, and neither Google Chat
+  // webhooks nor Teams workflow webhooks have an interaction callback.
+  const actions = await buildActions({ orgId, event, context });
+
   const queued = [];
   for (const { row } of destinations) {
+    const withActions = canAct(row.platform, row.mode) ? actions : [];
     try {
       const delivery = await prisma.chatDelivery.create({
         data: { orgId, destinationId: row.id, event: event.key, status: 'queued' },
       });
-      queued.push(delivery.id);
+      queued.push({ id: delivery.id, actions: withActions });
     } catch (err) {
       logger.warn('chatDispatch: could not record delivery', { destinationId: row.id, error: err.message });
     }
@@ -51,10 +97,10 @@ export async function dispatchChatEvent({ orgId, event, title, summary, fields, 
   const enqueue = (async () => {
     const { chatNotifyQueue } = await import('../../jobs/chatNotify.js');
     await Promise.all(
-      queued.map((deliveryId) =>
+      queued.map(({ id, actions: a }) =>
         // attempts: 1 — see jobs/chatNotify.js. A BullMQ retry after a
         // successful post would put the same message in the channel twice.
-        chatNotifyQueue.add('deliver', { deliveryId, message }, { attempts: 1, jobId: `chat-${deliveryId}` })
+        chatNotifyQueue.add('deliver', { deliveryId: id, message, actions: a }, { attempts: 1, jobId: `chat-${id}` })
       )
     );
   })();
@@ -66,7 +112,7 @@ export async function dispatchChatEvent({ orgId, event, title, summary, fields, 
     logger.warn('chatDispatch: could not queue chat delivery', { orgId, event: event.key, error: err.message });
     prisma.chatDelivery
       .updateMany({
-        where: { id: { in: queued }, status: 'queued' },
+        where: { id: { in: queued.map((q) => q.id) }, status: 'queued' },
         data: { status: 'dropped', error: `Not queued: ${err.message}` },
       })
       .catch(() => {});

@@ -418,7 +418,12 @@ export async function submit({
             { label: 'Reason', value: reason },
           ],
           url: `${config.frontendUrl}/access-requests?request=${accessRequest.id}`,
-          context: { environment: server.environment, customerId: server.customerId },
+          context: {
+            environment: server.environment,
+            customerId: server.customerId,
+            accessRequestId: accessRequest.id,
+            serverName: server.displayName || server.hostname,
+          },
         },
       });
       // The email is separate and stays separate: each approver's link carries
