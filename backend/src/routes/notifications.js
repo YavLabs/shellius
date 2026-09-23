@@ -32,6 +32,7 @@ const NOTIFICATION_TYPES = [
   'ACCESS_REQUEST_REVOKED',
   'BREAK_GLASS_INVOKED',
   'POSTURE_FINDING',
+  'DIRECTORY_SYNC',
 ];
 
 const listQuerySchema = Joi.object({

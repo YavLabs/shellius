@@ -150,23 +150,13 @@ function RuleForm({ rule, customers, groups, onSave, onCancel, saving, error }) 
         />
       </Field>
 
-      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-        <Field label="Mode">
-          <SearchableSelect
-            value={form.mode}
-            onChange={(v) => set({ mode: v })}
-            options={[
-              { value: 'immediate', label: 'Immediate' },
-              { value: 'digest', label: 'Daily digest' },
-            ]}
-            searchable={false}
-            clearable={false}
-          />
-        </Field>
-        <Field label="Throttle (minutes)" description="Per finding, 0 = none">
-          <Input type="number" min={0} value={form.throttleMinutes} onChange={(e) => set({ throttleMinutes: e.target.value })} />
-        </Field>
-      </div>
+      {/* "Daily digest" used to be offered here. It suppressed the per-event
+          email and deferred to a batching job that was never written, so
+          choosing it stopped a rule notifying anybody. Removed until that job
+          exists; throttling is the control that actually limits volume. */}
+      <Field label="Throttle (minutes)" description="Per finding, 0 = none">
+        <Input type="number" min={0} value={form.throttleMinutes} onChange={(e) => set({ throttleMinutes: e.target.value })} />
+      </Field>
 
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
         <Field label="Escalate after (hours)" description="Blank = never">
@@ -217,7 +207,7 @@ function RuleRow({ rule, onEdit, onDelete }) {
             (rule.recipientRoles || []).length ? `roles: ${rule.recipientRoles.join(', ')}` : null,
             rule.recipientGroupId ? 'group recipient' : null,
             (rule.channels || []).join(', '),
-            rule.mode === 'digest' ? 'daily digest' : 'immediate',
+            rule.throttleMinutes ? `throttled ${rule.throttleMinutes}m` : null,
           ]
             .filter(Boolean)
             .join(' · ')}

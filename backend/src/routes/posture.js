@@ -117,7 +117,11 @@ const alertRuleBodySchema = Joi.object({
   recipientGroupId: Joi.string().allow(null, ''),
   recipientUserIds: Joi.array().items(Joi.string()).default([]),
   channels: Joi.array().items(Joi.string().valid(...CHANNELS)).default(['inapp']),
-  mode: Joi.string().valid('immediate', 'digest').default('immediate'),
+  // 'digest' was accepted here for a batching job that was never written, so
+  // choosing it silently stopped a rule emailing anybody. Only 'immediate' is
+  // offered until that job exists; stored rows are migrated by
+  // 20261008000000_posture_alert_drop_digest.
+  mode: Joi.string().valid('immediate').default('immediate'),
   notifyOnResolve: Joi.boolean().default(false),
   throttleMinutes: Joi.number().integer().min(0).max(10080).default(0),
   escalateAfterHours: Joi.number().integer().min(1).max(720).allow(null),

@@ -157,7 +157,7 @@ function ruleWantsEvent(rule, type) {
  * Mirrors accessRequestService.resolveApprovers so "who gets told" has one
  * shape across the product.
  */
-async function resolveRecipients(orgId, rule) {
+async function resolveRecipients(orgId, rule, { escalating = false } = {}) {
   const orFilters = [];
   if (rule.recipientUserIds?.length) orFilters.push({ id: { in: rule.recipientUserIds } });
   if (rule.recipientRoles?.length) {
@@ -166,6 +166,14 @@ async function resolveRecipients(orgId, rule) {
   }
   if (rule.recipientGroupId) {
     orFilters.push({ groupMemberships: { some: { groupId: rule.recipientGroupId } } });
+  }
+  // An escalation is what happens when the normal recipients have not acted,
+  // so it adds the escalation group rather than replacing them. Until now
+  // `escalateToGroupId` was stored, validated and returned by the API but
+  // never read here, so escalations went only to the usual people — which is
+  // to say, escalating did nothing at all.
+  if (escalating && rule.escalateToGroupId) {
+    orFilters.push({ groupMemberships: { some: { groupId: rule.escalateToGroupId } } });
   }
   if (orFilters.length === 0) return [];
 
@@ -270,7 +278,10 @@ export async function dispatchFindingEvents({ orgId, serverId, events }) {
         continue;
       }
 
-      const recipients = await filterByScope(await resolveRecipients(orgId, rule), server);
+      const recipients = await filterByScope(
+        await resolveRecipients(orgId, rule, { escalating: event.type === 'escalation' }),
+        server
+      );
       const { title, body } = describe(event, server);
 
       for (const user of recipients) {
@@ -301,9 +312,12 @@ export async function dispatchFindingEvents({ orgId, serverId, events }) {
           }
         }
 
-        // `digest` mode is deliberately not emailed per event — the digest job
-        // batches those; immediate rules mail now.
-        if (rule.channels?.includes('email') && rule.mode !== 'digest') {
+        // Every matching rule mails immediately. There was once a `digest`
+        // mode here that suppressed this branch and deferred to a batching job
+        // — a job that was never written, so a digest rule with only the email
+        // channel delivered nothing, ever, and said nothing about it. The mode
+        // is gone until that job exists.
+        if (rule.channels?.includes('email')) {
           try {
             await mailer.sendMail({
               orgId,

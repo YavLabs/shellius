@@ -6,6 +6,7 @@ import { execFile } from 'child_process';
 import { promisify } from 'util';
 
 import prisma from '../config/db.js';
+import config from '../config/index.js';
 import ApiError from '../utils/ApiError.js';
 import logger from '../utils/logger.js';
 import * as caService from './caService.js';
@@ -383,19 +384,11 @@ export async function submit({
       include: REQUEST_INCLUDE,
     });
 
-    // Notify every eligible approver (in-app) and email a one-click link.
-    for (const approver of approvers) {
-      await notificationService.create({
-        orgId,
-        userId: approver.id,
-        type: 'ACCESS_REQUEST_SUBMITTED',
-        title: 'New access request requires your review',
-        body: `${requester.name} is requesting ${protocol} access to ${server.displayName || server.hostname} (${server.environment}). Reason: ${reason}`,
-        metadata: { accessRequestId: accessRequest.id, requesterId, serverId },
-      });
-    }
-    await sendApprovalEmails({ orgId, accessRequest, requester, server, reason, approvers });
-
+    // The audit entry is written BEFORE anyone is told, and telling them
+    // cannot throw. The request row is already committed at this point, so an
+    // exception here used to leave an orphaned PENDING request that nobody had
+    // been notified about and that had no audit row at all — the request
+    // existed, and nothing in the system said how.
     await writeAudit(orgId, requesterId, 'access_request.submitted', accessRequest.id, {
       serverId,
       environment: server.environment,
@@ -404,6 +397,26 @@ export async function submit({
       approverCount: approvers.length,
       approverPolicyId: approverPolicy?.id || null,
     });
+
+    // Notify every eligible approver (in-app) and email a one-click link.
+    try {
+      for (const approver of approvers) {
+        await notificationService.create({
+          orgId,
+          userId: approver.id,
+          type: 'ACCESS_REQUEST_SUBMITTED',
+          title: 'New access request requires your review',
+          body: `${requester.name} is requesting ${protocol} access to ${server.displayName || server.hostname} (${server.environment}). Reason: ${reason}`,
+          metadata: { accessRequestId: accessRequest.id, requesterId, serverId },
+        });
+      }
+      await sendApprovalEmails({ orgId, accessRequest, requester, server, reason, approvers });
+    } catch (err) {
+      logger.error('accessRequestService.submit: approver notification failed', {
+        requestId: accessRequest.id,
+        error: err.message,
+      });
+    }
 
     logger.info('accessRequestService.submit: request created PENDING', {
       orgId,
@@ -617,8 +630,16 @@ export async function review({ requestId, reviewerId, decision, approvedDuration
     }
     const expiresAt = new Date(now.getTime() + duration * 1000);
 
-    updated = await prisma.accessRequest.update({
-      where: { id: requestId },
+    // Conditional update, not a plain one. The PENDING check above is a
+    // separate round trip, so two decisions arriving together both passed it
+    // and both wrote — two approvals, two audit rows, two different expiry
+    // times for one request. Making PENDING part of the WHERE means exactly
+    // one writer wins; the loser is told the request was already decided.
+    // (A Slack approve button will make this race ordinary rather than rare:
+    // Slack re-sends any interaction it does not get a response to within
+    // three seconds, and each retry is separately signed and valid.)
+    const claimed = await prisma.accessRequest.updateMany({
+      where: { id: requestId, status: 'PENDING' },
       data: {
         status: 'APPROVED',
         // Record the actual decider (may differ from the primary reviewer).
@@ -627,18 +648,14 @@ export async function review({ requestId, reviewerId, decision, approvedDuration
         approvedAt: now,
         expiresAt,
       },
-      include: REQUEST_INCLUDE,
     });
+    if (claimed.count === 0) {
+      throw new ApiError(409, 'Request is not pending (it was just decided by someone else)');
+    }
+    updated = await prisma.accessRequest.findUnique({ where: { id: requestId }, include: REQUEST_INCLUDE });
 
-    await notificationService.create({
-      orgId: accessRequest.orgId,
-      userId: accessRequest.requesterId,
-      type: 'ACCESS_REQUEST_APPROVED',
-      title: 'Your access request was approved',
-      body: `Your request for ${accessRequest.server.displayName || accessRequest.server.hostname} has been approved for ${Math.round(duration / 60)} minutes.`,
-      metadata: { accessRequestId: requestId, reviewerId, expiresAt },
-    });
-
+    // Audit first: the decision has already been committed above, so a
+    // notification failure must not be able to lose the record of it.
     await writeAudit(
       accessRequest.orgId,
       reviewerId,
@@ -647,6 +664,19 @@ export async function review({ requestId, reviewerId, decision, approvedDuration
       { duration, expiresAt }
     );
 
+    try {
+      await notificationService.create({
+        orgId: accessRequest.orgId,
+        userId: accessRequest.requesterId,
+        type: 'ACCESS_REQUEST_APPROVED',
+        title: 'Your access request was approved',
+        body: `Your request for ${accessRequest.server.displayName || accessRequest.server.hostname} has been approved for ${Math.round(duration / 60)} minutes.`,
+        metadata: { accessRequestId: requestId, reviewerId, expiresAt },
+      });
+    } catch (err) {
+      logger.error('accessRequestService.review: approval notification failed', { requestId, error: err.message });
+    }
+
     logger.info('accessRequestService.review: request approved', {
       requestId,
       reviewerId,
@@ -654,27 +684,19 @@ export async function review({ requestId, reviewerId, decision, approvedDuration
       expiresAt,
     });
   } else {
-    updated = await prisma.accessRequest.update({
-      where: { id: requestId },
+    const claimed = await prisma.accessRequest.updateMany({
+      where: { id: requestId, status: 'PENDING' },
       data: {
         status: 'DENIED',
         reviewerId,
         deniedAt: now,
         deniedReason: deniedReason ?? null,
       },
-      include: REQUEST_INCLUDE,
     });
-
-    await notificationService.create({
-      orgId: accessRequest.orgId,
-      userId: accessRequest.requesterId,
-      type: 'ACCESS_REQUEST_DENIED',
-      title: 'Your access request was denied',
-      body: deniedReason
-        ? `Your request for ${accessRequest.server.displayName || accessRequest.server.hostname} was denied. Reason: ${deniedReason}`
-        : `Your request for ${accessRequest.server.displayName || accessRequest.server.hostname} was denied.`,
-      metadata: { accessRequestId: requestId, reviewerId, deniedReason },
-    });
+    if (claimed.count === 0) {
+      throw new ApiError(409, 'Request is not pending (it was just decided by someone else)');
+    }
+    updated = await prisma.accessRequest.findUnique({ where: { id: requestId }, include: REQUEST_INCLUDE });
 
     await writeAudit(
       accessRequest.orgId,
@@ -683,6 +705,21 @@ export async function review({ requestId, reviewerId, decision, approvedDuration
       requestId,
       { deniedReason }
     );
+
+    try {
+      await notificationService.create({
+        orgId: accessRequest.orgId,
+        userId: accessRequest.requesterId,
+        type: 'ACCESS_REQUEST_DENIED',
+        title: 'Your access request was denied',
+        body: deniedReason
+          ? `Your request for ${accessRequest.server.displayName || accessRequest.server.hostname} was denied. Reason: ${deniedReason}`
+          : `Your request for ${accessRequest.server.displayName || accessRequest.server.hostname} was denied.`,
+        metadata: { accessRequestId: requestId, reviewerId, deniedReason },
+      });
+    } catch (err) {
+      logger.error('accessRequestService.review: denial notification failed', { requestId, error: err.message });
+    }
 
     logger.info('accessRequestService.review: request denied', { requestId, reviewerId });
   }
@@ -2204,6 +2241,7 @@ export async function verifyBreakGlass({ orgId, invokerId, invokerPermissions, c
   try {
     const admins = await usersWithPermission(orgId, 'access_requests.revoke_any');
     const methodLabel = payload.method === 'totp' ? 'an authenticator app code' : 'an emailed one-time code';
+    const reviewUrl = `${config.frontendUrl}/access-requests?request=${ar.id}`;
     for (const admin of admins) {
       await notificationService.create({
         orgId,
@@ -2219,6 +2257,31 @@ export async function verifyBreakGlass({ orgId, invokerId, invokerPermissions, c
           method: payload.method,
         },
       });
+
+      // Break-glass is the highest-severity event in the product, and until
+      // now it reached administrators only as an in-app row they had to
+      // notice. The template for this existed and was never registered.
+      // Emailed per-admin and best-effort: a mail failure must never affect
+      // the access that has already been granted.
+      if (!admin.email) continue;
+      try {
+        const tpl = renderTemplate('breakGlassInvoked', {
+          recipientName: admin.name,
+          invokerName: invoker.name,
+          serverHostname: server.displayName || server.hostname,
+          environment: server.environment,
+          reason: payload.reason,
+          expiresAt: expiresAt.toISOString(),
+          reviewUrl,
+        });
+        await mailer.sendMail({ orgId, to: admin.email, subject: tpl.subject, html: tpl.html, text: tpl.text });
+      } catch (err) {
+        logger.warn('accessRequestService.verifyBreakGlass: break-glass email failed', {
+          accessRequestId: ar.id,
+          adminId: admin.id,
+          error: err.message,
+        });
+      }
     }
     logger.info('accessRequestService.verifyBreakGlass: fanned out notifications', {
       accessRequestId: ar.id,
