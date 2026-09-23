@@ -98,6 +98,7 @@ model Organization {
   auditSettings     AuditSettings?
   auditArchives     AuditArchive[]
   directorySyncs    DirectorySync[]
+  chatDestinations  ChatDestination[]
 
   @@map("organizations")
 }
@@ -182,6 +183,7 @@ model User {
   personalHosts           PersonalHost[]
   apiTokens               ApiToken[]              @relation("ApiTokensForUser")
   directorySyncFindings   DirectorySyncFinding[]
+  chatIdentities          ChatIdentity[]
   apiTokensIssued         ApiToken[]              @relation("ApiTokensIssuedBy")
   apiTokensRevoked        ApiToken[]              @relation("ApiTokensRevokedBy")
 
@@ -1779,4 +1781,126 @@ model DirectorySyncFinding {
   @@unique([syncId, userId])
   @@index([orgId, status])
   @@map("directory_sync_findings")
+}
+
+// ---------------------------------------------------------------------------
+// Chat notifications — Slack, Google Chat, Teams and generic webhooks.
+// See docs/chat-notifications.md.
+// ---------------------------------------------------------------------------
+
+/// One place messages are sent: a Slack channel, a Google Chat space, a Teams
+/// channel, or any endpoint that accepts JSON.
+model ChatDestination {
+  id       String @id @default(cuid())
+  orgId    String @map("org_id")
+  name     String
+  /// slack | google_chat | teams | webhook
+  platform String
+  /// `webhook` posts through an incoming-webhook URL and can only post.
+  /// `app` uses a Slack bot token, which is what buttons and direct messages
+  /// require — no other platform supports either through a webhook.
+  mode     String @default("webhook")
+
+  /// AES-256-GCM JSON. Note that for every chat platform the URL is ITSELF the
+  /// credential — a Slack webhook URL, a Google Chat URL with its key and
+  /// token, a Teams Workflows URL with its SAS signature — so `url` is a
+  /// secret field here, unlike in the audit sinks where it names a collector.
+  configEncrypted String @map("config_encrypted") @db.Text
+
+  /// Event keys from config/notificationEvents.js. Empty means "the ones
+  /// marked chatDefault", never "literally everything".
+  events       String[] @default([])
+  /// Empty = any environment. An event with no environment (a directory sync,
+  /// a break-glass without a server) passes only when this is empty.
+  environments String[] @default([])
+  /// Which customers' events reach here. Empty means ONLY events that concern
+  /// no customer — deny by default, because a channel has no scope of its own
+  /// and an MSP must not have one customer's servers announced in another's.
+  customerIds  String[] @default([]) @map("customer_ids")
+  /// Drop anything below this severity. Null = no floor.
+  minSeverity  String?  @map("min_severity")
+
+  isActive Boolean @default(true) @map("is_active")
+
+  // Health, on the same rules as the audit sinks.
+  lastDeliveredAt     DateTime? @map("last_delivered_at")
+  lastError           String?   @map("last_error") @db.Text
+  consecutiveFailures Int       @default(0) @map("consecutive_failures")
+  backoffUntil        DateTime? @map("backoff_until")
+  disabledReason      String?   @map("disabled_reason") @db.Text
+  lastTestAt          DateTime? @map("last_test_at")
+  lastTestOk          Boolean?  @map("last_test_ok")
+  lastTestError       String?   @map("last_test_error") @db.Text
+
+  createdById String?  @map("created_by_id")
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  organization Organization   @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  deliveries   ChatDelivery[]
+
+  @@index([orgId, isActive])
+  @@map("chat_destinations")
+}
+
+/// One attempt to post one event. Kept so a destination's history is
+/// inspectable the way an audit sink's is, and because retiring a message
+/// later needs the ids the platform gave back.
+model ChatDelivery {
+  id            String @id @default(cuid())
+  orgId         String @map("org_id")
+  destinationId String @map("destination_id")
+  event         String
+  /// queued | delivered | failed | dropped
+  status        String @default("queued")
+  attempt       Int    @default(0)
+
+  /// Where the message landed, so it can be edited afterwards. `response_url`
+  /// is good for 30 minutes and five uses, which is not enough to retire a
+  /// day-old approval message — that needs chat.update with these.
+  channel   String?
+  messageTs String? @map("message_ts")
+
+  error       String?   @db.Text
+  durationMs  Int?      @map("duration_ms")
+  createdAt   DateTime  @default(now()) @map("created_at")
+  deliveredAt DateTime? @map("delivered_at")
+
+  destination ChatDestination @relation(fields: [destinationId], references: [id], onDelete: Cascade)
+
+  @@index([destinationId, createdAt])
+  @@index([orgId])
+  @@map("chat_deliveries")
+}
+
+/// A person's account on a chat platform, bound to their Shellius user.
+///
+/// Required before that person may act on anything from chat. Binding is
+/// confirmed from inside Shellius under a real session — never inferred from a
+/// matching email address, because a workspace administrator can set a
+/// member's email and would otherwise be able to approve as somebody else.
+model ChatIdentity {
+  id             String @id @default(cuid())
+  orgId          String @map("org_id")
+  userId         String @map("user_id")
+  platform       String
+  /// Slack team id, or the enterprise id for an org-wide install.
+  workspaceId    String @map("workspace_id")
+  externalUserId String @map("external_user_id")
+
+  linkedAt   DateTime  @default(now()) @map("linked_at")
+  /// confirmed — the only value that may authorise an action.
+  linkedVia  String    @default("confirmed") @map("linked_via")
+  linkedByIp String?   @map("linked_by_ip")
+  lastUsedAt DateTime? @map("last_used_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  /// Scoped to the org: two organizations may share one Slack workspace, and
+  /// a global key would let a button in one resolve to a user in the other.
+  @@unique([orgId, platform, workspaceId, externalUserId])
+  /// One chat account per person per workspace.
+  @@unique([orgId, userId, platform, workspaceId])
+  @@index([userId])
+  @@map("chat_identities")
 }

@@ -19,12 +19,14 @@
  */
 
 import prisma from '../config/db.js';
+import config from '../config/index.js';
 import ApiError from '../utils/ApiError.js';
 import logger from '../utils/logger.js';
 import redis from '../config/redis.js';
 import { TIERS } from '../config/permissions.js';
 import { resolveScope, isUnscoped } from '../lib/scope.js';
 import * as notificationService from './notificationService.js';
+import { notifyEvent } from './notify/notifyService.js';
 import * as mailer from './mailer.js';
 import { escapeHtml as esc } from '../email/escape.js';
 
@@ -283,6 +285,31 @@ export async function dispatchFindingEvents({ orgId, serverId, events }) {
         server
       );
       const { title, body } = describe(event, server);
+
+      // Chat is per-rule, like the other channels, and per-FINDING rather
+      // than per-recipient: several rules matching one finding would
+      // otherwise put the same message in a channel several times.
+      if (rule.channels?.includes('chat')) {
+        await notifyEvent({
+          orgId,
+          event: 'posture.finding',
+          recipients: [],
+          title,
+          body,
+          chat: {
+            fields: [
+              { label: 'Server', value: server.displayName || server.hostname },
+              { label: 'Environment', value: server.environment },
+              { label: 'Severity', value: String(finding.severity || '').toLowerCase() },
+              { label: 'Finding', value: finding.code },
+              ...(finding.port ? [{ label: 'Port', value: `${finding.proto || 'tcp'}/${finding.port}` }] : []),
+              { label: 'Rule', value: rule.name },
+            ],
+            url: `${config.frontendUrl}/servers/${serverId}`,
+            context: { environment: server.environment, customerId: server.customerId },
+          },
+        });
+      }
 
       for (const user of recipients) {
         if (rule.channels?.includes('inapp')) {

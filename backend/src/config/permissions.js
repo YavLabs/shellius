@@ -824,6 +824,20 @@ export const PERMISSIONS = [
   },
 
   {
+    key: 'settings.notifications',
+    delegable: false,
+    group: 'settings',
+    label: 'Chat notifications',
+    description:
+      'Configure where notifications are sent — Slack, Google Chat, Teams or a webhook — and whether decisions may be made from chat.',
+    sensitive: true,
+    since: 8,
+    defaults: SA,
+    current: SA,
+    endpoints: ['/api/settings/chat*'],
+  },
+
+  {
     key: 'audit.sinks',
     group: 'sessions',
     label: 'Configure audit destinations',

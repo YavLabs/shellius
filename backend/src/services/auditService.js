@@ -142,6 +142,22 @@ export const ACTIONS = {
     // action rather than a field on `update`.
     disabled: 'audit_sink.disabled',
   },
+  chat_destination: {
+    create: 'chat_destination.create',
+    update: 'chat_destination.update',
+    delete: 'chat_destination.delete',
+    test: 'chat_destination.test',
+    // A destination that gave up on its own. Same reasoning as the audit
+    // sinks: a notification path that has quietly died is worse than one
+    // that is loudly broken.
+    disabled: 'chat_destination.disabled',
+  },
+  chat_identity: {
+    linked: 'chat_identity.linked',
+    unlinked: 'chat_identity.unlinked',
+    // Somebody pressed a button in chat whose account is not linked here.
+    unknown_actor: 'chat_identity.unknown_actor',
+  },
   directory_sync: {
     create: 'directory_sync.create',
     update: 'directory_sync.update',

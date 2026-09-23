@@ -44,7 +44,7 @@ import ApiError from '../../utils/ApiError.js';
 import logger from '../../utils/logger.js';
 import { encrypt, decrypt } from '../../utils/crypto.js';
 import { ACTIONS, log as auditLog } from '../auditService.js';
-import * as notificationService from '../notificationService.js';
+import { notifyEvent } from '../notify/notifyService.js';
 import { revokeAllAccessFor } from '../userService.js';
 import { usersWithPermission } from '../roleService.js';
 import { getAdapter, ADAPTER_TYPES, adapterForConfig, describeAdapters } from './adapters/index.js';
@@ -361,18 +361,24 @@ async function finishRun(row, run, patch, { orgId }) {
  * hold the permission that gates this feature, not a hardcoded list of role
  * names. A custom role with `settings.sso` gets told too.
  */
-async function notifyAdmins(orgId, { title, body, metadata }) {
+async function notifyAdmins(orgId, { title, body, metadata, fields = [] }) {
   const admins = await usersWithPermission(orgId, 'settings.sso');
-  for (const admin of admins) {
-    await notificationService.create({
-      orgId,
-      userId: admin.id,
-      type: 'DIRECTORY_SYNC',
-      title,
-      body,
-      metadata,
-    });
-  }
+  await notifyEvent({
+    orgId,
+    event: 'directory_sync.alert',
+    recipients: admins.map((a) => a.id),
+    title,
+    body,
+    metadata,
+    chat: {
+      summary: body,
+      fields,
+      // Directory sync concerns no single server, so it carries no
+      // environment and no customer: a destination filtered to either will
+      // not receive it, which is the documented behaviour.
+      context: {},
+    },
+  });
 }
 
 /**

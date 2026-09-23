@@ -13,6 +13,7 @@ import * as caService from './caService.js';
 import * as policyService from './policyService.js';
 import * as jitManifestService from './jitManifestService.js';
 import * as notificationService from './notificationService.js';
+import { notifyEvent } from './notify/notifyService.js';
 import * as rdpService from './rdpService.js';
 import * as mailer from './mailer.js';
 import * as inviteService from './inviteService.js';
@@ -398,18 +399,31 @@ export async function submit({
       approverPolicyId: approverPolicy?.id || null,
     });
 
-    // Notify every eligible approver (in-app) and email a one-click link.
+    // Notify every eligible approver (in-app + chat) and email a one-click
+    // link. The in-app rows go one per approver; the chat message goes once.
     try {
-      for (const approver of approvers) {
-        await notificationService.create({
-          orgId,
-          userId: approver.id,
-          type: 'ACCESS_REQUEST_SUBMITTED',
-          title: 'New access request requires your review',
-          body: `${requester.name} is requesting ${protocol} access to ${server.displayName || server.hostname} (${server.environment}). Reason: ${reason}`,
-          metadata: { accessRequestId: accessRequest.id, requesterId, serverId },
-        });
-      }
+      await notifyEvent({
+        orgId,
+        event: 'access_request.submitted',
+        recipients: approvers.map((a) => a.id),
+        title: 'New access request requires your review',
+        body: `${requester.name} is requesting ${protocol} access to ${server.displayName || server.hostname} (${server.environment}). Reason: ${reason}`,
+        metadata: { accessRequestId: accessRequest.id, requesterId, serverId },
+        chat: {
+          fields: [
+            { label: 'Requester', value: requester.name },
+            { label: 'Server', value: server.displayName || server.hostname },
+            { label: 'Environment', value: server.environment },
+            { label: 'Login as', value: requestedPrincipal },
+            { label: 'Reason', value: reason },
+          ],
+          url: `${config.frontendUrl}/access-requests?request=${accessRequest.id}`,
+          context: { environment: server.environment, customerId: server.customerId },
+        },
+      });
+      // The email is separate and stays separate: each approver's link carries
+      // a token minted for them alone, which is exactly what must never be
+      // posted into a shared channel.
       await sendApprovalEmails({ orgId, accessRequest, requester, server, reason, approvers });
     } catch (err) {
       logger.error('accessRequestService.submit: approver notification failed', {
@@ -521,16 +535,24 @@ export async function submit({
       if (approvers.length === 0) {
         approvers = await usersWithPermission(orgId, 'access_requests.revoke_any', { excludeUserId: requesterId });
       }
-      for (const approver of approvers) {
-        await notificationService.create({
-          orgId,
-          userId: approver.id,
-          type: 'ACCESS_REQUEST_APPROVED',
-          title: `Production access bypass — ${requester.name}`,
-          body: `${requester.name} (${callerRole}) was auto-approved for ${protocol} access to ${server.displayName || server.hostname} (prod) without review, because their role may skip production approval. Reason: ${reason}`,
-          metadata: { accessRequestId: accessRequest.id, requesterId, serverId, bypass: true },
-        });
-      }
+      await notifyEvent({
+        orgId,
+        event: 'access_request.prod_bypass',
+        recipients: approvers.map((a) => a.id),
+        title: `Production access bypass — ${requester.name}`,
+        body: `${requester.name} (${callerRole}) was auto-approved for ${protocol} access to ${server.displayName || server.hostname} (prod) without review, because their role may skip production approval. Reason: ${reason}`,
+        metadata: { accessRequestId: accessRequest.id, requesterId, serverId, bypass: true },
+        chat: {
+          title: `Production access taken without review — ${requester.name}`,
+          fields: [
+            { label: 'Who', value: `${requester.name} (${callerRole})` },
+            { label: 'Server', value: server.displayName || server.hostname },
+            { label: 'Reason', value: reason },
+          ],
+          url: `${config.frontendUrl}/access-requests?request=${accessRequest.id}`,
+          context: { environment: server.environment, customerId: server.customerId },
+        },
+      });
     } catch (err) {
       logger.warn('accessRequestService.submit: prod bypass approver notification failed', {
         requestId: accessRequest.id,
@@ -2249,21 +2271,34 @@ export async function verifyBreakGlass({ orgId, invokerId, invokerPermissions, c
     const admins = await usersWithPermission(orgId, 'access_requests.revoke_any');
     const methodLabel = payload.method === 'totp' ? 'an authenticator app code' : 'an emailed one-time code';
     const reviewUrl = `${config.frontendUrl}/access-requests?request=${ar.id}`;
+    await notifyEvent({
+      orgId,
+      event: 'break_glass.invoked',
+      recipients: admins.map((a) => a.id),
+      title: `[Break-glass] access invoked on ${server.displayName || server.hostname}`,
+      body: `${invoker.name} invoked break-glass access to ${server.displayName || server.hostname} (${server.environment}), verified with ${methodLabel}. Reason: ${payload.reason.slice(0, 160)}`,
+      metadata: {
+        accessRequestId: ar.id,
+        invokerId,
+        serverId: payload.serverId,
+        expiresAt: expiresAt.toISOString(),
+        method: payload.method,
+      },
+      chat: {
+        fields: [
+          { label: 'Who', value: invoker.name },
+          { label: 'Server', value: server.displayName || server.hostname },
+          { label: 'Environment', value: server.environment },
+          { label: 'Verified with', value: methodLabel },
+          { label: 'Expires', value: expiresAt.toISOString() },
+          { label: 'Reason', value: payload.reason },
+        ],
+        url: reviewUrl,
+        context: { environment: server.environment, customerId: server.customerId },
+      },
+    });
+
     for (const admin of admins) {
-      await notificationService.create({
-        orgId,
-        userId: admin.id,
-        type: 'BREAK_GLASS_INVOKED',
-        title: `[Break-glass] access invoked on ${server.displayName || server.hostname}`,
-        body: `${invoker.name} invoked break-glass access to ${server.displayName || server.hostname} (${server.environment}), verified with ${methodLabel}. Reason: ${payload.reason.slice(0, 160)}`,
-        metadata: {
-          accessRequestId: ar.id,
-          invokerId,
-          serverId: payload.serverId,
-          expiresAt: expiresAt.toISOString(),
-          method: payload.method,
-        },
-      });
 
       // Break-glass is the highest-severity event in the product, and until
       // now it reached administrators only as an in-app row they had to

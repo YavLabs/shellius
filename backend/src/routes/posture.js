@@ -52,7 +52,11 @@ const validateQuery = (schema) => (req, res, next) => {
 const SEVERITIES = ['CRITICAL', 'HIGH', 'MEDIUM', 'LOW', 'INFO'];
 const STATUSES = ['open', 'muted', 'resolved'];
 const ENVIRONMENTS = ['demo', 'dev', 'staging', 'prod'];
-const CHANNELS = ['inapp', 'email'];
+// `chat` is a single generic value on purpose: which platform, and which
+// channel, belongs to the destination — a rule says whether it wants chat at
+// all. Both must agree, so a rule opting in still only reaches destinations
+// whose own event filter includes posture findings.
+const CHANNELS = ['inapp', 'email', 'chat'];
 
 const findingsQuerySchema = Joi.object({
   // The UI keys severities lowercase — that is how getSummary returns its
