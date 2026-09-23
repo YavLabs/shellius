@@ -13,10 +13,21 @@ Tracked here as work lands on `main`; moved into a dated section on release
 
 2.0 answers the three questions a buyer's security team asks that Shellius
 could not answer: can we get the audit log into our SIEM, what happens when we
-remove someone from the IdP, and is there an API. It also fixes a security bug
-found while planning it.
+remove someone from the IdP, and is there an API. Notifications can now also
+reach Slack, Google Chat, Teams and webhooks — and be acted on from Slack. It
+fixes two security holes and a set of things that were quietly not working.
 
 ### Security
+
+- **Production can no longer be approved from an email link alone.** The
+  approval email carries a 24-hour URL that acts as the named approver with no
+  login at all — reasonable for a dev box, and a way around the authentication
+  half of the approval flow for production, where a forwarded message or a
+  shared inbox was enough. A production decision now needs a session belonging
+  to that approver; being signed in as somebody else is not enough, not even a
+  super admin. Non-production keeps one-click. Every decision now records how
+  it was made, so "was this approved by someone logged in, or by whoever held
+  a link?" has an answer.
 
 - **Suspending or deleting an account now actually cuts its SSH access.**
   Suspension revoked sessions and refresh tokens, but left the person's
@@ -81,9 +92,57 @@ found while planning it.
   active super admin is never suspended. An aborted run is the feature
   working, and says what it saw. See `docs/directory-sync.md`.
 
+- **Chat notifications.** Notifications can be sent to **Slack**, **Google
+  Chat**, **Microsoft Teams**, or any endpoint that takes JSON, with
+  per-destination filtering by event, environment, customer and severity. On
+  Slack — and only on Slack, with a bot token — they carry working approve and
+  deny buttons and can be sent as direct messages; Google Chat webhooks are
+  one-way and Teams workflow webhooks have no interaction callback, so those
+  carry a link instead.
+
+  What is never sent to a channel: the six payloads that are bearer
+  credentials — an invite, a password reset, an email verification, an
+  approval link, an SSO link approval, an MFA code — because a channel is read
+  by everyone in it. Nothing is auto-serialised either: a chat message is
+  built from an explicit field list, so a field added to a notification later
+  cannot quietly start appearing in Slack.
+
+  Approving from Slack needs a signed request within five minutes and an
+  explicitly linked account, and goes through exactly the same authorisation
+  as the web UI. Accounts are linked by pressing a button and confirming in
+  Shellius, never matched by email — a Slack workspace administrator can set a
+  member's email address. Production approvals from chat stay off until an
+  organization turns them on. See `docs/chat-notifications.md`.
+
+### Fixed
+
+- **A posture alert rule set to "Daily digest" notified nobody at all.** It
+  suppressed the per-event email and deferred to a batching job that was never
+  written. The mode is removed until that job exists, and existing rules are
+  migrated to immediate so they start sending; throttling still bounds volume.
+- **Escalating an unacknowledged posture finding did nothing.** The escalation
+  group was stored, validated and returned by the API, but never read — so an
+  escalation reached exactly the people who had already ignored it.
+- **Break-glass never emailed anyone.** Its template existed and was never
+  registered, so the highest-severity event in the product reached
+  administrators only as an in-app row they had to notice.
+- **An access request could be decided twice.** The pending check and the
+  update were separate statements, so two approvals arriving together both
+  succeeded — two approvals, two audit entries, two different expiry times for
+  one request.
+- **A notification failure could orphan a request or lose an audit entry.** A
+  failure while notifying approvers threw after the request had been
+  committed and before the audit write, leaving a pending request nobody was
+  told about and nothing in the log describing it. Decisions are now audited
+  before anyone is told, and notifying can no longer throw.
+- **Clicking a user's name from the Users list did nothing**, and the same for
+  a policy from the Policies list. Both worked from everywhere else.
+- Filtering notifications by "Directory sync" returned an error, and those
+  notifications showed a generic icon.
+
 ### Migration notes
 
-- **Seven migrations.** Run `scripts/backup-db.sh` first, then
+- **Nine migrations.** Run `scripts/backup-db.sh` first, then
   `docker compose ... exec backend npx prisma migrate deploy` as usual (or let
   `docker/entrypoint-backend.sh` do it).
 
@@ -115,11 +174,17 @@ found while planning it.
   `docs/directory-sync.md`. GitHub and Google identities are backfilled
   automatically, because there the identifier provably matches.
 
-- Nothing else requires action. No existing behaviour changes on upgrade:
-  audit sinks, retention and directory sync are all off until configured, and
-  no users are signed out.
+- **Two behaviour changes on upgrade, both deliberate.** A production access
+  request can no longer be approved from the emailed link without signing in —
+  approvers will be asked to sign in, and the page says why. And any posture
+  alert rule set to "Daily digest" becomes immediate, because digest delivered
+  nothing at all; if such a rule exists, its recipients will start receiving
+  email they were not getting before. Check `throttleMinutes` on those rules
+  if volume is a concern.
 
-### Migration notes
+- Nothing else requires action. Audit sinks, retention, directory sync and
+  chat destinations are all off until configured, and no users are signed
+  out.
 
 
 ## [1.7.6] - 2026-09-22

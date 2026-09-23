@@ -24,6 +24,10 @@ const apiTokenMiddlewareSrc = read('../../middleware/apiTokenAuth.js');
 const permissionsSrc = read('../../config/permissions.js');
 const authServiceSrc = read('../../services/authService.js');
 const ssoServiceSrc = read('../../services/ssoService.js');
+const slackRouteSrc = read('../slackInteractions.js');
+const slackSigSrc = read('../../services/notify/chat/slackSignature.js');
+const approvalsRouteSrc = read('../approvals.js');
+const appSrc = read('../../app.js');
 
 describe('POST /api/mfa/disable — requires proof of possession', () => {
   test('Joi schema requires either password XOR method, and method implies code', () => {
@@ -312,5 +316,56 @@ describe('SSO account linking (docs/auth-hardening.md "Linking SSO accounts")', 
       expect(idx).toBeGreaterThan(-1);
       expect(usersRouteSrc.slice(idx, idx + 120)).toContain("requirePermission('users.manage_identities')");
     }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The two routes that are deliberately NOT behind `authenticate`
+// ---------------------------------------------------------------------------
+
+describe('unauthenticated routes carry their own authentication', () => {
+  test('the Slack interactions route verifies a signature and refuses without one', () => {
+    // It cannot be behind `authenticate` — Slack has no session — so the
+    // signature is the only thing between a stranger and an approve button.
+    expect(slackRouteSrc).toContain('verifySlackSignature');
+    const idx = slackRouteSrc.indexOf('verifySlackSignature({');
+    expect(idx).toBeGreaterThan(-1);
+    const block = slackRouteSrc.slice(idx, idx + 600);
+    expect(block).toContain('signingSecret');
+    expect(block).toContain('x-slack-signature');
+    expect(block).toContain('x-slack-request-timestamp');
+    expect(block).toContain('req.rawBody');
+    // …and a failed verification must return before doing any work.
+    expect(slackRouteSrc).toMatch(/if \(!verified\.ok\)[\s\S]{0,200}return res\.status\(401\)/);
+  });
+
+  test('a missing raw body is a refusal, never a skipped check', () => {
+    // A future middleware reorder must break this endpoint loudly rather than
+    // quietly turn off its only authentication.
+    expect(slackSigSrc).toMatch(/rawBody === undefined \|\| rawBody === null/);
+    expect(slackSigSrc).toContain('timingSafeEqual');
+    expect(slackSigSrc).toContain('MAX_SKEW_SECONDS');
+  });
+
+  test('the Slack router is mounted before the global body parsers', () => {
+    // The signature covers the exact bytes Slack sent; a body parsed and
+    // re-serialised by express.json() first would never match.
+    const mountIdx = appSrc.indexOf("app.use('/api/chat/slack'");
+    const jsonIdx = appSrc.indexOf('app.use(express.json())');
+    expect(mountIdx).toBeGreaterThan(-1);
+    expect(jsonIdx).toBeGreaterThan(-1);
+    expect(mountIdx).toBeLessThan(jsonIdx);
+  });
+
+  test('the emailed approval link cannot decide a production request on its own', () => {
+    expect(approvalsRouteSrc).toContain('SESSION_REQUIRED_ENVIRONMENTS');
+    expect(approvalsRouteSrc).toMatch(/SESSION_REQUIRED_ENVIRONMENTS = \['prod'\]/);
+    const idx = approvalsRouteSrc.indexOf('needsSession(ar) && !viaSession');
+    expect(idx).toBeGreaterThan(-1);
+    expect(approvalsRouteSrc.slice(idx, idx + 260)).toContain("code: 'SESSION_REQUIRED'");
+    // Being signed in as somebody else must not count.
+    expect(approvalsRouteSrc).toContain('req.user?.userId === approverId');
+    // An API token authenticates, but must never approve a human's access.
+    expect(approvalsRouteSrc).toContain("req.auth?.type !== 'api_token'");
   });
 });
