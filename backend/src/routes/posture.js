@@ -52,7 +52,11 @@ const validateQuery = (schema) => (req, res, next) => {
 const SEVERITIES = ['CRITICAL', 'HIGH', 'MEDIUM', 'LOW', 'INFO'];
 const STATUSES = ['open', 'muted', 'resolved'];
 const ENVIRONMENTS = ['demo', 'dev', 'staging', 'prod'];
-const CHANNELS = ['inapp', 'email'];
+// `chat` is a single generic value on purpose: which platform, and which
+// channel, belongs to the destination — a rule says whether it wants chat at
+// all. Both must agree, so a rule opting in still only reaches destinations
+// whose own event filter includes posture findings.
+const CHANNELS = ['inapp', 'email', 'chat'];
 
 const findingsQuerySchema = Joi.object({
   // The UI keys severities lowercase — that is how getSummary returns its
@@ -117,7 +121,11 @@ const alertRuleBodySchema = Joi.object({
   recipientGroupId: Joi.string().allow(null, ''),
   recipientUserIds: Joi.array().items(Joi.string()).default([]),
   channels: Joi.array().items(Joi.string().valid(...CHANNELS)).default(['inapp']),
-  mode: Joi.string().valid('immediate', 'digest').default('immediate'),
+  // 'digest' was accepted here for a batching job that was never written, so
+  // choosing it silently stopped a rule emailing anybody. Only 'immediate' is
+  // offered until that job exists; stored rows are migrated by
+  // 20261008000000_posture_alert_drop_digest.
+  mode: Joi.string().valid('immediate').default('immediate'),
   notifyOnResolve: Joi.boolean().default(false),
   throttleMinutes: Joi.number().integer().min(0).max(10080).default(0),
   escalateAfterHours: Joi.number().integer().min(1).max(720).allow(null),

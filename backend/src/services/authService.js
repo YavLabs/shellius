@@ -311,8 +311,12 @@ export async function login(email, password, ipAddress, userAgent) {
   // Email is unique PER ORG, not globally — the same address may belong to
   // more than one organization. Gather every non-deleted candidate and check
   // the password against each one that has a local password set.
+  // kind: 'human' — a service account is not a login. It holds no password
+  // and its address is unroutable, so it could never pass anyway; excluding
+  // it here means an attacker can't even use the timing of this lookup to
+  // learn that a given service account exists.
   const candidates = await prisma.user.findMany({
-    where: { email: normalizedEmail, status: { not: 'deleted' } },
+    where: { email: normalizedEmail, status: { not: 'deleted' }, kind: 'human' },
     include: { organization: true },
   });
 
@@ -478,7 +482,7 @@ export async function completeMfaLogin({ mfaToken, method, code, ipAddress, user
 export async function getLoginState(email, orgId = null) {
   const normalizedEmail = String(email || '').trim().toLowerCase();
   const users = await prisma.user.findMany({
-    where: { email: normalizedEmail, status: { not: 'deleted' } },
+    where: { email: normalizedEmail, status: { not: 'deleted' }, kind: 'human' },
     select: { id: true, orgId: true, role: true, roleId: true, passwordHash: true, ssoProvider: true },
   });
   // The org-wide "require SSO" switch is policy, not a secret — report it

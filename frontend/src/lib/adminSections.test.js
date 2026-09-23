@@ -28,6 +28,7 @@ describe('sections table', () => {
       ['people', 'roles', 'roles.view'],
       ['people', 'groups', 'groups.view'],
       ['people', 'policies', 'policies.view'],
+      ['people', 'service-accounts', 'service_accounts.view'],
       ['authentication', 'sso', 'settings.sso'],
       ['authentication', 'mfa', 'settings.mfa'],
       ['authentication', 'access', 'org.access_settings'],
@@ -35,8 +36,10 @@ describe('sections table', () => {
       ['organization', 'ca', 'ca.view'],
       ['organization', 'quick-connect', 'quick_connect.settings'],
       ['organization', 'posture', 'posture.settings'],
+      ['organization', 'audit-sinks', 'audit.sinks'],
       ['integrations', 'email', 'settings.smtp'],
       ['integrations', 'storage', 'settings.storage'],
+      ['integrations', 'chat', 'settings.notifications'],
     ]);
   });
 
@@ -131,7 +134,7 @@ describe('search', () => {
     for (const q of ['okta', 'google', 'oidc', 'saml', 'github']) expect(find(q)).toContain('sso');
     for (const q of ['totp', '2fa', 'two-factor']) expect(find(q)).toContain('mfa');
     for (const q of ['certificate', 'ssh ca']) expect(find(q)).toContain('ca');
-    expect(find('integrations')).toEqual(['email', 'storage']);
+    expect(find('integrations')).toEqual(['email', 'storage', 'chat']);
   });
 
   it('returns nothing for a query that matches no section', () => {

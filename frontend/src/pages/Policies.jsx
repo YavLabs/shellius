@@ -82,9 +82,13 @@ function Policies() {
 
   // Deep links: /policies?action=new opens the create modal; ?highlight=<id>
   // opens that policy's edit modal (DataTable has no row-highlight affordance).
+  // Depends on `searchParams`, not on mount — same reason as Users.jsx: a
+  // link to ?highlight=<id> from this very page changes the query string
+  // without remounting, so a mount-only effect never fired.
   useEffect(() => {
     const action = searchParams.get('action');
     const highlightId = searchParams.get('highlight');
+    if (!action && !highlightId) return;
     if (action === 'new' && canAdmin) {
       setEditing(null);
       setFormOpen(true);
@@ -105,7 +109,7 @@ function Policies() {
       setSearchParams(next, { replace: true });
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [searchParams]);
 
   const fetchCustomers = useCallback(async () => {
     try {

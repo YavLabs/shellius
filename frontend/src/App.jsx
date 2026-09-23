@@ -38,6 +38,7 @@ import Legal from './pages/Legal';
 import AuthCallback from './pages/AuthCallback';
 import SsoLink from './pages/SsoLink';
 import SsoLinkApprove from './pages/SsoLinkApprove';
+import ChatLink from './pages/ChatLink';
 import NotFound from './pages/NotFound';
 import InstallCli from './pages/InstallCli';
 import ApproveRequest from './pages/ApproveRequest';
@@ -65,6 +66,7 @@ function App() {
               <Route path="/auth/callback" element={<AuthCallback />} />
               <Route path="/sso/link" element={<SsoLink />} />
               <Route path="/sso/link/approve" element={<SsoLinkApprove />} />
+              <Route path="/chat/link" element={<ChatLink />} />
               <Route element={<ProtectedRoute />}>
                 {/* Forced MFA enrollment — full screen, no app chrome */}
                 <Route path="/mfa-setup" element={<MfaSetup />} />

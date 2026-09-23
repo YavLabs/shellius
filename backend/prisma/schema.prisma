@@ -31,6 +31,21 @@ enum UserStatus {
   deleted
 }
 
+/// Whether a User row is a person or a machine identity.
+///
+/// Service accounts are real User rows so that everything built around a
+/// user keeps working for them: AuditLog.actorId is an FK to User (a
+/// synthetic id could not be attributed), roles and permissions resolve the
+/// same way, customer scope applies, and a service account can be a policy
+/// subject and actually connect to a server.
+///
+/// The cost is that every query meaning "people" must say so. Use the
+/// HUMANS filter from userService rather than writing `kind` by hand.
+enum UserKind {
+  human
+  service
+}
+
 enum DeviceAuthStatus {
   pending
   approved
@@ -78,6 +93,12 @@ model Organization {
   expectedPorts     ServerExpectedPort[]
   postureAlertRules PostureAlertRule[]
   postureSettings   PostureSettings?
+  apiTokens         ApiToken[]
+  auditSinks        AuditSink[]
+  auditSettings     AuditSettings?
+  auditArchives     AuditArchive[]
+  directorySyncs    DirectorySync[]
+  chatDestinations  ChatDestination[]
 
   @@map("organizations")
 }
@@ -94,6 +115,12 @@ model User {
   role              OrgRole     @default(member)
   roleId            String?     @map("role_id")
   status            UserStatus  @default(active)
+  // Person or machine. See the UserKind enum. A service account never signs
+  // in: it holds no password, its email is unroutable, and it authenticates
+  // only by API token.
+  kind              UserKind    @default(human)
+  // Service accounts only: what this identity is for.
+  description       String?
   // Visibility scope. super_admin ignores this (they can edit their own).
   accessScope       AccessScope @default(ALL) @map("access_scope")
   managerId         String?     @map("manager_id")
@@ -154,12 +181,18 @@ model User {
   personalSshKeys         SshKey[]                @relation("PersonalSshKeys")
   personalCredentials     Credential[]            @relation("PersonalCredentials")
   personalHosts           PersonalHost[]
+  apiTokens               ApiToken[]              @relation("ApiTokensForUser")
+  directorySyncFindings   DirectorySyncFinding[]
+  chatIdentities          ChatIdentity[]
+  apiTokensIssued         ApiToken[]              @relation("ApiTokensIssuedBy")
+  apiTokensRevoked        ApiToken[]              @relation("ApiTokensRevokedBy")
 
   @@unique([orgId, email])
   @@unique([orgId, jitUid], map: "user_org_jit_uid_unique")
   @@index([orgId])
   @@index([managerId])
   @@index([roleId])
+  @@index([orgId, kind])
   @@map("users")
 }
 
@@ -376,6 +409,12 @@ model AuditLog {
 
   @@index([orgId, createdAt])
   @@index([actorId])
+  // (orgId, createdAt, id) is a total order, so a sequential reader's
+  // keyset predicate uses this index directly instead of sorting.
+  @@index([orgId, createdAt, id])
+  // A sink that only wants some actions, and the existing facets() query.
+  @@index([orgId, action])
+  @@index([orgId, resourceType])
   @@map("audit_logs")
 }
 
@@ -488,8 +527,9 @@ model SsoConfig {
   createdAt             DateTime @default(now()) @map("created_at")
   updatedAt             DateTime @updatedAt @map("updated_at")
 
-  organization Organization   @relation(fields: [orgId], references: [id], onDelete: Cascade)
-  identities   UserIdentity[]
+  organization  Organization   @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  identities    UserIdentity[]
+  directorySync DirectorySync?
 
   @@index([orgId])
   @@map("sso_configs")
@@ -504,6 +544,13 @@ model UserIdentity {
   ssoConfigId String    @map("sso_config_id")
   provider    String // oidc | github (denormalised from SsoConfig)
   subject     String // OIDC sub / GitHub numeric user id
+  /// The id this user has in the provider's DIRECTORY API, which is not always
+  /// the same value as `subject`. Microsoft Entra's `sub` is pairwise — unique
+  /// per application — so it never matches a Graph `/users` id; the directory
+  /// id is the `oid` claim instead. Null means "we do not know this user's
+  /// directory id", and directory sync must never treat that as "absent from
+  /// the directory". See docs/directory-sync.md.
+  externalId  String?   @map("external_id")
   email       String?
   lastLoginAt DateTime? @map("last_login_at")
   createdAt   DateTime  @default(now()) @map("created_at")
@@ -514,6 +561,7 @@ model UserIdentity {
   @@unique([ssoConfigId, subject])
   @@index([userId])
   @@index([orgId])
+  @@index([ssoConfigId, externalId])
   @@map("user_identities")
 }
 
@@ -632,6 +680,7 @@ enum NotificationType {
   ACCESS_REQUEST_REVOKED
   BREAK_GLASS_INVOKED
   POSTURE_FINDING
+  DIRECTORY_SYNC
 }
 
 enum PolicyEffect {
@@ -820,6 +869,189 @@ model Notification {
   @@index([userId, createdAt])
   @@index([orgId])
   @@map("notifications")
+}
+
+/// Somewhere an organization's audit log is copied to, so it can live in the
+/// SIEM or object store their security team already watches.
+///
+/// Shaped like EmailProvider on purpose: one row per destination, every
+/// type-specific setting (secrets included) in a single AES-256-GCM blob
+/// that the API never returns, and a test button. Unlike EmailProvider there
+/// is no one-active-per-org rule — an org may stream to several at once.
+model AuditSink {
+  id              String  @id @default(cuid())
+  orgId           String  @map("org_id")
+  name            String
+  type            String // webhook | s3 | syslog | email_digest
+  configEncrypted String? @map("config_encrypted") @db.Text
+  /// Optional narrowing: { actions: [], resourceTypes: [] }. Empty = all.
+  filters         Json?
+  isActive        Boolean @default(false) @map("is_active")
+  batchSize       Int     @default(500) @map("batch_size")
+
+  // Durable cursor into audit_logs, ordered by (created_at, id). Streaming
+  // sinks only — a digest works on a time window instead.
+  cursorCreatedAt DateTime? @map("cursor_created_at")
+  cursorId        String?   @map("cursor_id")
+
+  lastRunAt           DateTime? @map("last_run_at")
+  lastOkAt            DateTime? @map("last_ok_at")
+  lastError           String?   @map("last_error") @db.Text
+  consecutiveFailures Int       @default(0) @map("consecutive_failures")
+  backoffUntil        DateTime? @map("backoff_until")
+  /// Set when the worker gives up, so the UI can say why it stopped rather
+  /// than just showing it as off.
+  disabledReason      String?   @map("disabled_reason")
+
+  lastTestAt    DateTime? @map("last_test_at")
+  lastTestOk    Boolean?  @map("last_test_ok")
+  lastTestError String?   @map("last_test_error") @db.Text
+
+  createdById String?  @map("created_by_id")
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  organization Organization        @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  deliveries   AuditSinkDelivery[]
+
+  @@index([orgId])
+  @@index([isActive, backoffUntil])
+  @@map("audit_sinks")
+}
+
+/// One attempted batch, so an operator can answer "did those entries ship?"
+/// without reading the destination. Pruned by the archive job.
+model AuditSinkDelivery {
+  id            String    @id @default(cuid())
+  sinkId        String    @map("sink_id")
+  orgId         String    @map("org_id")
+  /// Derived from the row range, so a retry of the same batch reuses it —
+  /// the receiver's idempotency key, since delivery is at-least-once.
+  batchId       String    @map("batch_id")
+  fromCreatedAt DateTime  @map("from_created_at")
+  toCreatedAt   DateTime  @map("to_created_at")
+  firstLogId    String    @map("first_log_id")
+  lastLogId     String    @map("last_log_id")
+  count         Int
+  status        String // ok | failed
+  attempt       Int       @default(1)
+  objectKey     String?   @map("object_key") // s3 only
+  error         String?   @db.Text
+  durationMs    Int?      @map("duration_ms")
+  startedAt     DateTime  @default(now()) @map("started_at")
+  finishedAt    DateTime? @map("finished_at")
+
+  sink AuditSink @relation(fields: [sinkId], references: [id], onDelete: Cascade)
+
+  @@index([sinkId, startedAt])
+  @@index([orgId, startedAt])
+  @@map("audit_sink_deliveries")
+}
+
+/// How long an organization keeps its audit log, and whether it is archived
+/// before anything is deleted.
+///
+/// Its own model rather than Organization.settings, because PUT /api/org
+/// deliberately restricts which fields it will write so that settings cannot
+/// be changed around their own permission (orgService ALLOWED_UPDATE_FIELDS).
+model AuditSettings {
+  id                   String  @id @default(cuid())
+  orgId                String  @unique @map("org_id")
+  /// null = keep everything, which stays the default. Deleting audit history
+  /// is never something that starts happening on its own.
+  retentionDays        Int?    @map("retention_days")
+  archiveEnabled       Boolean @default(false) @map("archive_enabled")
+  archiveEncrypt       Boolean @default(true) @map("archive_encrypt")
+  archiveBucket        String? @map("archive_bucket")
+  archivePrefix        String  @default("audit-archive") @map("archive_prefix")
+  /// Delete past retention even with no archive to fall back on. Off, and
+  /// deliberately awkward to turn on.
+  deleteWithoutArchive Boolean @default(false) @map("delete_without_archive")
+
+  lastArchiveAt    DateTime? @map("last_archive_at")
+  lastArchiveError String?   @map("last_archive_error") @db.Text
+  createdAt        DateTime  @default(now()) @map("created_at")
+  updatedAt        DateTime  @updatedAt @map("updated_at")
+
+  organization Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+
+  @@map("audit_settings")
+}
+
+/// One archived, immutable NDJSON object: the receipt that makes deleting
+/// the rows it covers safe. Records a checksum so the archive can be shown
+/// to be intact without reading all of it back.
+model AuditArchive {
+  id          String   @id @default(cuid())
+  orgId       String   @map("org_id")
+  objectKey   String   @map("object_key")
+  bucket      String?
+  format      String   @default("ndjson.gz")
+  encrypted   Boolean  @default(false)
+  rangeStart  DateTime @map("range_start")
+  rangeEnd    DateTime @map("range_end")
+  rowCount    Int      @map("row_count")
+  bytes       Int
+  sha256      String
+  deletedRows Int?     @map("deleted_rows")
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  organization Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+
+  @@unique([orgId, objectKey])
+  @@index([orgId, rangeStart])
+  @@map("audit_archives")
+}
+
+/// A long-lived bearer credential for non-interactive callers. Two kinds,
+/// one model, one auth path (middleware/apiTokenAuth.js):
+///
+///   personal — minted by a person for their own scripts. Its permissions
+///              are ALWAYS intersected with the owner's live role on every
+///              request, so it can narrow but never grant, and a demotion
+///              takes effect on the next call without re-minting.
+///   service  — belongs to a User row with kind = 'service': a non-login
+///              identity with its own Role, owned by the org rather than by
+///              a person, so it survives them leaving.
+///
+/// Only the SHA-256 hash is stored — the plaintext is returned exactly once,
+/// on create and on rotate, and never logged.
+model ApiToken {
+  id            String    @id @default(cuid())
+  orgId         String    @map("org_id")
+  // The identity this token acts as: its owner (personal) or the service
+  // account itself (service).
+  userId        String    @map("user_id")
+  kind          String // personal | service
+  name          String
+  description   String?
+  tokenHash     String    @unique @map("token_hash") // sha256 hex
+  // First few characters of the plaintext, for telling tokens apart in the
+  // UI. Not a secret and not enough to authenticate with.
+  tokenPrefix   String    @map("token_prefix")
+  /// Permission keys this token may use. EMPTY means "whatever its user's
+  /// role allows". Always intersected with that live set at request time.
+  scopes        String[]  @default([])
+  expiresAt     DateTime  @map("expires_at")
+  lastUsedAt    DateTime? @map("last_used_at")
+  lastUsedIp    String?   @map("last_used_ip")
+  revokedAt     DateTime? @map("revoked_at")
+  revokedById   String?   @map("revoked_by_id")
+  revokedReason String?   @map("revoked_reason")
+  rotatedAt     DateTime? @map("rotated_at")
+  createdById   String?   @map("created_by_id")
+  createdAt     DateTime  @default(now()) @map("created_at")
+  updatedAt     DateTime  @updatedAt @map("updated_at")
+
+  organization Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  user         User         @relation("ApiTokensForUser", fields: [userId], references: [id], onDelete: Cascade)
+  createdBy    User?        @relation("ApiTokensIssuedBy", fields: [createdById], references: [id], onDelete: SetNull)
+  revokedBy    User?        @relation("ApiTokensRevokedBy", fields: [revokedById], references: [id], onDelete: SetNull)
+
+  @@index([orgId, kind])
+  @@index([userId])
+  @@index([expiresAt])
+  @@map("api_tokens")
 }
 
 model UserToken {
@@ -1431,4 +1663,244 @@ model PostureSettings {
   organization Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
 
   @@map("posture_settings")
+}
+
+// ---------------------------------------------------------------------------
+// Directory sync — reconciling Shellius accounts against the IdP's directory.
+//
+// OIDC has no directory API, so this is a per-provider adapter reading the
+// provider's own management API (Graph, Okta, Google Admin SDK, GitHub org
+// membership). See docs/directory-sync.md.
+// ---------------------------------------------------------------------------
+
+/// One directory reconciliation, bound to the SSO config whose users it judges.
+model DirectorySync {
+  id              String  @id @default(cuid())
+  orgId           String  @map("org_id")
+  ssoConfigId     String  @unique @map("sso_config_id")
+  adapter         String // entra | okta | google | github
+  configEncrypted String  @map("config_encrypted") @db.Text
+  isActive        Boolean @default(false) @map("is_active")
+
+  /// What a run does with someone the directory no longer has:
+  /// `flag` raises a finding and notifies; `suspend` also cuts their access.
+  action        String  @default("flag")
+  /// On by default, and turning it off is a deliberate act. A dry run reports
+  /// exactly what it would have done and changes nothing.
+  dryRun        Boolean @default(true) @map("dry_run")
+  intervalHours Int     @default(6) @map("interval_hours")
+
+  /// Safety valves. A run aborts rather than acting when the number of people
+  /// it would suspend exceeds EITHER of these — that shape means a broken
+  /// credential or a paging bug far more often than it means a mass layoff.
+  maxSuspendPercent Int @default(10) @map("max_suspend_percent")
+  maxSuspendCount   Int @default(25) @map("max_suspend_count")
+  /// Absence must persist across this many hours before anyone is acted on, so
+  /// a single bad directory read cannot suspend a soul.
+  graceHours        Int @default(24) @map("grace_hours")
+
+  lastRunAt     DateTime? @map("last_run_at")
+  lastRunStatus String?   @map("last_run_status")
+  lastError     String?   @map("last_error") @db.Text
+  createdById   String?   @map("created_by_id")
+  createdAt     DateTime  @default(now()) @map("created_at")
+  updatedAt     DateTime  @updatedAt @map("updated_at")
+
+  organization Organization           @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  ssoConfig    SsoConfig              @relation(fields: [ssoConfigId], references: [id], onDelete: Cascade)
+  runs         DirectorySyncRun[]
+  findings     DirectorySyncFinding[]
+
+  @@index([orgId])
+  @@map("directory_syncs")
+}
+
+/// One execution. Kept whether it acted, aborted or found nothing — the
+/// aborted ones are the interesting ones.
+model DirectorySyncRun {
+  id          String  @id @default(cuid())
+  orgId       String  @map("org_id")
+  syncId      String  @map("sync_id")
+  /// ok | aborted | failed
+  status      String
+  /// Why an aborted run stopped, in words an admin can act on.
+  abortReason String? @map("abort_reason") @db.Text
+  dryRun      Boolean @default(true) @map("dry_run")
+
+  directoryCount      Int @default(0) @map("directory_count")
+  /// How many local identities matched by each means. A run whose
+  /// `matchedByExternalId` is 0 while `matchedByEmail` is high is telling you
+  /// the directory ids have not been learned yet.
+  matchedByExternalId Int @default(0) @map("matched_by_external_id")
+  matchedByEmail      Int @default(0) @map("matched_by_email")
+  /// Identities with no directory id recorded yet, which are never judged.
+  unknownIdentities   Int @default(0) @map("unknown_identities")
+  candidates          Int @default(0)
+  flagged             Int @default(0)
+  suspended           Int @default(0)
+  skipped             Int @default(0)
+
+  startedAt  DateTime  @default(now()) @map("started_at")
+  finishedAt DateTime? @map("finished_at")
+  durationMs Int?      @map("duration_ms")
+  error      String?   @db.Text
+
+  sync     DirectorySync          @relation(fields: [syncId], references: [id], onDelete: Cascade)
+  findings DirectorySyncFinding[]
+
+  @@index([syncId, startedAt])
+  @@index([orgId])
+  @@map("directory_sync_runs")
+}
+
+/// A user the directory no longer vouches for. Open findings carry the grace
+/// period: `firstSeenAt` is when absence was first observed, and nothing is
+/// acted on until it has persisted past `graceHours`.
+model DirectorySyncFinding {
+  id     String  @id @default(cuid())
+  orgId  String  @map("org_id")
+  syncId String  @map("sync_id")
+  runId  String? @map("run_id")
+  userId String  @map("user_id")
+  /// missing | disabled — absent from the directory, or present and disabled.
+  reason String
+  /// open | resolved | acted | ignored
+  status String  @default("open")
+
+  firstSeenAt DateTime  @default(now()) @map("first_seen_at")
+  lastSeenAt  DateTime  @default(now()) @map("last_seen_at")
+  resolvedAt  DateTime? @map("resolved_at")
+  actedAt     DateTime? @map("acted_at")
+  /// What was done, or what was skipped and why (e.g. "last super admin").
+  outcome     String?   @db.Text
+
+  sync DirectorySync     @relation(fields: [syncId], references: [id], onDelete: Cascade)
+  run  DirectorySyncRun? @relation(fields: [runId], references: [id], onDelete: SetNull)
+  user User              @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([syncId, userId])
+  @@index([orgId, status])
+  @@map("directory_sync_findings")
+}
+
+// ---------------------------------------------------------------------------
+// Chat notifications — Slack, Google Chat, Teams and generic webhooks.
+// See docs/chat-notifications.md.
+// ---------------------------------------------------------------------------
+
+/// One place messages are sent: a Slack channel, a Google Chat space, a Teams
+/// channel, or any endpoint that accepts JSON.
+model ChatDestination {
+  id       String @id @default(cuid())
+  orgId    String @map("org_id")
+  name     String
+  /// slack | google_chat | teams | webhook
+  platform String
+  /// `webhook` posts through an incoming-webhook URL and can only post.
+  /// `app` uses a Slack bot token, which is what buttons and direct messages
+  /// require — no other platform supports either through a webhook.
+  mode     String @default("webhook")
+
+  /// AES-256-GCM JSON. Note that for every chat platform the URL is ITSELF the
+  /// credential — a Slack webhook URL, a Google Chat URL with its key and
+  /// token, a Teams Workflows URL with its SAS signature — so `url` is a
+  /// secret field here, unlike in the audit sinks where it names a collector.
+  configEncrypted String @map("config_encrypted") @db.Text
+
+  /// Event keys from config/notificationEvents.js. Empty means "the ones
+  /// marked chatDefault", never "literally everything".
+  events       String[] @default([])
+  /// Empty = any environment. An event with no environment (a directory sync,
+  /// a break-glass without a server) passes only when this is empty.
+  environments String[] @default([])
+  /// Which customers' events reach here. Empty means ONLY events that concern
+  /// no customer — deny by default, because a channel has no scope of its own
+  /// and an MSP must not have one customer's servers announced in another's.
+  customerIds  String[] @default([]) @map("customer_ids")
+  /// Drop anything below this severity. Null = no floor.
+  minSeverity  String?  @map("min_severity")
+
+  isActive Boolean @default(true) @map("is_active")
+
+  // Health, on the same rules as the audit sinks.
+  lastDeliveredAt     DateTime? @map("last_delivered_at")
+  lastError           String?   @map("last_error") @db.Text
+  consecutiveFailures Int       @default(0) @map("consecutive_failures")
+  backoffUntil        DateTime? @map("backoff_until")
+  disabledReason      String?   @map("disabled_reason") @db.Text
+  lastTestAt          DateTime? @map("last_test_at")
+  lastTestOk          Boolean?  @map("last_test_ok")
+  lastTestError       String?   @map("last_test_error") @db.Text
+
+  createdById String?  @map("created_by_id")
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  organization Organization   @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  deliveries   ChatDelivery[]
+
+  @@index([orgId, isActive])
+  @@map("chat_destinations")
+}
+
+/// One attempt to post one event. Kept so a destination's history is
+/// inspectable the way an audit sink's is, and because retiring a message
+/// later needs the ids the platform gave back.
+model ChatDelivery {
+  id            String @id @default(cuid())
+  orgId         String @map("org_id")
+  destinationId String @map("destination_id")
+  event         String
+  /// queued | delivered | failed | dropped
+  status        String @default("queued")
+  attempt       Int    @default(0)
+
+  /// Where the message landed, so it can be edited afterwards. `response_url`
+  /// is good for 30 minutes and five uses, which is not enough to retire a
+  /// day-old approval message — that needs chat.update with these.
+  channel   String?
+  messageTs String? @map("message_ts")
+
+  error       String?   @db.Text
+  durationMs  Int?      @map("duration_ms")
+  createdAt   DateTime  @default(now()) @map("created_at")
+  deliveredAt DateTime? @map("delivered_at")
+
+  destination ChatDestination @relation(fields: [destinationId], references: [id], onDelete: Cascade)
+
+  @@index([destinationId, createdAt])
+  @@index([orgId])
+  @@map("chat_deliveries")
+}
+
+/// A person's account on a chat platform, bound to their Shellius user.
+///
+/// Required before that person may act on anything from chat. Binding is
+/// confirmed from inside Shellius under a real session — never inferred from a
+/// matching email address, because a workspace administrator can set a
+/// member's email and would otherwise be able to approve as somebody else.
+model ChatIdentity {
+  id             String @id @default(cuid())
+  orgId          String @map("org_id")
+  userId         String @map("user_id")
+  platform       String
+  /// Slack team id, or the enterprise id for an org-wide install.
+  workspaceId    String @map("workspace_id")
+  externalUserId String @map("external_user_id")
+
+  linkedAt   DateTime  @default(now()) @map("linked_at")
+  /// confirmed — the only value that may authorise an action.
+  linkedVia  String    @default("confirmed") @map("linked_via")
+  linkedByIp String?   @map("linked_by_ip")
+  lastUsedAt DateTime? @map("last_used_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  /// Scoped to the org: two organizations may share one Slack workspace, and
+  /// a global key would let a button in one resolve to a user in the other.
+  @@unique([orgId, platform, workspaceId, externalUserId])
+  /// One chat account per person per workspace.
+  @@unique([orgId, userId, platform, workspaceId])
+  @@index([userId])
+  @@map("chat_identities")
 }

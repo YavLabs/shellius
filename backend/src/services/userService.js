@@ -10,6 +10,8 @@ import { parseAvatarDataUrl } from '../utils/avatar.js';
 import { log as auditLog } from './auditService.js';
 import { assertCanActOnRole, getSystemRole, resolveRole, hasPermission } from './roleService.js';
 import { isUnscoped, customerScopeWhere } from '../lib/scope.js';
+import { isDisabledStatus } from '../lib/userStatus.js';
+import * as apiTokenService from './apiTokenService.js';
 import { endOfDayInclusive } from '../utils/dateRange.js';
 
 const ROLE_BRIEF = { select: { id: true, key: true, name: true, isSystem: true, baseRole: true, permissions: true } };
@@ -63,7 +65,10 @@ export async function listUsers(orgId, {
   page = parseInt(page, 10) || 1;
   pageSize = Math.min(parseInt(pageSize, 10) || 25, 100);
 
-  const where = { orgId, status: { not: 'deleted' } };
+  // People only: service accounts are managed on their own admin page, and
+  // showing them here would put rows in the list that can't be edited like a
+  // user (no password, no MFA, no invite).
+  const where = { orgId, status: { not: 'deleted' }, kind: 'human' };
   if (role) where.role = role;
   if (roleId) where.roleId = roleId;
   if (status) where.status = status; // caller-supplied status overrides the default filter
@@ -579,7 +584,18 @@ export async function updateUser(orgId, userId, data, actor, meta = {}) {
   // Role or status changes must take effect immediately — kill every
   // outstanding session/access-token for the affected user rather than
   // waiting for their tokens to naturally expire.
-  if (updateData.role !== undefined || updateData.status !== undefined) {
+  //
+  // Being disabled goes further than being re-roled: an account that is no
+  // longer allowed in must also lose its signed certificates and standing
+  // access requests, or it keeps SSH access to hosts for the rest of the
+  // certificate's life.
+  if (isDisabledStatus(updateData.status)) {
+    await revokeAllAccessFor(orgId, userId, {
+      reason: `Account ${updateData.status}`,
+      sessionReason: 'account_disabled',
+      revokedById: actor?.userId ?? null,
+    });
+  } else if (updateData.role !== undefined || updateData.status !== undefined) {
     await authService.revokeAllSessions(userId, orgId, updateData.status !== undefined ? 'account_disabled' : 'role_changed');
   }
 
@@ -627,8 +643,9 @@ export async function getUserDeleteImpact(orgId, userId) {
       prisma.groupMembership.count({ where: { userId } }),
       prisma.certificate.count({ where: { orgId, issuedToId: userId, status: 'ACTIVE' } }),
       prisma.policySubject.count({ where: { subjectType: 'USER', subjectId: userId } }),
+      // Reports can only be reassigned to a person.
       prisma.user.findMany({
-        where: { orgId, status: { not: 'deleted' }, id: { not: userId } },
+        where: { orgId, status: { not: 'deleted' }, id: { not: userId }, kind: 'human' },
         select: { id: true, name: true, email: true },
         orderBy: { name: 'asc' },
       }),
@@ -681,6 +698,16 @@ export async function deleteUser(orgId, userId, options = {}, callerId = null, a
   }
 
   await terminalService.terminateActiveSessionsFor(orgId, { userId }, callerId);
+
+  // Revoke before deleting. Certificate.issuedToId is SetNull, so deleting
+  // the user detaches their live certificates instead of ending them — they
+  // would stay ACTIVE with no owner left to check, which is the one case
+  // certificateService.verify can no longer reason about.
+  await revokeAllAccessFor(orgId, userId, {
+    reason: 'User deleted',
+    sessionReason: 'account_deleted',
+    revokedById: callerId,
+  });
 
   await prisma.$transaction(async (tx) => {
     if (reassignTo) {
@@ -928,6 +955,68 @@ export async function exportUserData(orgId, userId) {
 }
 
 // ---------------------------------------------------------------------------
+// Cutting off access
+// ---------------------------------------------------------------------------
+
+/**
+ * Cut every live path this user has into the fleet.
+ *
+ * Revoking sessions alone is not enough. A certificate already signed by the
+ * CA keeps authenticating on hosts until it expires — check-principals asks
+ * whether the *certificate* is still good, and the answer stays yes for the
+ * rest of the policy's maxSessionDuration. So a disabled account must have
+ * its certificates and its standing access requests revoked too, not just
+ * its browser sessions.
+ *
+ * Used by suspension, self soft-delete and SSO deprovisioning, so the three
+ * can't drift apart.
+ *
+ * @param {string} orgId
+ * @param {string} userId
+ * @param {object} opts
+ * @param {string} opts.reason        stored on the revoked access requests
+ * @param {string} opts.sessionReason passed to authService.revokeAllSessions
+ * @param {string|null} [opts.revokedById] actor recorded on the certificates
+ * @returns {Promise<{accessRequests: number, certificates: number}>}
+ */
+export async function revokeAllAccessFor(orgId, userId, { reason, sessionReason, revokedById = null }) {
+  const now = new Date();
+
+  // API tokens are a standing credential exactly like a certificate: they
+  // don't expire when the browser session does, so a disabled account would
+  // keep whatever automation it had running.
+  const tokens = await apiTokenService.revokeAllForUser(orgId, userId, reason, { userId: revokedById });
+
+  const [requests, certificates] = await Promise.all([
+    prisma.accessRequest.updateMany({
+      where: { requesterId: userId, orgId, status: { in: ['PENDING', 'APPROVED'] } },
+      data: { status: 'REVOKED', revokedAt: now, revokedReason: reason },
+    }),
+    prisma.certificate.updateMany({
+      where: { issuedToId: userId, orgId, status: 'ACTIVE' },
+      data: { status: 'REVOKED', revokedAt: now, revokedById: revokedById ?? userId },
+    }),
+  ]);
+
+  // Sign out everywhere AND end any live terminal sessions — a disabled
+  // account must not keep an open shell.
+  await authService.revokeAllSessions(userId, orgId, sessionReason);
+
+  if (requests.count || certificates.count || tokens) {
+    logger.info('userService.revokeAllAccessFor: standing access revoked', {
+      userId,
+      orgId,
+      reason: sessionReason,
+      accessRequests: requests.count,
+      certificates: certificates.count,
+      apiTokens: tokens,
+    });
+  }
+
+  return { accessRequests: requests.count, certificates: certificates.count, apiTokens: tokens };
+}
+
+// ---------------------------------------------------------------------------
 // Soft-delete (self-service)
 // ---------------------------------------------------------------------------
 
@@ -964,37 +1053,10 @@ export async function softDeleteSelf(orgId, userId) {
 
   const now = new Date();
 
-  // Revoke PENDING and APPROVED access requests
-  await prisma.accessRequest.updateMany({
-    where: {
-      requesterId: userId,
-      orgId,
-      status: { in: ['PENDING', 'APPROVED'] },
-    },
-    data: {
-      status: 'REVOKED',
-      revokedAt: now,
-      revokedReason: 'User deleted account',
-    },
+  await revokeAllAccessFor(orgId, userId, {
+    reason: 'User deleted account',
+    sessionReason: 'account_deleted',
   });
-
-  // Revoke ACTIVE certificates
-  await prisma.certificate.updateMany({
-    where: {
-      issuedToId: userId,
-      orgId,
-      status: 'ACTIVE',
-    },
-    data: {
-      status: 'REVOKED',
-      revokedAt: now,
-      revokedById: userId,
-    },
-  });
-
-  // Sign out everywhere AND end any live terminal sessions (a deleted
-  // account must not keep an open shell), then drop the refresh tokens.
-  await authService.revokeAllSessions(userId, orgId, 'account_deleted');
   await prisma.refreshToken.deleteMany({ where: { userId } });
 
   // Mark user as deleted

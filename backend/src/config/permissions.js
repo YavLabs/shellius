@@ -38,6 +38,7 @@ export const PERMISSION_GROUPS = [
   { key: 'vault', label: 'Personal vault' },
   { key: 'users', label: 'Users' },
   { key: 'roles', label: 'Roles' },
+  { key: 'tokens', label: 'API tokens & service accounts' },
   { key: 'posture', label: 'Exposure posture' },
   { key: 'settings', label: 'Organization & settings' },
 ];
@@ -233,6 +234,7 @@ export const PERMISSIONS = [
   },
   {
     key: 'access.break_glass',
+    delegable: false,
     group: 'access',
     label: 'Break-glass access',
     description:
@@ -347,6 +349,7 @@ export const PERMISSIONS = [
   },
   {
     key: 'ca.rotate',
+    delegable: false,
     group: 'certificates',
     label: 'Rotate CA',
     description: 'Rotate the organization’s certificate authority key pair.',
@@ -485,6 +488,7 @@ export const PERMISSIONS = [
   },
   {
     key: 'keystore.export_private',
+    delegable: false,
     group: 'keystore',
     label: 'Export private keys',
     description: 'Download a stored private key in plain text. Always audited.',
@@ -578,6 +582,7 @@ export const PERMISSIONS = [
   },
   {
     key: 'users.assign_role',
+    delegable: false,
     group: 'users',
     label: 'Assign roles',
     description: 'Change users’ roles. You can only assign roles whose permissions you hold yourself.',
@@ -599,6 +604,7 @@ export const PERMISSIONS = [
   },
   {
     key: 'users.reset_credentials',
+    delegable: false,
     group: 'users',
     label: 'Reset passwords & lockouts',
     description: 'Send password-reset links and clear login lockouts.',
@@ -619,6 +625,7 @@ export const PERMISSIONS = [
   },
   {
     key: 'users.delete',
+    delegable: false,
     group: 'users',
     label: 'Delete users',
     description: 'Permanently delete users.',
@@ -631,6 +638,7 @@ export const PERMISSIONS = [
 
   {
     key: 'users.manage_identities',
+    delegable: false,
     group: 'users',
     label: 'Manage sign-in methods',
     description:
@@ -730,6 +738,7 @@ export const PERMISSIONS = [
   },
   {
     key: 'roles.manage',
+    delegable: false,
     group: 'roles',
     label: 'Manage roles',
     description: 'Create, edit and delete custom roles and edit built-in ones. You can only grant permissions you hold.',
@@ -762,17 +771,19 @@ export const PERMISSIONS = [
   },
   {
     key: 'settings.sso',
+    delegable: false,
     group: 'settings',
     label: 'Single sign-on',
     description: 'Configure SSO providers, auto-provisioning and their default role.',
     sensitive: true,
     defaults: SA,
     current: SA,
-    endpoints: ['/api/auth/sso/config*', '/api/auth/sso/providers*'],
+    endpoints: ['/api/auth/sso/config*', '/api/auth/sso/providers*', '/api/settings/directory-sync*'],
     findings: ['F-25'],
   },
   {
     key: 'settings.mfa',
+    delegable: false,
     group: 'settings',
     label: 'MFA policy',
     description: 'Enable and enforce multi-factor authentication for the organization.',
@@ -783,6 +794,7 @@ export const PERMISSIONS = [
   },
   {
     key: 'settings.smtp',
+    delegable: false,
     group: 'settings',
     label: 'Email delivery',
     description:
@@ -800,6 +812,7 @@ export const PERMISSIONS = [
   },
   {
     key: 'settings.storage',
+    delegable: false,
     group: 'settings',
     label: 'Recording storage',
     description: 'Configure where session recordings are stored. This setting is shared by every organization on this install.',
@@ -809,7 +822,117 @@ export const PERMISSIONS = [
     endpoints: ['GET/PUT/DELETE /api/settings/storage', 'POST /api/settings/storage/test'],
     findings: ['F-16'],
   },
-].map((p) => ({ since: 1, sensitive: false, findings: [], ...p }));
+
+  {
+    key: 'settings.notifications',
+    delegable: false,
+    group: 'settings',
+    label: 'Chat notifications',
+    description:
+      'Configure where notifications are sent — Slack, Google Chat, Teams or a webhook — and whether decisions may be made from chat.',
+    sensitive: true,
+    since: 8,
+    defaults: SA,
+    current: SA,
+    endpoints: ['/api/settings/chat*'],
+  },
+
+  {
+    key: 'audit.sinks',
+    group: 'sessions',
+    label: 'Configure audit destinations',
+    description:
+      'Send this organization\u2019s audit log to a webhook, object storage, syslog or a scheduled digest.',
+    sensitive: true,
+    defaults: SA,
+    current: SA,
+    delegable: false,
+    endpoints: [
+      'GET/POST /api/settings/audit-sinks',
+      'GET/PUT/DELETE /api/settings/audit-sinks/:id',
+      'POST /api/settings/audit-sinks/:id/test',
+    ],
+    since: 7,
+  },
+
+  {
+    key: 'audit.retention',
+    group: 'sessions',
+    label: 'Set audit retention',
+    description:
+      'Decide how long audit entries are kept, and whether they are archived before being deleted. Audit history is otherwise kept forever.',
+    sensitive: true,
+    defaults: SA,
+    current: SA,
+    delegable: false,
+    endpoints: ['GET/PUT /api/audit/retention', 'GET /api/audit/archives'],
+    since: 7,
+  },
+
+  // ------------------------------------------------------------------- tokens
+  {
+    key: 'tokens.personal',
+    group: 'tokens',
+    label: 'Create personal API tokens',
+    description:
+      'Create tokens for your own scripts. A token can never do more than you can — its permissions are narrowed to your role on every request. Remove this from the Member role to turn personal tokens off for everyone.',
+    defaults: M,
+    current: M,
+    delegable: false,
+    endpoints: ['GET/POST /api/tokens', 'POST /api/tokens/:id/rotate', 'DELETE /api/tokens/:id'],
+    since: 7,
+  },
+  {
+    key: 'tokens.view_all',
+    group: 'tokens',
+    label: 'See everyone’s tokens',
+    description: 'List the API tokens other people have created, and when each was last used.',
+    defaults: ADM,
+    current: ADM,
+    endpoints: ['GET /api/users/:id/tokens'],
+    since: 7,
+  },
+  {
+    key: 'tokens.revoke_any',
+    group: 'tokens',
+    label: 'Revoke anyone’s token',
+    description: 'Revoke an API token belonging to another user.',
+    sensitive: true,
+    defaults: ADM,
+    current: ADM,
+    delegable: false,
+    endpoints: ['DELETE /api/users/:id/tokens/:tokenId'],
+    since: 7,
+  },
+  {
+    key: 'service_accounts.view',
+    group: 'tokens',
+    label: 'View service accounts',
+    description: 'See the machine identities in this organization and what they can do.',
+    defaults: ADM,
+    current: ADM,
+    endpoints: ['GET /api/service-accounts', 'GET /api/service-accounts/:id'],
+    since: 7,
+  },
+  {
+    key: 'service_accounts.manage',
+    group: 'tokens',
+    label: 'Manage service accounts',
+    description:
+      'Create machine identities for CI and scripts, choose their role and customer scope, and issue their tokens. You can only give a service account permissions you hold yourself.',
+    sensitive: true,
+    defaults: SA,
+    current: SA,
+    delegable: false,
+    endpoints: [
+      'POST /api/service-accounts',
+      'PUT/DELETE /api/service-accounts/:id',
+      'POST /api/service-accounts/:id/tokens',
+      'DELETE /api/service-accounts/:id/tokens/:tokenId',
+    ],
+    since: 7,
+  },
+].map((p) => ({ since: 1, sensitive: false, delegable: true, findings: [], ...p }));
 
 export const CATALOG_VERSION = Math.max(...PERMISSIONS.map((p) => p.since));
 
@@ -825,8 +948,29 @@ export const PERMISSION_KEYS = PERMISSIONS.map((p) => p.key);
  */
 export const PRIVILEGED_PERMISSIONS = PERMISSIONS.filter(
   (p) =>
-    (['users', 'roles', 'settings'].includes(p.group) && !/\.view(_|$)/.test(p.key)) || p.key === 'access.prod_bypass'
+    (['users', 'roles', 'settings'].includes(p.group) && !/\.view(_|$)/.test(p.key)) ||
+    // Tokens by sensitivity, not by group: `tokens.personal` is a baseline
+    // Member capability, so treating the whole group as privileged would
+    // make every account privileged and stop SSO ever linking by email.
+    // Only issuing machine identities and revoking other people's
+    // credentials are takeover-grade.
+    (p.group === 'tokens' && p.sensitive) ||
+    p.key === 'access.prod_bypass'
 ).map((p) => p.key);
+
+/**
+ * Permissions an API token may never hold, however powerful its owner is.
+ *
+ * A token is a credential that lives in a CI variable or a config file, is
+ * used unattended, and can't answer an MFA challenge. These are the actions
+ * where that is the wrong trade: minting further credentials, changing who
+ * can sign in or how, exporting private keys, rotating the CA, or bypassing
+ * the approval flow. They stay things a person does in a session.
+ *
+ * Derived from the catalogue (`delegable: false`) rather than listed here,
+ * so a new permission declares its own answer next to its description.
+ */
+export const NON_DELEGABLE_PERMISSIONS = PERMISSIONS.filter((p) => p.delegable === false).map((p) => p.key);
 const KEY_SET = new Set(PERMISSION_KEYS);
 
 export function isPermission(key) {

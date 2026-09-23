@@ -363,7 +363,7 @@ export const HELP_CONTENT = {
       {
         heading: 'Integrations',
         body:
-          'Email: add one or more providers (SMTP, Google / Gmail API, Microsoft 365 via Graph, SendGrid, Mailgun, Postmark, Resend) and make one active. Use "Send test email" to check delivery; failures show the provider’s own error. With no active provider, email falls back to the server’s SMTP_* settings, or is not sent. Storage: where session recordings are kept (MinIO, AWS S3 or Azure Blob).',
+          'Email: add one or more providers (SMTP, Google / Gmail API, Microsoft 365 via Graph, SendGrid, Mailgun, Postmark, Resend) and make one active. Use "Send test email" to check delivery; failures show the provider’s own error. With no active provider, email falls back to the server’s SMTP_* settings, or is not sent. Storage: where session recordings are kept (MinIO, AWS S3 or Azure Blob). Chat notifications: post access requests, break-glass and posture findings to Slack, Google Chat, Microsoft Teams or a webhook — only a Slack app (bot token) can carry approve/deny buttons or a direct message, and an empty customer list sends only org-wide events, not everything.',
       },
       {
         heading: 'Finding a setting',

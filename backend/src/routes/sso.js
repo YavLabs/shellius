@@ -20,6 +20,7 @@ import { requirePermission } from '../middleware/rbac.js';
 import { authLimiter, tokenActionLimiter, userRateLimiter } from '../middleware/rateLimiter.js';
 import audit from '../middleware/audit.js';
 import { assertSsoDefaultRole } from '../services/roleService.js';
+import { externalIdFor } from '../services/directory/externalId.js';
 
 const router = express.Router();
 
@@ -570,6 +571,8 @@ async function runOidcCallback(req, res, { org, cfg, code, stateData }) {
     org,
     cfg,
     subject,
+    // The directory id, which for Entra is the `oid` claim and not `sub`.
+    externalId: externalIdFor(cfg, { subject, claims: { ...idClaims, ...userinfo } }),
     email: userinfo.email || idClaims.email,
     emailVerified,
     name: userinfo.name || userinfo.preferred_username,
@@ -644,6 +647,8 @@ async function runGithubCallback(req, res, { org, cfg, code, stateData }) {
     org,
     cfg,
     subject: ghUser.subject,
+    // GitHub's numeric user id is exactly what /orgs/{org}/members returns.
+    externalId: externalIdFor(cfg, { subject: ghUser.subject }),
     email,
     emailVerified,
     name: ghUser.name,
@@ -655,7 +660,7 @@ async function runGithubCallback(req, res, { org, cfg, code, stateData }) {
 // Shared tail — reconcile, audit, hand off a one-time exchange code.
 // ---------------------------------------------------------------------------
 
-async function finishConnectCallback(req, res, { org, cfg, subject, email, name, picture }) {
+async function finishConnectCallback(req, res, { org, cfg, subject, externalId, email, name, picture }) {
   const stateData = res.locals.ssoState;
   try {
     const result = await ssoLinkService.completeConnect({
@@ -663,6 +668,7 @@ async function finishConnectCallback(req, res, { org, cfg, subject, email, name,
       userId: stateData.userId,
       cfg,
       subject,
+      externalId,
       email,
       name,
       picture,
@@ -688,14 +694,14 @@ async function finishConnectCallback(req, res, { org, cfg, subject, email, name,
   }
 }
 
-async function finishSsoCallback(req, res, { org, cfg, subject, email, emailVerified, name, picture }) {
+async function finishSsoCallback(req, res, { org, cfg, subject, externalId, email, emailVerified, name, picture }) {
   if (res.locals.ssoState?.mode === 'connect') {
-    return finishConnectCallback(req, res, { org, cfg, subject, email, name, picture });
+    return finishConnectCallback(req, res, { org, cfg, subject, externalId, email, name, picture });
   }
 
   let user;
   try {
-    user = await ssoService.reconcileSsoUser({ orgId: org.id, cfg, subject, email, emailVerified, name, picture });
+    user = await ssoService.reconcileSsoUser({ orgId: org.id, cfg, subject, externalId, email, emailVerified, name, picture });
   } catch (err) {
     const errorCode = err.errorCode || 'sso_failed';
     await auditLog({

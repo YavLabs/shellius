@@ -37,12 +37,12 @@ import * as authService from './authService.js';
 import { linkIdentityToUser, deleteUserIdentity, listUserIdentities, ssoError, materializeEnvGoogle } from './ssoService.js';
 import { assertCanManageUser } from './userService.js';
 import { passwordSignInBlocked } from './orgService.js';
+import { DISABLED_STATUSES } from '../lib/userStatus.js';
 
 export const PENDING_LINK_TTL_SEC = 10 * 60;
 export const APPROVAL_LINK_TTL_SEC = 30 * 60;
 const MAX_CONFIRM_ATTEMPTS = 5;
 const APPROVAL_MAILS_PER_HOUR = 5;
-const DISABLED_STATUSES = ['deleted', 'suspended', 'deactivated'];
 
 const sha256 = (v) => crypto.createHash('sha256').update(String(v)).digest('hex');
 const linkKey = (token) => `sso:link:${sha256(token)}`;
@@ -296,6 +296,7 @@ async function finalizePendingLink(token, pending, user, method, meta) {
       cfg,
       userId: user.id,
       subject: pending.subject,
+      externalId: pending.externalId || null,
       email: pending.email,
       name: pending.name,
       picture: pending.picture,
@@ -461,7 +462,7 @@ export async function assertCanStartConnect({ orgId, userId, providerId }) {
  * Callback tail for mode 'connect': link (cfg, subject) to the signed-in user
  * who started the flow. Never matches by email.
  */
-export async function completeConnect({ orgId, userId, cfg, subject, email, name, picture, ipAddress, userAgent }) {
+export async function completeConnect({ orgId, userId, cfg, subject, externalId = null, email, name, picture, ipAddress, userAgent }) {
   if (!subject) throw ssoError('sso_failed', 'Provider response is missing a subject');
   const allowedDomains = cfg.allowedDomains || [];
   if (allowedDomains.length > 0) {
@@ -473,7 +474,7 @@ export async function completeConnect({ orgId, userId, cfg, subject, email, name
   const user = await prisma.user.findFirst({ where: { id: userId, orgId } });
   if (!user || user.status !== 'active') throw ssoError('account_disabled', 'Account is not active');
 
-  await linkIdentityToUser({ orgId, cfg, userId, subject, email: email ? String(email).toLowerCase() : null, name, picture });
+  await linkIdentityToUser({ orgId, cfg, userId, subject, externalId, email: email ? String(email).toLowerCase() : null, name, picture });
   await recordIdentityLinked({
     user,
     method: 'connect',

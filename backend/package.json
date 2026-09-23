@@ -1,6 +1,6 @@
 {
   "name": "shellius-backend",
-  "version": "1.7.6",
+  "version": "2.0.0",
   "type": "module",
   "description": "Shellius SSH/RDP Access Management Backend",
   "main": "src/server.js",

@@ -83,6 +83,15 @@ const config = {
     // treated as a benign client race rather than theft.
     refreshReuseGraceMs: 10 * 1000,
   },
+
+  certificates: {
+    // check-principals runs on every SSH connection in the fleet, so the
+    // owner-status check it performs has an off switch that doesn't need a
+    // deploy. Revoking a disabled user's certificates is the primary fix and
+    // is never disabled by this; turning it off only drops the backstop that
+    // covers a certificate issued in the window before the revoke lands.
+    checkUserStatus: process.env.CERT_VERIFY_CHECK_USER_STATUS !== 'false',
+  },
 };
 
 // ---------------------------------------------------------------------------

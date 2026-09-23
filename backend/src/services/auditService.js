@@ -109,6 +109,74 @@ export const ACTIONS = {
     test: 'email_provider.test',
     google_connect: 'email_provider.google_connect',
   },
+  api_token: {
+    create: 'api_token.create',
+    rotate: 'api_token.rotate',
+    revoke: 'api_token.revoke',
+    // Once per token, the first time it authenticates — so "was this
+    // credential ever actually used?" has an answer in the log, not just in
+    // a lastUsedAt column that a later use overwrites.
+    first_use: 'api_token.first_use',
+  },
+  service_account: {
+    create: 'service_account.create',
+    update: 'service_account.update',
+    delete: 'service_account.delete',
+    role_changed: 'service_account.role_changed',
+  },
+  audit_retention: {
+    update: 'audit_retention.update',
+    applied: 'audit_retention.applied',
+    archive_created: 'audit_retention.archive_created',
+    archive_downloaded: 'audit_retention.archive_downloaded',
+  },
+  audit_sink: {
+    create: 'audit_sink.create',
+    update: 'audit_sink.update',
+    delete: 'audit_sink.delete',
+    activate: 'audit_sink.activate',
+    deactivate: 'audit_sink.deactivate',
+    test: 'audit_sink.test',
+    // A sink that stopped on its own. An audit pipeline that has quietly
+    // died is worse than one that is loudly broken, so this is its own
+    // action rather than a field on `update`.
+    disabled: 'audit_sink.disabled',
+  },
+  chat_destination: {
+    create: 'chat_destination.create',
+    update: 'chat_destination.update',
+    delete: 'chat_destination.delete',
+    test: 'chat_destination.test',
+    // A destination that gave up on its own. Same reasoning as the audit
+    // sinks: a notification path that has quietly died is worse than one
+    // that is loudly broken.
+    disabled: 'chat_destination.disabled',
+  },
+  chat_identity: {
+    linked: 'chat_identity.linked',
+    unlinked: 'chat_identity.unlinked',
+    // Somebody pressed a button in chat whose account is not linked here.
+    unknown_actor: 'chat_identity.unknown_actor',
+  },
+  directory_sync: {
+    create: 'directory_sync.create',
+    update: 'directory_sync.update',
+    delete: 'directory_sync.delete',
+    test: 'directory_sync.test',
+    // One reconcile pass. `aborted` is deliberately separate from `failed`:
+    // aborted means the run read the directory, distrusted what it saw and
+    // refused to act — the single most important thing this feature does.
+    run: 'directory_sync.run',
+    aborted: 'directory_sync.aborted',
+    failed: 'directory_sync.failed',
+    // Per-user outcomes.
+    flagged: 'directory_sync.flagged',
+    deprovisioned: 'directory_sync.deprovisioned',
+    // Someone the directory has lost who was deliberately left alone, and why.
+    skipped: 'directory_sync.skipped',
+    // They came back, or were re-added, before the grace period ran out.
+    resolved: 'directory_sync.resolved',
+  },
 };
 
 // ---------------------------------------------------------------------------
@@ -901,6 +969,92 @@ async function enrichAuditItems(items, orgId) {
 
     return out;
   });
+}
+
+// ---------------------------------------------------------------------------
+// Keyset reader — for anything that has to walk the whole log in order
+// (sinks, the archive job, streaming exports) rather than show a page of it.
+// ---------------------------------------------------------------------------
+
+/**
+ * How far behind "now" a sequential reader stays, in milliseconds.
+ *
+ * A row's created_at is set when the INSERT runs, but the row only becomes
+ * visible when its transaction commits. A reader that walked right up to the
+ * current instant could therefore pass a timestamp and only afterwards have
+ * a row with that timestamp appear — and since the cursor has moved on, that
+ * row would never be read. Staying a few seconds back closes the window.
+ *
+ * auditService.log writes a single un-batched insert outside any long
+ * transaction, so five seconds is generous.
+ */
+export const READ_LAG_MS = Number(process.env.AUDIT_READ_LAG_MS || 5000);
+
+/**
+ * Walk an org's audit log in ascending order, in batches.
+ *
+ * Ordering is `(createdAt, id)`. That pair is a total order because `id` is
+ * unique, which is what makes the cursor exact: rows sharing a millisecond
+ * are always visited in the same sequence, and the cursor remembers both
+ * halves, so a batch boundary can't skip or repeat one. `id` is a tiebreak
+ * here and nothing else — cuid is not a reliable clock and isn't used as one.
+ *
+ * @param {object} params
+ * @param {string} params.orgId
+ * @param {{createdAt: Date, id: string}|null} [params.after]  exclusive cursor
+ * @param {{actions?: string[], resourceTypes?: string[]}} [params.filters]
+ * @param {number} [params.batchSize]
+ * @param {Date}   [params.until]  read no further than this instant
+ * @yields {object[]} a batch of AuditLog rows
+ */
+export async function* stream({ orgId, after = null, filters = {}, batchSize = 500, until = null }) {
+  const ceiling = until ?? new Date(Date.now() - READ_LAG_MS);
+  let cursor = after;
+
+  for (;;) {
+    const where = { orgId, createdAt: { lte: ceiling } };
+    if (filters.actions?.length) where.action = { in: filters.actions };
+    if (filters.resourceTypes?.length) where.resourceType = { in: filters.resourceTypes };
+
+    // (createdAt, id) > (cursor.createdAt, cursor.id), expressed the way
+    // Prisma can: a later timestamp, or the same one with a greater id.
+    if (cursor) {
+      where.AND = [
+        {
+          OR: [
+            { createdAt: { gt: cursor.createdAt } },
+            { createdAt: cursor.createdAt, id: { gt: cursor.id } },
+          ],
+        },
+      ];
+    }
+
+    const rows = await prisma.auditLog.findMany({
+      where,
+      orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
+      take: batchSize,
+    });
+
+    if (rows.length === 0) return;
+    yield rows;
+    if (rows.length < batchSize) return;
+
+    const last = rows[rows.length - 1];
+    cursor = { createdAt: last.createdAt, id: last.id };
+  }
+}
+
+/** How many rows a reader at `after` still has to catch up on. */
+export async function lagFrom({ orgId, after = null, filters = {} }) {
+  const where = { orgId, createdAt: { lte: new Date(Date.now() - READ_LAG_MS) } };
+  if (filters.actions?.length) where.action = { in: filters.actions };
+  if (filters.resourceTypes?.length) where.resourceType = { in: filters.resourceTypes };
+  if (after) {
+    where.AND = [
+      { OR: [{ createdAt: { gt: after.createdAt } }, { createdAt: after.createdAt, id: { gt: after.id } }] },
+    ];
+  }
+  return prisma.auditLog.count({ where });
 }
 
 // ---------------------------------------------------------------------------

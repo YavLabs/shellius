@@ -18,6 +18,9 @@ const querySchema = Joi.object({
   q: Joi.string().trim().max(100).allow(''),
   ids: Joi.string().max(2000).allow(''),
   limit: Joi.number().integer().min(1).max(50).default(25),
+  // Users only: include service accounts. The audit log's actor filter sets
+  // it, because a service account acts and must be findable there.
+  includeService: Joi.boolean().default(false),
 });
 
 // Who may list which entity. Users are listed to anyone who can already see
@@ -45,7 +48,7 @@ router.get(
     let items;
     if (kind === 'servers') items = await lookupService.lookupServers(req.orgId, req.scope, opts);
     else if (kind === 'customers') items = await lookupService.lookupCustomers(req.orgId, req.scope, opts);
-    else items = await lookupService.lookupUsers(req.orgId, opts);
+    else items = await lookupService.lookupUsers(req.orgId, { ...opts, includeService: value.includeService });
     res.json({ success: true, data: { items } });
   })
 );

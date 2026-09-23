@@ -19,12 +19,14 @@
  */
 
 import prisma from '../config/db.js';
+import config from '../config/index.js';
 import ApiError from '../utils/ApiError.js';
 import logger from '../utils/logger.js';
 import redis from '../config/redis.js';
 import { TIERS } from '../config/permissions.js';
 import { resolveScope, isUnscoped } from '../lib/scope.js';
 import * as notificationService from './notificationService.js';
+import { notifyEvent } from './notify/notifyService.js';
 import * as mailer from './mailer.js';
 import { escapeHtml as esc } from '../email/escape.js';
 
@@ -157,7 +159,7 @@ function ruleWantsEvent(rule, type) {
  * Mirrors accessRequestService.resolveApprovers so "who gets told" has one
  * shape across the product.
  */
-async function resolveRecipients(orgId, rule) {
+async function resolveRecipients(orgId, rule, { escalating = false } = {}) {
   const orFilters = [];
   if (rule.recipientUserIds?.length) orFilters.push({ id: { in: rule.recipientUserIds } });
   if (rule.recipientRoles?.length) {
@@ -167,10 +169,20 @@ async function resolveRecipients(orgId, rule) {
   if (rule.recipientGroupId) {
     orFilters.push({ groupMemberships: { some: { groupId: rule.recipientGroupId } } });
   }
+  // An escalation is what happens when the normal recipients have not acted,
+  // so it adds the escalation group rather than replacing them. Until now
+  // `escalateToGroupId` was stored, validated and returned by the API but
+  // never read here, so escalations went only to the usual people — which is
+  // to say, escalating did nothing at all.
+  if (escalating && rule.escalateToGroupId) {
+    orFilters.push({ groupMemberships: { some: { groupId: rule.escalateToGroupId } } });
+  }
   if (orFilters.length === 0) return [];
 
   return prisma.user.findMany({
-    where: { orgId, status: 'active', deletedAt: null, OR: orFilters },
+    // Alerts are sent to people, and a service account's address is
+    // deliberately undeliverable.
+    where: { orgId, status: 'active', deletedAt: null, kind: 'human', OR: orFilters },
     select: { id: true, name: true, email: true, role: true, accessScope: true },
   });
 }
@@ -268,8 +280,36 @@ export async function dispatchFindingEvents({ orgId, serverId, events }) {
         continue;
       }
 
-      const recipients = await filterByScope(await resolveRecipients(orgId, rule), server);
+      const recipients = await filterByScope(
+        await resolveRecipients(orgId, rule, { escalating: event.type === 'escalation' }),
+        server
+      );
       const { title, body } = describe(event, server);
+
+      // Chat is per-rule, like the other channels, and per-FINDING rather
+      // than per-recipient: several rules matching one finding would
+      // otherwise put the same message in a channel several times.
+      if (rule.channels?.includes('chat')) {
+        await notifyEvent({
+          orgId,
+          event: 'posture.finding',
+          recipients: [],
+          title,
+          body,
+          chat: {
+            fields: [
+              { label: 'Server', value: server.displayName || server.hostname },
+              { label: 'Environment', value: server.environment },
+              { label: 'Severity', value: String(finding.severity || '').toLowerCase() },
+              { label: 'Finding', value: finding.code },
+              ...(finding.port ? [{ label: 'Port', value: `${finding.proto || 'tcp'}/${finding.port}` }] : []),
+              { label: 'Rule', value: rule.name },
+            ],
+            url: `${config.frontendUrl}/servers/${serverId}`,
+            context: { environment: server.environment, customerId: server.customerId },
+          },
+        });
+      }
 
       for (const user of recipients) {
         if (rule.channels?.includes('inapp')) {
@@ -299,9 +339,12 @@ export async function dispatchFindingEvents({ orgId, serverId, events }) {
           }
         }
 
-        // `digest` mode is deliberately not emailed per event — the digest job
-        // batches those; immediate rules mail now.
-        if (rule.channels?.includes('email') && rule.mode !== 'digest') {
+        // Every matching rule mails immediately. There was once a `digest`
+        // mode here that suppressed this branch and deferred to a batching job
+        // — a job that was never written, so a digest rule with only the email
+        // channel delivered nothing, ever, and said nothing about it. The mode
+        // is gone until that job exists.
+        if (rule.channels?.includes('email')) {
           try {
             await mailer.sendMail({
               orgId,

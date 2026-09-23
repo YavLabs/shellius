@@ -9,6 +9,184 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 Tracked here as work lands on `main`; moved into a dated section on release
 (`node scripts/version.mjs bump <major|minor|patch>`).
 
+## [2.0.0] - 2026-09-22
+
+2.0 answers the three questions a buyer's security team asks that Shellius
+could not answer: can we get the audit log into our SIEM, what happens when we
+remove someone from the IdP, and is there an API. Notifications can now also
+reach Slack, Google Chat, Teams and webhooks — and be acted on from Slack. It
+fixes two security holes and a set of things that were quietly not working.
+
+### Security
+
+- **Production can no longer be approved from an email link alone.** The
+  approval email carries a 24-hour URL that acts as the named approver with no
+  login at all — reasonable for a dev box, and a way around the authentication
+  half of the approval flow for production, where a forwarded message or a
+  shared inbox was enough. A production decision now needs a session belonging
+  to that approver; being signed in as somebody else is not enough, not even a
+  super admin. Non-production keeps one-click. Every decision now records how
+  it was made, so "was this approved by someone logged in, or by whoever held
+  a link?" has an answer.
+
+- **Suspending or deleting an account now actually cuts its SSH access.**
+  Suspension revoked sessions and refresh tokens, but left the person's
+  already-issued SSH certificates and approved access requests alone — and
+  `certificateService.verify()`, which every host calls on every SSH
+  connection, never checked whether the human was still employed. A suspended
+  user's certificate kept authenticating until it expired, up to the policy's
+  maximum session duration. Disabling an account now revokes its certificates,
+  access requests and API tokens in one cascade, and certificate verification
+  refuses a certificate whose owner is no longer active.
+
+  If you have suspended anyone whose certificate had not yet expired, they had
+  access until it did. Audit → filter by `certificate.*` will show whether a
+  suspended user's certificate was used.
+
+### Added
+
+- **API tokens.** Two kinds: **service accounts**, which belong to the
+  organization and survive whoever created them, and **personal access
+  tokens**, which belong to a person and can never exceed that person's own
+  permissions. A token's permissions are recomputed on every request against
+  the owner's live role, so demoting someone narrows every token they hold
+  immediately — there is nothing to re-mint. Tokens cannot reach sign-in, MFA,
+  SSO, the personal vault, the terminal, or token management itself, and can
+  never hold a permission marked non-delegable. Shown once, expiry required
+  (90 days by default), rotatable and revocable, with last-used time and IP.
+  See `docs/api-tokens.md`.
+
+- **Audit export.** The audit log can now be streamed to a **webhook**
+  (HMAC-signed, for Splunk/Datadog/Panther or anything that speaks HTTP), to
+  **S3** as gzipped NDJSON, to a **syslog** collector over TCP+TLS, or sent as
+  a scheduled **email digest**. Delivery is at-least-once: the cursor advances
+  only after the destination accepts a batch, so a crash replays rather than
+  skips, and every record carries its immutable id for deduplication. A
+  failing destination backs off and auto-disables after ten consecutive
+  failures with a notification, because an audit pipeline that has quietly
+  died is worse than one that is loudly broken. Delivery history, including
+  the failures, is visible per sink. See `docs/audit-export.md`.
+
+- **Audit retention and archiving.** Optional per-organization retention, off
+  by default — the default remains to keep everything forever. Nothing is
+  deleted without an archive unless you explicitly ask for that, and nothing
+  is ever deleted past what an active sink has not yet shipped. That last rule
+  matters: retention and sinks are configured on different screens, often by
+  different people, and a short retention plus a stalled sink would destroy
+  entries that reached neither place. The API reports the holding point, so
+  "why has nothing been deleted?" is answerable.
+
+- **SSO deprovisioning.** Shellius can now reconcile accounts against the
+  identity provider's own directory — Microsoft Entra, Okta, Google Workspace
+  or GitHub org membership — and flag or suspend the people who are no longer
+  in it. A provider with no directory API says so explicitly rather than
+  silently doing nothing.
+
+  This is the only feature that can disable an account without a human
+  deciding to, so it is deliberately timid. Dry run is on by default. The
+  credential is tested before the directory is even read; an empty directory
+  or one that has halved since the last good run aborts the whole pass;
+  absence must persist past a grace period; the run aborts entirely if it
+  would act on more than a set percentage or count of your people; someone
+  still reachable through another sign-in provider is left alone; and the last
+  active super admin is never suspended. An aborted run is the feature
+  working, and says what it saw. See `docs/directory-sync.md`.
+
+- **Chat notifications.** Notifications can be sent to **Slack**, **Google
+  Chat**, **Microsoft Teams**, or any endpoint that takes JSON, with
+  per-destination filtering by event, environment, customer and severity. On
+  Slack — and only on Slack, with a bot token — they carry working approve and
+  deny buttons and can be sent as direct messages; Google Chat webhooks are
+  one-way and Teams workflow webhooks have no interaction callback, so those
+  carry a link instead.
+
+  What is never sent to a channel: the six payloads that are bearer
+  credentials — an invite, a password reset, an email verification, an
+  approval link, an SSO link approval, an MFA code — because a channel is read
+  by everyone in it. Nothing is auto-serialised either: a chat message is
+  built from an explicit field list, so a field added to a notification later
+  cannot quietly start appearing in Slack.
+
+  Approving from Slack needs a signed request within five minutes and an
+  explicitly linked account, and goes through exactly the same authorisation
+  as the web UI. Accounts are linked by pressing a button and confirming in
+  Shellius, never matched by email — a Slack workspace administrator can set a
+  member's email address. Production approvals from chat stay off until an
+  organization turns them on. See `docs/chat-notifications.md`.
+
+### Fixed
+
+- **A posture alert rule set to "Daily digest" notified nobody at all.** It
+  suppressed the per-event email and deferred to a batching job that was never
+  written. The mode is removed until that job exists, and existing rules are
+  migrated to immediate so they start sending; throttling still bounds volume.
+- **Escalating an unacknowledged posture finding did nothing.** The escalation
+  group was stored, validated and returned by the API, but never read — so an
+  escalation reached exactly the people who had already ignored it.
+- **Break-glass never emailed anyone.** Its template existed and was never
+  registered, so the highest-severity event in the product reached
+  administrators only as an in-app row they had to notice.
+- **An access request could be decided twice.** The pending check and the
+  update were separate statements, so two approvals arriving together both
+  succeeded — two approvals, two audit entries, two different expiry times for
+  one request.
+- **A notification failure could orphan a request or lose an audit entry.** A
+  failure while notifying approvers threw after the request had been
+  committed and before the audit write, leaving a pending request nobody was
+  told about and nothing in the log describing it. Decisions are now audited
+  before anyone is told, and notifying can no longer throw.
+- **Clicking a user's name from the Users list did nothing**, and the same for
+  a policy from the Policies list. Both worked from everywhere else.
+- Filtering notifications by "Directory sync" returned an error, and those
+  notifications showed a generic icon.
+
+### Migration notes
+
+- **Nine migrations.** Run `scripts/backup-db.sh` first, then
+  `docker compose ... exec backend npx prisma migrate deploy` as usual (or let
+  `docker/entrypoint-backend.sh` do it).
+
+- **On a large `audit_logs` table**, `20261002000000_audit_read_indexes`
+  creates three indexes and will hold a write lock for the duration, because
+  Prisma runs each migration in a single transaction and `CREATE INDEX
+  CONCURRENTLY` cannot be used inside one. To avoid the lock, create them by
+  hand with `CONCURRENTLY` first and then mark the migration applied:
+
+  ```
+  CREATE INDEX CONCURRENTLY "audit_logs_org_id_created_at_id_idx" ON "audit_logs" ("org_id", "created_at", "id");
+  CREATE INDEX CONCURRENTLY "audit_logs_org_id_action_idx" ON "audit_logs" ("org_id", "action");
+  CREATE INDEX CONCURRENTLY "audit_logs_org_id_resource_type_idx" ON "audit_logs" ("org_id", "resource_type");
+  npx prisma migrate resolve --applied 20261002000000_audit_read_indexes
+  ```
+
+- **If you sign in with Microsoft Entra or Okta, read this before arming
+  directory sync.** Deprovisioning has to match your users against the
+  provider's directory, and Entra makes that harder than it looks: the
+  identifier Entra puts in a sign-in token is unique *per application*, so it
+  appears nowhere in Microsoft Graph. Shellius now records the correct
+  directory identifier at sign-in, but it **cannot be reconstructed for
+  accounts that already exist** — those fill in as each person next signs in.
+
+  This is safe by construction: a user whose directory identifier is unknown
+  is never judged, and each run reports how many were skipped for that reason.
+  But it means an Entra or Okta organization should leave directory sync in
+  dry run until that count has come down. The rollout steps are in
+  `docs/directory-sync.md`. GitHub and Google identities are backfilled
+  automatically, because there the identifier provably matches.
+
+- **Two behaviour changes on upgrade, both deliberate.** A production access
+  request can no longer be approved from the emailed link without signing in —
+  approvers will be asked to sign in, and the page says why. And any posture
+  alert rule set to "Daily digest" becomes immediate, because digest delivered
+  nothing at all; if such a rule exists, its recipients will start receiving
+  email they were not getting before. Check `throttleMinutes` on those rules
+  if volume is a concern.
+
+- Nothing else requires action. Audit sinks, retention, directory sync and
+  chat destinations are all off until configured, and no users are signed
+  out.
+
+
 ## [1.7.6] - 2026-09-22
 
 ### Fixed

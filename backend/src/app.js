@@ -44,6 +44,13 @@ import searchRouter from './routes/search.js';
 import lookupRouter from './routes/lookup.js';
 import terminalRouter from './routes/terminal.js';
 import rolesRouter from './routes/roles.js';
+import apiTokensRouter from './routes/apiTokens.js';
+import serviceAccountsRouter from './routes/serviceAccounts.js';
+import auditSinksRouter from './routes/auditSinks.js';
+import directorySyncRouter from './routes/directorySync.js';
+import chatDestinationsRouter from './routes/chatDestinations.js';
+import slackInteractionsRouter from './routes/slackInteractions.js';
+import chatIdentitiesRouter from './routes/chatIdentities.js';
 import vaultRouter from './routes/vault.js';
 import postureRouter from './routes/posture.js';
 import errorHandler from './middleware/errorHandler.js';
@@ -76,6 +83,14 @@ app.use(cors({ origin: config.corsOrigin, credentials: true }));
 // own larger parser locally — see routes/hosts.js. Raising the limit globally
 // would widen the request-body attack surface of every other endpoint to buy
 // headroom that only one of them needs.
+// Slack's interactions endpoint is mounted BEFORE the global parsers and
+// brings its own, because verifying Slack's signature needs the exact bytes
+// it sent — a body parsed and re-serialised here would never match. Mount
+// order is load-bearing; the verifier refuses outright when the raw body is
+// missing, so reordering this breaks the endpoint loudly rather than
+// silently disabling its only authentication.
+app.use('/api/chat/slack', slackInteractionsRouter);
+
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
@@ -96,6 +111,12 @@ app.use('/api/auth/device', deviceAuthRouter);
 app.use('/api/users', usersRouter);
 app.use('/api/groups', groupsRouter);
 app.use('/api/roles', rolesRouter);
+app.use('/api/tokens', apiTokensRouter);
+app.use('/api/service-accounts', serviceAccountsRouter);
+app.use('/api/settings/audit-sinks', auditSinksRouter);
+app.use('/api/settings/directory-sync', directorySyncRouter);
+app.use('/api/settings/chat', chatDestinationsRouter);
+app.use('/api/chat/identities', chatIdentitiesRouter);
 app.use('/api/vault', vaultRouter);
 app.use('/api/customers', customersRouter);
 app.use('/api/servers', serversRouter);

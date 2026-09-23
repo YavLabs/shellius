@@ -6,6 +6,7 @@ import authenticate from '../middleware/auth.js';
 import tenant from '../middleware/tenant.js';
 import { requirePermission } from '../middleware/rbac.js';
 import * as auditService from '../services/auditService.js';
+import * as retentionService from '../services/audit/retentionService.js';
 
 const router = express.Router();
 
@@ -115,6 +116,57 @@ router.get(
     res.set('Content-Disposition', `attachment; filename="${filename}"`);
     res.set('Content-Length', buffer.length);
     res.end(buffer);
+  })
+);
+
+// ---------------------------------------------------------------------------
+// Retention and archives.
+//
+// `audit.retention` is separate from `audit.view` and `audit.export` on
+// purpose: reading the log, taking a copy of it, and deciding how long it
+// survives are three different powers.
+// ---------------------------------------------------------------------------
+
+const retentionSchema = Joi.object({
+  // null means keep everything, which stays the default.
+  retentionDays: Joi.number().integer().min(retentionService.MIN_RETENTION_DAYS).allow(null),
+  archiveEnabled: Joi.boolean(),
+  archiveEncrypt: Joi.boolean(),
+  archiveBucket: Joi.string().trim().max(200).allow('', null),
+  archivePrefix: Joi.string().trim().max(200),
+  deleteWithoutArchive: Joi.boolean(),
+}).min(1);
+
+router.get(
+  '/retention',
+  requirePermission('audit.retention'),
+  asyncHandler(async (req, res) => {
+    const settings = await retentionService.getSettings(req.orgId);
+    // Surface the sink floor: retention and sinks are configured on
+    // different screens, and "why has nothing been deleted?" is otherwise
+    // very hard to answer.
+    const floor = await retentionService.sinkFloor(req.orgId);
+    res.json({ success: true, data: { ...settings, heldBySinkUntil: floor } });
+  })
+);
+
+router.put(
+  '/retention',
+  requirePermission('audit.retention'),
+  asyncHandler(async (req, res) => {
+    const { error, value } = retentionSchema.validate(req.body || {});
+    if (error) throw new ApiError(400, error.details[0].message);
+    const data = await retentionService.updateSettings(req.orgId, value, { userId: req.user.userId });
+    res.json({ success: true, data });
+  })
+);
+
+router.get(
+  '/archives',
+  requirePermission('audit.retention'),
+  asyncHandler(async (req, res) => {
+    const data = await retentionService.listArchives(req.orgId, { limit: req.query.limit });
+    res.json({ success: true, data });
   })
 );
 

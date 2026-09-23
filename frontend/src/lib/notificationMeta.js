@@ -1,4 +1,4 @@
-import { Ban, Bell, CheckCircle, Clock, Radar, ShieldAlert, XCircle } from 'lucide-react';
+import { Ban, Bell, CheckCircle, Clock, Radar, ShieldAlert, UserMinus, XCircle } from 'lucide-react';
 
 /**
  * How each notification type looks, in one place.
@@ -21,6 +21,7 @@ export const NOTIFICATION_META = {
   ACCESS_REQUEST_REVOKED: { Icon: Ban, color: 'text-muted-foreground', label: 'Access revoked' },
   BREAK_GLASS_INVOKED: { Icon: ShieldAlert, color: 'text-red-500', label: 'Break-glass invoked' },
   POSTURE_FINDING: { Icon: Radar, color: 'text-amber-500', label: 'Posture finding' },
+  DIRECTORY_SYNC: { Icon: UserMinus, color: 'text-amber-500', label: 'Directory sync' },
 };
 
 const FALLBACK = { Icon: Bell, color: 'text-muted-foreground', label: 'Notification' };

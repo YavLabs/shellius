@@ -12,6 +12,9 @@ import {
   HardDrive,
   Radar,
   ShieldHalf,
+  Bot,
+  ScrollText,
+  MessageSquare,
 } from 'lucide-react';
 import { canAny } from '@/lib/permissions';
 
@@ -77,6 +80,15 @@ export const ADMIN_SECTIONS = [
     keywords: ['policy', 'access policy', 'rules', 'grant', 'break-glass', 'break glass', 'auto approve', 'principals', 'ttl'],
   },
   {
+    key: 'service-accounts',
+    group: 'people',
+    label: 'Service accounts',
+    description: 'Machine identities for CI and automation',
+    icon: Bot,
+    anyOf: ['service_accounts.view'],
+    keywords: ['service account', 'machine identity', 'ci', 'terraform', 'automation', 'bot', 'api token', 'bearer token'],
+  },
+  {
     key: 'sso',
     group: 'authentication',
     label: 'Single sign-on',
@@ -140,6 +152,15 @@ export const ADMIN_SECTIONS = [
     keywords: ['posture', 'exposure', 'findings', 'firewall', 'collector', 'alert rules', 'retention'],
   },
   {
+    key: 'audit-sinks',
+    group: 'organization',
+    label: 'Audit sinks',
+    description: 'Send the audit log to a SIEM, bucket or digest email',
+    icon: ScrollText,
+    anyOf: ['audit.sinks'],
+    keywords: ['audit', 'sink', 'siem', 'webhook', 'syslog', 's3', 'splunk', 'datadog', 'panther', 'digest', 'export'],
+  },
+  {
     key: 'email',
     group: 'integrations',
     label: 'Email',
@@ -156,6 +177,15 @@ export const ADMIN_SECTIONS = [
     icon: HardDrive,
     anyOf: ['settings.storage'],
     keywords: ['storage', 's3', 'minio', 'azure blob', 'bucket', 'recordings'],
+  },
+  {
+    key: 'chat',
+    group: 'integrations',
+    label: 'Chat notifications',
+    description: 'Post requests and findings to Slack, Chat or Teams',
+    icon: MessageSquare,
+    anyOf: ['settings.notifications'],
+    keywords: ['chat', 'slack', 'google chat', 'teams', 'webhook', 'notifications', 'notify', 'approve', 'deny', 'break-glass'],
   },
 ];
 

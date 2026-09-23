@@ -21,6 +21,10 @@ import {
   startQuickConnectHistoryPruneWorker,
 } from './quickConnectHistoryPrune.js';
 import { registerPosturePruneJob, startPosturePruneWorker } from './posturePrune.js';
+import { registerAuditExportJob, startAuditExportWorker } from './auditExport.js';
+import { registerAuditArchiveJob, startAuditArchiveWorker } from './auditArchive.js';
+import { registerDirectorySyncJob, startDirectorySyncWorker } from './directorySync.js';
+import { registerChatNotifyJob, startChatNotifyWorker } from './chatNotify.js';
 import { registerPostureEscalateJob, startPostureEscalateWorker } from './postureEscalate.js';
 import { seedDefaultPolicies } from './seedDefaultPolicies.js';
 import {
@@ -58,6 +62,18 @@ export async function startAllJobs() {
 
   await registerPosturePruneJob();
   startPosturePruneWorker();
+
+  await registerAuditExportJob();
+  startAuditExportWorker();
+
+  await registerAuditArchiveJob();
+  startAuditArchiveWorker();
+
+  await registerDirectorySyncJob();
+  startDirectorySyncWorker();
+
+  await registerChatNotifyJob();
+  startChatNotifyWorker();
 
   await registerPostureEscalateJob();
   startPostureEscalateWorker();

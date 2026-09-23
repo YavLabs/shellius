@@ -14,9 +14,10 @@ import { renderLayout } from '../layout.js';
  * @param {string} params.environment     - Server environment (prod / staging / etc.)
  * @param {string} params.reason          - Mandatory reason provided by the invoker
  * @param {string} params.expiresAt       - ISO string when access expires
- * @param {string} params.auditUrl        - Link to the audit log entry
+ * @param {string} params.reviewUrl       - Link to the request's own detail view,
+ *   which is where an administrator revokes it
  */
-export function render({ recipientName, invokerName, serverHostname, environment, reason, expiresAt, auditUrl }) {
+export function render({ recipientName, invokerName, serverHostname, environment, reason, expiresAt, reviewUrl }) {
   const subject = `[Shellius] ALERT: Break-glass access invoked — ${serverHostname}`;
   const safeName = esc(recipientName || 'Admin');
   const safeInvoker = esc(invokerName || 'An administrator');
@@ -24,7 +25,7 @@ export function render({ recipientName, invokerName, serverHostname, environment
   const safeEnv = esc(environment || 'unknown');
   const safeReason = esc(reason || '(no reason provided)');
   const safeExpires = esc(expiresAt || '');
-  const safeUrl = esc(auditUrl || '');
+  const safeUrl = esc(reviewUrl || '');
 
   const bodyHtml = `
     <h1 style="margin:0 0 16px;font:600 22px/1.3 -apple-system,sans-serif;color:#dc2626">
@@ -52,7 +53,7 @@ export function render({ recipientName, invokerName, serverHostname, environment
       If this access was not authorised or you suspect a security incident, revoke the
       access request immediately from the Shellius dashboard and investigate.
     </p>
-    ${safeUrl ? `<div style="margin:32px 0;text-align:center"><a href="${safeUrl}" style="display:inline-block;padding:12px 24px;background:#dc2626;color:#fff;text-decoration:none;border-radius:6px;font:600 14px/1 -apple-system,sans-serif">View Audit Log</a></div>` : ''}
+    ${safeUrl ? `<div style="margin:32px 0;text-align:center"><a href="${safeUrl}" style="display:inline-block;padding:12px 24px;background:#dc2626;color:#fff;text-decoration:none;border-radius:6px;font:600 14px/1 -apple-system,sans-serif">Review this access</a></div>` : ''}
   `;
 
   const text = `ALERT: Break-glass access invoked — ${serverHostname}
@@ -65,7 +66,7 @@ Expires at: ${expiresAt}
 
 Reason: ${reason}
 
-${auditUrl ? `View audit log: ${auditUrl}` : ''}`;
+${reviewUrl ? `Review this access: ${reviewUrl}` : ''}`;
 
   return {
     subject,

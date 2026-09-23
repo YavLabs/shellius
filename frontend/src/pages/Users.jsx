@@ -160,9 +160,17 @@ function Users() {
   // Deep links: /admin/users?action=invite opens the invite modal; ?highlight=<id>
   // opens that user's edit modal (no inline row-highlight affordance in
   // DataTable, so this is the closest equivalent).
+  //
+  // Depends on `searchParams`, not on mount. Every user name in the app links
+  // here (UserCell), including the ones in this page's own table — and
+  // react-router changes the query string without remounting, so a mount-only
+  // effect made clicking a name from the Users page itself do nothing at all
+  // while leaving `?highlight=` stranded in the URL. Keystore.jsx already had
+  // this right.
   useEffect(() => {
     const action = searchParams.get('action');
     const highlightId = searchParams.get('highlight');
+    if (!action && !highlightId) return;
     if (action === 'invite') {
       setEditingUser(null);
       setFormOpen(true);
@@ -183,7 +191,7 @@ function Users() {
       setSearchParams(next, { replace: true });
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [searchParams]);
 
   const loadedRef = useRef(false);
   const fetchUsers = useCallback(async () => {

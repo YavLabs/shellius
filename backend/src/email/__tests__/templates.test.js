@@ -27,6 +27,9 @@ const SAMPLES = {
   accountDeleted: { recipientName: 'A', when: '2026-04-07T01:00:00Z', gracePeriodDays: 30 },
   smtpTest: { recipientName: 'A', orgName: 'Acme', host: 'smtp.gmail.com', port: 587, useTls: true, when: '2026-04-07T01:00:00Z' },
   emailTest: { recipientName: 'A', orgName: 'Acme', providerName: 'Company <Gmail>', providerLabel: 'Google (Gmail API)', fromAddress: 'ops@acme.test', when: '2026-04-07T01:00:00Z' },
+  // The reason carries whatever the invoker typed, so it is the escaping case
+  // that matters most here.
+  breakGlassInvoked: { recipientName: 'A', invokerName: '<b>Root</b>', serverHostname: 'h', environment: 'prod', reason: '<b>urgent</b> & fast', expiresAt: '2026-04-07T02:00:00Z', reviewUrl: 'https://x.test/access-requests?request=1' },
 };
 
 describe('email templates — registry', () => {
