@@ -1,10 +1,11 @@
 import { useState, useEffect } from 'react';
 import { useParams, useSearchParams, Link } from 'react-router-dom';
-import { Loader2, CheckCircle2, XCircle, ShieldCheck } from 'lucide-react';
+import { Loader2, CheckCircle2, XCircle, ShieldCheck, LogIn } from 'lucide-react';
 import EnvironmentBadge from '@/components/shared/EnvironmentBadge';
 import UserCell from '@/components/shared/UserCell';
 import { getApprovalRequest, submitApprovalDecision } from '@/services/approvalService';
 import AuthShell from '@/components/auth/AuthShell';
+import { useAuth } from '@/context/AuthContext';
 
 function fmtDuration(seconds) {
   const mins = Math.round((seconds || 0) / 60);
@@ -17,6 +18,7 @@ function fmtDuration(seconds) {
 
 function ApproveRequest() {
   const { token } = useParams();
+  const { isAuthenticated, user } = useAuth();
   const [searchParams] = useSearchParams();
   const intent = searchParams.get('intent'); // 'approve' | 'reject' | null
 
@@ -28,6 +30,9 @@ function ApproveRequest() {
   const [submitting, setSubmitting] = useState(false);
   const [result, setResult] = useState(null); // { decision, status }
   const [error, setError] = useState('');
+  // Production decisions need a session belonging to this approver; the link
+  // alone opens the request but cannot decide it.
+  const [sessionRequired, setSessionRequired] = useState(false);
 
   useEffect(() => {
     setLoading(true);
@@ -56,6 +61,9 @@ function ApproveRequest() {
       const status = err?.response?.status;
       if (status === 409) {
         setError('This request has already been handled.');
+      } else if (status === 401 && err?.response?.data?.error?.code === 'SESSION_REQUIRED') {
+        setSessionRequired(true);
+        setError('');
       } else {
         setError(err?.response?.data?.error?.message || err.message || 'Failed to submit decision.');
       }
@@ -65,6 +73,18 @@ function ApproveRequest() {
   };
 
   const env = request?.server?.environment;
+  // The approval page is public, so the sign-in round trip has to come back
+  // here. Login only honours same-origin relative paths.
+  const signInHref = `/login?redirect=${encodeURIComponent(`/approve/${token}`)}`;
+  // Signed in as somebody is not enough — it has to be this approver, which is
+  // also what the server checks. Comparing the addresses is sufficient here;
+  // the decision itself is authorised server-side, not by this flag.
+  const signedInAsApprover =
+    isAuthenticated &&
+    !!user?.email &&
+    !!request?.approver?.email &&
+    user.email.toLowerCase() === request.approver.email.toLowerCase();
+  const needsSignIn = sessionRequired || (!!request?.requiresSession && !signedInAsApprover);
 
   return (
     <AuthShell>
@@ -117,10 +137,30 @@ function ApproveRequest() {
                 </div>
               ) : (
                 <>
-                  <div className="flex items-center gap-2 text-sm text-muted-foreground">
-                    <ShieldCheck className="h-4 w-4" />
-                    Review the request below, then approve or reject. No sign-in required.
-                  </div>
+                  {needsSignIn ? (
+                    <div className="rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-sm text-amber-700 dark:text-amber-300">
+                      <div className="flex items-center gap-2 font-medium">
+                        <ShieldCheck className="h-4 w-4 shrink-0" />
+                        This is a production server
+                      </div>
+                      <p className="mt-1">
+                        Approving production access needs you signed in as this approver — an emailed link on its own
+                        isn&apos;t enough, because anyone holding it could use it.
+                      </p>
+                      <Link
+                        to={signInHref}
+                        className="mt-2 inline-flex items-center gap-1.5 font-medium text-primary underline-offset-4 hover:underline"
+                      >
+                        <LogIn className="h-3.5 w-3.5" />
+                        Sign in to continue
+                      </Link>
+                    </div>
+                  ) : (
+                    <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                      <ShieldCheck className="h-4 w-4" />
+                      Review the request below, then approve or reject. No sign-in required.
+                    </div>
+                  )}
 
                   <div className="rounded-md border border-border bg-muted/30 px-4 py-3 text-sm space-y-1.5">
                     <div className="flex items-center gap-2">
@@ -175,7 +215,7 @@ function ApproveRequest() {
                   <div className="flex gap-2">
                     <button
                       onClick={() => decide('approve')}
-                      disabled={submitting}
+                      disabled={submitting || needsSignIn}
                       className="flex h-9 flex-1 items-center justify-center gap-1.5 rounded-md bg-emerald-600 text-sm font-medium text-white transition-colors hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-50"
                     >
                       {submitting ? <Loader2 className="h-4 w-4 animate-spin" /> : <CheckCircle2 className="h-4 w-4" />}
@@ -183,7 +223,7 @@ function ApproveRequest() {
                     </button>
                     <button
                       onClick={() => decide('reject')}
-                      disabled={submitting}
+                      disabled={submitting || needsSignIn}
                       className="flex h-9 flex-1 items-center justify-center gap-1.5 rounded-md bg-destructive text-sm font-medium text-destructive-foreground transition-colors hover:bg-destructive/90 disabled:cursor-not-allowed disabled:opacity-50"
                     >
                       {submitting ? <Loader2 className="h-4 w-4 animate-spin" /> : <XCircle className="h-4 w-4" />}

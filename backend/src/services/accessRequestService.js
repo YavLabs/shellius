@@ -573,7 +573,14 @@ export async function submit({
  * @param {string}  [params.deniedReason]
  * @returns {Promise<object>}
  */
-export async function review({ requestId, reviewerId, decision, approvedDuration, deniedReason }) {
+/**
+ * @param {string} [params.via] - how the decision reached us: 'session' (the
+ *   web UI), 'email_token' (a link from the approval email), or a chat
+ *   platform. Recorded on the audit entry, because "was this production
+ *   approval made by someone logged in, or by whoever held a link?" is a
+ *   question the audit log could not previously answer.
+ */
+export async function review({ requestId, reviewerId, decision, approvedDuration, deniedReason, via = 'session' }) {
   if (!requestId) throw new ApiError(400, 'requestId is required');
   if (!reviewerId) throw new ApiError(400, 'reviewerId is required');
   if (!decision || !['approve', 'deny'].includes(decision)) {
@@ -661,7 +668,7 @@ export async function review({ requestId, reviewerId, decision, approvedDuration
       reviewerId,
       'access_request.approved',
       requestId,
-      { duration, expiresAt }
+      { duration, expiresAt, via, environment: accessRequest.server?.environment ?? null }
     );
 
     try {
@@ -703,7 +710,7 @@ export async function review({ requestId, reviewerId, decision, approvedDuration
       reviewerId,
       'access_request.denied',
       requestId,
-      { deniedReason }
+      { deniedReason, via, environment: accessRequest.server?.environment ?? null }
     );
 
     try {
