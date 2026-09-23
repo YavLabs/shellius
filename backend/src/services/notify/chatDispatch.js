@@ -107,7 +107,13 @@ export async function dispatchChatEvent({ orgId, event, title, summary, fields, 
 
   Promise.race([
     enqueue,
-    new Promise((_, reject) => setTimeout(() => reject(new Error('enqueue timed out')), ENQUEUE_TIMEOUT_MS)),
+    new Promise((_, reject) => {
+      // unref: this timer must not by itself keep the process alive. Without
+      // it a short-lived script — or a test — waits out the timeout after the
+      // work has already finished.
+      const t = setTimeout(() => reject(new Error('enqueue timed out')), ENQUEUE_TIMEOUT_MS);
+      t.unref?.();
+    }),
   ]).catch((err) => {
     logger.warn('chatDispatch: could not queue chat delivery', { orgId, event: event.key, error: err.message });
     prisma.chatDelivery
