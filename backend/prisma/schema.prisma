@@ -93,6 +93,8 @@ model Organization {
   expectedPorts     ServerExpectedPort[]
   postureAlertRules PostureAlertRule[]
   postureSettings   PostureSettings?
+  collectorRollouts CollectorRollout[]
+  collectorUpdates  CollectorUpdateAttempt[]
   apiTokens         ApiToken[]
   auditSinks        AuditSink[]
   auditSettings     AuditSettings?
@@ -356,6 +358,7 @@ model Server {
   postureFindings  ExposureFinding[]
   metricSamples    HostMetricSample[]
   expectedPorts    ServerExpectedPort[]
+  collectorUpdates CollectorUpdateAttempt[]
 
   @@index([orgId, customerId])
   @@index([orgId, environment])
@@ -1673,12 +1676,101 @@ model PostureSettings {
   metricRetentionHours   Int      @default(24) @map("metric_retention_hours")
   findingRetentionDays   Int      @default(90) @map("finding_retention_days")
   expectedPublicPorts    Json     @default("[]") @map("expected_public_ports")
+  /// Let hosts pull a newer collector by themselves. OFF by default and
+  /// deliberately so: this is the switch that turns Shellius into something
+  /// that can run new code as root on every managed host without anyone
+  /// pressing anything. See docs/collector-updates.md.
+  collectorAutoUpdate    Boolean  @default(false) @map("collector_auto_update")
+  /// Ceiling on how much of the fleet a rollout may reach per step, as a
+  /// percentage. A rollout starts here and only widens when the hosts already
+  /// updated are reporting healthily on the new version.
+  collectorCanaryPercent Int      @default(10) @map("collector_canary_percent")
   createdAt              DateTime @default(now()) @map("created_at")
   updatedAt              DateTime @updatedAt @map("updated_at")
 
   organization Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
 
   @@map("posture_settings")
+}
+
+/// The instance's signing key for anything Shellius asks a managed host to
+/// execute. One per install, like StorageConfig.
+///
+/// This exists because a pull-based collector update is, by construction, a
+/// channel for running new code as root on every host in the fleet. TLS says
+/// the bytes came from the server the host was told to trust; a signature
+/// says they came from THIS installation's key and have not been altered
+/// since — which is what still holds if a proxy, a mirror or a compromised
+/// CDN sits in between. The host verifies before it executes, and refuses
+/// rather than falling back.
+///
+/// RSA rather than Ed25519 for one unglamorous reason: the verifier is
+/// `openssl dgst -sha256 -verify` in a bash script on an arbitrary Linux
+/// host, and that works back to OpenSSL 1.0.2, while Ed25519 verification
+/// from the openssl CLI needs `pkeyutl -rawin`, which is 3.0+.
+model ReleaseSigningKey {
+  id                  String    @id @default(cuid())
+  scope               String    @unique @default("global")
+  algorithm           String    @default("rsa-4096")
+  publicKeyPem        String    @map("public_key_pem") @db.Text
+  privateKeyEncrypted String    @map("private_key_encrypted") @db.Text
+  /// SHA-256 of the DER public key, for "which key signed this?"
+  fingerprint         String
+  createdAt           DateTime  @default(now()) @map("created_at")
+  rotatedAt           DateTime? @map("rotated_at")
+
+  @@map("release_signing_keys")
+}
+
+/// One staged rollout of a collector version across an organization's fleet.
+model CollectorRollout {
+  id            String    @id @default(cuid())
+  orgId         String    @map("org_id")
+  targetVersion String    @map("target_version")
+  /// rolling | halted | complete | cancelled
+  status        String    @default("rolling")
+  /// How much of the eligible fleet is currently offered the update.
+  percent       Int       @default(0)
+  startedAt     DateTime  @default(now()) @map("started_at")
+  lastStepAt    DateTime? @map("last_step_at")
+  completedAt   DateTime? @map("completed_at")
+  /// Set when the health gate stopped the rollout, so the UI can say why
+  /// rather than showing it as merely paused.
+  haltedReason  String?   @map("halted_reason") @db.Text
+  createdById   String?   @map("created_by_id")
+
+  organization Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  attempts     CollectorUpdateAttempt[]
+
+  @@unique([orgId, targetVersion])
+  @@index([orgId, status])
+  @@map("collector_rollouts")
+}
+
+/// What happened to one host in one rollout. The health gate reads this, and
+/// it is also the answer to "why is that host still on the old version?".
+model CollectorUpdateAttempt {
+  id          String    @id @default(cuid())
+  orgId       String    @map("org_id")
+  rolloutId   String    @map("rollout_id")
+  serverId    String    @map("server_id")
+  fromVersion String?   @map("from_version")
+  toVersion   String    @map("to_version")
+  /// offered | installed | verified | rolled_back | failed
+  status      String    @default("offered")
+  detail      String?   @db.Text
+  offeredAt   DateTime  @default(now()) @map("offered_at")
+  reportedAt  DateTime? @map("reported_at")
+  verifiedAt  DateTime? @map("verified_at")
+
+  organization Organization     @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  rollout      CollectorRollout @relation(fields: [rolloutId], references: [id], onDelete: Cascade)
+  server       Server           @relation(fields: [serverId], references: [id], onDelete: Cascade)
+
+  @@unique([rolloutId, serverId])
+  @@index([orgId, status])
+  @@index([serverId, offeredAt])
+  @@map("collector_update_attempts")
 }
 
 // ---------------------------------------------------------------------------

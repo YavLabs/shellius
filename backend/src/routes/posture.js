@@ -130,6 +130,10 @@ const settingsUpdateSchema = Joi.object({
   metricRetentionHours: Joi.number().integer().min(1).max(8760),
   findingRetentionDays: Joi.number().integer().min(1).max(3650),
   expectedPublicPorts: Joi.array().items(portEntrySchema).max(200),
+  // See docs/collector-updates.md. Off by default; turning it on is the
+  // decision that lets hosts pull and execute a new collector unattended.
+  collectorAutoUpdate: Joi.boolean(),
+  collectorCanaryPercent: Joi.number().integer().min(1).max(100),
 }).min(1);
 
 // Exported for tests — the same convention routes/hosts.js uses for

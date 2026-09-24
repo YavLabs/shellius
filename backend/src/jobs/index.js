@@ -27,6 +27,7 @@ import { registerDirectorySyncJob, startDirectorySyncWorker } from './directoryS
 import { registerChatNotifyJob, startChatNotifyWorker } from './chatNotify.js';
 import { registerPostureEscalateJob, startPostureEscalateWorker } from './postureEscalate.js';
 import { registerPostureDigestJob, startPostureDigestWorker } from './postureDigest.js';
+import { registerCollectorRolloutJob, startCollectorRolloutWorker } from './collectorRollout.js';
 import { seedDefaultPolicies } from './seedDefaultPolicies.js';
 import {
   startServerOnboardingWorker,
@@ -81,6 +82,9 @@ export async function startAllJobs() {
 
   await registerPostureDigestJob();
   startPostureDigestWorker();
+
+  await registerCollectorRolloutJob();
+  startCollectorRolloutWorker();
 
   // Bulk-import server onboarding (parallel) + ephemeral-credential TTL reaper.
   startServerOnboardingWorker();

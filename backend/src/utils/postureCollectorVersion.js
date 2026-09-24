@@ -31,6 +31,28 @@ function read() {
 
 export const POSTURE_COLLECTOR_VERSION = read();
 
+/**
+ * The collector script's bytes, for serving to a host that has been offered
+ * an update.
+ *
+ * Read fresh rather than cached at module load, unlike the version above: the
+ * bytes are what get signed and what a host executes, so they must be the
+ * ones on disk right now. A cached copy that outlived a redeploy would be
+ * signed correctly and be the wrong script.
+ *
+ * @returns {Buffer|null}
+ */
+export function readCollectorScript() {
+  for (const p of CANDIDATES) {
+    try {
+      return fs.readFileSync(p);
+    } catch {
+      /* next */
+    }
+  }
+  return null;
+}
+
 /** Dotted-version compare; an unknown current version counts as older. */
 export function isOlderCollector(current, latest = POSTURE_COLLECTOR_VERSION) {
   if (!latest) return false;
@@ -43,4 +65,4 @@ export function isOlderCollector(current, latest = POSTURE_COLLECTOR_VERSION) {
   return false;
 }
 
-export default { POSTURE_COLLECTOR_VERSION, isOlderCollector };
+export default { POSTURE_COLLECTOR_VERSION, isOlderCollector, readCollectorScript };

@@ -81,7 +81,77 @@ const POSTURE_ASSET_PATHS = {
     path.resolve(__dirname, '..', '..', '..', 'scripts', 'posture', 'shellius-posture.sudoers'),
     '/app/scripts/posture/shellius-posture.sudoers',
   ],
+  updater: [
+    path.resolve(__dirname, '..', '..', '..', 'scripts', 'posture', 'shellius-collector-update.sh'),
+    '/app/scripts/posture/shellius-collector-update.sh',
+  ],
+  updaterService: [
+    path.resolve(__dirname, '..', '..', '..', 'scripts', 'posture', 'shellius-collector-update.service'),
+    '/app/scripts/posture/shellius-collector-update.service',
+  ],
+  updaterTimer: [
+    path.resolve(__dirname, '..', '..', '..', 'scripts', 'posture', 'shellius-collector-update.timer'),
+    '/app/scripts/posture/shellius-collector-update.timer',
+  ],
 };
+
+/**
+ * Base64 blobs for the collector updater, plus the installation's release
+ * signing public key.
+ *
+ * `releasePublicKey` is passed in rather than read here: fetching it needs a
+ * database round trip, and these builders are synchronous by design so that a
+ * missing asset can only ever degrade the generated script, never fail the
+ * request. A null key is the "updates not available" case — the updater is
+ * not installed at all rather than installed without a way to verify.
+ */
+function collectorUpdaterBlobs(apiUrl, releasePublicKey) {
+  const script = POSTURE_ASSETS.updater
+    ? POSTURE_ASSETS.updater.replace('__SHELLIUS_POSTURE_API_URL__', apiUrl)
+    : null;
+  return {
+    updaterB64: script ? Buffer.from(script, 'utf8').toString('base64') : '',
+    updaterServiceB64: POSTURE_ASSETS.updaterService
+      ? Buffer.from(POSTURE_ASSETS.updaterService, 'utf8').toString('base64')
+      : '',
+    updaterTimerB64: POSTURE_ASSETS.updaterTimer
+      ? Buffer.from(POSTURE_ASSETS.updaterTimer, 'utf8').toString('base64')
+      : '',
+    releaseKeyB64: releasePublicKey ? Buffer.from(releasePublicKey, 'utf8').toString('base64') : '',
+  };
+}
+
+/**
+ * The bash that installs the collector updater. Shared verbatim by the full
+ * and posture-only installers so the two cannot drift.
+ *
+ * Every piece of this is conditional on having BOTH the updater assets and a
+ * signing key. A host that ends up with the updater but no public key would
+ * refuse every update anyway (the script checks), but it would refuse
+ * silently and look like a host that simply never gets offered anything —
+ * so it is not installed at all in that case, and the installer says so.
+ */
+const COLLECTOR_UPDATER_STEP = String.raw`
+if [ -n "$COLLECTOR_UPDATE_B64" ] && [ -n "$RELEASE_KEY_B64" ] && [ "$PLATFORM" = "linux" ] && command -v systemctl >/dev/null 2>&1; then
+  echo "$RELEASE_KEY_B64" | base64 -d > /etc/shellius/release-key.pub
+  chmod 644 /etc/shellius/release-key.pub
+  chown root:0 /etc/shellius/release-key.pub 2>/dev/null || true
+  echo "$COLLECTOR_UPDATE_B64" | base64 -d > /usr/local/sbin/shellius-collector-update
+  chmod 755 /usr/local/sbin/shellius-collector-update
+  chown root:0 /usr/local/sbin/shellius-collector-update 2>/dev/null || true
+  echo "$COLLECTOR_UPDATE_SERVICE_B64" | base64 -d > /etc/systemd/system/shellius-collector-update.service
+  echo "$COLLECTOR_UPDATE_TIMER_B64" | base64 -d > /etc/systemd/system/shellius-collector-update.timer
+  chmod 644 /etc/systemd/system/shellius-collector-update.service /etc/systemd/system/shellius-collector-update.timer
+  systemctl daemon-reload 2>/dev/null || true
+  if systemctl enable --now shellius-collector-update.timer 2>/dev/null; then
+    echo "[shellius]   Collector updater installed (checks every 15 min; only installs signed collectors)"
+  else
+    echo "[shellius]   ! could not enable shellius-collector-update.timer — collector updates will not be pulled"
+  fi
+else
+  echo "[shellius]   Collector updater not installed (no signing key or assets) — collectors update by re-running the installer"
+fi
+`;
 
 function readFirstExistingSync(paths) {
   for (const p of paths) {
@@ -106,6 +176,9 @@ const POSTURE_ASSETS = {
   timer: readFirstExistingSync(POSTURE_ASSET_PATHS.timer),
   sudoers: readFirstExistingSync(POSTURE_ASSET_PATHS.sudoers),
   containerSudoers: readFirstExistingSync(POSTURE_ASSET_PATHS.containerSudoers),
+  updater: readFirstExistingSync(POSTURE_ASSET_PATHS.updater),
+  updaterService: readFirstExistingSync(POSTURE_ASSET_PATHS.updaterService),
+  updaterTimer: readFirstExistingSync(POSTURE_ASSET_PATHS.updaterTimer),
 };
 if (Object.values(POSTURE_ASSETS).some((v) => v === null)) {
   logger.warn('bootstrap: posture collector assets missing on disk — install.sh will skip posture packaging', {
@@ -332,6 +405,20 @@ router.get(
     const agentToken = await mintAgentToken(server.id);
     const apiUrl = getPublicBaseUrl(req);
 
+    // The installation's release-signing public key, written to the host so
+    // it can verify a collector update offline. Generated on first use. If
+    // this fails the host is installed WITHOUT the updater rather than with
+    // an updater that has nothing to verify against — see
+    // COLLECTOR_UPDATER_STEP.
+    let releasePublicKey = null;
+    try {
+      releasePublicKey = (await releaseSigningService.getPublicKey()).publicKeyPem;
+    } catch (err) {
+      logger.warn('bootstrap: no release signing key — installing without the collector updater', {
+        error: err.message,
+      });
+    }
+
     let script;
     if (payload.mode === 'posture') {
       // Posture-only: no CA public key needed or fetched — this mode never
@@ -340,6 +427,7 @@ router.get(
         apiUrl,
         agentToken,
         hostname: server.hostname,
+        releasePublicKey,
       });
     } else {
       // 'full' or 'ssh' — both run the CA-trust/sshd/check-principals
@@ -355,6 +443,7 @@ router.get(
         serverId: payload.serverId,
         orgId: payload.orgId,
         mode: payload.mode,
+        releasePublicKey,
       });
     }
 
@@ -628,6 +717,7 @@ if [ "$PLATFORM" = "linux" ] && command -v systemctl >/dev/null 2>&1 \\
       && echo "[shellius]   First posture report started — it reaches Shellius within a minute" \\
       || echo "[shellius]   ! could not start shellius-posture.service now; the timer runs it within 5 min"
   fi
+${COLLECTOR_UPDATER_STEP}
 else
   echo "[shellius]   Skipping posture systemd units (not Linux, no systemd, or assets missing)"
 fi
@@ -660,7 +750,9 @@ if command -v sudo >/dev/null 2>&1 && id -u "\$POSTURE_USER" >/dev/null 2>&1; th
   fi
 fi`;
 
-function buildUnixInstallScript({ apiUrl, agentToken, caPubKey, hostname, sshUser, serverId, orgId, mode = 'full' }) {
+
+function buildUnixInstallScript({ apiUrl, agentToken, caPubKey, hostname, sshUser, serverId, orgId, mode = 'full', releasePublicKey = null }) {
+  const { updaterB64, updaterServiceB64, updaterTimerB64, releaseKeyB64 } = collectorUpdaterBlobs(apiUrl, releasePublicKey);
   // mode 'ssh' is 'full' minus the posture collector: the SSH-trust steps are
   // identical, steps 10-11 are omitted entirely, and the remaining steps are
   // renumbered so the operator doesn't watch "[12/14]" go by in a 12-step run.
@@ -798,6 +890,13 @@ POSTURE_SERVICE_B64='${postureServiceB64}'
 POSTURE_TIMER_B64='${postureTimerB64}'
 POSTURE_SUDOERS_B64='${postureSudoersB64}'
 POSTURE_CONTAINER_SUDOERS_B64='${postureContainerSudoersB64}'
+# Collector updater (docs/collector-updates.md). Empty when this deployment
+# has no signing key yet — the updater is then not installed at all, rather
+# than installed with no way to verify what it downloads.
+COLLECTOR_UPDATE_B64='${updaterB64}'
+COLLECTOR_UPDATE_SERVICE_B64='${updaterServiceB64}'
+COLLECTOR_UPDATE_TIMER_B64='${updaterTimerB64}'
+RELEASE_KEY_B64='${releaseKeyB64}'
 POSTURE_USER=shellius-posture
 POSTURE_COLLECT_PATH=/usr/local/sbin/shellius-posture-collect
 POSTURE_REPORT_PATH=/usr/local/sbin/shellius-posture-report
@@ -1537,7 +1636,8 @@ fi
 // Idempotent and re-runnable. Accepts (and no-ops) --upgrade for symmetry
 // with the full script's CLI — every step here already re-applies on every
 // invocation, so there's no separate "upgrade only" code path to gate.
-function buildPostureOnlyInstallScript({ apiUrl, agentToken, hostname }) {
+function buildPostureOnlyInstallScript({ apiUrl, agentToken, hostname, releasePublicKey = null }) {
+  const { updaterB64, updaterServiceB64, updaterTimerB64, releaseKeyB64 } = collectorUpdaterBlobs(apiUrl, releasePublicKey);
   const postureReportScript = POSTURE_ASSETS.report
     ? POSTURE_ASSETS.report.replace('__SHELLIUS_POSTURE_API_URL__', apiUrl)
     : null;
@@ -1632,6 +1732,10 @@ POSTURE_SERVICE_B64='${postureServiceB64}'
 POSTURE_TIMER_B64='${postureTimerB64}'
 POSTURE_SUDOERS_B64='${postureSudoersB64}'
 POSTURE_CONTAINER_SUDOERS_B64='${postureContainerSudoersB64}'
+COLLECTOR_UPDATE_B64='${updaterB64}'
+COLLECTOR_UPDATE_SERVICE_B64='${updaterServiceB64}'
+COLLECTOR_UPDATE_TIMER_B64='${updaterTimerB64}'
+RELEASE_KEY_B64='${releaseKeyB64}'
 
 if [ -z "\$POSTURE_COLLECT_B64" ] || [ -z "\$POSTURE_REPORT_B64" ] || [ -z "\$POSTURE_SERVICE_B64" ] \\
    || [ -z "\$POSTURE_TIMER_B64" ] || [ -z "\$POSTURE_SUDOERS_B64" ]; then
@@ -1717,6 +1821,7 @@ systemctl restart shellius-posture.timer 2>/dev/null || true
 systemctl start --no-block shellius-posture.service 2>/dev/null \\
   && echo "[shellius]   First posture report started — it reaches Shellius within a minute" \\
   || echo "[shellius]   ! could not start shellius-posture.service now; the timer runs it within 5 min"
+${COLLECTOR_UPDATER_STEP}
 
 echo "[shellius] [5/5] Running self-test"
 SELF_TEST_FAIL=0

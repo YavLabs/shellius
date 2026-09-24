@@ -1,0 +1,36 @@
+# Shellius collector updater — managed by Shellius bootstrap, DO NOT EDIT.
+#
+# Deliberately root, and deliberately NOT the shellius-posture account: this
+# unit's whole job is to replace /usr/local/sbin/shellius-posture-collect,
+# which is root-owned 0755. The collector itself must stay unprivileged, so
+# the two are separate units with separate accounts rather than one unit that
+# can both collect and rewrite the collector.
+#
+# It is a separate failure domain from both the collector and SSH. A failure
+# here costs a missed update; the existing collector carries on unchanged.
+# The script exits 0 on every failure path for that reason — see its header.
+#
+# Nothing here is hardened with NoNewPrivileges, ProtectKernelModules or
+# RestrictSUIDSGID, for the same reason those are forbidden in
+# shellius-posture.service: this unit runs the freshly installed collector as
+# the unprivileged account to smoke-test it, and that run needs `sudo`, which
+# is setuid. A hardening option that quietly disables setuid would make every
+# smoke test fail and every update roll back — and the symptom would look
+# exactly like a bad collector.
+[Unit]
+Description=Shellius posture collector updater
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=root
+ExecStart=/usr/local/sbin/shellius-collector-update
+# Downloading, verifying and smoke-testing a collector. The smoke run has its
+# own 60s timeout inside the script; this is the outer bound on the whole
+# thing, including a slow network.
+TimeoutStartSec=300
+MemoryMax=256M
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=shellius-collector-update

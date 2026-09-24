@@ -45,6 +45,7 @@ import StorageTab from '@/components/settings/StorageTab';
 import ServiceAccountsTab from '@/components/settings/serviceAccounts/ServiceAccountsTab';
 import AuditSinksTab from '@/components/settings/auditSinks/AuditSinksTab';
 import ChatTab from '@/components/settings/chat/ChatTab';
+import UpdatesTab from '@/components/settings/UpdatesTab';
 
 /**
  * What each section renders. `card: true` wraps a former standalone page
@@ -65,6 +66,7 @@ const SECTION_VIEWS = {
   ca: { render: () => <CaTab /> },
   'quick-connect': { render: () => <QuickConnectSettings /> },
   posture: { render: () => <PostureSettings /> },
+  updates: { render: () => <UpdatesTab /> },
   email: { render: () => <EmailTab /> },
   storage: { render: () => <StorageTab /> },
   chat: { render: () => <ChatTab /> },

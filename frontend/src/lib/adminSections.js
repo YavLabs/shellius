@@ -15,6 +15,7 @@ import {
   Bot,
   ScrollText,
   MessageSquare,
+  RefreshCw,
 } from 'lucide-react';
 import { canAny } from '@/lib/permissions';
 
@@ -159,6 +160,15 @@ export const ADMIN_SECTIONS = [
     icon: ScrollText,
     anyOf: ['audit.sinks'],
     keywords: ['audit', 'sink', 'siem', 'webhook', 'syslog', 's3', 'splunk', 'datadog', 'panther', 'digest', 'export'],
+  },
+  {
+    key: 'updates',
+    group: 'organization',
+    label: 'Updates',
+    description: 'Available Shellius releases and collector versions',
+    icon: RefreshCw,
+    anyOf: ['settings.updates'],
+    keywords: ['update', 'upgrade', 'version', 'release', 'collector', 'changelog', 'ota'],
   },
   {
     key: 'email',

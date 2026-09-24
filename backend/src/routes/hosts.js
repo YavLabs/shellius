@@ -5,6 +5,10 @@ import ApiError from '../utils/ApiError.js';
 import prisma from '../config/db.js';
 import agentAuth from '../middleware/agentAuth.js';
 import * as postureService from '../services/postureService.js';
+import * as collectorUpdateService from '../services/collectorUpdateService.js';
+import * as releaseSigningService from '../services/releaseSigningService.js';
+import { readCollectorScript } from '../utils/postureCollectorVersion.js';
+import logger from '../utils/logger.js';
 
 const router = express.Router();
 
@@ -342,10 +346,22 @@ router.post('/posture', agentAuth, rejectOversizedPosture, express.json({ limit:
     });
   }
 
+  const normalized = normalizePostureSnapshot(value);
   const result = await postureService.ingest(
     req.agentServer.orgId,
     req.agentServer.id,
-    normalizePostureSnapshot(value)
+    normalized
+  );
+
+  // A posture report is the only channel a host has to say how an update
+  // went: it cannot tell us "that worked", only carry on working at the new
+  // version. Coming back still on the old one after the grace period is what
+  // the updater's own rollback looks like from here. Never throws — this is
+  // the ingest path.
+  await collectorUpdateService.recordReportedVersion(
+    req.agentServer.orgId,
+    req.agentServer.id,
+    normalized.agentVersion || null
   );
 
   res.json({ success: true, data: result });
@@ -379,6 +395,91 @@ router.post('/posture/problem', agentAuth, asyncHandler(async (req, res) => {
   if (error) throw new ApiError(400, error.message);
   await postureService.recordRejectedSnapshot(req.agentServer.id, [`reported by the host: ${value.reason}`]);
   res.json({ success: true, data: { recorded: true } });
+}));
+
+// ---------------------------------------------------------------------------
+// GET /api/hosts/collector-update
+// GET /api/hosts/collector-script
+// ---------------------------------------------------------------------------
+//
+// The pull half of collector auto-update (docs/collector-updates.md). A host
+// asks whether it has been offered a newer collector, and if so fetches it.
+//
+// Per-host agent token ONLY — the org-wide legacy shared secret is refused
+// here as it is for posture ingest. This pair is the one path in Shellius
+// that hands a managed host something it will execute as root, so "which
+// host is this" has to be answerable from the credential itself and not from
+// anything in the request.
+//
+// Note what these endpoints deliberately cannot do. They serve exactly one
+// artefact — the posture collector script this installation ships — chosen by
+// the rollout job, not by anything the caller says. There is no version
+// parameter, no path, no name: a host cannot ask for a different file, an
+// older version, or a script belonging to another installation, because none
+// of those are expressible. `check-principals` and the heartbeat agent are
+// not reachable this way at all, and that is on purpose: a broken collector
+// makes posture go quiet, while a broken check-principals decides whether
+// anyone can log in anywhere.
+
+router.get('/collector-update', agentAuth, asyncHandler(async (req, res) => {
+  if (!req.agentServer) {
+    throw new ApiError(401, 'A per-host agent token is required', { code: 'AGENT_AUTH_REQUIRED' });
+  }
+
+  const offer = await collectorUpdateService.offerFor(req.agentServer.id);
+  if (!offer) {
+    res.json({ success: true, data: { update: null } });
+    return;
+  }
+
+  const script = readCollectorScript();
+  if (!script) {
+    // We know which version we meant to offer but cannot read its bytes.
+    // Saying "no update" is the safe answer: the host carries on working.
+    logger.error('collectorUpdate: offered a version whose script cannot be read', {
+      serverId: req.agentServer.id,
+      version: offer.version,
+    });
+    res.json({ success: true, data: { update: null } });
+    return;
+  }
+
+  const { signature, fingerprint, algorithm } = await releaseSigningService.sign(script);
+
+  res.json({
+    success: true,
+    data: {
+      update: {
+        version: offer.version,
+        url: offer.url,
+        sha256: releaseSigningService.digestOf(script),
+        signature,
+        algorithm,
+        keyFingerprint: fingerprint,
+      },
+    },
+  });
+}));
+
+router.get('/collector-script', agentAuth, asyncHandler(async (req, res) => {
+  if (!req.agentServer) {
+    throw new ApiError(401, 'A per-host agent token is required', { code: 'AGENT_AUTH_REQUIRED' });
+  }
+
+  // Only hosts with a live offer may fetch it. Not because the script is a
+  // secret — it ships in the repository — but because an endpoint that hands
+  // out an executable to any authenticated agent is a larger surface than one
+  // that hands it to the specific hosts a rollout has decided on.
+  const offer = await collectorUpdateService.offerFor(req.agentServer.id);
+  if (!offer) throw new ApiError(404, 'No collector update is offered to this host');
+
+  const script = readCollectorScript();
+  if (!script) throw new ApiError(503, 'The collector script is not readable on this server');
+
+  res.setHeader('Content-Type', 'text/x-shellscript; charset=utf-8');
+  res.setHeader('Cache-Control', 'no-store');
+  res.setHeader('X-Shellius-Collector-Version', offer.version);
+  res.send(script);
 }));
 
 export default router;

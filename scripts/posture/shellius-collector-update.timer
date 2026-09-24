@@ -1,0 +1,18 @@
+# Shellius collector updater timer — managed by Shellius bootstrap, DO NOT
+# EDIT. See docs/collector-updates.md.
+[Unit]
+Description=Shellius posture collector updater timer
+
+[Timer]
+# Long after boot: a host that has just come up has more urgent things to do,
+# and an update that waits ten minutes costs nothing.
+OnBootSec=10min
+OnUnitActiveSec=15min
+Unit=shellius-collector-update.service
+# Ninety hosts asking for an update in the same second is a self-inflicted
+# thundering herd against the Shellius API. The server's staged rollout bounds
+# how many hosts are OFFERED an update; this bounds how many ASK at once.
+RandomizedDelaySec=300
+
+[Install]
+WantedBy=timers.target

@@ -34,6 +34,12 @@ function serialize(row) {
     // Json column — Prisma already hands back parsed JS, but a raw payload
     // from an old row could in principle be malformed; never let that 500.
     expectedPublicPorts: Array.isArray(row.expectedPublicPorts) ? row.expectedPublicPorts : [],
+    // serialize() is a whitelist, so a new column is invisible to every
+    // caller until it is named here — which is exactly how the collector
+    // rollout job read `collectorAutoUpdate` as undefined and decided every
+    // organization had the feature turned off.
+    collectorAutoUpdate: row.collectorAutoUpdate,
+    collectorCanaryPercent: row.collectorCanaryPercent,
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
   };
@@ -115,6 +121,21 @@ export async function updateSettings(orgId, patch = {}) {
 
   if (patch.expectedPublicPorts !== undefined) {
     data.expectedPublicPorts = normalizeExpectedPublicPorts(patch.expectedPublicPorts);
+  }
+
+  // Turning this on is what makes Shellius able to run new code as root on
+  // every managed host with nobody pressing anything. It is a deliberate
+  // decision and it is audited by the route, like every other setting here.
+  if (patch.collectorAutoUpdate !== undefined) data.collectorAutoUpdate = !!patch.collectorAutoUpdate;
+
+  if (patch.collectorCanaryPercent !== undefined) {
+    const n = parseInt(patch.collectorCanaryPercent, 10);
+    if (!Number.isFinite(n) || n < 1 || n > 100) {
+      throw new ApiError(400, 'collectorCanaryPercent must be between 1 and 100');
+    }
+    // No floor of 0: a canary percentage of zero means "roll out to nobody",
+    // which looks identical to the feature being broken.
+    data.collectorCanaryPercent = n;
   }
 
   const row = await prisma.postureSettings.update({ where: { orgId }, data });
