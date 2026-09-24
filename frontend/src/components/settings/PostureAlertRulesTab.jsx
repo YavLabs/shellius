@@ -29,6 +29,31 @@ const CHANNELS = [
   { value: 'chat', label: 'Chat' },
 ];
 
+const MODES = [
+  { value: 'immediate', label: 'Send each finding as it happens' },
+  { value: 'digest', label: 'Batch the email into a digest' },
+];
+
+const DIGEST_SCHEDULES = [
+  { value: 'daily', label: 'Daily' },
+  { value: 'weekly', label: 'Weekly' },
+];
+
+const WEEKDAYS = [
+  { value: 0, label: 'Sunday' },
+  { value: 1, label: 'Monday' },
+  { value: 2, label: 'Tuesday' },
+  { value: 3, label: 'Wednesday' },
+  { value: 4, label: 'Thursday' },
+  { value: 5, label: 'Friday' },
+  { value: 6, label: 'Saturday' },
+];
+
+const HOURS = Array.from({ length: 24 }, (_, h) => ({
+  value: h,
+  label: `${String(h).padStart(2, '0')}:00 UTC`,
+}));
+
 const EMPTY_RULE = {
   name: '',
   isActive: true,
@@ -41,10 +66,28 @@ const EMPTY_RULE = {
   recipientUserIds: [],
   channels: ['inapp'],
   mode: 'immediate',
+  digestSchedule: 'daily',
+  digestHour: 8,
+  digestDayOfWeek: 1,
   throttleMinutes: 0,
   escalateAfterHours: '',
   escalateToGroupId: '',
 };
+
+/**
+ * "email digest daily 08:00 UTC" — mirrors the backend's normalisation, which
+ * reads a NULL cadence as daily at 08:00 (and deliberately does NOT coerce
+ * NULL to 0, because that would mean midnight).
+ */
+function digestLabel(rule) {
+  const hour = Number.isInteger(rule.digestHour) ? rule.digestHour : 8;
+  const at = `${String(hour).padStart(2, '0')}:00 UTC`;
+  if (rule.digestSchedule === 'weekly') {
+    const day = WEEKDAYS.find((d) => d.value === rule.digestDayOfWeek)?.label || 'Monday';
+    return `email digest ${day} ${at}`;
+  }
+  return `email digest daily ${at}`;
+}
 
 function Field({ label, description, children }) {
   return (
@@ -67,8 +110,15 @@ function RuleForm({ rule, customers, groups, onSave, onCancel, saving, error }) 
       escalateAfterHours: form.escalateAfterHours === '' ? null : Number(form.escalateAfterHours),
       recipientGroupId: form.recipientGroupId || null,
       escalateToGroupId: form.escalateToGroupId || null,
+      digestHour: Number(form.digestHour) || 0,
+      // The API refuses a day on a daily schedule, and the backend's
+      // normaliser would pick Monday for a weekly rule that sent none.
+      digestDayOfWeek: form.digestSchedule === 'weekly' ? Number(form.digestDayOfWeek) || 0 : null,
     });
   };
+
+  const isDigest = form.mode === 'digest';
+  const hasEmail = form.channels.includes('email');
 
   const canSubmit = form.name.trim().length > 0 && form.channels.length > 0;
 
@@ -151,11 +201,69 @@ function RuleForm({ rule, customers, groups, onSave, onCancel, saving, error }) 
         />
       </Field>
 
-      {/* "Daily digest" used to be offered here. It suppressed the per-event
-          email and deferred to a batching job that was never written, so
-          choosing it stopped a rule notifying anybody. Removed until that job
-          exists; throttling is the control that actually limits volume. */}
-      <Field label="Throttle (minutes)" description="Per finding, 0 = none">
+      {/* Digest batches the EMAIL channel and nothing else. The first version
+          of this control suppressed the only channel a rule had and deferred
+          to a job that was never written, so those rules delivered nothing at
+          all. Saying exactly what is and is not batched is what stops that
+          being re-learned the hard way. */}
+      <Field
+        label="Email delivery"
+        description="In-app and chat always arrive as each finding happens. This only changes the email."
+      >
+        <SearchableSelect
+          value={form.mode}
+          onChange={(v) => set({ mode: v })}
+          options={MODES}
+          searchable={false}
+        />
+      </Field>
+
+      {isDigest && !hasEmail && (
+        <div className="rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs text-amber-700 dark:text-amber-400">
+          This rule has no email channel, so there is nothing to batch. Add
+          &ldquo;Email&rdquo; above, or leave the mode on &ldquo;send each finding&rdquo;.
+        </div>
+      )}
+
+      {isDigest && (
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+          <Field label="How often">
+            <SearchableSelect
+              value={form.digestSchedule}
+              onChange={(v) => set({ digestSchedule: v })}
+              options={DIGEST_SCHEDULES}
+              searchable={false}
+            />
+          </Field>
+          {form.digestSchedule === 'weekly' && (
+            <Field label="Day">
+              <SearchableSelect
+                value={form.digestDayOfWeek}
+                onChange={(v) => set({ digestDayOfWeek: v })}
+                options={WEEKDAYS}
+                searchable={false}
+              />
+            </Field>
+          )}
+          <Field label="At" description="Always UTC">
+            <SearchableSelect
+              value={form.digestHour}
+              onChange={(v) => set({ digestHour: v })}
+              options={HOURS}
+              searchable={false}
+            />
+          </Field>
+        </div>
+      )}
+
+      <Field
+        label="Throttle (minutes)"
+        description={
+          isDigest
+            ? 'Per finding, 0 = none. Applies to the in-app and chat channels; the digest is bounded by its own schedule.'
+            : 'Per finding, 0 = none'
+        }
+      >
         <Input type="number" min={0} value={form.throttleMinutes} onChange={(e) => set({ throttleMinutes: e.target.value })} />
       </Field>
 
@@ -208,6 +316,10 @@ function RuleRow({ rule, onEdit, onDelete }) {
             (rule.recipientRoles || []).length ? `roles: ${rule.recipientRoles.join(', ')}` : null,
             rule.recipientGroupId ? 'group recipient' : null,
             (rule.channels || []).join(', '),
+            // Worth showing in the list: a rule whose email is batched
+            // behaves very differently from one that is not, and the only
+            // other way to find out is to open it.
+            rule.mode === 'digest' ? digestLabel(rule) : null,
             rule.throttleMinutes ? `throttled ${rule.throttleMinutes}m` : null,
           ]
             .filter(Boolean)
@@ -341,7 +453,21 @@ function PostureAlertRulesTab() {
 
       <Modal open={formOpen} onClose={() => setFormOpen(false)} title={editing ? 'Edit alert rule' : 'New alert rule'} size="lg">
         <RuleForm
-          rule={editing ? { ...EMPTY_RULE, ...editing, escalateAfterHours: editing.escalateAfterHours ?? '' } : EMPTY_RULE}
+          rule={
+            editing
+              ? {
+                  ...EMPTY_RULE,
+                  ...editing,
+                  escalateAfterHours: editing.escalateAfterHours ?? '',
+                  // Rules written before digest existed carry NULLs here, and
+                  // a spread of null would blank the selects rather than fall
+                  // back to EMPTY_RULE's defaults.
+                  digestSchedule: editing.digestSchedule ?? EMPTY_RULE.digestSchedule,
+                  digestHour: editing.digestHour ?? EMPTY_RULE.digestHour,
+                  digestDayOfWeek: editing.digestDayOfWeek ?? EMPTY_RULE.digestDayOfWeek,
+                }
+              : EMPTY_RULE
+          }
           customers={customers}
           groups={groups}
           onSave={handleSave}

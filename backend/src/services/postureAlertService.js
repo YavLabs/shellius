@@ -42,6 +42,9 @@ const WRITABLE_FIELDS = [
   'recipientUserIds',
   'channels',
   'mode',
+  'digestSchedule',
+  'digestHour',
+  'digestDayOfWeek',
   'notifyOnResolve',
   'throttleMinutes',
   'escalateAfterHours',
@@ -92,6 +95,11 @@ export async function createAlertRule(orgId, data) {
     assertCustomersExist(orgId, payload.customerIds),
   ]);
 
+  // Start the digest watermark at creation. Without it the job would fall
+  // back to `createdAt`, which is the same instant here but would not be
+  // after a later edit — see updateAlertRule.
+  if (payload.mode === 'digest') payload.lastDigestAt = new Date();
+
   try {
     return await prisma.postureAlertRule.create({ data: { orgId, ...payload } });
   } catch (err) {
@@ -115,6 +123,15 @@ export async function updateAlertRule(orgId, id, data) {
       : Promise.resolve(),
     payload.customerIds !== undefined ? assertCustomersExist(orgId, payload.customerIds) : Promise.resolve(),
   ]);
+
+  // Switching an existing rule INTO digest mode restarts the watermark.
+  // Otherwise the job would anchor on `createdAt`, and a year-old rule
+  // switched to digest this morning would send a first digest covering
+  // everything back to the window clamp — a month of findings, presented as
+  // if they had just happened.
+  if (payload.mode === 'digest' && existing.mode !== 'digest') {
+    payload.lastDigestAt = new Date();
+  }
 
   try {
     return await prisma.postureAlertRule.update({ where: { id }, data: payload });
@@ -159,7 +176,7 @@ function ruleWantsEvent(rule, type) {
  * Mirrors accessRequestService.resolveApprovers so "who gets told" has one
  * shape across the product.
  */
-async function resolveRecipients(orgId, rule, { escalating = false } = {}) {
+export async function resolveRecipients(orgId, rule, { escalating = false } = {}) {
   const orFilters = [];
   if (rule.recipientUserIds?.length) orFilters.push({ id: { in: rule.recipientUserIds } });
   if (rule.recipientRoles?.length) {
@@ -191,7 +208,7 @@ async function resolveRecipients(orgId, rule, { escalating = false } = {}) {
  * Drop recipients who cannot see the server. A scoped user must not learn
  * that an out-of-scope server exists — least of all through an alert.
  */
-async function filterByScope(recipients, server) {
+export async function filterByScope(recipients, server) {
   const allowed = [];
   for (const user of recipients) {
     const scope = await resolveScope(user);
@@ -339,12 +356,15 @@ export async function dispatchFindingEvents({ orgId, serverId, events }) {
           }
         }
 
-        // Every matching rule mails immediately. There was once a `digest`
-        // mode here that suppressed this branch and deferred to a batching job
-        // — a job that was never written, so a digest rule with only the email
-        // channel delivered nothing, ever, and said nothing about it. The mode
-        // is gone until that job exists.
-        if (rule.channels?.includes('email')) {
+        // `digest` batches this branch — and ONLY this branch. The in-app row
+        // above and the chat message further up still go out per finding, so
+        // a digest rule always delivers something immediately. That is the
+        // whole lesson of the first attempt: digest mode suppressed the only
+        // channel a rule had and deferred to a job nobody had written, so
+        // those rules delivered nothing, ever, and said nothing about it.
+        // jobs/postureDigest.js is that job; it selects on `lastDigestAt`,
+        // which is why nothing here has to remember what it skipped.
+        if (rule.channels?.includes('email') && rule.mode !== 'digest') {
           try {
             await mailer.sendMail({
               orgId,

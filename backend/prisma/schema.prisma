@@ -1630,7 +1630,20 @@ model PostureAlertRule {
   recipientGroupId   String?  @map("recipient_group_id")
   recipientUserIds   String[] @default([]) @map("recipient_user_ids")
   channels           String[] @default(["inapp"])
-  mode               String   @default("immediate") // immediate | digest
+  /// immediate | digest. `digest` batches the EMAIL channel only — in-app
+  /// rows and chat messages stay per-finding, so a digest rule can never
+  /// deliver nothing at all (which is exactly what the first attempt at this
+  /// feature did, silently, until it was removed in 2.0).
+  mode               String   @default("immediate")
+  /// Digest cadence, read only when mode = 'digest'. All UTC; see
+  /// services/digestSchedule.js for why there is no per-rule timezone.
+  digestSchedule     String?  @map("digest_schedule") // daily | weekly
+  digestHour         Int?     @map("digest_hour") // 0-23
+  digestDayOfWeek    Int?     @map("digest_day_of_week") // 0 = Sunday, weekly only
+  /// Watermark: the end of the period the last digest covered. The next
+  /// digest starts here, so an outage produces one catch-up digest rather
+  /// than one per missed day.
+  lastDigestAt       DateTime? @map("last_digest_at")
   notifyOnResolve    Boolean  @default(false) @map("notify_on_resolve")
   throttleMinutes    Int      @default(0) @map("throttle_minutes")
   escalateAfterHours Int?     @map("escalate_after_hours")
@@ -1642,6 +1655,9 @@ model PostureAlertRule {
 
   @@unique([orgId, name])
   @@index([orgId, isActive])
+  /// The digest job scans every org for due rules, so it filters on
+  /// (isActive, mode) rather than orgId.
+  @@index([isActive, mode])
   @@map("posture_alert_rules")
 }
 

@@ -29,6 +29,7 @@ import * as identityLinked from './templates/identityLinked.js';
 import * as identityUnlinked from './templates/identityUnlinked.js';
 import * as ssoLinkApproval from './templates/ssoLinkApproval.js';
 import * as breakGlassInvoked from './templates/breakGlassInvoked.js';
+import * as postureDigest from './templates/postureDigest.js';
 
 const TEMPLATES = {
   invite,
@@ -49,6 +50,7 @@ const TEMPLATES = {
   identityUnlinked,
   ssoLinkApproval,
   breakGlassInvoked,
+  postureDigest,
 };
 
 export function renderTemplate(name, vars) {

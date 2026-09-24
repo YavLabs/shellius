@@ -588,9 +588,13 @@ model PostureAlertRule {
   recipientRoles   String[] @map("recipient_roles")     // role keys or base tiers
   recipientGroupId String?  @map("recipient_group_id")
   recipientUserIds String[] @map("recipient_user_ids")
-  channels    String[]                        // inapp | email
+  channels    String[]                        // inapp | email | chat
   // Behaviour
   mode        String   @default("immediate")  // immediate | digest
+  digestSchedule  String?  @map("digest_schedule")     // daily | weekly
+  digestHour      Int?     @map("digest_hour")         // 0-23, UTC
+  digestDayOfWeek Int?     @map("digest_day_of_week")  // 0 = Sunday, weekly only
+  lastDigestAt    DateTime? @map("last_digest_at")     // watermark
   throttleMinutes Int  @default(0)            // per finding, 0 = no extra throttle
   escalateAfterHours Int? @map("escalate_after_hours")
   escalateToGroupId  String? @map("escalate_to_group_id")
@@ -609,7 +613,14 @@ finding reopened, finding still open at escalation time, finding resolved
 3. Recipients are intersected with customer scope — a scoped user is never
    alerted about a customer they cannot see. This also means a rule cannot be
    used to leak the existence of out-of-scope servers.
-4. `digest` mode batches into one daily message per recipient.
+4. `digest` mode batches **the email channel only** into one message per
+   recipient, on the rule's own cadence (daily or weekly, at an hour, UTC).
+   In-app rows and chat messages still go out per finding. That asymmetry is
+   deliberate: the first version of this mode suppressed the only channel a
+   rule had and deferred to a batching job that was never written, so digest
+   rules delivered nothing at all, silently, until the mode was removed in
+   2.0 (migration `20261008000000_posture_alert_drop_digest`). It is back in
+   2.1 with `backend/src/jobs/postureDigest.js` behind it.
 5. Acknowledging a finding stops its escalation clock without resolving it.
 
 **Seeded default rule** (so a fresh org is useful but quiet): *"Critical

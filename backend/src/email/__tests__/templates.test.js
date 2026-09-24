@@ -30,6 +30,20 @@ const SAMPLES = {
   // The reason carries whatever the invoker typed, so it is the escaping case
   // that matters most here.
   breakGlassInvoked: { recipientName: 'A', invokerName: '<b>Root</b>', serverHostname: 'h', environment: 'prod', reason: '<b>urgent</b> & fast', expiresAt: '2026-04-07T02:00:00Z', reviewUrl: 'https://x.test/access-requests?request=1' },
+  // Every field of a finding comes off a monitored host — `message` carries
+  // process names and unix usernames — so this sample is deliberately hostile.
+  postureDigest: {
+    recipientName: 'A',
+    ruleName: 'Critical exposure',
+    periodLabel: 'the last 24 hours',
+    findings: [
+      { severity: 'CRITICAL', code: 'PORT_EXPOSED', proto: 'tcp', port: 5432, message: '<b>postgres</b> & friends listening on 0.0.0.0', serverName: '<b>db-1</b>', environment: 'prod' },
+      { severity: 'HIGH', code: 'FIREWALL_INACTIVE', message: 'ufw is installed but inactive', serverName: 'web-2', environment: 'staging' },
+    ],
+    resolved: [{ severity: 'MEDIUM', code: 'PORT_EXPOSED', proto: 'tcp', port: 6379, message: 'redis no longer reachable', serverName: 'cache-1', environment: 'dev' }],
+    truncated: 3,
+    postureUrl: 'https://x.test/posture',
+  },
 };
 
 describe('email templates — registry', () => {

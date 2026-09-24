@@ -38,6 +38,28 @@ const validate = (schema) => (req, res, next) => {
   next();
 };
 
+/**
+ * Validate a PATCH-shaped body: absent keys stay absent.
+ *
+ * `noDefaults` is the whole point. An update schema built by forking the
+ * create schema's keys to `.optional()` still applies every `.default(...)`
+ * for the keys the caller left out — so `PUT /alert-rules/:id` with
+ * `{ isActive: false }` did not pause a rule, it also reset its severities to
+ * "any", its channels to in-app only (silently dropping email) and its
+ * throttle to zero. The service layer's `pick()` cannot tell a defaulted
+ * value from a supplied one, so this has to be fixed here.
+ */
+const validatePartial = (schema) => (req, res, next) => {
+  const { error, value } = schema.validate(req.body, {
+    abortEarly: false,
+    stripUnknown: true,
+    noDefaults: true,
+  });
+  if (error) return next(new ApiError(400, error.details.map((d) => d.message).join(', ')));
+  req.body = value;
+  next();
+};
+
 const validateQuery = (schema) => (req, res, next) => {
   const { error, value } = schema.validate(req.query, { abortEarly: false, stripUnknown: true });
   if (error) return next(new ApiError(400, error.details.map((d) => d.message).join(', ')));
@@ -110,7 +132,10 @@ const settingsUpdateSchema = Joi.object({
   expectedPublicPorts: Joi.array().items(portEntrySchema).max(200),
 }).min(1);
 
-const alertRuleBodySchema = Joi.object({
+// Exported for tests — the same convention routes/hosts.js uses for
+// `postureSchema`. The update schema's `noDefaults` behaviour is a
+// correctness property worth pinning, not an implementation detail.
+export const alertRuleBodySchema = Joi.object({
   name: Joi.string().min(1).max(200).required(),
   isActive: Joi.boolean().default(true),
   severities: Joi.array().items(Joi.string().valid(...SEVERITIES)).default([]),
@@ -121,18 +146,26 @@ const alertRuleBodySchema = Joi.object({
   recipientGroupId: Joi.string().allow(null, ''),
   recipientUserIds: Joi.array().items(Joi.string()).default([]),
   channels: Joi.array().items(Joi.string().valid(...CHANNELS)).default(['inapp']),
-  // 'digest' was accepted here for a batching job that was never written, so
-  // choosing it silently stopped a rule emailing anybody. Only 'immediate' is
-  // offered until that job exists; stored rows are migrated by
-  // 20261008000000_posture_alert_drop_digest.
-  mode: Joi.string().valid('immediate').default('immediate'),
+  // 'digest' was accepted here once before with no job behind it, so choosing
+  // it silently stopped a rule emailing anybody (fixed by
+  // 20261008000000_posture_alert_drop_digest, which moved those rules back to
+  // 'immediate'). It is accepted again now that jobs/postureDigest.js exists.
+  // Note what digest does and does not batch: the EMAIL channel only. In-app
+  // rows and chat messages still go out per finding, so a digest rule can
+  // never deliver nothing at all.
+  mode: Joi.string().valid('immediate', 'digest').default('immediate'),
+  // Cadence, read only when mode = 'digest'. UTC — see
+  // services/digestSchedule.js for why there is no per-rule timezone.
+  digestSchedule: Joi.string().valid('daily', 'weekly').default('daily'),
+  digestHour: Joi.number().integer().min(0).max(23).default(8),
+  digestDayOfWeek: Joi.number().integer().min(0).max(6).allow(null).default(null),
   notifyOnResolve: Joi.boolean().default(false),
   throttleMinutes: Joi.number().integer().min(0).max(10080).default(0),
   escalateAfterHours: Joi.number().integer().min(1).max(720).allow(null),
   escalateToGroupId: Joi.string().allow(null, ''),
 });
 
-const alertRuleUpdateSchema = alertRuleBodySchema.fork(['name'], (s) => s.optional()).min(1);
+export const alertRuleUpdateSchema = alertRuleBodySchema.fork(['name'], (s) => s.optional()).min(1);
 
 // ---------------------------------------------------------------------------
 // Every posture route requires JWT auth + tenant extraction
@@ -523,7 +556,7 @@ router.put(
   '/alert-rules/:id',
   requirePermission('posture.settings'),
   audit('posture.alert_rule.update', 'PostureAlertRule'),
-  validate(alertRuleUpdateSchema),
+  validatePartial(alertRuleUpdateSchema),
   asyncHandler(async (req, res) => {
     const rule = await postureAlertService.updateAlertRule(req.orgId, req.params.id, req.body);
     res.json({ success: true, data: { rule } });
