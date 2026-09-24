@@ -13,6 +13,17 @@ services:
       dockerfile: docker/Dockerfile.guacd
     image: shellius-guacd:h264
     restart: unless-stopped
+    # Published ONLY in dev, and only on the loopback interface.
+    #
+    # In every other compose file the backend is a container on this network
+    # and reaches guacd by service name (GUACD_HOST=guacd). In dev the backend
+    # runs on the host, so it looks for guacd at 127.0.0.1:4822 — which
+    # nothing was listening on, because no dev compose file published the
+    # port. The symptom was every local RDP attempt failing with "Desktop
+    # service unavailable (SERVICE_UNAVAILABLE)" and ECONNREFUSED in the
+    # backend log, i.e. RDP could not be exercised locally at all.
+    ports:
+      - "127.0.0.1:4822:4822"
     networks:
       - default
 
