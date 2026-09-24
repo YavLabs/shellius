@@ -67,9 +67,9 @@ describe('cohort maths', () => {
     }
   });
 
-  // The arithmetic trap that already bit the directory-sync safety valve:
-  // ceil(2 * 10/100) is 0, so a small org would sit at "rolling" forever
-  // having done nothing at all.
+  // A small organization must never be left at "rolling" having offered the
+  // update to nobody. (Math.ceil already guarantees this; the explicit floor
+  // is kept as a guard, and this test is what would catch a ceil->floor edit.)
   test('a cohort is never empty while there is work and a percentage', () => {
     expect(cohortSize(1, 10)).toBe(1);
     expect(cohortSize(2, 10)).toBe(1);
@@ -470,6 +470,48 @@ describe('rollout (live DB)', () => {
       data: { status: 'halted', haltedReason: 'stopped by a person' },
     });
     expect(await offerFor(s.id)).toBeNull();
+  });
+
+  // Found in review: an attempt left 'offered' when a rollout stops is never
+  // looked at again, because only a 'rolling' rollout reaches the judging
+  // code. It sat pending in the UI for ever.
+  test('halting a rollout closes the attempts it was still waiting on', async () => {
+    if (!(await dbReachable())) return console.warn('[skip] DB unreachable');
+    await settings({ collectorCanaryPercent: 100 });
+    for (let i = 0; i < 4; i += 1) await host();
+    await advanceOrg(org.id);
+    const rollout = await prisma.collectorRollout.findFirst({ where: { orgId: org.id } });
+    const attempts = await prisma.collectorUpdateAttempt.findMany({ where: { rolloutId: rollout.id } });
+
+    // Two hosts come back on the old version, well past the grace period.
+    const late = new Date(Date.now() + VERIFY_GRACE_MS + MINUTE);
+    await recordReportedVersion(org.id, attempts[0].serverId, '0.0.1', late);
+    await recordReportedVersion(org.id, attempts[1].serverId, '0.0.1', late);
+
+    const result = await advanceOrg(org.id, { now: late });
+    expect(result.action).toBe('halted');
+    expect(await prisma.collectorUpdateAttempt.count({ where: { rolloutId: rollout.id, status: 'offered' } })).toBe(0);
+  });
+
+  // A machine taken out of service is not an update failure, and must not be
+  // able to halt an otherwise healthy rollout.
+  test('a server deactivated mid-rollout is withdrawn, not counted as a failure', async () => {
+    if (!(await dbReachable())) return console.warn('[skip] DB unreachable');
+    await settings({ collectorCanaryPercent: 100 });
+    const a = await host();
+    const b = await host();
+    await advanceOrg(org.id);
+
+    // Both hosts are decommissioned while their updates are outstanding.
+    await prisma.server.updateMany({ where: { id: { in: [a.id, b.id] } }, data: { isActive: false } });
+
+    const late = new Date(Date.now() + VERIFY_GRACE_MS + MINUTE);
+    const result = await advanceOrg(org.id, { now: late });
+    expect(result.action).not.toBe('halted');
+
+    const rollout = await prisma.collectorRollout.findFirst({ where: { orgId: org.id } });
+    expect(await prisma.collectorUpdateAttempt.count({ where: { rolloutId: rollout.id, status: 'failed' } })).toBe(0);
+    expect(await prisma.collectorUpdateAttempt.count({ where: { rolloutId: rollout.id, status: 'cancelled' } })).toBe(2);
   });
 
   test('stepHealth counts what the gate reads', async () => {

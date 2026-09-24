@@ -71,7 +71,13 @@ const createSchema = Joi.object({
   ipAddress: Joi.string()
     .allow('', null)
     .when('dynamicIp', { is: true, then: Joi.optional(), otherwise: Joi.string().required() }),
-  port: Joi.number().integer().min(1).max(65535).default(22),
+  // Defaulted by protocol. A flat `.default(22)` gave every RDP server the
+  // SSH port, which is what guacd then tried to speak RDP to.
+  port: Joi.number()
+    .integer()
+    .min(1)
+    .max(65535)
+    .default((parent) => (parent.protocol === 'rdp' ? 3389 : 22)),
   protocol: Joi.string().valid(...PROTOCOLS).default('ssh'),
   environment: Joi.string().valid(...ENVIRONMENTS).default('dev'),
   labels: Joi.array().items(Joi.string()),
@@ -85,6 +91,9 @@ const createSchema = Joi.object({
   sshKeyPath: Joi.string().allow('', null),
   rdpUsername: Joi.string().allow('', null).max(255),
   rdpPassword: Joi.string().allow('', null),
+  // Present in the schema since RDP shipped, settable through no API until
+  // now — so a host serving RDP on a non-default port could not be described.
+  rdpPort: Joi.number().integer().min(1).max(65535).allow(null),
   isActive: Joi.boolean(),
   authMode: Joi.string().valid(...AUTH_MODES).default('certificate'),
   credentialId: Joi.when('authMode', {
@@ -114,6 +123,7 @@ const updateSchema = Joi.object({
   sshKeyPath: Joi.string().allow('', null),
   rdpUsername: Joi.string().allow('', null).max(255),
   rdpPassword: Joi.string().allow('', null),
+  rdpPort: Joi.number().integer().min(1).max(65535).allow(null),
   isActive: Joi.boolean(),
   authMode: Joi.string().valid(...AUTH_MODES),
   credentialId: Joi.string().allow(null),

@@ -75,6 +75,31 @@ async function withLock(orgId, fn) {
   }
 }
 
+
+/**
+ * End a rollout, and judge whatever it was still waiting on.
+ *
+ * Without the second half, any attempt still `offered` at the moment a
+ * rollout halts or is cancelled stays `offered` in the database for ever:
+ * `advanceOrg` only reaches `failSilentAttempts` while a rollout is still
+ * `rolling`, so nothing ever looks at those rows again and the UI shows them
+ * as pending indefinitely. They are marked `cancelled` rather than `failed` —
+ * nothing is known to have gone wrong with them, they simply stopped being
+ * part of a rollout.
+ */
+async function closeRollout(rolloutId, status, reason, now) {
+  await prisma.$transaction([
+    prisma.collectorRollout.update({
+      where: { id: rolloutId },
+      data: { status, completedAt: now, haltedReason: reason },
+    }),
+    prisma.collectorUpdateAttempt.updateMany({
+      where: { rolloutId, status: 'offered' },
+      data: { status: 'cancelled', detail: `The rollout was ${status} before this host reported back.` },
+    }),
+  ]);
+}
+
 /** The next step up from `percent`, or null when there is nowhere further. */
 export function nextPercent(percent) {
   return PERCENT_STEPS.find((p) => p > percent) ?? null;
@@ -99,10 +124,7 @@ export async function advanceOrg(orgId, { now = new Date() } = {}) {
   // is not a thing this feature can do.
   if (!settings.collectorAutoUpdate) {
     if (open) {
-      await prisma.collectorRollout.update({
-        where: { id: open.id },
-        data: { status: 'cancelled', haltedReason: 'Automatic collector updates were turned off.', completedAt: now },
-      });
+      await closeRollout(open.id, 'cancelled', 'Automatic collector updates were turned off.', now);
       return { action: 'cancelled', rolloutId: open.id };
     }
     return { action: 'disabled' };
@@ -117,14 +139,12 @@ export async function advanceOrg(orgId, { now = new Date() } = {}) {
   // A rollout for a version this installation no longer ships (a downgrade,
   // or a rollback of Shellius itself) must not carry on.
   if (open && open.targetVersion !== target) {
-    await prisma.collectorRollout.update({
-      where: { id: open.id },
-      data: {
-        status: 'cancelled',
-        haltedReason: `This installation now ships collector ${target}, not ${open.targetVersion}.`,
-        completedAt: now,
-      },
-    });
+    await closeRollout(
+      open.id,
+      'cancelled',
+      `This installation now ships collector ${target}, not ${open.targetVersion}.`,
+      now
+    );
     return { action: 'cancelled', rolloutId: open.id };
   }
 
@@ -155,6 +175,14 @@ export async function advanceOrg(orgId, { now = new Date() } = {}) {
     logger.info('collectorRollout: started', { orgId, targetVersion: target, candidates: candidates.length });
   }
 
+  // A host taken out of service is not an update failure. Its attempt is
+  // withdrawn before the health maths runs, so decommissioning a machine
+  // cannot halt an otherwise healthy rollout.
+  await prisma.collectorUpdateAttempt.updateMany({
+    where: { rolloutId: rollout.id, status: 'offered', server: { isActive: false } },
+    data: { status: 'cancelled', detail: 'The server was deactivated while the update was outstanding.' },
+  });
+
   // Judge anything that went silent before reading the health of the step.
   await failSilentAttempts(rollout.id, now);
   const health = await stepHealth(rollout.id);
@@ -162,16 +190,13 @@ export async function advanceOrg(orgId, { now = new Date() } = {}) {
   // Halt on evidence. Checked before widening, so a bad step can never be
   // followed by a bigger one.
   if (health.failed >= MIN_FAILURES_TO_HALT && health.rate > MAX_FAILURE_RATE) {
-    await prisma.collectorRollout.update({
-      where: { id: rollout.id },
-      data: {
-        status: 'halted',
-        completedAt: now,
-        haltedReason:
-          `${health.failed} of ${health.judged} hosts did not come back healthy on ${target} ` +
-          `(${Math.round(health.rate * 100)}%). Rollout stopped; no further hosts will be offered the update.`,
-      },
-    });
+    await closeRollout(
+      rollout.id,
+      'halted',
+      `${health.failed} of ${health.judged} hosts did not come back healthy on ${target} ` +
+        `(${Math.round(health.rate * 100)}%). Rollout stopped; no further hosts will be offered the update.`,
+      now
+    );
     logger.warn('collectorRollout: halted on failure rate', {
       orgId,
       rolloutId: rollout.id,

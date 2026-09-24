@@ -20,10 +20,13 @@
  *      stop reporting, or come back still on the old version (which is what a
  *      host-side rollback looks like from here), the rollout stops and says
  *      why. It does not widen on a schedule.
- *   3. **A cohort floor of one.** `ceil(n * percent / 100)` is zero for a
- *      two-host organization at 10%, so the rollout would sit at "rolling"
- *      forever having done nothing. The same arithmetic trap already bit the
- *      directory-sync mass-suspension valve.
+ *   3. **A cohort floor of one**, so a small organization is never left at
+ *      "rolling" having offered the update to nobody. With `Math.ceil` the
+ *      floor is in fact redundant — ceil(2 × 0.10) is 1, not 0 — and an
+ *      earlier version of this comment claimed otherwise. It is kept as a
+ *      guard because the failure it prevents is silent (a rollout that runs
+ *      forever and does nothing), and one edit from `ceil` to `floor` would
+ *      reintroduce it.
  *
  * Nothing here can update the SSH agent or check-principals. Only the posture
  * collector, which is the piece whose failure is visible (posture goes quiet)
@@ -76,7 +79,15 @@ export function bucketFor(serverId, targetVersion) {
   return h.readUInt16BE(0) % 10000;
 }
 
-/** How many hosts a step covers. Never zero while there is anything to do. */
+/**
+ * How many hosts a step covers. Never zero while there is anything to do.
+ *
+ * `Math.max(1, …)` is belt and braces rather than load-bearing: `Math.ceil`
+ * already cannot return 0 once total and percent are both positive, which the
+ * guards above ensure. It stays because the failure mode it covers is a
+ * rollout that reports "rolling" for ever having offered the update to
+ * nobody — silent, and one `ceil`→`floor` edit away.
+ */
 export function cohortSize(total, percent) {
   if (total <= 0) return 0;
   if (percent <= 0) return 0;

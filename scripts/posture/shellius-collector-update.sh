@@ -34,7 +34,12 @@
 # never do is leave a host without a working collector.
 #
 # Usage: shellius-collector-update [--api-url URL] [--token-file PATH]
-#                                  [--key-file PATH] [--dry-run]
+#                                  [--key-file PATH] [--collector PATH]
+#                                  [--dry-run]
+#
+# The path overrides exist so the refusals above can be exercised against a
+# stand-in API without touching a real host's collector — the same reason
+# shellius-posture-report takes --api-url.
 
 set -uo pipefail
 
@@ -60,6 +65,7 @@ while [ $# -gt 0 ]; do
     --api-url) API_URL="$2"; shift 2 ;;
     --token-file) TOKEN_FILE="$2"; shift 2 ;;
     --key-file) KEY_FILE="$2"; shift 2 ;;
+    --collector) COLLECTOR="$2"; PREVIOUS="$2.prev"; shift 2 ;;
     --dry-run) DRY_RUN=1; shift ;;
     *) echo "unknown option: $1" >&2; exit 2 ;;
   esac
@@ -76,6 +82,17 @@ trap 'rm -rf "$WORKDIR"' EXIT
 
 for tool in curl openssl sha256sum; do
   command -v "$tool" >/dev/null 2>&1 || { log "SKIP $tool is not installed"; exit 0; }
+done
+
+# Checked up front rather than discovered during the smoke test: a missing
+# runuser or timeout makes the smoke run fail in a way indistinguishable from
+# a genuinely broken collector, so every update would install, "fail", roll
+# back, and report a failure that would eventually halt the org's rollout.
+for tool in runuser timeout; do
+  command -v "$tool" >/dev/null 2>&1 || {
+    log "SKIP $tool is not installed — cannot smoke-test a new collector, so not installing one"
+    exit 0
+  }
 done
 
 if [ ! -r "$TOKEN_FILE" ]; then
@@ -122,12 +139,28 @@ if [ -z "$SHA_EXPECTED" ] || [ -z "$SIGNATURE" ]; then
   exit 0
 fi
 
-# Never install what is already installed: a loop that reinstalls the same
-# version every fifteen minutes would restart the collector timer forever.
+# Never install what is already installed, and never go BACKWARDS.
+#
+# The signature proves the bytes came from this installation's key. It does
+# not prove they are current: it covers the script and nothing else — no
+# nonce, no timestamp, no expiry. So a validly-signed OLDER bundle, captured
+# once from a legitimate rollout and replayed later by whatever sits between
+# this host and the server (a proxy, a mirror, a TLS-terminating middlebox —
+# the very things the signature exists to survive), would verify perfectly and
+# downgrade this host to a collector with whatever bugs that version had.
+#
+# Monotonicity is the cheap defence, and it belongs here rather than on the
+# server: the server is the party being impersonated.
+version_le() { [ "$(printf '%s\n%s\n' "$1" "$2" | sort -V | head -1)" = "$1" ]; }
+
 if [ -x "$COLLECTOR" ]; then
   CURRENT="$(sed -n 's/^VERSION="\([^"]*\)".*/\1/p' "$COLLECTOR" 2>/dev/null | head -1)"
   if [ "$CURRENT" = "$VERSION" ]; then
     log "OK already on $VERSION"
+    exit 0
+  fi
+  if [ -n "$CURRENT" ] && version_le "$VERSION" "$CURRENT"; then
+    log "FAIL refusing $VERSION — not newer than the installed collector ($CURRENT); possible replay"
     exit 0
   fi
 fi
@@ -189,7 +222,22 @@ fi
 
 # --- install -----------------------------------------------------------------
 
-install -m 0755 -o root -g root "$WORKDIR/collector" "$WORKDIR/collector.staged" || {
+# Staged NEXT TO the destination, not in $WORKDIR.
+#
+# mktemp -d lands in /tmp, which on most systemd distros is a different
+# filesystem (often a tmpfs) from /usr/local/sbin. `mv` across filesystems is
+# not rename(2): it is copy-then-unlink, writing directly into the LIVE path.
+# Interrupted by a full disk, an OOM kill or the unit's own TimeoutStartSec,
+# that leaves a truncated collector where a working one used to be — the one
+# outcome this script promises can never happen. Staging in the destination
+# directory makes the final move a same-filesystem rename, which is atomic.
+STAGED="$(mktemp "${COLLECTOR}.new.XXXXXX")" || {
+  log "FAIL could not create a staging file beside $COLLECTOR"
+  exit 0
+}
+trap 'rm -rf "$WORKDIR"; rm -f "$STAGED"' EXIT
+
+install -m 0755 -o root -g root "$WORKDIR/collector" "$STAGED" || {
   log "FAIL could not stage the new collector"
   exit 0
 }
@@ -205,8 +253,10 @@ fi
 
 # Same filesystem, so this is atomic: no window in which the collector is
 # half-written, and no window in which it does not exist at all.
-if ! mv -f "$WORKDIR/collector.staged" "$COLLECTOR"; then
-  log "FAIL could not replace the collector"
+if ! mv -f "$STAGED" "$COLLECTOR"; then
+  # Same filesystem, so this failing means something is badly wrong. The
+  # original is still in place — mv either renamed or it did not.
+  log "FAIL could not replace the collector; the existing one is untouched"
   exit 0
 fi
 chmod 0755 "$COLLECTOR" 2>/dev/null || true
@@ -241,8 +291,15 @@ fi
 
 if [ "$SMOKE_OK" != 1 ]; then
   if [ -x "$PREVIOUS" ]; then
-    mv -f "$PREVIOUS" "$COLLECTOR" && chmod 0755 "$COLLECTOR" 2>/dev/null
-    log "FAIL rolled back to the previous collector after $VERSION failed its smoke run"
+    # Checked, not assumed. Reporting "rolled back" when the rollback itself
+    # failed is worse than reporting nothing: it says the host is safe when
+    # it may be running a collector that does not work.
+    if mv -f "$PREVIOUS" "$COLLECTOR"; then
+      chmod 0755 "$COLLECTOR" 2>/dev/null || true
+      log "FAIL rolled back to the previous collector after $VERSION failed its smoke run"
+    else
+      log "FAIL $VERSION failed its smoke run AND the rollback could not be written — this host needs attention"
+    fi
   else
     log "FAIL $VERSION failed its smoke run and there is no previous collector to restore"
   fi

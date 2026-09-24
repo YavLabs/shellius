@@ -111,10 +111,26 @@ describe('it is inert on failure', () => {
 
   test('keeps the previous collector before replacing it', () => {
     const cp = SCRIPT.indexOf('cp -p "$COLLECTOR" "$PREVIOUS"');
-    const mv = SCRIPT.indexOf('mv -f "$WORKDIR/collector.staged" "$COLLECTOR"');
+    const mv = SCRIPT.indexOf('mv -f "$STAGED" "$COLLECTOR"');
     expect(cp).toBeGreaterThan(-1);
     expect(mv).toBeGreaterThan(-1);
     expect(cp).toBeLessThan(mv);
+  });
+
+  // mktemp -d lands in /tmp, which on most systemd distros is a different
+  // filesystem from /usr/local/sbin. `mv` across filesystems is copy-then-
+  // unlink onto the LIVE path, not rename(2) — so an interrupted move leaves
+  // a truncated collector where a working one used to be.
+  test('stages the replacement beside its destination, not in /tmp', () => {
+    expect(SCRIPT).toMatch(/mktemp "\$\{COLLECTOR\}\.new\.XXXXXX"/);
+    expect(SCRIPT).not.toContain('collector.staged');
+  });
+
+  test('checks whether the rollback itself succeeded', () => {
+    // Reporting "rolled back" when the rollback failed says the host is safe
+    // when it may be running a collector that does not work.
+    expect(SCRIPT).toMatch(/if mv -f "\$PREVIOUS" "\$COLLECTOR"; then/);
+    expect(SCRIPT).toMatch(/the rollback could not be written/);
   });
 
   test('rolls back when the new collector fails its smoke run', () => {
@@ -133,6 +149,21 @@ describe('it is inert on failure', () => {
 
   test('does not reinstall the version it already has', () => {
     expect(SCRIPT).toMatch(/already on \$VERSION/);
+  });
+
+  // The signature covers the script and nothing else — no nonce, no
+  // timestamp. A validly-signed OLDER bundle replayed by whatever sits
+  // between the host and the server would verify perfectly.
+  test('refuses a version that is not newer than the installed one', () => {
+    expect(SCRIPT).toMatch(/version_le/);
+    expect(SCRIPT).toMatch(/possible replay/);
+  });
+
+  // A missing runuser makes the smoke run fail in a way indistinguishable
+  // from a broken collector, so every update would install, roll back, and
+  // report a failure that eventually halts the org's rollout.
+  test('requires the tools the smoke test needs before installing anything', () => {
+    expect(SCRIPT).toMatch(/for tool in runuser timeout/);
   });
 });
 

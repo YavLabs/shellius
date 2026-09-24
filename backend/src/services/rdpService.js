@@ -87,11 +87,28 @@ export function encryptGuacToken(obj) {
  * @param {object} params.server         - Server row (incl. rdp* fields)
  * @returns {string} encrypted token
  */
+/**
+ * Which TCP port to speak RDP to.
+ *
+ * `Server.port` defaults to 22 — the SSH default, applied regardless of
+ * protocol — so reading it unconditionally pointed guacd at port 22 for every
+ * RDP server created through the API. On a `both` server it is worse: 22 is
+ * genuinely the SSH port there, and RDP has no business using it.
+ *
+ * So: an explicit `rdpPort` wins; otherwise `port` is trusted only on an
+ * RDP-only server, where it is unambiguous; otherwise 3389.
+ */
+export function rdpPortFor(server) {
+  if (server?.rdpPort) return server.rdpPort;
+  if (server?.protocol === 'rdp' && server?.port) return server.port;
+  return 3389;
+}
+
 export function buildRdpToken({ accessRequest, server }) {
   const { username, password } = resolveRdpCredentials(server);
   const settings = {
     hostname: server.ipAddress || server.hostname,
-    port: String(server.rdpPort ?? server.port ?? 3389),
+    port: String(rdpPortFor(server)),
     username,
     password,
     security: 'any',
@@ -228,6 +245,7 @@ export async function createConnectionForRequest(accessRequestId, scope = UNSCOP
 }
 
 export default {
+  rdpPortFor,
   GUAC_CRYPT_CYPHER,
   GUAC_CRYPT_KEY,
   GUAC_TOKEN_TTL_MS,

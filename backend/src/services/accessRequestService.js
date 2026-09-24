@@ -1025,12 +1025,10 @@ export async function generateRdpFile({ requestId, callerId, scope = UNSCOPED })
   // expiry, protocol, customer scope and that a credential exists at all.
   const { server } = await rdpService.createConnectionForRequest(requestId, scope);
 
-  // Must agree with rdpService.buildRdpToken, which is what the browser
-  // client actually connects to. This read `server.port` alone, so a host
-  // with an explicit rdpPort got a .rdp file pointing at the wrong port
-  // while the in-browser session worked — the confusing half of a bug,
-  // because one of the two ways in kept working.
-  const rdpPort = server.rdpPort ?? server.port ?? 3389;
+  // Exactly what the browser client connects to — one helper, so the
+  // downloaded file and the in-browser session can never disagree about
+  // which port the host speaks RDP on.
+  const rdpPort = rdpService.rdpPortFor(server);
   // Only a deliberately configured RD Gateway counts. The old default of
   // 'localhost' was worse than none at all.
   const rdGateway = (process.env.RD_GATEWAY_HOST || '').trim();

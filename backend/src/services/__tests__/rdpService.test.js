@@ -144,19 +144,57 @@ describe('guacamole connection token', () => {
     expect(noIp.connection.settings.hostname).toBe('win-1.example.com');
   });
 
-  test('rdpPort wins over port, and 3389 is the floor', () => {
-    const explicit = decryptGuacToken(
+  // Server.port defaults to 22 — the SSH default, applied whatever the
+  // protocol — so reading it unconditionally pointed guacd at port 22 for
+  // every RDP server created through the API. Found by creating a real one.
+  test('an explicit rdpPort always wins', () => {
+    const t = decryptGuacToken(
       rdpService.buildRdpToken({
         accessRequest: accessRequest(),
-        server: server({ rdpPort: 3390, port: 22 }),
+        server: server({ rdpPort: 3390, port: 22, protocol: 'rdp' }),
       })
     );
-    expect(explicit.connection.settings.port).toBe('3390');
+    expect(t.connection.settings.port).toBe('3390');
+  });
 
-    const fromPort = decryptGuacToken(
-      rdpService.buildRdpToken({ accessRequest: accessRequest(), server: server({ port: 13389 }) })
+  test('never speaks RDP to the SSH default port', () => {
+    const t = decryptGuacToken(
+      rdpService.buildRdpToken({
+        accessRequest: accessRequest(),
+        server: server({ rdpPort: null, port: 22, protocol: 'rdp' }),
+      })
     );
-    expect(fromPort.connection.settings.port).toBe('13389');
+    expect(t.connection.settings.port).toBe('22');
+  });
+
+  test("on an RDP-only server, `port` is unambiguous and is trusted", () => {
+    const t = decryptGuacToken(
+      rdpService.buildRdpToken({
+        accessRequest: accessRequest(),
+        server: server({ rdpPort: null, port: 13389, protocol: 'rdp' }),
+      })
+    );
+    expect(t.connection.settings.port).toBe('13389');
+  });
+
+  // On a `both` server, `port` is genuinely the SSH port and RDP has no
+  // business using it.
+  test('on a `both` server, RDP falls back to 3389 rather than the SSH port', () => {
+    const t = decryptGuacToken(
+      rdpService.buildRdpToken({
+        accessRequest: accessRequest(),
+        server: server({ rdpPort: null, port: 22, protocol: 'both' }),
+      })
+    );
+    expect(t.connection.settings.port).toBe('3389');
+  });
+
+  test('rdpPortFor is the single source of truth for both ways in', () => {
+    expect(rdpService.rdpPortFor({ rdpPort: 3390, port: 22, protocol: 'rdp' })).toBe(3390);
+    expect(rdpService.rdpPortFor({ rdpPort: null, port: 13389, protocol: 'rdp' })).toBe(13389);
+    expect(rdpService.rdpPortFor({ rdpPort: null, port: 22, protocol: 'both' })).toBe(3389);
+    expect(rdpService.rdpPortFor({})).toBe(3389);
+    expect(rdpService.rdpPortFor(null)).toBe(3389);
   });
 });
 

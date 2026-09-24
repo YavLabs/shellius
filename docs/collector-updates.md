@@ -78,19 +78,26 @@ installation ships.
    with a few dead machines would halt every rollout.
 2. It orders them by a stable hash of `(serverId, targetVersion)` and offers
    the update to the first *canary percent* of the fleet (default 10%, never
-   fewer than one host — `ceil(2 × 10/100)` is 0, which would leave a
-   two-host organization "rolling" forever having done nothing).
+   fewer than one host, so a small organization is not left "rolling" having
+   offered the update to nobody).
 3. Hosts poll `GET /api/hosts/collector-update` every 15 minutes (with up to
    5 minutes of jitter, so ninety hosts do not ask in the same second). A host
    with an offer fetches, verifies and installs it.
-4. The host proves the new collector works before trusting it: it runs it once
+4. The host refuses any version that is not newer than the one it is running.
+   The signature covers the script and nothing else — no nonce, no timestamp —
+   so a validly-signed older bundle replayed by something sitting between the
+   host and the server would otherwise verify perfectly and downgrade it.
+5. The host proves the new collector works before trusting it: it runs it once
    **as the unprivileged collector account** and requires JSON on stdout, not
-   merely a zero exit. If that fails, the previous collector is restored.
-5. Shellius learns the outcome the only way it can — the host carries on
+   merely a zero exit. If that fails, the previous collector is restored. The
+   replacement is staged in the destination directory so the final move is a
+   same-filesystem rename; staged in /tmp it would often be a cross-device
+   copy onto the live path, which is not atomic.
+6. Shellius learns the outcome the only way it can — the host carries on
    reporting. A host back on the target version is `verified`. A host still on
    the old version after the grace period (45 minutes) is `rolled_back`. A
    host that stops reporting entirely is `failed`.
-6. The rollout widens (10 → 25 → 50 → 100) only when the current step has no
+7. The rollout widens (10 → 25 → 50 → 100) only when the current step has no
    pending hosts and the dwell time has passed. If more than 20% of judged
    hosts failed — and at least two did, because one failure out of one host is
    100% and would make the feature unusable for small organizations — the
