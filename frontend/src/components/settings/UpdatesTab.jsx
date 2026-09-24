@@ -16,7 +16,14 @@ import EmptyState from '@/components/ui/EmptyState';
 import EnvironmentBadge from '@/components/shared/EnvironmentBadge';
 import { SectionCard, CopyButton } from '@/components/settings/shared';
 import { PostureTile, PostureTileGrid } from '@/components/posture/PostureTiles';
-import { getUpdateStatus, checkForUpdates, getCollectorVersions } from '@/services/updateService';
+import {
+  getUpdateStatus,
+  checkForUpdates,
+  getCollectorVersions,
+  getSelfUpdate,
+  requestSelfUpdate,
+  cancelSelfUpdate,
+} from '@/services/updateService';
 import { summarizeUpdateStatus, updateCommand } from '@/lib/updateStatus';
 import { statusTone } from '@/lib/badgeTones';
 import { relativeTime, formatDateTime } from '@/utils/time';
@@ -26,12 +33,121 @@ import { cn } from '@/lib/utils';
  * Administration → Organization → Updates (settings.updates).
  *
  * Two independent questions, two cards: is THIS install current, and is the
- * fleet's collector current. Both are read-only by design — see the
- * comment on routes/updates.js. Applying an update is deliberately not a
- * button anywhere in here: it's a script a person runs on the host, after
- * backing up the database, and the UI's job stops at telling them the exact
- * command.
+ * fleet's collector current.
+ *
+ * Applying an update is never something this screen does. With no host-side
+ * helper installed — the default — it shows the exact command to run on the
+ * host, and that is the whole feature. With a helper installed, it offers to
+ * REQUEST an upgrade: a row the helper picks up and acts on. The application
+ * itself has no capability to upgrade anything, deliberately; see
+ * docs/instance-updates.md.
  */
+
+
+// ---------------------------------------------------------------------------
+// Self-update — only offered when a host-side helper is actually listening
+// ---------------------------------------------------------------------------
+
+const IN_FLIGHT = ['requested', 'claimed', 'running'];
+
+/**
+ * Shown under the command, never instead of it.
+ *
+ * With no helper there is nothing to press: a request would queue a row that
+ * nobody reads, which is worse than no button at all, so the component
+ * renders nothing and the command above remains the answer. A helper that was
+ * installed and has gone quiet is a THIRD state and is called out — a request
+ * sitting unclaimed because the helper died looks identical to one that was
+ * never made.
+ */
+function SelfUpdate({ targetVersion }) {
+  const [state, setState] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+
+  const load = useCallback(
+    () =>
+      getSelfUpdate()
+        .then(setState)
+        .catch(() => setState(null)),
+    []
+  );
+
+  useEffect(() => {
+    load();
+  }, [load]);
+
+  // A request is picked up within ~5 minutes and an upgrade restarts this very
+  // API, so poll while something is in flight rather than leaving the screen
+  // showing a state that has since moved on.
+  useEffect(() => {
+    if (!state?.pending || !IN_FLIGHT.includes(state.pending.status)) return undefined;
+    const t = setInterval(load, 15000);
+    return () => clearInterval(t);
+  }, [state?.pending, load]);
+
+  if (!state) return null;
+
+  const { helper, pending } = state;
+  const inFlight = pending && IN_FLIGHT.includes(pending.status);
+
+  if (!helper?.present && !inFlight) {
+    if (!helper?.stale) return null;
+    return (
+      <p className="text-xs text-muted-foreground">
+        A self-update helper was installed on this host but has not checked in
+        since {relativeTime(helper.lastSeenAt)}. Until it does, apply updates with
+        the command above.
+      </p>
+    );
+  }
+
+  const act = async (fn) => {
+    setBusy(true);
+    setError('');
+    try {
+      await fn();
+      await load();
+    } catch (err) {
+      setError(err?.response?.data?.error?.message || err.message || 'Request failed');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="space-y-2 border-t border-border pt-3">
+      {inFlight ? (
+        <div className="flex flex-wrap items-center gap-2">
+          <Badge tone={pending.status === 'running' ? 'info' : 'neutral'}>
+            {pending.status === 'running' ? 'Upgrading' : 'Update requested'}
+          </Badge>
+          <span className="text-xs text-muted-foreground">
+            to {pending.targetVersion}
+            {pending.status === 'running' ? ' — the API restarts during this' : ''}
+          </span>
+          {pending.status === 'requested' && (
+            <Button size="sm" variant="outline" disabled={busy} onClick={() => act(() => cancelSelfUpdate(pending.id))}>
+              Cancel
+            </Button>
+          )}
+        </div>
+      ) : (
+        <div className="flex flex-wrap items-center gap-2">
+          <Button size="sm" disabled={busy} onClick={() => act(() => requestSelfUpdate(targetVersion))}>
+            Request update to {targetVersion}
+          </Button>
+          <span className="text-xs text-muted-foreground">
+            The helper on {helper.hostname || 'this host'} runs it within five minutes.
+          </span>
+        </div>
+      )}
+
+      {pending?.detail && <p className="text-xs text-muted-foreground">{pending.detail}</p>}
+      {error && <p className="text-xs text-destructive">{error}</p>}
+    </div>
+  );
+}
 
 // ---------------------------------------------------------------------------
 // This installation
@@ -141,6 +257,8 @@ function InstallationCard() {
                   <CopyButton text={updateCommand(status.latestVersion)} />
                 </div>
               </div>
+
+              <SelfUpdate targetVersion={status.latestVersion} />
             </div>
           )}
         </div>

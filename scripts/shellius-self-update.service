@@ -1,0 +1,27 @@
+# Shellius self-update helper.
+#
+# NOT installed by Shellius. An operator installs this deliberately after
+# reading docs/instance-updates.md — that deliberate act is the whole security
+# model. Without it, an update requested in the UI sits unclaimed and the UI
+# shows the command to run by hand.
+#
+# It runs as root because update-shellius.sh drives docker compose and writes
+# to the application directory. That is exactly why it is a short script on
+# the host rather than a capability of the web application: the privileged
+# half is something a person read and chose to install.
+[Unit]
+Description=Shellius self-update helper
+After=network-online.target docker.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=root
+EnvironmentFile=/etc/shellius/self-update.env
+ExecStart=/usr/local/sbin/shellius-self-update
+# A full upgrade clones the tag, builds images, dumps the database and
+# restarts the stack. On a small VM that is comfortably tens of minutes.
+TimeoutStartSec=3600
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=shellius-self-update

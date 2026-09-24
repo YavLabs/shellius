@@ -21,7 +21,10 @@ import tenant from '../middleware/tenant.js';
 import { requirePermission } from '../middleware/rbac.js';
 import audit from '../middleware/audit.js';
 import rateLimit from 'express-rate-limit';
+import Joi from 'joi';
+import ApiError from '../utils/ApiError.js';
 import * as updateCheckService from '../services/updateCheckService.js';
+import * as instanceUpdateService from '../services/instanceUpdateService.js';
 import { fleetCollectorVersions } from '../services/collectorFleetService.js';
 
 const router = express.Router();
@@ -73,6 +76,111 @@ router.get(
   asyncHandler(async (req, res) => {
     const data = await fleetCollectorVersions(req.orgId, req.scope);
     res.json({ success: true, data });
+  })
+);
+
+// ---------------------------------------------------------------------------
+// Self-update: requesting an upgrade, and the helper that performs it
+// ---------------------------------------------------------------------------
+//
+// Nothing in this section upgrades anything. It records an intent and reports
+// what the host-side helper did with it — see
+// services/instanceUpdateService.js for why the application deliberately has
+// no capability to upgrade itself, and docs/instance-updates.md for how to
+// install the helper.
+
+const requestSchema = Joi.object({
+  version: Joi.string().max(64).required(),
+});
+
+// GET /api/updates/self — status, pending request, whether a helper exists.
+router.get(
+  '/self',
+  requirePermission('settings.updates'),
+  asyncHandler(async (req, res) => {
+    res.json({ success: true, data: await instanceUpdateService.status() });
+  })
+);
+
+router.post(
+  '/self/request',
+  requirePermission('settings.updates'),
+  audit('instance_update.requested', 'Organization'),
+  asyncHandler(async (req, res) => {
+    const { error, value } = requestSchema.validate(req.body || {}, { stripUnknown: true });
+    if (error) throw new ApiError(400, error.message);
+    const row = await instanceUpdateService.request(value.version, req.user.userId);
+    res.status(201).json({ success: true, data: { request: row } });
+  })
+);
+
+router.delete(
+  '/self/request/:id',
+  requirePermission('settings.updates'),
+  audit('instance_update.cancelled', 'Organization'),
+  asyncHandler(async (req, res) => {
+    const row = await instanceUpdateService.cancel(req.params.id);
+    res.json({ success: true, data: { request: row } });
+  })
+);
+
+// --- the helper's own endpoints ---------------------------------------------
+//
+// The helper authenticates as a service account holding `settings.updates`,
+// exactly like any other API client. It gets no special credential type and no
+// bypass: if its token is revoked it stops working, and everything it does is
+// in the audit log under that identity.
+
+const helperPollSchema = Joi.object({
+  helperVersion: Joi.string().max(64).allow('', null),
+  hostname: Joi.string().max(255).allow('', null),
+});
+
+router.post(
+  '/self/poll',
+  requirePermission('settings.updates'),
+  asyncHandler(async (req, res) => {
+    const { error, value } = helperPollSchema.validate(req.body || {}, { stripUnknown: true });
+    if (error) throw new ApiError(400, error.message);
+    await instanceUpdateService.touchHelper({
+      helperVersion: value.helperVersion || null,
+      hostname: value.hostname || null,
+    });
+    const row = await instanceUpdateService.pending();
+    // Only a request nobody has picked up is handed out. A 'claimed' or
+    // 'running' row belongs to a run already under way.
+    res.json({
+      success: true,
+      data: { request: row && row.status === 'requested' ? row : null },
+    });
+  })
+);
+
+router.post(
+  '/self/claim/:id',
+  requirePermission('settings.updates'),
+  audit('instance_update.claimed', 'Organization'),
+  asyncHandler(async (req, res) => {
+    const row = await instanceUpdateService.claim(req.params.id);
+    if (!row) throw new ApiError(409, 'That request is no longer available to claim');
+    res.json({ success: true, data: { request: row } });
+  })
+);
+
+const statusSchema = Joi.object({
+  status: Joi.string().valid('running', 'succeeded', 'failed').required(),
+  detail: Joi.string().max(4000).allow('', null),
+});
+
+router.post(
+  '/self/status/:id',
+  requirePermission('settings.updates'),
+  audit('instance_update.status', 'Organization'),
+  asyncHandler(async (req, res) => {
+    const { error, value } = statusSchema.validate(req.body || {}, { stripUnknown: true });
+    if (error) throw new ApiError(400, error.message);
+    const row = await instanceUpdateService.reportStatus(req.params.id, value.status, value.detail);
+    res.json({ success: true, data: { request: row } });
   })
 );
 

@@ -1722,6 +1722,50 @@ model ReleaseSigningKey {
   @@map("release_signing_keys")
 }
 
+/// A request that THIS INSTALLATION be upgraded, waiting for the host-side
+/// helper to pick it up.
+///
+/// Shellius cannot upgrade itself and this model does not let it. A container
+/// cannot reliably replace itself, and the alternatives — mounting the Docker
+/// socket, or giving the app a shell on its host — hand the application root
+/// on the machine holding the SSH CA. So the app only ever records an
+/// INTENT. A small systemd unit the operator installs deliberately
+/// (scripts/shellius-self-update.sh) polls for it and runs the existing
+/// update-shellius.sh. The privileged half is a short script the operator
+/// chose to install, not a capability the web app has.
+///
+/// If no helper is installed, requests simply sit here unclaimed and the UI
+/// shows the command to run by hand. That is the default.
+model InstanceUpdateRequest {
+  id            String    @id @default(cuid())
+  targetVersion String    @map("target_version")
+  /// requested | claimed | running | succeeded | failed | cancelled
+  status        String    @default("requested")
+  detail        String?   @db.Text
+  requestedById String?   @map("requested_by_id")
+  requestedAt   DateTime  @default(now()) @map("requested_at")
+  claimedAt     DateTime? @map("claimed_at")
+  finishedAt    DateTime? @map("finished_at")
+  /// The version that was running when the request was made, so a failed
+  /// upgrade can say what it was meant to be moving away from.
+  fromVersion   String?   @map("from_version")
+
+  @@index([status, requestedAt])
+  @@map("instance_update_requests")
+}
+
+/// Whether a host-side update helper exists at all, and when it last checked
+/// in. One row. Written by the helper's own polling, never by a human.
+model InstanceUpdateHelper {
+  id            String    @id @default(cuid())
+  scope         String    @unique @default("global")
+  helperVersion String?   @map("helper_version")
+  lastSeenAt    DateTime? @map("last_seen_at")
+  hostname      String?
+
+  @@map("instance_update_helpers")
+}
+
 /// One staged rollout of a collector version across an organization's fleet.
 model CollectorRollout {
   id            String    @id @default(cuid())

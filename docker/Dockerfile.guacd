@@ -57,7 +57,20 @@ ARG WITH_FREERDP='2(\.\d+)+'
 ARG WITH_LIBSSH2='libssh2-\d+(\.\d+)+'
 ARG WITH_LIBTELNET='\d+(\.\d+)+'
 ARG WITH_LIBVNCCLIENT='LibVNCServer-\d+(\.\d+)+'
-ARG WITH_LIBWEBSOCKETS='v\d+(\.\d+)+'
+# PINNED to 4.3.x, not "whatever the newest tag is" (which is what upstream's
+# own Dockerfile does, and what this file used to do).
+#
+# build-all.sh checks out the newest tag matching this pattern. libwebsockets
+# 4.4 turns on its GnuTLS backend for this configuration, so an unpinned build
+# started failing at `cmake` with "GnuTLS not found" — on a Dockerfile nobody
+# had touched. It is a time bomb rather than a bug: the image built fine for
+# months and then stopped, purely because upstream cut a release. That matters
+# more than it sounds, because update-shellius.sh builds this image on every
+# production upgrade, so the failure surfaces mid-upgrade on a customer's host.
+#
+# guacamole-server 1.5.5 is contemporary with libwebsockets 4.3, so that is
+# what it is built against.
+ARG WITH_LIBWEBSOCKETS='v4\.3(\.\d+)*'
 
 # FreeRDP build options — identical to upstream EXCEPT OpenH264 + GFX H264 ON.
 ARG FREERDP_OPTS="\

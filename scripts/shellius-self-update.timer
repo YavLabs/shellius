@@ -1,0 +1,15 @@
+# Shellius self-update helper timer. See docs/instance-updates.md.
+[Unit]
+Description=Shellius self-update helper timer
+
+[Timer]
+OnBootSec=5min
+# Five minutes is the delay between pressing the button and anything
+# happening. Shorter would mean polling an API all day to save four minutes
+# on an action taken a few times a year.
+OnUnitActiveSec=5min
+Unit=shellius-self-update.service
+RandomizedDelaySec=60
+
+[Install]
+WantedBy=timers.target
