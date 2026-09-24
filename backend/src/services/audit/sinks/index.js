@@ -23,10 +23,20 @@ export const ADAPTERS = {
 export const SINK_TYPES = Object.keys(ADAPTERS);
 
 /**
- * The types the delivery worker drives. A digest is scheduled, not streamed,
- * so it has no cursor and is handled by its own job.
+ * The types the streaming delivery loop drives: they hold a durable cursor
+ * and ship everything they owe.
  */
 export const STREAMING_TYPES = SINK_TYPES.filter((t) => ADAPTERS[t].streaming);
+
+/**
+ * The rest — scheduled, cursorless, bounded by a clock rather than a cursor.
+ *
+ * This list used to be implicit, and that was the bug: `jobs/auditExport.js`
+ * selects STREAMING_TYPES, so nothing ever ran a digest sink. An org could
+ * configure a daily audit digest, see it saved and reported healthy, and
+ * never receive one. `sinkService.runDigestSink` is what drives these now.
+ */
+export const DIGEST_TYPES = SINK_TYPES.filter((t) => !ADAPTERS[t].streaming);
 
 export function getAdapter(type) {
   const adapter = ADAPTERS[type];
@@ -43,4 +53,4 @@ export const describeAdapters = () =>
     secretFields: ADAPTERS[t].secretFields,
   }));
 
-export default { ADAPTERS, SINK_TYPES, STREAMING_TYPES, getAdapter, describeAdapters };
+export default { ADAPTERS, SINK_TYPES, STREAMING_TYPES, DIGEST_TYPES, getAdapter, describeAdapters };

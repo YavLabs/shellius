@@ -17,8 +17,8 @@ import prisma from '../config/db.js';
 import redis from '../config/redis.js';
 import { createQueue, createWorker } from '../config/queue.js';
 import logger from '../utils/logger.js';
-import { runSink } from '../services/audit/sinkService.js';
-import { STREAMING_TYPES } from '../services/audit/sinks/index.js';
+import { runSink, runDigestSink } from '../services/audit/sinkService.js';
+import { STREAMING_TYPES, DIGEST_TYPES } from '../services/audit/sinks/index.js';
 
 const QUEUE_NAME = 'audit-export';
 const EVERY_MS = 30_000;
@@ -58,6 +58,30 @@ async function withLock(sinkId, fn) {
   }
 }
 
+/**
+ * One instance at a time per digest sink. Unlike `withLock`, this does NOT
+ * fail open: a streaming sink delivering twice is a duplicate the receiver
+ * can dedupe on the record id, whereas a duplicated digest lands in a human's
+ * inbox with nothing to dedupe it. If Redis is unavailable the digest waits
+ * for the next tick, which on a daily schedule is invisible.
+ */
+async function withStrictLock(sinkId, fn) {
+  const key = `lock:auditdigest:${sinkId}`;
+  let held = false;
+  try {
+    held = (await redis.set(key, '1', 'PX', LOCK_TTL_MS, 'NX')) === 'OK';
+  } catch (err) {
+    logger.warn('auditExport: digest lock unavailable, skipping this pass', { sinkId, error: err.message });
+    return null;
+  }
+  if (!held) return null;
+  try {
+    return await fn();
+  } finally {
+    redis.del(key).catch(() => {});
+  }
+}
+
 /** One pass over every sink that is due. */
 export async function runDueSinks() {
   const now = new Date();
@@ -88,11 +112,49 @@ export async function runDueSinks() {
   return { sinks: sinks.length, ran, delivered };
 }
 
+/**
+ * One pass over every scheduled (digest) sink.
+ *
+ * Runs on the same 30-second tick as the streaming sinks, which is far more
+ * often than any digest is due — `runDigestSink` answers "not yet" cheaply
+ * from the sink's own cadence. A frequent tick is what lets a digest set for
+ * 07:00 arrive at 07:00.
+ */
+export async function runDueDigests({ now = new Date() } = {}) {
+  if (!DIGEST_TYPES.length) return { sinks: 0, sent: 0, delivered: 0 };
+
+  const sinks = await prisma.auditSink.findMany({
+    where: {
+      isActive: true,
+      type: { in: DIGEST_TYPES },
+      OR: [{ backoffUntil: null }, { backoffUntil: { lte: now } }],
+    },
+  });
+
+  let sent = 0;
+  let delivered = 0;
+
+  for (const sink of sinks) {
+    try {
+      const result = await withStrictLock(sink.id, () => runDigestSink(sink, { now }));
+      if (!result) continue; // another instance has it
+      if (result.sent) sent += 1;
+      delivered += result.delivered;
+    } catch (err) {
+      logger.error('auditExport: unexpected digest error', { sinkId: sink.id, error: err.message });
+    }
+  }
+
+  return { sinks: sinks.length, sent, delivered };
+}
+
 export function startAuditExportWorker() {
   try {
     const worker = createWorker(QUEUE_NAME, async () => {
       const result = await runDueSinks();
       if (result.delivered) logger.info('auditExport: batch shipped', result);
+      const digests = await runDueDigests();
+      if (digests.sent) logger.info('auditExport: digest sent', digests);
     });
 
     worker.on('failed', (job, err) => {

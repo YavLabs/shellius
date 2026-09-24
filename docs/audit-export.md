@@ -84,6 +84,25 @@ Key: `<prefix>/org=<orgId>/dt=<YYYY-MM-DD>/<stamp>_<batchId>.ndjson.gz`.
 **Email digest.** Scheduled, not streamed, so it has no cursor and does not
 hold retention back.
 
+Cadence is `daily` or `weekly` at an hour, **UTC** (see
+`backend/src/services/digestSchedule.js` for why there is no per-sink
+timezone). The watermark is the sink's `lastOkAt`; on a sink that has never
+run it falls back to `createdAt`, so turning a digest on does not attach the
+organization's entire history. An outage collapses to one catch-up digest
+rather than one per missed day, and a period with no entries advances the
+watermark without sending anything — a digest that says "nothing happened"
+every morning stops being read. A failed send deliberately does **not**
+advance the watermark, so the period is retried: a duplicated digest is a
+better failure than a silently missing one.
+
+> **Fixed in 2.1.** Until 2.1 this sink had no scheduler at all.
+> `jobs/auditExport.js` selects `STREAMING_TYPES` and the digest adapter is
+> `streaming: false`, so its `deliver()` was reachable only from the Test
+> button. An organization could configure a daily digest, save it, see it
+> reported healthy, and never receive one. `sinkService.runDigestSink` and
+> `auditExport.runDueDigests` drive it now, and `DIGEST_TYPES` exists so that
+> a future non-streaming sink cannot be added without something running it.
+
 ## Failure handling
 
 Failures back off exponentially and a sink auto-disables after

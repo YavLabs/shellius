@@ -24,6 +24,7 @@ import { ACTIONS, log as auditLog, stream, lagFrom } from '../auditService.js';
 import { toEnvelope } from './envelope.js';
 import { getAdapter, SINK_TYPES, STREAMING_TYPES } from './sinks/index.js';
 import { SinkConfigError, PermanentSinkError } from './sinks/errors.js';
+import { digestDue, periodLabel } from '../digestSchedule.js';
 
 /** Give up after this many failures in a row and say so loudly. */
 export const MAX_CONSECUTIVE_FAILURES = 10;
@@ -506,6 +507,190 @@ export async function runSink(sinkRow, ctx = {}) {
   return { delivered, batches, stopped: null };
 }
 
+
+// ---------------------------------------------------------------------------
+// Non-streaming sinks: the periodic digest
+// ---------------------------------------------------------------------------
+
+/**
+ * One CSV cell. Quotes everything, which is always valid and saves guessing
+ * which of a comma, a quote, a newline or a leading `=` is in the value.
+ */
+function csvCell(v) {
+  if (v === null || v === undefined) return '""';
+  const s = typeof v === 'object' ? JSON.stringify(v) : String(v);
+  // A leading =, +, - or @ makes a spreadsheet treat the cell as a formula.
+  const guarded = /^[=+\-@]/.test(s) ? `'${s}` : s;
+  return `"${guarded.replace(/"/g, '""')}"`;
+}
+
+const CSV_COLUMNS = ['id', 'occurredAt', 'action', 'category', 'severity', 'actor', 'resource', 'ip'];
+
+function toCsv(envelopes) {
+  const lines = [CSV_COLUMNS.join(',')];
+  for (const e of envelopes) {
+    lines.push(
+      [
+        e.id,
+        e.occurredAt,
+        e.action,
+        e.category,
+        e.severity,
+        e.actor?.email || e.actor?.name || e.actor?.id || 'system',
+        [e.resource?.type, e.resource?.id].filter(Boolean).join(':'),
+        e.ip ?? e.ipAddress ?? '',
+      ]
+        .map(csvCell)
+        .join(',')
+    );
+  }
+  return lines.join('\n');
+}
+
+/**
+ * Run one non-streaming (digest) sink.
+ *
+ * Separate from `runSink` because the two have opposite shapes: a streaming
+ * sink holds a durable cursor and ships everything it owes, while a digest
+ * answers "what happened in this period?" and is bounded by a clock.
+ *
+ * This exists because the `email_digest` sink was shipped with no scheduler
+ * at all — `jobs/auditExport.js` selects `STREAMING_TYPES`, and `email_digest`
+ * is `streaming: false`, so its `deliver()` was reachable only from the Test
+ * button. An organization could configure a daily audit digest, see it
+ * saved and healthy, and never receive one.
+ *
+ * Never throws: a broken destination must not take the worker down.
+ *
+ * @returns {Promise<{delivered: number, sent: boolean, stopped: string|null}>}
+ */
+export async function runDigestSink(sinkRow, ctx = {}) {
+  const now = ctx.now ?? new Date();
+  const adapter = ctx.adapter ?? getAdapter(sinkRow.type);
+  const config = decryptConfig(sinkRow);
+
+  const notReady = adapter.notReadyReason?.(config);
+  if (notReady) {
+    await prisma.auditSink.update({
+      where: { id: sinkRow.id },
+      data: { lastRunAt: now, lastError: notReady },
+    });
+    return { delivered: 0, sent: false, stopped: notReady };
+  }
+
+  // The watermark is the end of the last period this sink covered. On a sink
+  // that has never run it is `createdAt`, never the beginning of time — a
+  // digest turned on this morning must not attach the org's entire history.
+  const window = digestDue(
+    { schedule: config.schedule, hour: config.hour },
+    { anchor: sinkRow.lastOkAt ?? sinkRow.createdAt, now }
+  );
+  if (!window.due) return { delivered: 0, sent: false, stopped: null };
+
+  const startedAt = new Date();
+  const max = adapter.MAX_DIGEST_ROWS ?? 20_000;
+  const rows = [];
+  let truncated = false;
+
+  try {
+    const iterator = stream({
+      orgId: sinkRow.orgId,
+      after: { createdAt: window.from, id: '' },
+      until: window.to,
+      filters: sinkRow.filters ?? {},
+      batchSize: sinkRow.batchSize || 500,
+    });
+    for await (const batch of iterator) {
+      for (const r of batch) {
+        if (rows.length >= max) {
+          truncated = true;
+          break;
+        }
+        rows.push(r);
+      }
+      if (truncated) break;
+    }
+    await iterator.return?.();
+
+    const actors = await actorsFor(rows);
+    const envelopes = rows.map((r) => toEnvelope(r, { actor: actors.get(r.actorId) ?? null }));
+
+    // An empty period still counts as covered, but sending "nothing happened"
+    // every morning is how a digest stops being read.
+    if (envelopes.length > 0) {
+      const json = config.format === 'json';
+      const attachment = {
+        filename: `shellius-audit-${window.to.toISOString().slice(0, 10)}.${json ? 'json' : 'csv'}`,
+        content: json ? JSON.stringify(envelopes, null, 2) : toCsv(envelopes),
+        contentType: json ? 'application/json' : 'text/csv',
+      };
+      await adapter.deliver(config, envelopes, {
+        ...ctx,
+        orgId: sinkRow.orgId,
+        sinkId: sinkRow.id,
+        periodLabel: periodLabel(window.from, window.to),
+        attachment,
+        truncated,
+      });
+    }
+
+    await prisma.$transaction([
+      prisma.auditSink.update({
+        where: { id: sinkRow.id },
+        data: {
+          // Both move together: for a digest, "ran" and "covered up to" are
+          // the same instant, and lastOkAt IS the watermark.
+          lastRunAt: window.to,
+          lastOkAt: window.to,
+          lastError: null,
+          consecutiveFailures: 0,
+          backoffUntil: null,
+        },
+      }),
+      ...(envelopes.length
+        ? [
+            prisma.auditSinkDelivery.create({
+              data: {
+                sinkId: sinkRow.id,
+                orgId: sinkRow.orgId,
+                batchId: batchIdFor(sinkRow.id, rows[0].id, rows[rows.length - 1].id),
+                fromCreatedAt: window.from,
+                toCreatedAt: window.to,
+                firstLogId: rows[0].id,
+                lastLogId: rows[rows.length - 1].id,
+                count: rows.length,
+                status: 'ok',
+                durationMs: Date.now() - startedAt.getTime(),
+                finishedAt: new Date(),
+              },
+            }),
+          ]
+        : []),
+    ]);
+
+    return { delivered: envelopes.length, sent: envelopes.length > 0, stopped: null };
+  } catch (err) {
+    const failures = (sinkRow.consecutiveFailures ?? 0) + 1;
+    const giveUp = err instanceof PermanentSinkError || failures >= MAX_CONSECUTIVE_FAILURES;
+
+    // The watermark is deliberately NOT advanced: the next tick retries the
+    // same period. A duplicated digest beats a silently missing one.
+    await prisma.auditSink.update({
+      where: { id: sinkRow.id },
+      data: {
+        lastRunAt: now,
+        lastError: err.message?.slice(0, 2000) ?? 'failed',
+        consecutiveFailures: failures,
+        ...(giveUp
+          ? { isActive: false, disabledReason: `Stopped after ${failures} failures: ${err.message}`.slice(0, 2000) }
+          : { backoffUntil: new Date(Date.now() + backoffFor(failures)) }),
+      },
+    });
+    logger.error('sinkService: digest failed', { sinkId: sinkRow.id, error: err.message });
+    return { delivered: 0, sent: false, stopped: err.message };
+  }
+}
+
 export default {
   MAX_CONSECUTIVE_FAILURES,
   MAX_BATCHES_PER_RUN,
@@ -520,4 +705,5 @@ export default {
   remove,
   test,
   runSink,
+  runDigestSink,
 };
