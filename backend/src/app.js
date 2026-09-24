@@ -53,6 +53,7 @@ import slackInteractionsRouter from './routes/slackInteractions.js';
 import chatIdentitiesRouter from './routes/chatIdentities.js';
 import vaultRouter from './routes/vault.js';
 import postureRouter from './routes/posture.js';
+import updatesRouter from './routes/updates.js';
 import errorHandler from './middleware/errorHandler.js';
 import { startAllJobs } from './jobs/index.js';
 
@@ -130,6 +131,7 @@ app.use('/api/audit', auditRouter);
 app.use('/api/bootstrap', bootstrapRouter);
 app.use('/api/hosts', hostsRouter);
 app.use('/api/posture', postureRouter);
+app.use('/api/updates', updatesRouter);
 app.use('/api/org', orgRouter);
 app.use('/api/settings/smtp', smtpRouter);
 app.use('/api/settings/email', emailProvidersRouter);

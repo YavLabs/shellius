@@ -838,6 +838,20 @@ export const PERMISSIONS = [
   },
 
   {
+    key: 'settings.updates',
+    delegable: false,
+    group: 'settings',
+    label: 'Updates',
+    description:
+      'See whether a newer Shellius release exists, and the collector versions running across the fleet. Read-only: applying an update is still a command run on the host.',
+    sensitive: true,
+    since: 9,
+    defaults: SA,
+    current: SA,
+    endpoints: ['GET /api/updates', 'POST /api/updates/check', 'GET /api/updates/collectors'],
+  },
+
+  {
     key: 'audit.sinks',
     group: 'sessions',
     label: 'Configure audit destinations',
