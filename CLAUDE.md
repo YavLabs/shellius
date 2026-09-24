@@ -2,7 +2,14 @@
 
 ## Overview
 
-Shellius is a centralized SSH and RDP access management platform with short-lived certificate-based authentication, multi-cloud host discovery, manager approval workflows for production servers, and a companion TUI client. It replaces static SSH keys with a Certificate Authority model where access is policy-driven, time-limited, and fully audited.
+Shellius is a centralized SSH and RDP access management platform with short-lived certificate-based authentication, host posture monitoring, manager approval workflows for production servers, and a companion TUI client. It replaces static SSH keys with a Certificate Authority model where access is policy-driven, time-limited, and fully audited.
+
+> **Not built yet.** Cloud connectors (AWS/Azure/GCP host discovery) are on the
+> roadmap and **parked** — see README "Roadmap". There is no `CloudConnector`
+> model, no `backend/src/providers/` directory and no compute SDKs in
+> `package.json`. `Server.cloudProvider` / `cloudInstanceId` / `cloudRegion`
+> exist as unused placeholder columns. Do not write code that assumes any of
+> this exists, and do not describe it to users as a feature.
 
 ## Tech Stack
 
@@ -17,7 +24,7 @@ Shellius is a centralized SSH and RDP access management platform with short-live
 | RDP Gateway | Apache Guacamole (guacd) |
 | Web Terminal | xterm.js + WebSocket + ssh2 |
 | Auth | Passport.js (OIDC/SAML), JWT (access + refresh), Device Auth Flow (RFC 8628) |
-| Cloud SDKs | @aws-sdk/client-ec2, @azure/arm-compute, @google-cloud/compute |
+| Object storage | @aws-sdk/client-s3, @azure/storage-blob (session recordings only — **not** compute/discovery) |
 | Host Agent | Bash bootstrap script + systemd heartbeat timer |
 | Infra | Docker, docker-compose, nginx, Traefik |
 
@@ -28,7 +35,7 @@ Shellius is a centralized SSH and RDP access management platform with short-live
 3. **Real-time access validation** — Target hosts run `check-principals` which calls the Shellius API on every SSH connection to verify the cert is still valid and access hasn't been revoked.
 4. **Multi-tenant via org_id scoping** — Every tenant-scoped table has `org_id`. All queries are scoped. Prisma middleware enforces this.
 5. **Audit everything** — All read/write/access/revoke actions logged with actor, target, timestamp, IP. AuditLog is immutable (no UPDATE/DELETE).
-6. **Cloud-native discovery** — Servers are auto-discovered from AWS/Azure/GCP via cloud connectors. On-prem servers self-register via bootstrap agent.
+6. **Hosts arrive by bootstrap or by import** — a host self-registers when the bootstrap agent runs on it, or is added by hand / CSV import (`services/importService.js`). Cloud auto-discovery is parked, not built (see the note in Overview).
 7. **Ephemeral credentials** — SSH private keys for download are generated per-request, never stored server-side. RDP credentials are injected via Guacamole, never exposed to users.
 
 ## Data Hierarchy
@@ -52,7 +59,7 @@ shellius/
 │       ├── middleware/     # auth, rbac, audit, tenant, rateLimiter, errorHandler
 │       ├── routes/         # Express route handlers (thin — delegate to services)
 │       ├── services/       # Business logic layer
-│       ├── providers/      # Cloud sync adapters (aws, azure, gcp)
+│       ├── email/          # HTML templates + renderTemplate registry
 │       ├── utils/          # SSH key utils, cert utils, validators, crypto
 │       └── jobs/           # BullMQ job processors
 ├── frontend/
@@ -109,7 +116,6 @@ shellius/
 - **Organization** — Top-level tenant boundary
 - **Customer** — A client or project within the org. Servers belong to customers.
 - **Server** — An SSH or RDP target machine with an environment tag (demo/dev/staging/prod)
-- **CloudConnector** — Integration with AWS/Azure/GCP for auto-discovering servers
 - **CaKeyPair** — The org's SSH Certificate Authority key pair (private key encrypted at rest)
 - **AccessPolicy** — Rules defining who can access which servers, with what principals, for how long
 - **AccessRequest** — Approval workflow record (pending → approved/denied → expired). Required for prod servers.
@@ -135,7 +141,7 @@ shellius/
 
 - CA private key MUST be encrypted at rest (AES-256-GCM) and decrypted in memory only during signing
 - SSH private keys for download are ephemeral — generated per request, returned to user, NEVER stored
-- Cloud connector credentials MUST be encrypted at rest
+- Every stored third-party secret MUST be encrypted at rest with `utils/crypto.js` — SMTP passwords, SSO client secrets, storage keys, audit sink and chat destination config, Keystore identities. This rule applies to cloud connector credentials too, if and when that feature is built.
 - RDP passwords MUST never be exposed to the frontend — injected via Guacamole only
 - check-principals on hosts validates every connection in real-time against the Shellius API
 - Certificates auto-expire. Access requests auto-expire. No permanent access.
@@ -151,4 +157,4 @@ shellius/
 - NEVER allow direct production server access without the approval flow for a requester who can't skip it (`access.prod_bypass` + org switch) — applies to certificate AND credential servers, break-glass, key deployment and direct cert issuance; Quick Connect refuses hosts matching a saved prod server. Requesters who may skip it still get an audited, notified `APPROVED` request — never a silent, unaudited connection.
 - NEVER return or use another user's personal vault item: Keystore queries MUST filter `ownerId` (null for org views, the caller for personal ones); personal items can never be bound to servers, deployed, or searched.
 - NEVER gate on role names (`role === 'admin'`) — use permissions. NEVER let a role or user edit grant permissions the actor doesn't hold.
-- NEVER hard-delete cloud-terminated servers — mark as terminated to preserve audit trail
+- Prefer deactivating a server (`isActive: false`) over deleting it. **Be aware the code does not enforce this**: `serverService.deleteServer()` is a hard delete, and `Session.serverId` is `onDelete: Cascade`, so deleting a server destroys its session history (and orphans any stored recordings). `AuditLog` survives — it holds `resourceId` as a plain string with no foreign key. Do not add new cascades from `Server` to anything that is evidence.
