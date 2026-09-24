@@ -90,11 +90,11 @@ api() {
   local method="$1" path="$2" body="${3:-}"
   if [ -n "$body" ]; then
     curl -fsS --max-time "$CURL_TIMEOUT" -X "$method" \
-      -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+      -H "x-shellius-helper-token: $TOKEN" -H "Content-Type: application/json" \
       --data-binary "$body" "$API_URL$path" 2>/dev/null
   else
     curl -fsS --max-time "$CURL_TIMEOUT" -X "$method" \
-      -H "Authorization: Bearer $TOKEN" "$API_URL$path" 2>/dev/null
+      -H "x-shellius-helper-token: $TOKEN" "$API_URL$path" 2>/dev/null
   fi
 }
 
@@ -103,7 +103,7 @@ field() { printf '%s' "$1" | sed -n "s/.*\"$2\":\"\([^\"]*\)\".*/\1/p" | head -1
 # --- is anything requested? --------------------------------------------------
 
 POLL_BODY="{\"helperVersion\":\"$VERSION\",\"hostname\":\"$(hostname 2>/dev/null || echo unknown)\"}"
-RESPONSE="$(api POST /api/updates/self/poll "$POLL_BODY")" || {
+RESPONSE="$(api POST /api/updates/helper/poll "$POLL_BODY")" || {
   log "SKIP could not reach $API_URL"
   exit 0
 }
@@ -118,9 +118,13 @@ fi
 
 # --- refuse what should not be run -------------------------------------------
 
-if ! printf '%s' "$TARGET" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+([-.0-9A-Za-z]+)?$'; then
+# Deliberately the SAME grammar as instanceUpdateService.normalizeVersion: a
+# pre-release suffix must begin with a hyphen. The looser version accepted
+# things the API would have rejected, which quietly made the two "independent"
+# refusals test different policies.
+if ! printf '%s' "$TARGET" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+(-[-.0-9A-Za-z]+)?$'; then
   log "FAIL refusing '$TARGET' — not a plain semver version"
-  api POST "/api/updates/self/status/$REQUEST_ID" \
+  api POST "/api/updates/helper/status/$REQUEST_ID" \
     "{\"status\":\"failed\",\"detail\":\"The helper refused '$TARGET': not a plain semver version.\"}" >/dev/null
   exit 0
 fi
@@ -130,7 +134,7 @@ newest() { printf '%s\n%s\n' "$1" "$2" | sort -V | tail -1; }
 if [ "$CURRENT" != "unknown" ]; then
   if [ "$TARGET" = "$CURRENT" ] || [ "$(newest "$TARGET" "$CURRENT")" != "$TARGET" ]; then
     log "FAIL refusing $TARGET — not newer than the running version ($CURRENT)"
-    api POST "/api/updates/self/status/$REQUEST_ID" \
+    api POST "/api/updates/helper/status/$REQUEST_ID" \
       "{\"status\":\"failed\",\"detail\":\"The helper refused $TARGET: it is not newer than the running version ($CURRENT). Downgrades are done on the host with ./update-shellius.sh --rollback.\"}" >/dev/null
     exit 0
   fi
@@ -149,12 +153,12 @@ fi
 # finished) starting two upgrades on the same host. The API only lets the
 # claim succeed once.
 
-CLAIM="$(api POST "/api/updates/self/claim/$REQUEST_ID")" || {
+CLAIM="$(api POST "/api/updates/helper/claim/$REQUEST_ID")" || {
   log "SKIP could not claim $REQUEST_ID — another helper may have taken it"
   exit 0
 }
 
-api POST "/api/updates/self/status/$REQUEST_ID" \
+api POST "/api/updates/helper/status/$REQUEST_ID" \
   "{\"status\":\"running\",\"detail\":\"Upgrading $CURRENT to $TARGET on $(hostname 2>/dev/null || echo host).\"}" >/dev/null
 
 # --- run it ------------------------------------------------------------------
@@ -179,14 +183,14 @@ if bash "$UPDATE_SCRIPT" "$TARGET" --yes >"$LOGFILE" 2>&1; then
   # moment; a failure to report is not a failure to upgrade.
   sleep 20
   DETAIL="$(tail -c 1500 "$LOGFILE" | tr -d '\000-\037"\\' )"
-  api POST "/api/updates/self/status/$REQUEST_ID" \
+  api POST "/api/updates/helper/status/$REQUEST_ID" \
     "{\"status\":\"succeeded\",\"detail\":\"Now running $NEW. $DETAIL\"}" >/dev/null || \
     log "WARN upgraded, but could not report success to the API"
 else
   RC=$?
   log "FAIL update-shellius.sh exited $RC — see $LOGFILE"
   DETAIL="$(tail -c 1500 "$LOGFILE" | tr -d '\000-\037"\\' )"
-  api POST "/api/updates/self/status/$REQUEST_ID" \
+  api POST "/api/updates/helper/status/$REQUEST_ID" \
     "{\"status\":\"failed\",\"detail\":\"update-shellius.sh exited $RC. $DETAIL\"}" >/dev/null || true
   # update-shellius.sh leaves the previous version running when it fails
   # before the swap, and prints its own rollback command when it fails after.

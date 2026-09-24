@@ -54,6 +54,7 @@ import chatIdentitiesRouter from './routes/chatIdentities.js';
 import vaultRouter from './routes/vault.js';
 import postureRouter from './routes/posture.js';
 import updatesRouter from './routes/updates.js';
+import updateHelperRouter from './routes/updateHelper.js';
 import errorHandler from './middleware/errorHandler.js';
 import { startAllJobs } from './jobs/index.js';
 
@@ -131,6 +132,9 @@ app.use('/api/audit', auditRouter);
 app.use('/api/bootstrap', bootstrapRouter);
 app.use('/api/hosts', hostsRouter);
 app.use('/api/posture', postureRouter);
+// Before /api/updates: the helper carries its own credential and must not
+// pass through that router's authenticate/tenant chain.
+app.use('/api/updates/helper', updateHelperRouter);
 app.use('/api/updates', updatesRouter);
 app.use('/api/org', orgRouter);
 app.use('/api/settings/smtp', smtpRouter);

@@ -124,63 +124,30 @@ router.delete(
   })
 );
 
-// --- the helper's own endpoints ---------------------------------------------
+// --- the helper credential -------------------------------------------------
 //
-// The helper authenticates as a service account holding `settings.updates`,
-// exactly like any other API client. It gets no special credential type and no
-// bypass: if its token is revoked it stops working, and everything it does is
-// in the audit log under that identity.
-
-const helperPollSchema = Joi.object({
-  helperVersion: Joi.string().max(64).allow('', null),
-  hostname: Joi.string().max(255).allow('', null),
-});
+// Issued here by a human; used by the helper against routes/updateHelper.js,
+// which is mounted OUTSIDE this router's authenticate/tenant chain.
 
 router.post(
-  '/self/poll',
+  '/self/helper-token',
   requirePermission('settings.updates'),
+  audit('instance_update.helper_token_issued', 'Organization'),
   asyncHandler(async (req, res) => {
-    const { error, value } = helperPollSchema.validate(req.body || {}, { stripUnknown: true });
-    if (error) throw new ApiError(400, error.message);
-    await instanceUpdateService.touchHelper({
-      helperVersion: value.helperVersion || null,
-      hostname: value.hostname || null,
-    });
-    const row = await instanceUpdateService.pending();
-    // Only a request nobody has picked up is handed out. A 'claimed' or
-    // 'running' row belongs to a run already under way.
-    res.json({
-      success: true,
-      data: { request: row && row.status === 'requested' ? row : null },
-    });
+    // Shown once and never again — nothing stores the plaintext, and issuing
+    // a new one invalidates whatever came before.
+    const token = await instanceUpdateService.issueHelperToken();
+    res.status(201).json({ success: true, data: { token } });
   })
 );
 
-router.post(
-  '/self/claim/:id',
+router.delete(
+  '/self/helper-token',
   requirePermission('settings.updates'),
-  audit('instance_update.claimed', 'Organization'),
+  audit('instance_update.helper_token_revoked', 'Organization'),
   asyncHandler(async (req, res) => {
-    const row = await instanceUpdateService.claim(req.params.id);
-    if (!row) throw new ApiError(409, 'That request is no longer available to claim');
-    res.json({ success: true, data: { request: row } });
-  })
-);
-
-const statusSchema = Joi.object({
-  status: Joi.string().valid('running', 'succeeded', 'failed').required(),
-  detail: Joi.string().max(4000).allow('', null),
-});
-
-router.post(
-  '/self/status/:id',
-  requirePermission('settings.updates'),
-  audit('instance_update.status', 'Organization'),
-  asyncHandler(async (req, res) => {
-    const { error, value } = statusSchema.validate(req.body || {}, { stripUnknown: true });
-    if (error) throw new ApiError(400, error.message);
-    const row = await instanceUpdateService.reportStatus(req.params.id, value.status, value.detail);
-    res.json({ success: true, data: { request: row } });
+    await instanceUpdateService.revokeHelperToken();
+    res.json({ success: true, data: { revoked: true } });
   })
 );
 

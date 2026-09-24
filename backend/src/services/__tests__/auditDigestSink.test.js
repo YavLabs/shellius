@@ -310,6 +310,94 @@ describe('audit digest (live DB)', () => {
     expect(content).not.toMatch(/,"=cmd/);
   });
 
+  // Both of these were found in review, and both lose or duplicate audit
+  // entries — the one thing an audit pipeline cannot do.
+  test('does not read right up to the present (READ_LAG_MS is respected)', async () => {
+    if (!(await dbReachable())) return console.warn('[skip] DB unreachable');
+    // An entry written "just now" is inside the lag window: a row committing
+    // a moment later could share its timestamp and be lost for ever, because
+    // the watermark would have moved past it.
+    await prisma.auditLog.create({
+      data: { orgId: org.id, action: 'user.updated', resourceType: 'User', createdAt: new Date() },
+    });
+    await seed(3); // safely older than the lag
+    const sink = await makeSink({ lastOkAt: new Date(Date.now() - 36 * 60 * 60 * 1000) });
+
+    let n = 0;
+    await withDeliver(
+      async (_cfg, envelopes) => {
+        n = envelopes.length;
+        return { detail: 'ok' };
+      },
+      (ctx) => sinkService.runDigestSink(sink, ctx)
+    );
+    expect(n).toBe(3);
+
+    const after = await prisma.auditSink.findUnique({ where: { id: sink.id } });
+    // The watermark stops at the lag boundary, not at "now", so the entry
+    // inside the lag is still ahead of it and will be picked up next time.
+    expect(after.lastOkAt.getTime()).toBeLessThan(Date.now());
+  });
+
+  test('an entry on a window boundary is delivered exactly once', async () => {
+    if (!(await dbReachable())) return console.warn('[skip] DB unreachable');
+    const boundary = new Date(Date.now() - READ_LAG_MS - 30_000);
+    await prisma.auditLog.create({
+      data: { orgId: org.id, action: 'auth.login.failed', resourceType: 'User', createdAt: boundary },
+    });
+    const sink = await makeSink({ lastOkAt: new Date(Date.now() - 36 * 60 * 60 * 1000) });
+
+    const seen = [];
+    const deliver = async (_cfg, envelopes) => {
+      seen.push(...envelopes.map((e) => e.id));
+      return { detail: 'ok' };
+    };
+    await withDeliver(deliver, (ctx) => sinkService.runDigestSink(sink, ctx));
+
+    // Next period, starting exactly where the last one stopped.
+    const after = await prisma.auditSink.findUnique({ where: { id: sink.id } });
+    await withDeliver(deliver, (ctx) =>
+      sinkService.runDigestSink(after, { ...ctx, now: new Date(Date.now() + 25 * 60 * 60 * 1000) })
+    );
+
+    const boundaryIds = seen.filter((id, i) => seen.indexOf(id) !== i);
+    expect(boundaryIds).toEqual([]); // no id delivered twice
+  });
+
+  test('weekly can name its day instead of silently meaning Monday', () => {
+    expect(emailDigest.validateConfig({ recipients: ['a@b.test'], schedule: 'weekly' }).dayOfWeek).toBe(1);
+    expect(
+      emailDigest.validateConfig({ recipients: ['a@b.test'], schedule: 'weekly', dayOfWeek: 5 }).dayOfWeek
+    ).toBe(5);
+    expect(emailDigest.validateConfig({ recipients: ['a@b.test'], schedule: 'daily' }).dayOfWeek).toBeNull();
+    expect(() =>
+      emailDigest.validateConfig({ recipients: ['a@b.test'], schedule: 'weekly', dayOfWeek: 9 })
+    ).toThrow(/Day must be/);
+  });
+
+  test('guards a CSV cell that starts with a tab or a carriage return', async () => {
+    if (!(await dbReachable())) return console.warn('[skip] DB unreachable');
+    await prisma.auditLog.create({
+      data: {
+        orgId: org.id,
+        action: '\t=cmd|calc',
+        resourceType: 'User',
+        createdAt: new Date(Date.now() - READ_LAG_MS - 60_000),
+      },
+    });
+    const sink = await makeSink({ lastOkAt: new Date(Date.now() - 36 * 60 * 60 * 1000) });
+
+    let content;
+    await withDeliver(
+      async (_cfg, _e, ctx) => {
+        content = ctx.attachment.content;
+        return { detail: 'ok' };
+      },
+      (ctx) => sinkService.runDigestSink(sink, ctx)
+    );
+    expect(content).toContain("\"'\t=cmd|calc\"");
+  });
+
   test('the job pass picks up a due digest sink', async () => {
     if (!(await dbReachable())) return console.warn('[skip] DB unreachable');
     await seed(4);

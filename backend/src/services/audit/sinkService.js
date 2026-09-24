@@ -20,7 +20,7 @@ import prisma from '../../config/db.js';
 import ApiError from '../../utils/ApiError.js';
 import logger from '../../utils/logger.js';
 import { encrypt, decrypt } from '../../utils/crypto.js';
-import { ACTIONS, log as auditLog, stream, lagFrom } from '../auditService.js';
+import { ACTIONS, log as auditLog, stream, lagFrom, READ_LAG_MS } from '../auditService.js';
 import { toEnvelope } from './envelope.js';
 import { getAdapter, SINK_TYPES, STREAMING_TYPES } from './sinks/index.js';
 import { SinkConfigError, PermanentSinkError } from './sinks/errors.js';
@@ -519,8 +519,10 @@ export async function runSink(sinkRow, ctx = {}) {
 function csvCell(v) {
   if (v === null || v === undefined) return '""';
   const s = typeof v === 'object' ? JSON.stringify(v) : String(v);
-  // A leading =, +, - or @ makes a spreadsheet treat the cell as a formula.
-  const guarded = /^[=+\-@]/.test(s) ? `'${s}` : s;
+  // A leading =, +, - or @ makes a spreadsheet treat the cell as a formula,
+  // and a leading tab or carriage return does the same in some Excel and
+  // Sheets configurations — the value after it is what gets evaluated.
+  const guarded = /^[=+\-@\t\r]/.test(s) ? `'${s}` : s;
   return `"${guarded.replace(/"/g, '""')}"`;
 }
 
@@ -582,10 +584,37 @@ export async function runDigestSink(sinkRow, ctx = {}) {
   // that has never run it is `createdAt`, never the beginning of time — a
   // digest turned on this morning must not attach the org's entire history.
   const window = digestDue(
-    { schedule: config.schedule, hour: config.hour },
+    { schedule: config.schedule, hour: config.hour, dayOfWeek: config.dayOfWeek },
     { anchor: sinkRow.lastOkAt ?? sinkRow.createdAt, now }
   );
   if (!window.due) return { delivered: 0, sent: false, stopped: null };
+
+  // Two corrections to the obvious version of this, both of which lose or
+  // duplicate audit entries — the one thing this feature cannot do.
+  //
+  // 1. `stream()` applies its READ_LAG_MS write-visibility buffer ONLY when
+  //    no `until` is supplied (auditService.js:1011). Passing the raw tick
+  //    time therefore walked right up to the present, which is precisely
+  //    what that buffer exists to prevent: a row whose transaction commits
+  //    just after the SELECT, but whose createdAt is inside the window,
+  //    would never be read — and because the watermark advances on success,
+  //    no later window reaches back for it. Permanently lost, silently.
+  //    The ceiling is clamped to the same lag the streaming path respects.
+  //
+  // 2. The ceiling is INCLUSIVE (`lte`), and the lower bound uses a cursor
+  //    id of '' which every cuid sorts above — so a row landing exactly on a
+  //    boundary millisecond was included by the window that ended there AND
+  //    by the one that began there. The watermark therefore advances to one
+  //    millisecond past the ceiling; DateTime(3) makes that the next
+  //    representable instant, so this closes the overlap without opening a
+  //    gap.
+  const ceiling = new Date(Math.min(window.to.getTime(), Date.now() - READ_LAG_MS));
+  if (ceiling.getTime() <= window.from.getTime()) {
+    // The whole window is still inside the lag. Try again next tick rather
+    // than reading a period we cannot yet read completely.
+    return { delivered: 0, sent: false, stopped: null };
+  }
+  const nextWatermark = new Date(ceiling.getTime() + 1);
 
   const startedAt = new Date();
   const max = adapter.MAX_DIGEST_ROWS ?? 20_000;
@@ -596,7 +625,7 @@ export async function runDigestSink(sinkRow, ctx = {}) {
     const iterator = stream({
       orgId: sinkRow.orgId,
       after: { createdAt: window.from, id: '' },
-      until: window.to,
+      until: ceiling,
       filters: sinkRow.filters ?? {},
       batchSize: sinkRow.batchSize || 500,
     });
@@ -628,7 +657,7 @@ export async function runDigestSink(sinkRow, ctx = {}) {
         ...ctx,
         orgId: sinkRow.orgId,
         sinkId: sinkRow.id,
-        periodLabel: periodLabel(window.from, window.to),
+        periodLabel: periodLabel(window.from, ceiling),
         attachment,
         truncated,
       });
@@ -638,10 +667,10 @@ export async function runDigestSink(sinkRow, ctx = {}) {
       prisma.auditSink.update({
         where: { id: sinkRow.id },
         data: {
-          // Both move together: for a digest, "ran" and "covered up to" are
-          // the same instant, and lastOkAt IS the watermark.
-          lastRunAt: window.to,
-          lastOkAt: window.to,
+          // lastOkAt IS the watermark, and it is one millisecond past the
+          // ceiling actually read — see the note above about boundary rows.
+          lastRunAt: new Date(),
+          lastOkAt: nextWatermark,
           lastError: null,
           consecutiveFailures: 0,
           backoffUntil: null,
@@ -655,7 +684,7 @@ export async function runDigestSink(sinkRow, ctx = {}) {
                 orgId: sinkRow.orgId,
                 batchId: batchIdFor(sinkRow.id, rows[0].id, rows[rows.length - 1].id),
                 fromCreatedAt: window.from,
-                toCreatedAt: window.to,
+                toCreatedAt: ceiling,
                 firstLogId: rows[0].id,
                 lastLogId: rows[rows.length - 1].id,
                 count: rows.length,

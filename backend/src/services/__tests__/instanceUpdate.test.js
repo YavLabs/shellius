@@ -145,6 +145,63 @@ describe('requesting an upgrade (live DB)', () => {
   });
 });
 
+describe('the helper credential (live DB)', () => {
+  // This exists because the first version documented the helper as
+  // authenticating with a service-account API token holding
+  // `settings.updates`. That could never have worked: the permission is
+  // non-delegable, and middleware/apiTokenAuth strips every non-delegable
+  // permission from every API token, service accounts included. The helper
+  // would have received 403 on every call, for ever, and nothing in the
+  // service-layer tests would have noticed because they never drive a token
+  // through the route stack.
+  afterEach(async () => {
+    if (!(await dbReachable())) return;
+    await prisma.instanceUpdateHelper.deleteMany({});
+  });
+
+  test('is not an API token, and is never stored in the clear', async () => {
+    if (!(await dbReachable())) return console.warn('[skip] DB unreachable');
+    const token = await instanceUpdateService.issueHelperToken();
+    expect(token.startsWith(instanceUpdateService.HELPER_TOKEN_PREFIX)).toBe(true);
+    const row = await prisma.instanceUpdateHelper.findFirst();
+    expect(row.tokenHash).not.toContain(token);
+    expect(row.tokenHash).toBe(instanceUpdateService.hashHelperToken(token));
+  });
+
+  test('resolves only the exact credential', async () => {
+    if (!(await dbReachable())) return console.warn('[skip] DB unreachable');
+    const token = await instanceUpdateService.issueHelperToken();
+    expect(await instanceUpdateService.resolveHelperToken(token)).not.toBeNull();
+    expect(await instanceUpdateService.resolveHelperToken(`${token}x`)).toBeNull();
+    expect(await instanceUpdateService.resolveHelperToken('')).toBeNull();
+    expect(await instanceUpdateService.resolveHelperToken(null)).toBeNull();
+    expect(await instanceUpdateService.resolveHelperToken('shup_nonsense')).toBeNull();
+  });
+
+  test('issuing again invalidates the previous credential', async () => {
+    if (!(await dbReachable())) return console.warn('[skip] DB unreachable');
+    const first = await instanceUpdateService.issueHelperToken();
+    const second = await instanceUpdateService.issueHelperToken();
+    expect(second).not.toBe(first);
+    expect(await instanceUpdateService.resolveHelperToken(first)).toBeNull();
+    expect(await instanceUpdateService.resolveHelperToken(second)).not.toBeNull();
+  });
+
+  test('revoking stops the helper working', async () => {
+    if (!(await dbReachable())) return console.warn('[skip] DB unreachable');
+    const token = await instanceUpdateService.issueHelperToken();
+    await instanceUpdateService.revokeHelperToken();
+    expect(await instanceUpdateService.resolveHelperToken(token)).toBeNull();
+  });
+
+  test('the UI can tell "never set up" from "set up but quiet"', async () => {
+    if (!(await dbReachable())) return console.warn('[skip] DB unreachable');
+    expect((await instanceUpdateService.helperState()).credentialIssued).toBe(false);
+    await instanceUpdateService.issueHelperToken();
+    expect((await instanceUpdateService.helperState()).credentialIssued).toBe(true);
+  });
+});
+
 describe('helper presence (live DB)', () => {
   afterEach(async () => {
     if (!(await dbReachable())) return;

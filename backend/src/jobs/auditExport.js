@@ -22,8 +22,20 @@ import { STREAMING_TYPES, DIGEST_TYPES } from '../services/audit/sinks/index.js'
 
 const QUEUE_NAME = 'audit-export';
 const EVERY_MS = 30_000;
-/** Longer than any plausible run, short enough to recover from a crash. */
+/** Longer than any plausible streaming run, short enough to recover from a crash. */
 const LOCK_TTL_MS = 120_000;
+/**
+ * The digest lock gets its own, far longer TTL.
+ *
+ * A streaming batch is at most `batchSize` rows on a 30-second cadence; a
+ * digest can be MAX_DIGEST_ROWS (20,000 by default), streamed in batches,
+ * turned into a CSV attachment and mailed. Sharing the 120-second streaming
+ * TTL meant a slow digest could outlive its own lock, letting the next tick
+ * on another instance acquire it and send the same window again — a
+ * duplicate in a person's inbox, which is the exact thing withStrictLock
+ * exists to prevent.
+ */
+const DIGEST_LOCK_TTL_MS = 15 * 60 * 1000;
 
 export const auditExportQueue = createQueue(QUEUE_NAME);
 
@@ -69,7 +81,7 @@ async function withStrictLock(sinkId, fn) {
   const key = `lock:auditdigest:${sinkId}`;
   let held = false;
   try {
-    held = (await redis.set(key, '1', 'PX', LOCK_TTL_MS, 'NX')) === 'OK';
+    held = (await redis.set(key, '1', 'PX', DIGEST_LOCK_TTL_MS, 'NX')) === 'OK';
   } catch (err) {
     logger.warn('auditExport: digest lock unavailable, skipping this pass', { sinkId, error: err.message });
     return null;
@@ -136,8 +148,19 @@ export async function runDueDigests({ now = new Date() } = {}) {
 
   for (const sink of sinks) {
     try {
-      const result = await withStrictLock(sink.id, () => runDigestSink(sink, { now }));
-      if (!result) continue; // another instance has it
+      const result = await withStrictLock(sink.id, async () => {
+        // Re-read under the lock, as jobs/postureDigest.js does. The row from
+        // the query above may be minutes old by the time the lock is taken:
+        // the sink may have been deactivated, reconfigured (different
+        // recipients, different format) or — the one that matters — already
+        // sent this very period by another instance, which would be invisible
+        // if we ran against the stale `lastOkAt` we started with.
+        const fresh = await prisma.auditSink.findUnique({ where: { id: sink.id } });
+        if (!fresh || !fresh.isActive) return null;
+        if (fresh.backoffUntil && fresh.backoffUntil > now) return null;
+        return runDigestSink(fresh, { now });
+      });
+      if (!result) continue; // another instance has it, or it is no longer due
       if (result.sent) sent += 1;
       delivered += result.delivered;
     } catch (err) {

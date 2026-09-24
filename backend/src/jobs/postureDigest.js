@@ -84,7 +84,7 @@ export async function runDigestPass({ now = new Date(), sendMail } = {}) {
     where: { isActive: true, mode: 'digest' },
   });
 
-  const summary = { considered: rules.length, sent: 0, emails: 0, failed: 0 };
+  const summary = { considered: rules.length, sent: 0, emails: 0, failed: 0, deliveredToNobody: 0 };
 
   for (const rule of rules) {
     let window;
@@ -117,7 +117,28 @@ export async function runDigestPass({ now = new Date(), sendMail } = {}) {
         });
         summary.sent += 1;
         summary.emails += result.sent;
-        if (result.sent > 0 || result.findings > 0) {
+
+        // A rule that matched real findings and mailed nobody is the failure
+        // this feature was rebuilt to eliminate, one layer further down: the
+        // job is working, the rule is working, and the org hears nothing for
+        // ever. Log it as a WARNING naming the cause, not as "digest sent".
+        if (result.findings > 0 && result.sent === 0) {
+          summary.deliveredToNobody += 1;
+          logger.warn('postureDigest: rule matched findings but reached nobody', {
+            ruleId: fresh.id,
+            orgId: fresh.orgId,
+            findings: result.findings,
+            recipients: result.recipients,
+            scopedOut: result.scopedOut,
+            reason:
+              result.recipients === 0
+                ? 'the rule names no active recipients'
+                : result.scopedOut >= result.recipients
+                  ? 'every recipient is customer-scoped away from these findings'
+                  : 'see skipped',
+            skipped: result.skipped.slice(0, 5),
+          });
+        } else if (result.sent > 0 || result.findings > 0) {
           logger.info('postureDigest: digest sent', {
             ruleId: fresh.id,
             orgId: fresh.orgId,

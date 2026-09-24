@@ -338,6 +338,56 @@ describe('posture digest — delivery', () => {
     expect(result.skipped).toHaveLength(1);
   });
 
+  // A rule that matches real findings and reaches nobody is the same bug this
+  // whole feature was rebuilt to remove, one layer further down. It must be
+  // recorded, not inferred from a zero.
+  test('records WHY a recipient got nothing, rather than skipping silently', async () => {
+    if (!(await dbReachable())) return console.warn('[skip] DB unreachable');
+    const scoped = await createTestUser(org.id, { role: 'manager', data: { accessScope: 'CUSTOMERS' } });
+    await prisma.userCustomerScope.create({ data: { userId: scoped.id, customerId: customerB.id } });
+    const r = await ruleFor([scoped.id]);
+    await storeFinding({ serverId: srvA.id, firstSeenAt: new Date(Date.now() - HOUR) });
+
+    const result = await postureDigestService.sendDigest(r, {
+      from: new Date(Date.now() - DAY),
+      to: new Date(),
+      sendMail: recorder(),
+    });
+
+    expect(sent).toHaveLength(0);
+    expect(result.findings).toBeGreaterThan(0);
+    expect(result.scopedOut).toBe(1);
+    expect(result.skipped[0]).toMatch(/customer scope/);
+  });
+
+  // The fault-isolation boundary was drawn one line too late: rendering sat
+  // outside the try, so a template fault on recipient three rejected the whole
+  // call after one and two had already been mailed — and the job then re-sent
+  // the same window to all of them.
+  test('a render fault costs one recipient, not everybody', async () => {
+    if (!(await dbReachable())) return console.warn('[skip] DB unreachable');
+    const u1 = await createTestUser(org.id, { role: 'admin' });
+    const u2 = await createTestUser(org.id, { role: 'admin' });
+    const r = await ruleFor([u1.id, u2.id]);
+    // A finding whose message is a value the template will choke on.
+    await storeFinding({ firstSeenAt: new Date(Date.now() - HOUR) });
+
+    let calls = 0;
+    const result = await postureDigestService.sendDigest(r, {
+      from: new Date(Date.now() - DAY),
+      to: new Date(),
+      sendMail: recorder(async (m) => {
+        calls += 1;
+        if (calls === 1) throw new Error('template exploded');
+        sent.push(m);
+      }),
+    });
+
+    expect(calls).toBe(2);
+    expect(result.sent).toBe(1);
+    expect(result.skipped).toHaveLength(1);
+  });
+
   test('truncates a very large digest and says so', async () => {
     if (!(await dbReachable())) return console.warn('[skip] DB unreachable');
     const user = await createTestUser(org.id, { role: 'admin' });

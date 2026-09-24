@@ -24,6 +24,7 @@
  * helper refuse that independently.
  */
 
+import crypto from 'crypto';
 import { createRequire } from 'module';
 import prisma from '../config/db.js';
 import ApiError from '../utils/ApiError.js';
@@ -60,13 +61,24 @@ export async function pending() {
 
 export async function helperState() {
   const row = await prisma.instanceUpdateHelper.findUnique({ where: { scope: SCOPE } });
-  if (!row?.lastSeenAt) return { present: false, lastSeenAt: null, helperVersion: null, hostname: null };
+  if (!row?.lastSeenAt) {
+    return {
+      present: false,
+      lastSeenAt: null,
+      helperVersion: null,
+      hostname: null,
+      credentialIssued: !!row?.tokenHash,
+    };
+  }
   const fresh = Date.now() - row.lastSeenAt.getTime() < HELPER_STALE_MS;
   return {
     present: fresh,
     lastSeenAt: row.lastSeenAt,
     helperVersion: row.helperVersion,
     hostname: row.hostname,
+    // Whether a credential has been issued at all — the UI needs to tell
+    // "no helper set up" apart from "set up but not checking in".
+    credentialIssued: !!row.tokenHash,
     // A helper that was installed and has gone quiet is a different thing
     // from one that was never installed, and the difference matters when a
     // request is sitting unclaimed.
@@ -87,6 +99,74 @@ export async function touchHelper({ helperVersion = null, hostname = null } = {}
     create: { scope: SCOPE, helperVersion, hostname, lastSeenAt: new Date() },
     update: { helperVersion, hostname, lastSeenAt: new Date() },
   });
+}
+
+
+// ---------------------------------------------------------------------------
+// The helper's own credential
+// ---------------------------------------------------------------------------
+//
+// Deliberately NOT an API token. `settings.updates` is non-delegable, and
+// middleware/apiTokenAuth's effectivePermissions() strips every non-delegable
+// permission from every API token — service accounts included, by design and
+// with a test pinning it. A helper authenticating as an API client would have
+// received 403 on every call, forever.
+//
+// Carving an exception into that stripping was the wrong fix: it would reopen
+// the "no API token ever holds a non-delegable permission" guarantee that
+// settings.storage, settings.email, audit.sinks and service-account
+// management all rely on. This credential reaches exactly three endpoints and
+// nothing else in the product, which is the narrower answer.
+//
+// Only the hash is persisted, exactly as for a per-host agent token. Issuing
+// a new one invalidates the previous one — that is how rotation works.
+
+export const HELPER_TOKEN_PREFIX = 'shup_';
+
+export function hashHelperToken(token) {
+  return crypto.createHash('sha256').update(String(token), 'utf8').digest('hex');
+}
+
+/**
+ * Issue a new helper credential, returning the plaintext ONCE.
+ *
+ * @returns {Promise<string>} the token; never stored, never logged
+ */
+export async function issueHelperToken() {
+  const token = `${HELPER_TOKEN_PREFIX}${crypto.randomBytes(32).toString('base64url')}`;
+  const tokenHash = hashHelperToken(token);
+  await prisma.instanceUpdateHelper.upsert({
+    where: { scope: SCOPE },
+    create: { scope: SCOPE, tokenHash, tokenIssuedAt: new Date() },
+    update: { tokenHash, tokenIssuedAt: new Date() },
+  });
+  logger.info('instanceUpdate: helper credential issued (previous one is now invalid)');
+  return token;
+}
+
+/** Revoke whatever credential exists. The helper then stops working. */
+export async function revokeHelperToken() {
+  await prisma.instanceUpdateHelper.updateMany({
+    where: { scope: SCOPE },
+    data: { tokenHash: null, tokenIssuedAt: null },
+  });
+  logger.info('instanceUpdate: helper credential revoked');
+}
+
+/**
+ * Resolve a presented credential. Returns the helper row or null.
+ *
+ * The lookup is a database equality query against the hash, so the plaintext
+ * is never compared byte-by-byte in application code — the same reasoning as
+ * utils/agentToken.js.
+ */
+export async function resolveHelperToken(raw) {
+  const token = String(raw || '').trim();
+  if (!token) return null;
+  const row = await prisma.instanceUpdateHelper.findUnique({
+    where: { tokenHash: hashHelperToken(token) },
+  });
+  return row || null;
 }
 
 /**
@@ -198,6 +278,11 @@ export async function status() {
 
 export default {
   HELPER_STALE_MS,
+  HELPER_TOKEN_PREFIX,
+  hashHelperToken,
+  issueHelperToken,
+  revokeHelperToken,
+  resolveHelperToken,
   normalizeVersion,
   pending,
   helperState,

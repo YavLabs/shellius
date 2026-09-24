@@ -41,10 +41,22 @@ export function validateConfig(config = {}) {
     throw new SinkConfigError('Hour must be between 0 and 23');
   }
 
+  // Weekly used to carry no day at all, so the scheduler's normaliser picked
+  // Monday for every weekly digest and nothing said so. A "weekly" setting
+  // that silently means one specific day is a setting nobody can trust.
+  let dayOfWeek = null;
+  if (schedule === 'weekly') {
+    dayOfWeek = config.dayOfWeek === undefined || config.dayOfWeek === null ? 1 : Number(config.dayOfWeek);
+    if (!Number.isInteger(dayOfWeek) || dayOfWeek < 0 || dayOfWeek > 6) {
+      throw new SinkConfigError('Day must be 0 (Sunday) to 6 (Saturday)');
+    }
+  }
+
   return {
     recipients,
     schedule,
     hour,
+    dayOfWeek,
     format: config.format === 'json' ? 'json' : 'csv',
   };
 }

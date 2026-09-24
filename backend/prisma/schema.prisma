@@ -1762,6 +1762,21 @@ model InstanceUpdateHelper {
   helperVersion String?   @map("helper_version")
   lastSeenAt    DateTime? @map("last_seen_at")
   hostname      String?
+  /// The helper's own credential — SHA-256 of a token issued once and never
+  /// stored in the clear, exactly like Server.agentTokenHash.
+  ///
+  /// It does NOT authenticate through the API-token/RBAC path, and that is
+  /// the point. `settings.updates` is non-delegable, and
+  /// middleware/apiTokenAuth strips every non-delegable permission from
+  /// every API token including a service account's — so a helper
+  /// authenticating as an API client would receive 403 on every call,
+  /// forever. Carving an exception into that stripping would reopen the "no
+  /// token ever holds a non-delegable permission" guarantee that
+  /// settings.storage, settings.email and audit.sinks all rely on. A
+  /// purpose-built credential that reaches exactly three endpoints is the
+  /// narrower answer.
+  tokenHash     String?   @unique @map("token_hash")
+  tokenIssuedAt DateTime? @map("token_issued_at")
 
   @@map("instance_update_helpers")
 }

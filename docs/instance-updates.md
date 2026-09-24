@@ -74,11 +74,28 @@ happens is reimplemented — the helper only decides *when*.
 
 ### Installing it
 
-1. Create a **service account** with the `settings.updates` permission and
-   issue it a token (Administration → Service accounts). The helper
-   authenticates as an ordinary API client — no special credential type, no
-   bypass. Revoking the token stops it, and everything it does appears in the
-   audit log under that identity.
+1. Issue a **helper credential** (Administration → Updates, or
+   `POST /api/updates/self/helper-token` with `settings.updates`). It is shown
+   once; nothing stores the plaintext, and issuing another one invalidates the
+   previous.
+
+   > It is deliberately **not** an API token, and the reason is concrete
+   > rather than stylistic. `settings.updates` is non-delegable, and
+   > `middleware/apiTokenAuth` strips every non-delegable permission from
+   > every API token — a service account's included, by design and with a test
+   > pinning it. A helper authenticating as an API client would have received
+   > 403 on every call, for ever. The alternative fix, an exception in that
+   > stripping, would have reopened the "no API token ever holds a
+   > non-delegable permission" guarantee that `settings.storage`,
+   > `settings.email`, `audit.sinks` and service-account management all rely
+   > on. A credential that reaches exactly three endpoints and nothing else in
+   > the product is the narrower answer.
+
+   What a holder of it can do, in full: learn whether an upgrade has been
+   requested, claim it, and report how it went. It cannot read or write any
+   organization's data, cannot create a request, and cannot choose a version —
+   the version comes from a request a human made through the permission-gated
+   endpoint.
 
 2. On the host running Shellius:
 
@@ -98,7 +115,7 @@ happens is reimplemented — the helper only decides *when*.
    EOF
    sudo chmod 600 /etc/shellius/self-update.env
 
-   printf '%s' 'shtk_...' | sudo tee /etc/shellius/self-update-token >/dev/null
+   printf '%s' 'shup_...' | sudo tee /etc/shellius/self-update-token >/dev/null
    sudo chmod 600 /etc/shellius/self-update-token
 
    sudo systemctl daemon-reload
@@ -130,8 +147,18 @@ sudo systemctl disable --now shellius-self-update.timer
 sudo rm -f /usr/local/sbin/shellius-self-update /etc/shellius/self-update-token
 ```
 
-Revoke the service account token as well. Requests then sit unclaimed and the
-screen goes back to showing the command.
+Revoke the credential as well (`DELETE /api/updates/self/helper-token`).
+Requests then sit unclaimed and the screen goes back to showing the command.
+
+## One more thing worth saying out loud
+
+These records are **installation-wide**, not per organization: there is no
+`org_id` on them. On a multi-tenant install, one organization's
+`settings.updates` holder requests an upgrade that restarts the service for
+everybody, with no notice to the others. That follows the precedent already
+set by `settings.storage` ("shared by every organization on this install"),
+but it is worth knowing before you hand `settings.updates` to a second
+organization's super admin.
 
 ## What this does not cover
 
