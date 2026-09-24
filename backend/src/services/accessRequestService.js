@@ -1153,16 +1153,22 @@ export async function generateRdpFile({ requestId, callerId, scope = UNSCOPED })
 /**
  * Cut off any session still running on a request that is no longer valid.
  *
- * Revoking or expiring a request used to revoke the certificate and stop
- * there. That closes the door to NEW connections — check-principals refuses a
- * revoked certificate, and a fresh RDP token cannot be minted — but it does
- * nothing about the shell or remote desktop the person already has open. On a
- * production host, "access revoked" meant the session kept running until they
- * chose to close it. For RDP the gap was total: the Guacamole token's expiry
- * is checked once, at connect, and never again.
+ * Be precise about what this did and did not fix, because the two transports
+ * were in very different states:
  *
- * terminateSession handles both transports (the SSH hub and the live
- * guacamole-lite connection), so one call covers each.
+ *   SSH was already covered. `terminalHub.checkExpiries` polls every 30
+ *   seconds and ends any live session whose access request has become
+ *   REVOKED, DENIED or EXPIRED. What this adds for SSH is immediacy — the
+ *   session dies with the revoke instead of up to half a minute later.
+ *
+ *   RDP was not covered at all, and the gap was total. RDP connections live
+ *   in terminalService's own `rdpConnBySession` map, not in the hub, so the
+ *   expiry watcher never saw them; and the Guacamole token's expiry is
+ *   checked once, in `processConnectionSettings` at connect time, and never
+ *   again. A revoked or expired production RDP session ran until the user
+ *   closed the window.
+ *
+ * terminateSession handles both transports, so one call covers each.
  *
  * Imported lazily: terminalService imports this module, so a static import
  * would be a cycle. Best-effort by design — a session that cannot be closed

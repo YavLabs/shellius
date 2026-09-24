@@ -2,16 +2,20 @@
  * accessRequestSessionCutoff.test.js — revoking or expiring access must also
  * end the session it is already being used for.
  *
- * The gap this closes: `revoke()` and `markExpired()` revoked the certificate
- * and stopped there. That closes the door to NEW connections — check-principals
- * refuses a revoked certificate, and a fresh RDP token cannot be minted — but
- * it did nothing about the shell or remote desktop the person already had
- * open. On a production host, "access revoked" left the existing session
- * running until the user chose to close it.
+ * What was actually broken, stated precisely — the two transports were in
+ * very different states:
  *
- * RDP was the worse half: the Guacamole connection token's expiry is checked
- * once, in `processConnectionSettings` at connect time, and never again, so
- * an RDP session had nothing at all bounding its life.
+ *   SSH was already handled. `terminalHub.checkExpiries` polls every 30
+ *   seconds and ends a live session whose request has become REVOKED, DENIED
+ *   or EXPIRED. The SSH test below pins that at the service layer and makes
+ *   the cut immediate rather than up to 30 seconds late.
+ *
+ *   RDP was not handled at all. RDP connections live in terminalService's
+ *   own `rdpConnBySession` map rather than in the hub, so the expiry watcher
+ *   never saw them; and the Guacamole connection token's expiry is checked
+ *   once, in `processConnectionSettings` at connect time, and never again. A
+ *   revoked or expired production RDP session ran until the user closed the
+ *   window.
  *
  * "Certificates auto-expire. Access requests auto-expire. No permanent
  * access." — CLAUDE.md. These tests are what make the last sentence true of

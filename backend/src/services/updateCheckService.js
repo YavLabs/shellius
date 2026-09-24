@@ -159,6 +159,13 @@ async function fetchLatest(fetchImpl = fetch) {
  * @param {Function} [opts.fetchImpl]  injected for tests
  */
 export async function getStatus({ force = false, fetchImpl = fetch } = {}) {
+  // An injected fetch means a caller is simulating the release API — a test,
+  // or a future "what would this look like" preview. Its answer must never
+  // reach the shared cache: the test suite writing a fabricated release into
+  // Redis would leave the running instance reporting that fabrication as the
+  // latest version, which is exactly what happened the first time this was
+  // run against a live dev instance.
+  const simulated = fetchImpl !== fetch;
   const base = {
     currentVersion: CURRENT_VERSION,
     latestVersion: null,
@@ -174,7 +181,7 @@ export async function getStatus({ force = false, fetchImpl = fetch } = {}) {
     return { ...base, error: null, disabledReason: 'Update checks are turned off on this install' };
   }
 
-  const cached = force ? null : await readCache();
+  const cached = force || simulated ? null : await readCache();
   if (cached) {
     return { ...base, ...cached, updateAvailable: isNewer(cached.latestVersion) };
   }
@@ -182,14 +189,14 @@ export async function getStatus({ force = false, fetchImpl = fetch } = {}) {
   try {
     const fresh = await fetchLatest(fetchImpl);
     const value = { ...fresh, checkedAt: new Date().toISOString(), error: null };
-    await writeCache(value);
+    if (!simulated) await writeCache(value);
     return { ...base, ...value, updateAvailable: isNewer(value.latestVersion) };
   } catch (err) {
     // An install with no outbound internet is a supported configuration, not
     // a fault, so this is a debug line rather than an error — but the reason
     // is still reported to the screen that asked.
     logger.debug('updateCheck: could not reach the release API', { error: err.message });
-    const stale = await readCache();
+    const stale = simulated ? null : await readCache();
     if (stale) {
       return {
         ...base,

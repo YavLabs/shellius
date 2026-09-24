@@ -18,11 +18,16 @@
 
 import { compareVersions, isNewer, getStatus, isEnabled, RELEASES_API } from '../updateCheckService.js';
 
-// Every call below passes `force: true`, so the cache is never read and the
-// suite needs no Redis of its own. That is also the point of the bounded
-// cache helpers in the service: with `maxRetriesPerRequest: null` a Redis
-// command QUEUES rather than failing when the server is unreachable, so an
-// unbounded cache touch would hang the check instead of just missing it.
+// Every call below injects `fetchImpl`, which the service treats as a
+// simulation: it neither reads nor writes the shared cache. That is not a
+// convenience — the first version of these tests wrote a fabricated release
+// into Redis, and the dev instance then cheerfully reported that fabrication
+// as the latest published version.
+//
+// The bounded cache helpers matter for the same family of reason: with
+// `maxRetriesPerRequest: null` a Redis command QUEUES rather than failing
+// when the server is unreachable, so an unbounded cache touch would hang the
+// check instead of just missing it.
 
 /** A fetch that answers with one canned release. */
 const okFetch = (body, init = {}) => async () => ({
@@ -208,6 +213,15 @@ describe('getStatus', () => {
     expect(status.error).toBeTruthy();
     expect(status.updateAvailable).toBe(false);
   }, 20_000);
+
+  // The regression that made this rule explicit.
+  test('a simulated check never writes the shared cache', async () => {
+    const redis = (await import('../../config/redis.js')).default;
+    await redis.del('shellius:update-check').catch(() => {});
+    await getStatus({ fetchImpl: okFetch({ tag_name: 'v99.99.99' }) });
+    const cached = await redis.get('shellius:update-check').catch(() => null);
+    expect(cached).toBeNull();
+  });
 
   test('isEnabled defaults to on', () => {
     delete process.env.UPDATE_CHECK_ENABLED;
