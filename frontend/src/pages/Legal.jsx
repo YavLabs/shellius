@@ -22,7 +22,7 @@ const DOCS = {
       },
       {
         h: 'What we never store',
-        body: 'Plaintext SSH private keys are generated on demand and returned to the requesting user — they are never written to disk on the server. RDP credentials are injected directly into the Guacamole gateway and never returned to the browser. Cleartext passwords are hashed with bcrypt; cleartext secrets (CA private key, cloud connector keys, SMTP/SSO passwords) are encrypted at rest with AES-256-GCM.',
+        body: 'Plaintext SSH private keys are generated on demand and returned to the requesting user — they are never written to disk on the server. RDP credentials are stored encrypted and are never shown in any API response or written to a downloaded .rdp file; they are placed in an encrypted connection token that the browser relays to the Guacamole gateway without being able to read it, and that token expires after five minutes. Cleartext passwords are hashed with bcrypt; cleartext secrets (CA private key, SMTP/SSO passwords, storage and integration credentials) are encrypted at rest with AES-256-GCM.',
       },
       {
         h: 'Your rights',

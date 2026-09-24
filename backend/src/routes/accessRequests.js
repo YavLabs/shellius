@@ -541,16 +541,30 @@ router.post(
 
 // ---------------------------------------------------------------------------
 // POST /api/access-requests/:id/connect — requester only
-// TODO(phase-8): Wire to web terminal WebSocket session. Currently returns
-// a stub URL for the xterm.js terminal page.
+//
+// Hands back the URL of the page that will open the session, for a client
+// that cannot render one itself. The TUI uses it as a fallback when policy
+// forbids downloading a key (see tui/internal/api/client.go StartWebTerminal).
+//
+// It does NOT open a session, and it is not a stub for something that should:
+// the browser establishes the WebSocket itself, and the credential it needs
+// is minted at that point — an SSH ticket from POST /api/terminal/ticket, or
+// an RDP connection token from POST /api/access-requests/:id/rdp-token. Both
+// are short-lived and are deliberately not issued here, where they would
+// outlive the click that asked for them. Two `TODO(phase-8)` markers used to
+// say this endpoint was unfinished; it was finished, just described wrongly.
 // ---------------------------------------------------------------------------
 
 router.post(
   '/:id/connect',
+  // This records an intent to connect, which is exactly the sort of thing the
+  // audit log is for. It had no audit middleware while every neighbouring
+  // route did.
+  audit('access_request.connect', 'AccessRequest'),
   asyncHandler(async (req, res) => {
     const id = req.params.id;
 
-    // Verify caller is the requester and request is approved (delegate to getById)
+    // Verify caller is the requester and request is accessible (delegate to getById)
     const accessRequest = await accessRequestService.getById({
       requestId: id,
       orgId: req.orgId,
@@ -564,12 +578,28 @@ router.post(
     if (accessRequest.status !== 'APPROVED') {
       throw new ApiError(409, `Access request is not approved (status: ${accessRequest.status})`);
     }
+    // Checked here as well as at the point the session is actually opened.
+    // Handing back a URL for access that has already run out sends the user
+    // to a page whose only job is to fail.
+    if (!accessRequest.expiresAt || new Date(accessRequest.expiresAt) <= new Date()) {
+      throw new ApiError(410, 'Access request has expired');
+    }
 
-    // TODO(phase-8): Replace stub with Guacamole / ssh2 WebSocket session creation
+    // Both protocols land on the same page; it reads the request and mounts
+    // either the xterm view or the Guacamole client. `protocol` is returned
+    // so a client that wants to size a window, or refuse RDP outright, does
+    // not have to fetch the request again to find out which it is.
+    //
+    // The REQUEST's protocol, not the server's. They are different enums —
+    // AccessRequest.protocol is `Protocol` (SSH | RDP), Server.protocol is
+    // `ServerProtocol` (ssh | rdp | both) — and on a `both` server only the
+    // request says which of the two was asked for. rdpService and
+    // pages/Terminal.jsx read it the same way.
     res.json({
       success: true,
       data: {
         url: `/terminal?requestId=${id}`,
+        protocol: accessRequest.protocol === 'RDP' ? 'RDP' : 'SSH',
         expiresAt: accessRequest.expiresAt,
       },
     });

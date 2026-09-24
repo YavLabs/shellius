@@ -513,7 +513,9 @@ function ServerForm({ server, customerId: initialCustomerId, onSubmit, onCancel 
             </div>
           </div>
           <p className="text-xs text-muted-foreground">
-            Credentials are encrypted at rest and injected via the Guacamole gateway — never exposed to browsers.
+            Credentials are encrypted at rest and never returned by the API. To
+            open a session they travel inside a five-minute encrypted token that
+            the browser relays to the Guacamole gateway but cannot read.
           </p>
         </div>
       )}

@@ -79,7 +79,18 @@ services:
       start_period: 10s
 
   guacd:
-    image: guacamole/guacd:1.5.5
+    # Custom guacd build with H.264 (OpenH264) enabled. The official
+    # guacamole/guacd image builds FreeRDP with -DWITH_OPENH264=OFF, so it
+    # cannot decode the RDP Graphics Pipeline that Windows 10/11 and Server
+    # 2016+ default to: the desktop renders fully BLACK while the cursor
+    # still moves. Only docker-compose.deploy.yml used this build until 2.1,
+    # so RDP was broken in every other deployment, including all-in-one.
+    # See docker/Dockerfile.guacd. First build takes a few minutes; it is
+    # cached after that.
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.guacd
+    image: shellius-guacd:h264
     restart: unless-stopped
 
   minio:

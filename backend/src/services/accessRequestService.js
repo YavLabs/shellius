@@ -977,22 +977,21 @@ export async function generateSshCredentials({
 /**
  * Generate a downloadable .rdp file for an approved RDP access request.
  *
- * The file targets the RDP server directly (MSTSC format). The RDP password
- * is NEVER included in the file — it is injected by Guacamole at the
- * browser-terminal layer only.
+ * The file targets the RDP server directly (MSTSC format) and contains no
+ * credential of any kind: not the host's RDP password, and (since 2.1) not
+ * the Guacamole connection token either — that token's plaintext CONTAINS the
+ * password, so writing it to a downloaded file was a credential on disk.
  *
- * Security note: Windows MSTSC .rdp files connect directly to the target
- * host when network-reachable. For true RD Gateway support (which wraps the
- * RDP connection in HTTPS), a separate Windows RD Gateway component is
- * required. The gatewayToken field is embedded as a comment line for
- * Shellius-aware tooling; standard MSTSC ignores comment lines.
+ * What this means operationally: a .rdp file only works where the user's
+ * machine can already reach the host. It is the escape hatch for people who
+ * want a real mstsc client; the browser session (WebSocket → guacd) is the
+ * path that works from anywhere, and it is the one that injects credentials.
  *
- * TODO(rdp-gateway): When a real RD Gateway is deployed, replace
- *   `full address` with the gateway's public hostname and set
- *   `gatewayhostname` + `gatewaycredentialssource:i:5` (token-based auth).
- *   The gatewayToken JWT can be presented as the gateway access token.
- *   Until then, the .rdp file connects directly and the browser terminal
- *   (WebSocket → guacd path) should be preferred for credential injection.
+ * RD Gateway: set `RD_GATEWAY_HOST` to a real gateway and the file will route
+ * through it. Leave it unset and the file says "never use a gateway". There
+ * is no default, deliberately — the previous default was `localhost`, with
+ * `gatewayusagemethod:i:1`, which told Windows to tunnel every connection
+ * through an RD Gateway on the user's own machine.
  *
  * @param {object} params
  * @param {string} params.requestId
@@ -1022,10 +1021,19 @@ export async function generateRdpFile({ requestId, callerId, scope = UNSCOPED })
   }
 
   // Issue gateway token for Guacamole / Shellius-aware tooling
-  const { server, gatewayToken } = await rdpService.createConnectionForRequest(requestId, scope);
+  // Called for its validation, not for the token: it re-checks approval,
+  // expiry, protocol, customer scope and that a credential exists at all.
+  const { server } = await rdpService.createConnectionForRequest(requestId, scope);
 
-  const rdpPort = server.port ?? 3389;
-  const publicGatewayHost = process.env.PUBLIC_GATEWAY_HOST || 'localhost';
+  // Must agree with rdpService.buildRdpToken, which is what the browser
+  // client actually connects to. This read `server.port` alone, so a host
+  // with an explicit rdpPort got a .rdp file pointing at the wrong port
+  // while the in-browser session worked — the confusing half of a bug,
+  // because one of the two ways in kept working.
+  const rdpPort = server.rdpPort ?? server.port ?? 3389;
+  // Only a deliberately configured RD Gateway counts. The old default of
+  // 'localhost' was worse than none at all.
+  const rdGateway = (process.env.RD_GATEWAY_HOST || '').trim();
   const rdpUsername = server.rdpUsername || accessRequest.requestedPrincipal;
 
   // .rdp file in Windows MSTSC format (key:type:value, CRLF line endings).
@@ -1035,9 +1043,13 @@ export async function generateRdpFile({ requestId, callerId, scope = UNSCOPED })
     // shellius metadata (treated as unknown keys by MSTSC — safely ignored)
     `shellius-request-id:s:${requestId}`,
     `shellius-expires-at:s:${accessRequest.expiresAt.toISOString()}`,
-    // NOTE: gatewayToken is NOT the RDP password — it is a short-lived JWT
-    // for the Shellius WebSocket RDP proxy. The RDP password is never exposed.
-    `shellius-gateway-token:s:${gatewayToken}`,
+    // The connection token is deliberately NOT written here. The comment this
+    // replaces said it was "a short-lived JWT" and that "the RDP password is
+    // never exposed"; both were wrong. What buildRdpToken returns is an
+    // AES-CBC blob whose plaintext contains the host's RDP password, and
+    // writing it into a downloaded file put that blob on the user's disk with
+    // no expiry the file itself could enforce. Nothing ever read the field:
+    // the only verifier, rdpService.verifyGatewayToken, had no callers.
     '',
     // Display
     'screen mode id:i:2',
@@ -1048,18 +1060,27 @@ export async function generateRdpFile({ requestId, callerId, scope = UNSCOPED })
     'smart sizing:i:0',
     'displayconnectionbar:i:1',
     '',
-    // Connection — direct to server (see TODO above re: RD Gateway).
-    // Prefer the routable IP so MSTSC connects even when the display hostname
-    // isn't DNS-resolvable; dynamicIp overrides are persisted into ipAddress.
+    // Connection — direct to the server. Prefer the routable IP so MSTSC
+    // connects even when the display hostname isn't DNS-resolvable;
+    // dynamicIp overrides are persisted into ipAddress.
     `full address:s:${server.ipAddress || server.hostname}:${rdpPort}`,
     `username:s:${rdpUsername}`,
     '',
-    // Gateway fields — currently pointing at target server directly.
-    // Replace with real RD Gateway hostname when available.
-    `gatewayhostname:s:${publicGatewayHost}`,
-    'gatewayusagemethod:i:1',
-    'gatewaycredentialssource:i:4',
-    'gatewayprofileusagemethod:i:1',
+    // Gateway. `gatewayusagemethod:i:1` means "always route through the
+    // gateway named below", and the name defaulted to PUBLIC_GATEWAY_HOST,
+    // whose own default is `localhost` — so every downloaded .rdp file told
+    // Windows to tunnel through an RD Gateway on the user's own machine.
+    // There is no such gateway (see the note on generateRdpFile), so the
+    // file could not connect. Unless a real gateway has been configured, say
+    // "never use one" and connect directly, which is what actually works.
+    ...(rdGateway
+      ? [
+          `gatewayhostname:s:${rdGateway}`,
+          'gatewayusagemethod:i:1',
+          'gatewaycredentialssource:i:4',
+          'gatewayprofileusagemethod:i:1',
+        ]
+      : ['gatewayusagemethod:i:0']),
     '',
     // Security
     'authentication level:i:2',
@@ -1128,6 +1149,51 @@ export async function generateRdpFile({ requestId, callerId, scope = UNSCOPED })
  * @param {string} [params.reason]
  * @returns {Promise<object>}
  */
+
+/**
+ * Cut off any session still running on a request that is no longer valid.
+ *
+ * Revoking or expiring a request used to revoke the certificate and stop
+ * there. That closes the door to NEW connections — check-principals refuses a
+ * revoked certificate, and a fresh RDP token cannot be minted — but it does
+ * nothing about the shell or remote desktop the person already has open. On a
+ * production host, "access revoked" meant the session kept running until they
+ * chose to close it. For RDP the gap was total: the Guacamole token's expiry
+ * is checked once, at connect, and never again.
+ *
+ * terminateSession handles both transports (the SSH hub and the live
+ * guacamole-lite connection), so one call covers each.
+ *
+ * Imported lazily: terminalService imports this module, so a static import
+ * would be a cycle. Best-effort by design — a session that cannot be closed
+ * must not stop the revoke itself from being recorded.
+ *
+ * @returns {Promise<number>} sessions terminated
+ */
+async function endSessionsForRequest(orgId, requestId, byUserId = null) {
+  try {
+    const terminalService = await import('./terminalService.js');
+    const n = await terminalService.terminateActiveSessionsFor(
+      orgId,
+      { accessRequestId: requestId },
+      byUserId
+    );
+    if (n > 0) {
+      logger.info('accessRequestService: ended live sessions for a request that is no longer valid', {
+        requestId,
+        sessions: n,
+      });
+    }
+    return n;
+  } catch (err) {
+    logger.warn('accessRequestService: could not end sessions for request', {
+      requestId,
+      error: err.message,
+    });
+    return 0;
+  }
+}
+
 export async function revoke({ requestId, orgId, callerId, callerPermissions, reason }) {
   if (!requestId) throw new ApiError(400, 'requestId is required');
   if (!orgId) throw new ApiError(400, 'orgId is required');
@@ -1178,6 +1244,11 @@ export async function revoke({ requestId, orgId, callerId, callerPermissions, re
       });
     }
   }
+
+  // Close anything still connected on this request. Done before the
+  // notification so the person is not told their access is gone while their
+  // terminal is still open.
+  await endSessionsForRequest(accessRequest.orgId, requestId, callerId);
 
   // Notify the requester
   await notificationService.create({
@@ -1496,6 +1567,11 @@ export async function markExpired() {
           });
         }
       }
+
+      // "Access requests auto-expire. No permanent access." — which was only
+      // true of new connections until now. An already-open session outlived
+      // its own expiry, indefinitely.
+      await endSessionsForRequest(req.orgId, req.id, null);
 
       await notificationService.create({
         orgId: req.orgId,

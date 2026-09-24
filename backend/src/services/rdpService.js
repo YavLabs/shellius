@@ -1,32 +1,34 @@
 /**
  * rdpService.js
  *
- * Guacamole RDP integration service.
+ * Everything the RDP path needs BEFORE a socket exists: credential storage,
+ * credential resolution, and the connection token the browser carries.
  *
- * Responsibilities:
- *   - Encrypt / decrypt RDP credentials stored on the Server model
- *   - Perform the Guacamole handshake over a raw TCP socket to guacd and
- *     return the connected net.Socket ready for bidirectional proxying
- *   - Issue short-lived gateway JWT tokens for the WebSocket RDP proxy
- *   - Load and validate access requests before opening a Guacamole connection
+ * The socket itself is not here. `terminalService.buildGuacamoleServer()`
+ * hands the WebSocket to guacamole-lite, which speaks the Guacamole protocol
+ * to guacd. This module used to hand-roll that handshake as well
+ * (`createGuacdConnection`, `encodeInstruction`, `parseInstructions`) and to
+ * mint a separate JWT for a gateway (`issueGatewayToken`,
+ * `verifyGatewayToken`, `revokeConnection`). All six were superseded by
+ * guacamole-lite and had **no callers** — while their surrounding comments
+ * were still the canonical description of how RDP worked, which is how the
+ * route handlers, the .rdp file and the frontend all came to describe the
+ * connection token as "a short-lived JWT". Removed in 2.1.
  *
- * Architecture note:
- *   The Guacamole protocol is a text-based format where each "instruction"
- *   is a comma-separated list of length-prefixed fields ending with a
- *   semicolon.  Example: `4.size,4.1280,3.800,2.96;`
- *   This module hand-rolls the handshake because no widely-maintained
- *   npm guacd client exists.
+ * What the token actually is: `buildRdpToken` returns an AES-256-CBC blob in
+ * guacamole-lite's own format, whose plaintext contains the connection
+ * settings — INCLUDING the host's RDP password. It is opaque to the browser
+ * (only the backend holds the key, derived from the JWT secret) but it is
+ * still a credential in transit, so it is treated as one: five-minute
+ * expiry, checked in `processConnectionSettings` at connect time, never
+ * written to disk and never logged.
  *
  * Security:
- *   - RDP passwords are decrypted in memory only during the guacd handshake
- *   - Gateway tokens expire in 5 minutes and carry only (accessRequestId,
- *     userId, sub) — no credentials
+ *   - RDP passwords are decrypted in memory only while building a token
  *   - NEVER log decrypted passwords, tokens, or credential material
  */
 
-import net from 'net';
 import crypto from 'crypto';
-import jwt from 'jsonwebtoken';
 import { UNSCOPED, isUnscoped } from '../lib/scope.js';
 
 import { encrypt, decrypt } from '../utils/crypto.js';
@@ -39,10 +41,6 @@ import config from '../config/index.js';
 // Environment config
 // ---------------------------------------------------------------------------
 
-const GUACD_HOST = process.env.GUACD_HOST || '127.0.0.1';
-const GUACD_PORT = parseInt(process.env.GUACD_PORT, 10) || 4822;
-const GATEWAY_TOKEN_TTL = '5m';
-const PUBLIC_GATEWAY_HOST = process.env.PUBLIC_GATEWAY_HOST || 'localhost';
 
 // ---------------------------------------------------------------------------
 // guacamole-lite token encryption
@@ -114,74 +112,6 @@ export function buildRdpToken({ accessRequest, server }) {
 }
 
 // ---------------------------------------------------------------------------
-// Guacamole protocol helpers
-// ---------------------------------------------------------------------------
-
-/**
- * Encode a single Guacamole instruction.
- *
- * Each field is represented as `<length>.<value>` and fields are joined with
- * commas. The instruction is terminated with a semicolon.
- *
- * @param {...(string|number)} parts
- * @returns {string}
- *
- * @example
- *   encodeInstruction('select', 'rdp')  →  '6.select,3.rdp;'
- */
-export function encodeInstruction(...parts) {
-  const fields = parts.map((p) => {
-    const s = String(p);
-    return `${s.length}.${s}`;
-  });
-  return fields.join(',') + ';';
-}
-
-/**
- * Parse all complete Guacamole instructions from a string buffer.
- *
- * Returns { instructions, remainder } where instructions is an array of
- * string[] (one entry per parsed field within the instruction) and remainder
- * is the unparsed tail of the buffer.
- *
- * @param {string} buffer
- * @returns {{ instructions: string[][], remainder: string }}
- */
-export function parseInstructions(buffer) {
-  const instructions = [];
-  let pos = 0;
-
-  while (pos < buffer.length) {
-    const semicolon = buffer.indexOf(';', pos);
-    if (semicolon === -1) break; // incomplete instruction
-
-    const raw = buffer.slice(pos, semicolon);
-    pos = semicolon + 1;
-
-    const fields = [];
-    let fieldPos = 0;
-
-    while (fieldPos < raw.length) {
-      const dot = raw.indexOf('.', fieldPos);
-      if (dot === -1) break;
-      const len = parseInt(raw.slice(fieldPos, dot), 10);
-      if (isNaN(len)) break;
-      const value = raw.slice(dot + 1, dot + 1 + len);
-      fields.push(value);
-      fieldPos = dot + 1 + len;
-      // Skip optional comma separator
-      if (fieldPos < raw.length && raw[fieldPos] === ',') fieldPos++;
-    }
-
-    if (fields.length > 0) {
-      instructions.push(fields);
-    }
-  }
-
-  return { instructions, remainder: buffer.slice(pos) };
-}
-
-// ---------------------------------------------------------------------------
 // Credential encryption / decryption
 // ---------------------------------------------------------------------------
 
@@ -230,187 +160,6 @@ export function resolveRdpCredentials(server) {
     return { username: server.credential.username || '', password };
   }
   return { username: server.rdpUsername ?? '', password: decryptRdpPassword(server) ?? '' };
-}
-
-// ---------------------------------------------------------------------------
-// Guacamole handshake — createGuacdConnection
-// ---------------------------------------------------------------------------
-
-/**
- * Open a TCP connection to guacd and complete the Guacamole RDP handshake.
- *
- * Protocol sequence:
- *   C→S  select rdp
- *   S→C  args  <param-name-list>
- *   C→S  size  <width> <height> <dpi>
- *   C→S  audio <supported-mime-types…>
- *   C→S  video <supported-mime-types…>
- *   C→S  image <supported-mime-types…>
- *   C→S  connect <values aligned to args order>
- *   (socket is now in streaming / tunnel mode)
- *
- * @param {object} opts
- * @param {object} opts.server          - Prisma Server row (includes rdp* fields)
- * @param {number} [opts.width=1280]
- * @param {number} [opts.height=800]
- * @param {number} [opts.dpi=96]
- * @returns {Promise<net.Socket>}       - Resolved after successful handshake
- */
-export function createGuacdConnection({ server, width = 1280, height = 800, dpi = 96 }) {
-  return new Promise((resolve, reject) => {
-    const socket = new net.Socket();
-    let rxBuf = '';
-    let handshakeDone = false;
-
-    const fail = (msg, err) => {
-      if (!handshakeDone) {
-        socket.destroy();
-        reject(err || new Error(msg));
-      }
-    };
-
-    socket.setEncoding('utf8');
-    socket.setTimeout(10000);
-
-    socket.on('timeout', () => fail('guacd handshake timed out'));
-    socket.on('error', (err) => fail('guacd socket error', err));
-
-    // Accumulate data and process complete instructions
-    socket.on('data', (chunk) => {
-      if (handshakeDone) return; // post-handshake data handled by proxy layer
-      rxBuf += chunk;
-
-      const { instructions, remainder } = parseInstructions(rxBuf);
-      rxBuf = remainder;
-
-      for (const fields of instructions) {
-        if (fields[0] === 'args') {
-          // fields[1..n] are the parameter names guacd expects in order
-          const paramNames = fields.slice(1);
-
-          // Decrypt RDP credentials transiently — only in this closure
-          let rdpUsername = server.rdpUsername ?? '';
-          let rdpPassword = null;
-          try {
-            ({ username: rdpUsername, password: rdpPassword } = resolveRdpCredentials(server));
-          } catch (decryptErr) {
-            logger.error('rdpService: failed to decrypt RDP password', {
-              serverId: server.id,
-              error: decryptErr.message,
-            });
-            fail('credential decryption failed', decryptErr);
-            return;
-          }
-
-          // Map known parameter names to values.
-          // guacd connects to the target directly, so it must receive a
-          // routable IP — not the server's display hostname (e.g. "glovius"),
-          // which guacd cannot DNS-resolve. Mirror the SSH path, which prefers
-          // ipAddress. For dynamicIp servers the connect-time override is
-          // already persisted into ipAddress before this handshake runs.
-          const knownParams = {
-            hostname: server.ipAddress || server.hostname,
-            port: String(server.rdpPort ?? server.port ?? 3389),
-            username: rdpUsername,
-            password: rdpPassword ?? '',
-            security: 'any',
-            'ignore-cert': 'true',
-            domain: '',
-            width: String(width),
-            height: String(height),
-            dpi: String(dpi),
-            'color-depth': '24',
-            'enable-wallpaper': 'false',
-            'enable-font-smoothing': 'true',
-            'enable-full-window-drag': 'false',
-            'enable-desktop-composition': 'false',
-            'enable-menu-animations': 'false',
-            'enable-audio': 'true',
-            'disable-auth': 'false',
-          };
-
-          const connectValues = paramNames.map((name) => knownParams[name] ?? '');
-
-          // Zero the password from local scope immediately after use
-          rdpPassword = null;
-
-          // Send size, audio, video, image, then connect
-          socket.write(encodeInstruction('size', width, height, dpi));
-          socket.write(encodeInstruction('audio', 'audio/L16'));
-          socket.write(encodeInstruction('video'));
-          socket.write(encodeInstruction('image', 'image/png', 'image/jpeg'));
-          socket.write(encodeInstruction('connect', ...connectValues));
-
-          // Remove the timeout — handshake is complete; proxy layer takes over
-          socket.setTimeout(0);
-          socket.removeAllListeners('timeout');
-          socket.removeAllListeners('error');
-          socket.removeAllListeners('data');
-
-          handshakeDone = true;
-
-          logger.info('rdpService.createGuacdConnection: handshake complete', {
-            serverId: server.id,
-            hostname: server.hostname,
-            connectHost: server.ipAddress || server.hostname,
-            guacdHost: GUACD_HOST,
-            guacdPort: GUACD_PORT,
-          });
-
-          resolve(socket);
-          return;
-        }
-
-        // Unexpected instruction before args
-        logger.warn('rdpService.createGuacdConnection: unexpected instruction during handshake', {
-          opcode: fields[0],
-        });
-      }
-    });
-
-    socket.connect(GUACD_PORT, GUACD_HOST, () => {
-      socket.write(encodeInstruction('select', 'rdp'));
-    });
-  });
-}
-
-// ---------------------------------------------------------------------------
-// Gateway token
-// ---------------------------------------------------------------------------
-
-/**
- * Issue a short-lived JWT gateway token for an approved RDP access request.
- *
- * The token is used by the WebSocket proxy to authenticate the client
- * without re-exposing any credentials.  It carries only:
- *   { sub: 'rdp-gateway', accessRequestId, userId }
- *
- * @param {object} params
- * @param {string} params.accessRequestId
- * @param {string} params.userId
- * @returns {string}
- */
-function issueGatewayToken({ accessRequestId, userId }) {
-  return jwt.sign(
-    { sub: 'rdp-gateway', accessRequestId, userId },
-    config.jwt.secret,
-    { expiresIn: GATEWAY_TOKEN_TTL }
-  );
-}
-
-/**
- * Verify an RDP gateway token issued by issueGatewayToken.
- *
- * @param {string} token
- * @returns {{ sub: string, accessRequestId: string, userId: string, iat: number, exp: number }}
- * @throws {Error} if invalid or expired
- */
-export function verifyGatewayToken(token) {
-  const claims = jwt.verify(token, config.jwt.secret);
-  if (claims.sub !== 'rdp-gateway') {
-    throw new Error('Token is not an RDP gateway token');
-  }
-  return claims;
 }
 
 // ---------------------------------------------------------------------------
@@ -478,30 +227,14 @@ export async function createConnectionForRequest(accessRequestId, scope = UNSCOP
   return { server, gatewayToken };
 }
 
-// ---------------------------------------------------------------------------
-// revokeConnection
-// ---------------------------------------------------------------------------
-
-/**
- * Forcefully destroy a guacd socket, ending the RDP tunnel.
- *
- * @param {net.Socket} socket
- */
-export function revokeConnection(socket) {
-  try {
-    socket.destroy();
-  } catch (err) {
-    logger.warn('rdpService.revokeConnection: error destroying socket', { error: err.message });
-  }
-}
-
 export default {
+  GUAC_CRYPT_CYPHER,
+  GUAC_CRYPT_KEY,
+  GUAC_TOKEN_TTL_MS,
+  encryptGuacToken,
+  buildRdpToken,
   encryptRdpPassword,
   decryptRdpPassword,
-  encodeInstruction,
-  parseInstructions,
-  createGuacdConnection,
-  verifyGatewayToken,
+  resolveRdpCredentials,
   createConnectionForRequest,
-  revokeConnection,
 };

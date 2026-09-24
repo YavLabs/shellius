@@ -79,6 +79,13 @@ function ConnectModal({ open, onClose, server, intent, currentUser }) {
   const onConnect = async () => {
     if (!canSubmit || !intent?.activeRequestId) return;
     if (!(await ensureIpSaved())) return;
+    // RDP cannot live in a workspace pane. The Guacamole client binds its
+    // keyboard to `document`, so two RDP panes — or an RDP pane beside an SSH
+    // one — fight over every keystroke; and TerminalPaneArea only ever
+    // renders TerminalView, which speaks the SSH protocol. Sending RDP
+    // through openTab opened a tab that could never connect, which is what
+    // this button used to do for every protocol alike.
+    if (isRdp) return onConnectNewWindow();
     openTab(
       { requestId: intent.activeRequestId, principal: trimmed && trimmed !== intent.preferredPrincipal ? trimmed : undefined },
       { label: server?.displayName || server?.hostname, env: server?.environment, host: server?.ipAddress || server?.hostname, focus: true }
@@ -223,20 +230,27 @@ function ConnectModal({ open, onClose, server, intent, currentUser }) {
           <Button variant="outline" onClick={onClose}>
             Cancel
           </Button>
-          <Button
-            variant="outline"
-            title="Open in a new browser window instead of a workspace tab"
-            onClick={onConnectNewWindow}
-            disabled={!canSubmit || connecting || (server?.dynamicIp && !ip.trim())}
-          >
-            <ExternalLink className="mr-1.5 h-3.5 w-3.5" />
-            New window
-          </Button>
+          {/* A remote desktop always opens in its own window — see onConnect.
+              Offering "New window" beside it would imply the other button
+              does something different. */}
+          {!isRdp && (
+            <Button
+              variant="outline"
+              title="Open in a new browser window instead of a workspace tab"
+              onClick={onConnectNewWindow}
+              disabled={!canSubmit || connecting || (server?.dynamicIp && !ip.trim())}
+            >
+              <ExternalLink className="mr-1.5 h-3.5 w-3.5" />
+              New window
+            </Button>
+          )}
           <Button
             onClick={onConnect}
             disabled={!canSubmit || connecting || (server?.dynamicIp && !ip.trim())}
+            title={isRdp ? 'Remote desktop opens in its own window' : undefined}
           >
-            {connecting ? 'Updating IP…' : 'Connect'}
+            {isRdp && <ExternalLink className="mr-1.5 h-3.5 w-3.5" />}
+            {connecting ? 'Updating IP…' : isRdp ? 'Open remote desktop' : 'Connect'}
           </Button>
         </div>
       </div>
