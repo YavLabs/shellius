@@ -6,6 +6,8 @@ import SearchableSelect from '@/components/ui/SearchableSelect';
 import PasswordInput from '@/components/ui/PasswordInput';
 import { DomainChipsInput, GithubOrgChipsInput } from './ChipsInput';
 import IdpConfigPanel from './IdpConfigPanel';
+import SamlFields from './SamlFields';
+import { buildSamlFields, isSamlProvider, samlStateFromProvider, validateSamlForm } from './samlForm';
 import {
   createSsoProvider,
   updateSsoProvider,
@@ -48,8 +50,11 @@ const FIELD_PLACEHOLDERS = {
  * in edit mode.
  */
 export default function ProviderForm({ preset, existingProvider, orgGroups, onSaved, onCancel }) {
-  const isEdit = !!existingProvider;
   const isGithub = preset.protocol === 'github';
+  // The saved DTO's protocol wins over the preset: a SAML row created through
+  // the API with a preset id this build does not know must still render the
+  // SAML form, and the backend refuses a protocol change outright.
+  const isSaml = isSamlProvider(preset, existingProvider);
 
   const [name, setName] = useState(existingProvider?.name || preset.label);
   const [formData, setFormData] = useState(() => {
@@ -66,6 +71,10 @@ export default function ProviderForm({ preset, existingProvider, orgGroups, onSa
   });
   const [hasStoredSecret, setHasStoredSecret] = useState(!!existingProvider?.hasClientSecret);
   const [isActive, setIsActive] = useState(existingProvider?.isActive ?? true);
+  // SAML lives in its own state object (see samlForm.js) rather than in
+  // `formData`, which is keyed by OIDC field names.
+  const [samlState, setSamlState] = useState(() => samlStateFromProvider(existingProvider));
+  const [submitAttempted, setSubmitAttempted] = useState(false);
 
   const [defaultRole, setDefaultRole] = useState(existingProvider?.defaultRole || 'member');
   // Roles SSO may hand out automatically: never Super admin, never a role
@@ -98,8 +107,14 @@ export default function ProviderForm({ preset, existingProvider, orgGroups, onSa
   const [testing, setTesting] = useState(false);
   const [testResult, setTestResult] = useState(null);
   const [savedProvider, setSavedProvider] = useState(existingProvider || null);
+  const [justCreated, setJustCreated] = useState(false);
 
   const callbackUrl = savedProvider?.callbackUrl || '';
+  // A provider created in this dialog is edited from here on, not created
+  // again — which is what lets the SAML form stay open after "Add provider"
+  // so the admin can copy the Service Provider values it just derived.
+  const editingId = existingProvider?.id || savedProvider?.id || null;
+  const isEdit = !!editingId;
 
   function getEffectiveIssuerUrl() {
     if (preset.deriveIssuerUrl) return preset.deriveIssuerUrl(formData) || '';
@@ -112,7 +127,38 @@ export default function ProviderForm({ preset, existingProvider, orgGroups, onSa
     setTestResult(null);
   };
 
+  const samlValidation = validateSamlForm(samlState, {
+    hasStoredCertificate: !!savedProvider?.hasIdpCertificate,
+  });
+  // Don't shout about an empty required field before the admin has tried to
+  // save; do flag a value they have actually typed.
+  const samlErrors = {};
+  for (const [key, message] of Object.entries(samlValidation.errors)) {
+    const value = samlState[key];
+    const touched = typeof value === 'string' ? value.trim() !== '' : !!value;
+    if (submitAttempted || touched) samlErrors[key] = message;
+  }
+
+  /** The shared (protocol-independent) half of the request body. */
+  function buildSharedBody() {
+    return {
+      name: name.trim(),
+      presetId: preset.id,
+      isActive,
+      defaultRole,
+      defaultGroupId: defaultGroupId || null,
+      autoProvision,
+      allowedDomains,
+      requireVerifiedEmail,
+    };
+  }
+
   function buildBody() {
+    if (isSaml) {
+      // No clientId / clientSecret / issuerUrl / scopes: the create schema
+      // forbids the first two for a SAML preset and the rest are ignored.
+      return { ...buildSharedBody(), ...buildSamlFields(samlState, { isEdit }) };
+    }
     const effectiveIssuer = getEffectiveIssuerUrl();
     const body = {
       name: name.trim(),
@@ -137,6 +183,7 @@ export default function ProviderForm({ preset, existingProvider, orgGroups, onSa
 
   const canSave = (() => {
     if (!name.trim()) return false;
+    if (isSaml) return samlValidation.valid;
     if (!(formData.clientId || '').trim()) return false;
     if (!hasStoredSecret && !(formData.clientSecret || '').trim()) return false;
     if (preset.id === 'generic' && !getEffectiveIssuerUrl()) return false;
@@ -147,16 +194,26 @@ export default function ProviderForm({ preset, existingProvider, orgGroups, onSa
   })();
 
   const handleSave = async () => {
+    setSubmitAttempted(true);
+    if (isSaml && !samlValidation.valid) return;
     setSaving(true);
     setSaveError('');
     try {
       const body = buildBody();
-      const saved = isEdit
-        ? await updateSsoProvider(existingProvider.id, body)
-        : await createSsoProvider(body);
+      const saved = editingId ? await updateSsoProvider(editingId, body) : await createSsoProvider(body);
       setSavedProvider(saved);
       setHasStoredSecret(true);
       setFormData((prev) => ({ ...prev, clientSecret: '' }));
+      // The pasted certificate is now stored (and never readable again), so
+      // clear the box: an empty box means "keep what is stored".
+      setSamlState((prev) => ({ ...prev, idpCertificate: '' }));
+      if (isSaml && !existingProvider) {
+        // Stay open. The ACS URL, EntityID, metadata URL and SP certificate
+        // fingerprint only exist once the row has an id, and they are the
+        // values the admin has to take to their IdP before this works.
+        setJustCreated(true);
+        return;
+      }
       onSaved?.(saved);
     } catch (err) {
       setSaveError(err.response?.data?.error?.message || err.message || 'Failed to save provider');
@@ -190,7 +247,7 @@ export default function ProviderForm({ preset, existingProvider, orgGroups, onSa
 
   return (
     <div className="space-y-5">
-      <IdpConfigPanel preset={preset} callbackUrl={callbackUrl} />
+      <IdpConfigPanel preset={preset} callbackUrl={callbackUrl} provider={savedProvider} />
 
       <div>
         <label className="mb-1.5 block text-sm font-medium text-foreground">
@@ -198,6 +255,17 @@ export default function ProviderForm({ preset, existingProvider, orgGroups, onSa
         </label>
         <Input value={name} onChange={(e) => { setName(e.target.value); setTestResult(null); }} placeholder={preset.label} />
       </div>
+
+      {isSaml && (
+        <SamlFields
+          state={samlState}
+          onChange={setSamlState}
+          errors={samlErrors}
+          preset={preset}
+          provider={savedProvider}
+          onProviderChanged={setSavedProvider}
+        />
+      )}
 
       {isGithub && (
         <div>
@@ -215,14 +283,14 @@ export default function ProviderForm({ preset, existingProvider, orgGroups, onSa
         </div>
       )}
 
-      {preset.id !== 'generic' && !isGithub && effectiveIssuerUrl && (
+      {!isSaml && preset.id !== 'generic' && !isGithub && effectiveIssuerUrl && (
         <div>
           <label className="mb-1.5 block text-sm font-medium text-foreground">Issuer URL (computed)</label>
           <Input value={effectiveIssuerUrl} readOnly className="font-mono text-xs bg-muted/40 text-muted-foreground" />
         </div>
       )}
 
-      {genericFields.map((field) => {
+      {!isSaml && genericFields.map((field) => {
         const isSecret = field === 'clientSecret';
         const label = FIELD_LABELS[field] || field;
         const placeholder = isSecret && hasStoredSecret
@@ -285,11 +353,15 @@ export default function ProviderForm({ preset, existingProvider, orgGroups, onSa
 
         <SwitchField
           label="Require verified email for account linking"
-          description="On (recommended): a sign-in only links to an existing password account when the identity provider confirms the email address is verified. Off: link on email match alone."
+          description={
+            isSaml
+              ? 'A signed SAML assertion from your own identity provider always counts as a verified address, so this setting does not change a SAML sign-in. Linking to an account that has a password, or a privileged one, still requires that account\'s own confirmation.'
+              : 'On (recommended): a sign-in only links to an existing password account when the identity provider confirms the email address is verified. Off: link on email match alone.'
+          }
           checked={requireVerifiedEmail}
           onCheckedChange={setRequireVerifiedEmail}
         />
-        {!requireVerifiedEmail && (
+        {!requireVerifiedEmail && !isSaml && (
           <div role="alert" className="flex items-start gap-2 rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs text-amber-800 dark:text-amber-300">
             <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
             <span>
@@ -375,21 +447,55 @@ export default function ProviderForm({ preset, existingProvider, orgGroups, onSa
           {!testResult.ok && testResult.error && (
             <p className="mt-1 text-xs text-destructive">{testResult.error}</p>
           )}
+          {/* SAML has no discovery endpoint, so its "test" is a configuration
+              review that can pass and still have advice attached. */}
+          {(testResult.details?.warnings || []).length > 0 && (
+            <ul className="mt-2 space-y-1 text-xs text-amber-700 dark:text-amber-300">
+              {testResult.details.warnings.map((w) => (
+                <li key={w} className="flex items-start gap-1.5">
+                  <AlertTriangle className="mt-0.5 h-3 w-3 shrink-0" />
+                  <span>{w}</span>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+      )}
+
+      {justCreated && (
+        <div className="rounded-md border border-emerald-500/40 bg-emerald-500/10 px-4 py-3 text-sm text-emerald-700 dark:text-emerald-300">
+          Provider created. Copy the Service Provider values at the top into {preset.label} — until the identity
+          provider knows them, sign-in cannot work. SAML has no discovery endpoint, so the only real test is a sign-in.
         </div>
       )}
 
       <div data-sheet-footer className="flex flex-wrap items-center justify-between gap-3 pt-1">
         <div className="flex flex-wrap items-center gap-3">
-          <Button type="button" variant="outline" disabled={testing || !canSave} onClick={handleTest}>
+          <Button
+            type="button"
+            variant="outline"
+            disabled={testing || !canSave || (isSaml && !savedProvider)}
+            title={isSaml && !savedProvider ? 'Save the provider first — there is nothing to check until its certificate is stored' : undefined}
+            onClick={handleTest}
+          >
             {testing ? <WifiOff className="mr-2 h-4 w-4 animate-pulse" /> : <Wifi className="mr-2 h-4 w-4" />}
-            {testing ? 'Testing...' : 'Test connection'}
+            {testing ? 'Testing...' : isSaml ? 'Check configuration' : 'Test connection'}
           </Button>
           <Button type="button" disabled={saving || !canSave} onClick={handleSave}>
             {saving ? 'Saving...' : isEdit ? 'Save changes' : 'Add provider'}
           </Button>
+          {justCreated && (
+            <Button type="button" variant="secondary" onClick={() => onSaved?.(savedProvider)}>
+              Done
+            </Button>
+          )}
         </div>
-        <button type="button" onClick={onCancel} className="text-sm text-muted-foreground hover:text-foreground max-md:order-first">
-          Cancel
+        <button
+          type="button"
+          onClick={() => (justCreated ? onSaved?.(savedProvider) : onCancel?.())}
+          className="text-sm text-muted-foreground hover:text-foreground max-md:order-first"
+        >
+          {justCreated ? 'Close' : 'Cancel'}
         </button>
       </div>
     </div>

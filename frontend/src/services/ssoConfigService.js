@@ -48,6 +48,15 @@ export const reorderSsoProviders = (ids) =>
 export const testSavedSsoProvider = (id) =>
   api.post(`/auth/sso/providers/${id}/test`).then((r) => r.data?.data ?? r.data);
 
+/**
+ * POST /api/auth/sso/providers/:id/rotate-sp-key — generate a new SAML SP key
+ * pair. The old private key is destroyed, so the SP metadata must be
+ * re-imported at the IdP afterwards or signed AuthnRequests stop verifying.
+ * The new private key is never returned; the DTO carries only its certificate.
+ */
+export const rotateSamlSpKey = (id) =>
+  api.post(`/auth/sso/providers/${id}/rotate-sp-key`).then((r) => r.data?.data?.provider ?? r.data?.data);
+
 /** POST /api/auth/sso/providers/test — test an unsaved draft config. */
 export const testDraftSsoProvider = (body) =>
   api.post('/auth/sso/providers/test', body).then((r) => r.data?.data ?? r.data);

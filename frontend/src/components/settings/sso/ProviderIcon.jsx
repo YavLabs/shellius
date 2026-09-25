@@ -14,6 +14,9 @@ const ICONS = {
   generic: Globe,
   'generic-oidc': Globe, // legacy id, kept for safety
   saml: FileKey,
+  'saml-entra': FileKey,
+  'saml-okta': FileKey,
+  'saml-adfs': FileKey,
 };
 
 export default function ProviderIcon({ presetId, className }) {
