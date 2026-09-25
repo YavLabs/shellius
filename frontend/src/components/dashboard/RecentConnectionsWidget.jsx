@@ -177,7 +177,8 @@ export function RecentConnections({ variant = 'widget', showQuickConnect = true,
   const navigate = useNavigate();
   const { allowed: qcAllowed, openQuickConnect } = useQuickConnect();
   const workspace = useTerminalWorkspace();
-  const { liveSessions, refreshLiveSessions, tabs, groups, attachSession, openTab, openTabForAccessRequest } = workspace;
+  const { liveSessions, refreshLiveSessions, tabs, groups, attachSession, openTab, openRdpTab, openTabForAccessRequest } =
+    workspace;
 
   const [servers, setServers] = useState([]);
   const [intents, setIntents] = useState({});
@@ -280,7 +281,18 @@ export function RecentConnections({ variant = 'widget', showQuickConnect = true,
       const intent = intents[server.id];
       const meta = { label: server.displayName || server.hostname, env: server.environment, host: server.ipAddress || server.hostname };
       if (intent?.hasActiveAccess && intent.activeRequestId) {
-        openTab({ requestId: intent.activeRequestId }, meta);
+        if (intent.protocol === 'RDP') {
+          // Opens a remote-desktop pane, or focuses the one already showing
+          // this server: Windows permits one interactive session per account,
+          // so a second pane would evict the first (see lib/rdpPanes.js).
+          const { conflict } = openRdpTab(
+            { requestId: intent.activeRequestId, serverId: server.id, username: intent.preferredPrincipal || undefined },
+            { ...meta, focus: true }
+          );
+          if (conflict) setActionError('This remote desktop is already open in a tab — switched to it.');
+        } else {
+          openTab({ requestId: intent.activeRequestId }, meta);
+        }
       } else if (intent?.hasPendingRequest && intent.pendingRequestId) {
         openTabForAccessRequest(await getAccessRequest(intent.pendingRequestId), { ...meta, focus: true });
       } else {

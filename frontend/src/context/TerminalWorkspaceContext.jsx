@@ -8,6 +8,7 @@ import {
   closeTerminalSession,
 } from '@/services/terminalService';
 import * as L from '@/lib/workspaceLayout';
+import { RDP, findRdpConflict, isRdpTab } from '@/lib/rdpPanes';
 
 // v2: layout is per split group (see lib/workspaceLayout.js). v1 had a single
 // global layout and is migrated on load. Stored per user (`:<userId>`), so a
@@ -55,9 +56,41 @@ function loadPersisted(userId) {
 function buildInitialState(userId) {
   const persisted = loadPersisted(userId);
   const tabs = (persisted?.tabs || [])
-    .filter((t) => t && (t.sessionId || (t.kind === 'request' && t.accessRequestId)))
-    .map((t) =>
-      t.kind === 'request'
+    .filter(
+      (t) =>
+        t &&
+        (t.sessionId ||
+          (t.kind === 'request' && t.accessRequestId) ||
+          // RDP tabs never carry a sessionId: guacamole-lite sessions are not
+          // in the SSH hub, so there is nothing to attach to. They are kept
+          // anyway so the tab survives a reload, and reopen NOT connected.
+          (t.protocol === RDP && t.accessRequestId))
+    )
+    .map((t) => {
+      if (t.protocol === RDP) {
+        return {
+          id: t.id || uuid(),
+          kind: 'terminal',
+          protocol: RDP,
+          accessRequestId: t.accessRequestId,
+          serverId: t.serverId || null,
+          sessionId: null,
+          connect: { requestId: t.accessRequestId },
+          label: t.label || 'Remote desktop',
+          env: t.env,
+          host: t.host,
+          username: t.username,
+          // Deliberately not auto-reconnected. An RDP connect is a fresh
+          // Windows logon, and Windows evicts the previous one — a reload
+          // would silently kick a session the same user may still have open
+          // in another window. The pane shows a Connect button instead.
+          autoConnect: false,
+          state: 'ended',
+          endReason: 'reload',
+          error: null,
+        };
+      }
+      return t.kind === 'request'
         ? {
             id: t.id || uuid(),
             kind: 'request',
@@ -82,8 +115,8 @@ function buildInitialState(userId) {
             username: t.username,
             state: 'connecting',
             error: null,
-          }
-    );
+          };
+    });
   const ws = L.sanitize(
     { groups: persisted?.groups || [], activeTabId: persisted?.activeTabId },
     tabs.map((t) => t.id)
@@ -143,7 +176,7 @@ export function TerminalWorkspaceProvider({ children }) {
         // recovery card (SessionRecoveryCard) instead of a failing connect.
         setTabsMirrored((prev) =>
           prev.map((t) =>
-            t.kind !== 'request' && t.sessionId && !liveIds.has(t.sessionId)
+            t.kind !== 'request' && !isRdpTab(t) && t.sessionId && !liveIds.has(t.sessionId)
               ? { ...t, state: 'lost', endReason: 'not_found', skipConnect: true, error: null }
               : t
           )
@@ -161,12 +194,19 @@ export function TerminalWorkspaceProvider({ children }) {
   useEffect(() => {
     try {
       const persistTabs = tabs
-        .filter((t) => !!t.sessionId || (t.kind === 'request' && !!t.accessRequestId))
+        .filter(
+          (t) =>
+            !!t.sessionId ||
+            (t.kind === 'request' && !!t.accessRequestId) ||
+            (isRdpTab(t) && !!t.accessRequestId)
+        )
         .map((t) => ({
           id: t.id,
           kind: t.kind === 'request' ? 'request' : 'terminal',
+          protocol: t.protocol,
           sessionId: t.sessionId,
           accessRequestId: t.accessRequestId,
+          serverId: t.serverId,
           label: t.label,
           env: t.env,
           host: t.host,
@@ -214,19 +254,35 @@ export function TerminalWorkspaceProvider({ children }) {
     (connect, meta = {}) => {
       // New tabs open full size (their own view), unless the split on screen
       // has a focused empty pane waiting for a tab. See lib/workspaceLayout.js.
-      const { label, env, host, username, focus = true, sessionId = null, pane } = meta;
+      const {
+        label,
+        env,
+        host,
+        username,
+        focus = true,
+        sessionId = null,
+        pane,
+        protocol,
+        serverId = null,
+        accessRequestId = null,
+        autoConnect = true,
+      } = meta;
       const id = uuid();
       setTabsMirrored((prev) => [
         ...prev,
         {
           id,
           kind: 'terminal',
+          protocol: protocol === RDP ? RDP : undefined,
           sessionId,
           connect,
           label: label || 'Terminal',
           env,
           host,
           username,
+          serverId,
+          accessRequestId,
+          autoConnect,
           state: 'connecting',
           error: null,
         },
@@ -238,6 +294,47 @@ export function TerminalWorkspaceProvider({ children }) {
       return id;
     },
     [navigate]
+  );
+
+  /**
+   * Open an approved RDP access request in a workspace pane.
+   *
+   * Windows Server permits ONE interactive session per user account, and every
+   * Shellius RDP connection to a given server signs in as that server's
+   * configured RDP account (backend resolveRdpCredentials). A second pane onto
+   * the same server is therefore a second logon as the SAME Windows user, and
+   * Windows evicts the first with "Disconnected by other connection" — the
+   * exact failure the runIdRef guard in RdpTerminal exists to prevent. So we
+   * do not open one: the existing tab is brought to the front instead.
+   *
+   * Two panes onto the same server as two *different*, known Windows accounts
+   * are allowed, because those are two separate Windows sessions.
+   *
+   * @returns {{ id: string, conflict: object|null }} `conflict` is the tab that
+   *   was focused instead of opening a new one.
+   */
+  const openRdpTab = useCallback(
+    ({ requestId, serverId, username }, meta = {}) => {
+      const conflict = findRdpConflict(tabsRef.current, { serverId, username });
+      if (conflict) {
+        selectTab(conflict.id);
+        if (meta.focus !== false) navigate('/terminals');
+        return { id: conflict.id, conflict };
+      }
+      const id = openTab(
+        { requestId },
+        {
+          ...meta,
+          protocol: RDP,
+          serverId: serverId || null,
+          accessRequestId: requestId,
+          username,
+          label: meta.label || 'Remote desktop',
+        }
+      );
+      return { id, conflict: null };
+    },
+    [openTab, selectTab, navigate]
   );
 
   // Opens a status-card tab bound to an access request (pending/denied/
@@ -280,14 +377,34 @@ export function TerminalWorkspaceProvider({ children }) {
   // once the request is APPROVED and the user hits Connect. `connect` is the
   // usual TerminalView spec, e.g. { requestId }.
   const convertRequestTabToTerminal = useCallback((id, connect, meta = {}) => {
+    // An approved RDP request auto-connects when its tab is on screen. If a
+    // pane onto the same server + Windows account is already live, converting
+    // would open a second logon and Windows would evict the first, so show
+    // the live one instead and leave this tab as a status card.
+    if (meta.protocol === RDP) {
+      const conflict = findRdpConflict(
+        tabsRef.current,
+        { serverId: meta.serverId, username: meta.username },
+        { excludeTabId: id }
+      );
+      if (conflict) {
+        setWs((prev) => L.selectTab(prev, conflict.id));
+        return;
+      }
+    }
     setTabsMirrored((prev) =>
       prev.map((t) =>
         t.id === id
           ? {
               ...t,
               kind: 'terminal',
+              protocol: meta.protocol === RDP ? RDP : undefined,
               connect,
               sessionId: null,
+              serverId: meta.serverId ?? t.serverId ?? null,
+              accessRequestId: meta.protocol === RDP ? connect?.requestId : undefined,
+              username: meta.username ?? t.username,
+              autoConnect: true,
               state: 'connecting',
               error: null,
               label: meta.label || t.label,
@@ -308,7 +425,8 @@ export function TerminalWorkspaceProvider({ children }) {
           ? {
               ...t,
               kind: 'terminal',
-              accessRequestId: undefined,
+              accessRequestId: isRdpTab(t) ? connect?.requestId ?? t.accessRequestId : undefined,
+              autoConnect: true,
               connect: { ...connect, retry: Date.now() },
               sessionId: null,
               state: 'connecting',
@@ -358,18 +476,24 @@ export function TerminalWorkspaceProvider({ children }) {
   const openTabForAccessRequest = useCallback(
     (accessRequest, meta = {}) => {
       if (accessRequest.status === 'APPROVED') {
-        return openTab(
-          { requestId: accessRequest.id },
-          {
-            label: meta.label || accessRequest.server?.displayName || accessRequest.server?.hostname,
-            env: meta.env || accessRequest.server?.environment,
-            focus: meta.focus,
-          }
-        );
+        const label =
+          meta.label || accessRequest.server?.displayName || accessRequest.server?.hostname;
+        const env = meta.env || accessRequest.server?.environment;
+        if (accessRequest.protocol === RDP) {
+          return openRdpTab(
+            {
+              requestId: accessRequest.id,
+              serverId: accessRequest.server?.id || accessRequest.serverId || null,
+              username: accessRequest.requestedPrincipal || meta.username,
+            },
+            { label, env, focus: meta.focus }
+          ).id;
+        }
+        return openTab({ requestId: accessRequest.id }, { label, env, focus: meta.focus });
       }
       return openRequestTab(accessRequest, meta);
     },
-    [openTab, openRequestTab]
+    [openTab, openRdpTab, openRequestTab]
   );
 
   // Reorders tabs (drag in the tab bar, or Alt+Shift+Left/Right). Layout
@@ -413,7 +537,10 @@ export function TerminalWorkspaceProvider({ children }) {
   const duplicateTab = useCallback(
     async (id) => {
       const tab = tabsRef.current.find((t) => t.id === id);
-      if (!tab?.sessionId) return null;
+      // An RDP tab has no hub session, and a second pane to the same Windows
+      // account would evict this one. tabCapabilities() hides the menu item;
+      // this is the guard behind it.
+      if (isRdpTab(tab) || !tab?.sessionId) return null;
       const result = await duplicateTerminalSession(tab.sessionId);
       const connect = result?.connect || result;
       return openTab(connect, {
@@ -430,7 +557,7 @@ export function TerminalWorkspaceProvider({ children }) {
   const renameTab = useCallback((id, label) => {
     setTabsMirrored((prev) => prev.map((t) => (t.id === id ? { ...t, label } : t)));
     const tab = tabsRef.current.find((t) => t.id === id);
-    if (tab?.sessionId) renameTerminalSession(tab.sessionId, label).catch(() => {});
+    if (tab?.sessionId && !isRdpTab(tab)) renameTerminalSession(tab.sessionId, label).catch(() => {});
   }, []);
 
   // Everything below acts on the split on screen only (see lib/workspaceLayout.js
@@ -562,6 +689,7 @@ export function TerminalWorkspaceProvider({ children }) {
       setActiveTabId: selectTab,
       setFocusedPane,
       openTab,
+      openRdpTab,
       openRequestTab,
       openTabForAccessRequest,
       convertRequestTabToTerminal,
@@ -599,6 +727,7 @@ export function TerminalWorkspaceProvider({ children }) {
       selectTab,
       setFocusedPane,
       openTab,
+      openRdpTab,
       openRequestTab,
       openTabForAccessRequest,
       convertRequestTabToTerminal,

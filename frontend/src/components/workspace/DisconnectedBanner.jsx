@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { AlertTriangle, Loader2, RefreshCw, X } from 'lucide-react';
 import { getSessionRecovery, reconnectSession } from '@/services/terminalService';
+import { isRdpTab } from '@/lib/rdpPanes';
 
 const DISCONNECTED = new Set(['lost', 'ended']);
 
@@ -21,7 +22,10 @@ function DisconnectedBanner({ workspace }) {
   const [busy, setBusy] = useState(false);
   const [result, setResult] = useState(null);
 
-  const affected = tabs.filter((t) => t.kind !== 'request' && DISCONNECTED.has(t.state));
+  // RDP panes are excluded: there is no hub session to re-attach and no
+  // ticket to re-mint, so "Reconnect all" could never act on one. Each RDP
+  // pane offers its own Connect button instead.
+  const affected = tabs.filter((t) => t.kind !== 'request' && !isRdpTab(t) && DISCONNECTED.has(t.state));
   const offscreen = affected.filter((t) => !layout.panes.includes(t.id));
   if (affected.length === 0 || (affected.length < 2 && offscreen.length === 0)) {
     return null;

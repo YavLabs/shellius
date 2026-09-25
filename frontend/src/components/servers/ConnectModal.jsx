@@ -26,7 +26,7 @@ import { useTerminalWorkspace } from '@/context/TerminalWorkspaceContext';
  *   currentUser    auth user (for admin role check)
  */
 function ConnectModal({ open, onClose, server, intent, currentUser }) {
-  const { openTab } = useTerminalWorkspace();
+  const { openTab, openRdpTab } = useTerminalWorkspace();
   const adminOverride = !!intent?.adminCanOverride;
   const allowed = intent?.allowedPrincipals || [];
   const proto = intent?.protocol || 'SSH';
@@ -37,6 +37,7 @@ function ConnectModal({ open, onClose, server, intent, currentUser }) {
   const [ip, setIp] = useState(server?.ipAddress || '');
   const [ipErr, setIpErr] = useState('');
   const [connecting, setConnecting] = useState(false);
+  const [notice, setNotice] = useState('');
 
   // Reset on each open so a stale value from a previous render doesn't leak.
   useEffect(() => {
@@ -45,6 +46,7 @@ function ConnectModal({ open, onClose, server, intent, currentUser }) {
       setOverrideOn(false);
       setIp(server?.ipAddress || '');
       setIpErr('');
+      setNotice('');
     }
   }, [open, intent?.preferredPrincipal, server?.ipAddress]);
 
@@ -79,13 +81,32 @@ function ConnectModal({ open, onClose, server, intent, currentUser }) {
   const onConnect = async () => {
     if (!canSubmit || !intent?.activeRequestId) return;
     if (!(await ensureIpSaved())) return;
-    // RDP cannot live in a workspace pane. The Guacamole client binds its
-    // keyboard to `document`, so two RDP panes — or an RDP pane beside an SSH
-    // one — fight over every keystroke; and TerminalPaneArea only ever
-    // renders TerminalView, which speaks the SSH protocol. Sending RDP
-    // through openTab opened a tab that could never connect, which is what
-    // this button used to do for every protocol alike.
-    if (isRdp) return onConnectNewWindow();
+    // RDP now lives in the workspace like SSH: the Guacamole keyboard is
+    // bound to its own pane surface rather than to `document`, and
+    // TerminalPaneArea renders RdpTerminal for RDP tabs.
+    if (isRdp) {
+      const { conflict } = openRdpTab(
+        {
+          requestId: intent.activeRequestId,
+          serverId: server?.id,
+          username: intent?.preferredPrincipal || undefined,
+        },
+        {
+          label: server?.displayName || server?.hostname,
+          env: server?.environment,
+          host: server?.ipAddress || server?.hostname,
+          focus: true,
+        }
+      );
+      if (conflict) {
+        // Windows allows one interactive session per account; a second pane
+        // would evict the first. Say so rather than silently doing nothing.
+        setNotice('This remote desktop is already open in a tab — switched to it.');
+        return;
+      }
+      onClose();
+      return;
+    }
     openTab(
       { requestId: intent.activeRequestId, principal: trimmed && trimmed !== intent.preferredPrincipal ? trimmed : undefined },
       { label: server?.displayName || server?.hostname, env: server?.environment, host: server?.ipAddress || server?.hostname, focus: true }
@@ -146,6 +167,11 @@ function ConnectModal({ open, onClose, server, intent, currentUser }) {
           </p>
         )}
         {ipErr && <p className="text-xs text-destructive">{ipErr}</p>}
+        {notice && (
+          <p className="rounded-md border border-border bg-muted/40 px-3 py-2 text-xs text-muted-foreground">
+            {notice}
+          </p>
+        )}
 
         {/* Principal picker — only meaningful for SSH */}
         {!isRdp && (

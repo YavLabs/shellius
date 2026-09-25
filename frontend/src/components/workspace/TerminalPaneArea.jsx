@@ -9,8 +9,10 @@ import {
 } from '@/components/ui/dropdown-menu';
 import EnvironmentBadge from '@/components/shared/EnvironmentBadge';
 import TerminalView from '@/components/terminal/TerminalView';
+import RdpTerminal from '@/components/terminal/RdpTerminal';
 import RequestStatusCard from '@/components/workspace/RequestStatusCard';
 import SessionRecoveryCard from '@/components/workspace/SessionRecoveryCard';
+import { isRdpTab } from '@/lib/rdpPanes';
 import { cn } from '@/lib/utils';
 
 const MAX_MOUNTED = 12;
@@ -52,6 +54,10 @@ function zoneFromPoint(rect, clientX, clientY) {
 // Lost / ended sessions, and connects that failed before any session
 // existed, get the recovery card over the (still visible) terminal.
 function needsRecovery(tab) {
+  // RDP panes recover themselves: there is no hub session to re-attach to and
+  // no Quick Connect ticket to re-mint, so SessionRecoveryCard has nothing
+  // useful to offer. RdpTerminal shows its own Reconnect button instead.
+  if (isRdpTab(tab)) return false;
   if (tab.state === 'lost' || tab.state === 'ended') return true;
   return tab.state === 'error' && !tab.sessionId;
 }
@@ -341,6 +347,18 @@ function TerminalPaneArea({ workspace }) {
           <div className="relative h-full min-h-0" onMouseDownCapture={() => visible && setFocusedPane(paneIndex)}>
             {tab.kind === 'request' ? (
               <RequestStatusCard tab={tab} focused={visible && focusedPane === paneIndex} />
+            ) : isRdpTab(tab) ? (
+              <RdpTerminal
+                requestId={tab.connect?.requestId}
+                // Drives the keyboard release when this pane is parked in the
+                // hidden holder: removing a focused node from the document
+                // does not fire blur, so a held Ctrl would otherwise stay down
+                // on the remote host.
+                visible={visible}
+                embedded
+                autoConnect={tab.autoConnect !== false}
+                onStateChange={(state, extra) => setTabState(tab.id, state, extra)}
+              />
             ) : (
               <>
                 <TerminalView

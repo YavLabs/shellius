@@ -18,6 +18,7 @@ import {
   ChevronDown,
   Maximize2,
   Ungroup,
+  Monitor,
 } from 'lucide-react';
 import {
   DropdownMenu,
@@ -31,6 +32,7 @@ import EnvironmentBadge from '@/components/shared/EnvironmentBadge';
 import ConfirmDialog from '@/components/shared/ConfirmDialog';
 import { cn } from '@/lib/utils';
 import { barItems, itemTabId } from '@/lib/workspaceLayout';
+import { isRdpTab, tabCapabilities } from '@/lib/rdpPanes';
 
 const STATUS_DOT = {
   connecting: 'bg-amber-500 animate-pulse',
@@ -82,6 +84,8 @@ function TabItem({ tab, index, active, split, onSelect, onClose, menu, dragProps
   };
 
   const isTerminal = tab.kind !== 'request';
+  const isRdp = isRdpTab(tab);
+  const caps = tabCapabilities(tab);
   const SplitIcon = split ? SPLIT_ICON[split.mode] : null;
 
   return (
@@ -134,7 +138,10 @@ function TabItem({ tab, index, active, split, onSelect, onClose, menu, dragProps
       {tab.kind === 'request' ? (
         <Clock className="h-3 w-3 shrink-0 text-muted-foreground" aria-hidden="true" />
       ) : (
-        <span className={cn('h-1.5 w-1.5 shrink-0 rounded-full', STATUS_DOT[tab.state] || STATUS_DOT.detached)} />
+        <>
+          <span className={cn('h-1.5 w-1.5 shrink-0 rounded-full', STATUS_DOT[tab.state] || STATUS_DOT.detached)} />
+          {isRdp && <Monitor className="h-3 w-3 shrink-0 text-muted-foreground" aria-label="Remote desktop" />}
+        </>
       )}
       {renaming ? (
         <input
@@ -179,9 +186,13 @@ function TabItem({ tab, index, active, split, onSelect, onClose, menu, dragProps
           </DropdownMenuItem>
           {isTerminal && (
             <>
-              <DropdownMenuItem onSelect={() => menu.onDuplicate(tab.id)} disabled={!tab.sessionId}>
-                <Copy className="mr-2 h-3.5 w-3.5" /> Duplicate
-              </DropdownMenuItem>
+              {/* Duplicate is absent for RDP, not merely disabled: a second
+                  pane onto the same Windows account evicts this one. */}
+              {caps.canDuplicate !== false && !isRdp && (
+                <DropdownMenuItem onSelect={() => menu.onDuplicate(tab.id)} disabled={!tab.sessionId}>
+                  <Copy className="mr-2 h-3.5 w-3.5" /> Duplicate
+                </DropdownMenuItem>
+              )}
               <DropdownMenuItem onSelect={() => menu.onSplit(tab.id, 'right')}>
                 <SplitSquareHorizontal className="mr-2 h-3.5 w-3.5" /> Split right
               </DropdownMenuItem>
@@ -193,15 +204,19 @@ function TabItem({ tab, index, active, split, onSelect, onClose, menu, dragProps
                   <Maximize2 className="mr-2 h-3.5 w-3.5" /> Remove from split
                 </DropdownMenuItem>
               )}
-              <DropdownMenuItem onSelect={() => menu.onOpenNewWindow(tab.id)} disabled={!tab.sessionId}>
-                <ExternalLink className="mr-2 h-3.5 w-3.5" /> Open in new window
+              <DropdownMenuItem
+                onSelect={() => menu.onOpenNewWindow(tab.id)}
+                disabled={!caps.canOpenNewWindow}
+              >
+                <ExternalLink className="mr-2 h-3.5 w-3.5" />
+                {isRdp ? 'Move to a new window' : 'Open in new window'}
               </DropdownMenuItem>
             </>
           )}
           <DropdownMenuSeparator />
           <DropdownMenuItem onSelect={() => menu.onCloseOthers(tab.id)}>Close others</DropdownMenuItem>
           <DropdownMenuItem onSelect={onClose}>Close</DropdownMenuItem>
-          {isTerminal && (
+          {isTerminal && caps.canEndSession && (
             <DropdownMenuItem
               onSelect={() => menu.onEndSession(tab.id)}
               className="text-destructive focus:text-destructive"
@@ -220,6 +235,7 @@ function TabItem({ tab, index, active, split, onSelect, onClose, menu, dragProps
         }}
         className="rounded p-0.5 opacity-0 hover:bg-foreground/10 group-hover:opacity-100"
         aria-label={`Close ${tab.label}`}
+        title={caps.endsOnClose ? 'Close (this ends the remote desktop session)' : 'Close (the session keeps running)'}
       >
         <X className="h-3.5 w-3.5" />
       </button>
@@ -407,7 +423,18 @@ function TerminalTabBar({ tabs, activeTabId, onSelect, workspace, onNewConnectio
     onRemoveFromSplit: (id) => workspace.removeFromSplit(id),
     onOpenNewWindow: (id) => {
       const tab = workspace.tabs.find((t) => t.id === id);
-      if (!tab?.sessionId) return;
+      if (!tab) return;
+      if (isRdpTab(tab)) {
+        // RDP cannot be handed over: guacamole-lite has no attach, so the new
+        // window opens a NEW Windows logon. Close this pane first or the two
+        // evict each other (see lib/rdpPanes.js).
+        const requestId = tab.connect?.requestId || tab.accessRequestId;
+        if (!requestId) return;
+        workspace.closeTab(id);
+        window.open(`/terminal?requestId=${encodeURIComponent(requestId)}`, '_blank');
+        return;
+      }
+      if (!tab.sessionId) return;
       const params = new URLSearchParams({ attach: tab.sessionId, label: tab.label || 'Terminal' });
       window.open(`/terminal?${params.toString()}`, '_blank');
     },
@@ -418,7 +445,10 @@ function TerminalTabBar({ tabs, activeTabId, onSelect, workspace, onNewConnectio
   // endTarget: a tab id, or { tabs } for a workspace's "End all sessions".
   const confirmEnd = () => {
     if (typeof endTarget === 'string') workspace.closeTab(endTarget, { end: true });
-    else if (endTarget?.tabs) endTarget.tabs.forEach((t) => workspace.closeTab(t.id, { end: true }));
+    // RDP members have no hub session to end over REST; closing the tab tears
+    // the tunnel down, which is the same thing for them.
+    else if (endTarget?.tabs)
+      endTarget.tabs.forEach((t) => workspace.closeTab(t.id, { end: !isRdpTab(t) }));
     setEndTarget(null);
   };
 

@@ -68,7 +68,15 @@ function RequestStatusCard({ tab, focused }) {
     convertRequestTabToTerminal(
       tab.id,
       { requestId: ar.id },
-      { label: ar.server?.displayName || ar.server?.hostname, env: ar.server?.environment }
+      {
+        label: ar.server?.displayName || ar.server?.hostname,
+        env: ar.server?.environment,
+        // Carries the protocol so TerminalPaneArea mounts RdpTerminal rather
+        // than the xterm view for an approved RDP request.
+        protocol: ar.protocol === 'RDP' ? 'RDP' : undefined,
+        serverId: ar.server?.id || ar.serverId,
+        username: ar.requestedPrincipal || undefined,
+      }
     );
   }, [ar, convertRequestTabToTerminal, tab.id]);
 

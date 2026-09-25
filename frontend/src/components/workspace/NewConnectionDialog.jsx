@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Zap, Terminal, Loader2, Search, Clock } from 'lucide-react';
+import { Zap, Terminal, Loader2, Search, Clock, Monitor } from 'lucide-react';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogBody } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { Tooltip, TooltipTrigger, TooltipContent, TooltipProvider } from '@/components/ui/tooltip';
@@ -21,7 +21,7 @@ import { getHistory, reconnectHistory } from '@/services/quickConnectService';
  * a "Quick Connect..." shortcut.
  */
 function NewConnectionDialog({ open, onClose }) {
-  const { openTab, openTabForAccessRequest, refreshLiveSessions } = useTerminalWorkspace();
+  const { openTab, openRdpTab, openTabForAccessRequest, refreshLiveSessions } = useTerminalWorkspace();
   const { allowed: quickConnectAllowed, openQuickConnect } = useQuickConnect();
 
   const [query, setQuery] = useState('');
@@ -73,16 +73,29 @@ function NewConnectionDialog({ open, onClose }) {
       // it can go stale between opening the dialog and clicking Connect).
       const intent = await getAccessIntent(server.id);
       if (intent?.hasActiveAccess && intent.activeRequestId) {
-        // No principal picker here — omit it so the backend defaults to the
-        // access request's preferred principal (matches ConnectModal).
-        openTab(
-          { requestId: intent.activeRequestId },
-          {
-            label: server.displayName || server.hostname,
-            env: server.environment,
-            host: server.ipAddress || server.hostname,
-          }
-        );
+        const meta = {
+          label: server.displayName || server.hostname,
+          env: server.environment,
+          host: server.ipAddress || server.hostname,
+        };
+        if (intent.protocol === 'RDP') {
+          // Windows permits one interactive session per account, so this
+          // focuses an existing pane for the same server rather than opening
+          // a second one that would evict it (see lib/rdpPanes.js).
+          const { conflict } = openRdpTab(
+            {
+              requestId: intent.activeRequestId,
+              serverId: server.id,
+              username: intent.preferredPrincipal || undefined,
+            },
+            meta
+          );
+          if (conflict) setError('This remote desktop is already open in a tab — switched to it.');
+        } else {
+          // No principal picker here — omit it so the backend defaults to the
+          // access request's preferred principal (matches ConnectModal).
+          openTab({ requestId: intent.activeRequestId }, meta);
+        }
         onClose();
       } else {
         setRequestTarget(server.id);
@@ -200,9 +213,10 @@ function NewConnectionDialog({ open, onClose }) {
                       ButtonIcon = Clock;
                       onClick = () => handleOpenPending(s, intent.pendingRequestId);
                     }
+                    const RowIcon = intent?.protocol === 'RDP' || s.protocol === 'rdp' ? Monitor : Terminal;
                     const row = (
                       <li key={s.id} className="flex items-center gap-2 py-2">
-                        <Terminal className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                        <RowIcon className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
                         <div className="min-w-0 flex-1">
                           <div className="flex items-center gap-1.5">
                             <span className="truncate text-sm text-foreground">{s.displayName || s.hostname}</span>
