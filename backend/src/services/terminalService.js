@@ -359,12 +359,12 @@ const rdpConnBySession = new Map();
  * checks it makes touch the database and the filesystem. A slow answer must
  * cost a recording, not the session.
  */
-async function attachRecording(settings) {
+export async function attachRecording(settings, { service = rdpRecordingService, timeoutMs = 3000 } = {}) {
   if (!settings || !settings.connection) return;
 
   let enabled = false;
   await Promise.race([
-    rdpRecordingService
+    service
       .isEnabled()
       .then((v) => {
         enabled = v;
@@ -374,12 +374,12 @@ async function attachRecording(settings) {
       // acquired would surface as an unhandled rejection rather than a
       // missing recording.
       .catch(() => {}),
-    new Promise((resolve) => setTimeout(resolve, 3000).unref?.()),
+    new Promise((resolve) => setTimeout(resolve, timeoutMs).unref?.()),
   ]);
   if (!enabled) return;
 
-  const recordingId = rdpRecordingService.newRecordingId();
-  Object.assign(settings.connection, rdpRecordingService.recordingParamsFor(recordingId));
+  const recordingId = service.newRecordingId();
+  Object.assign(settings.connection, service.recordingParamsFor(recordingId));
   settings.recordingId = recordingId;
 }
 

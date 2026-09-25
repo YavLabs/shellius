@@ -20,6 +20,7 @@ import GuacamoleLite from 'guacamole-lite';
 import ClientConnection from 'guacamole-lite/lib/ClientConnection.js';
 import * as rdpService from '../rdpService.js';
 import * as rdpRecordingService from '../rdpRecordingService.js';
+import { attachRecording } from '../terminalService.js';
 
 const RECORDING_ID = 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee';
 
@@ -110,5 +111,72 @@ describe('what guacamole-lite hands to processConnectionSettings', () => {
     expect(seen.connection.hostname).toBe('10.0.0.5');
     expect(seen.connection.username).toBe('u');
     expect(seen.connection.port).toBe('3389');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// attachRecording — the one line that decides whether a session is recorded
+// ---------------------------------------------------------------------------
+
+describe('attachRecording', () => {
+  const fakeService = (overrides = {}) => ({
+    isEnabled: async () => true,
+    newRecordingId: () => RECORDING_ID,
+    recordingParamsFor: rdpRecordingService.recordingParamsFor,
+    ...overrides,
+  });
+
+  test('turns recording on for settings shaped the way guacamole-lite produces them', async () => {
+    const seen = settingsFor(token());
+    await attachRecording(seen, { service: fakeService() });
+
+    expect(seen.connection['recording-name']).toBe(`${RECORDING_ID}.guac`);
+    expect(seen.connection['recording-include-keys']).toBe('false');
+    expect(seen.recordingId).toBe(RECORDING_ID);
+  });
+
+  test('leaves the connection untouched when recording is not available', async () => {
+    const seen = settingsFor(token());
+    await attachRecording(seen, { service: fakeService({ isEnabled: async () => false }) });
+
+    expect(seen.connection['recording-path']).toBeUndefined();
+    expect(seen.recordingId).toBeUndefined();
+    // And the session itself is still perfectly connectable.
+    expect(seen.connection.hostname).toBe('10.0.0.5');
+  });
+
+  // A slow database or filesystem must cost a recording, never the session.
+  test('gives up rather than holding the connection open', async () => {
+    const seen = settingsFor(token());
+    const started = Date.now();
+    await attachRecording(seen, {
+      service: fakeService({ isEnabled: () => new Promise(() => {}) }), // never settles
+      timeoutMs: 50,
+    });
+
+    expect(Date.now() - started).toBeLessThan(2000);
+    expect(seen.recordingId).toBeUndefined();
+    expect(seen.connection.hostname).toBe('10.0.0.5');
+  });
+
+  // isEnabled() is written not to throw; if that ever stops being true, the
+  // session must still connect.
+  test('a throwing availability check does not reject', async () => {
+    const seen = settingsFor(token());
+    await expect(
+      attachRecording(seen, {
+        service: fakeService({
+          isEnabled: async () => {
+            throw new Error('storage exploded');
+          },
+        }),
+      })
+    ).resolves.toBeUndefined();
+    expect(seen.recordingId).toBeUndefined();
+  });
+
+  test('a settings object with no connection is ignored rather than throwing', async () => {
+    await expect(attachRecording({}, { service: fakeService() })).resolves.toBeUndefined();
+    await expect(attachRecording(null, { service: fakeService() })).resolves.toBeUndefined();
   });
 });
