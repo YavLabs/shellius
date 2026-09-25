@@ -60,6 +60,7 @@ import ApiError from '../utils/ApiError.js';
 import * as accessRequestService from './accessRequestService.js';
 import * as sessionService from './sessionService.js';
 import * as rdpService from './rdpService.js';
+import * as rdpRecordingService from './rdpRecordingService.js';
 import * as storageService from './storageService.js';
 import * as sshConnect from './sshConnect.js';
 import * as quickConnectService from './quickConnectService.js';
@@ -346,6 +347,36 @@ const rdpSessionByConn = new Map();
 const rdpConnBySession = new Map();
 
 /**
+ * Turn on recording for one RDP connection, if recording can work at all.
+ *
+ * `settings.connection` is guacamole-lite's already-compiled flat parameter
+ * map (ClientConnection merges it before this callback runs), so the recording
+ * parameters go straight onto it. The generated id is left at the top level of
+ * the token, which is metadata guacd never sees and the `open` handler reads
+ * to tie the file to its Session row.
+ *
+ * Bounded, because this callback sits in front of every RDP connection and the
+ * checks it makes touch the database and the filesystem. A slow answer must
+ * cost a recording, not the session.
+ */
+async function attachRecording(settings) {
+  if (!settings || !settings.connection) return;
+
+  let enabled = false;
+  await Promise.race([
+    rdpRecordingService.isEnabled().then((v) => {
+      enabled = v;
+    }),
+    new Promise((resolve) => setTimeout(resolve, 3000).unref?.()),
+  ]);
+  if (!enabled) return;
+
+  const recordingId = rdpRecordingService.newRecordingId();
+  Object.assign(settings.connection, rdpRecordingService.recordingParamsFor(recordingId));
+  settings.recordingId = recordingId;
+}
+
+/**
  * Construct the guacamole-lite server (noServer mode). Validates the encrypted
  * connection token's expiry, and creates/ends a Session row per connection.
  */
@@ -365,12 +396,22 @@ function buildGuacamoleServer() {
       },
     },
     {
-      // Runs after the token is decrypted, before guacd is contacted.
+      // Runs after the token is decrypted, before guacd is contacted — which
+      // is the only moment a recording can be turned on, because recording is
+      // a connection parameter and guacd will not accept one mid-session.
       processConnectionSettings: (settings, callback) => {
         if (settings && settings.expiration && Date.now() > settings.expiration) {
           return callback(new Error('RDP connection token expired'));
         }
-        return callback(null, settings);
+        // Best-effort, and deliberately so: an installation with no object
+        // storage, or whose guacd volume is not shared, still gets RDP. It
+        // just gets no replay. Refusing the session instead would make a
+        // missing bucket look like a broken gateway.
+        attachRecording(settings)
+          .catch((err) =>
+            logger.warn('terminalService: RDP recording not attached', { error: err.message })
+          )
+          .finally(() => callback(null, settings));
       },
     }
   );
@@ -388,7 +429,14 @@ function buildGuacamoleServer() {
         sessionType: 'RDP',
         clientIp: null,
         userAgent: null,
-        metadata: { via: 'guacamole-lite', guacId: clientConnection.guacamoleConnectionId },
+        metadata: {
+          via: 'guacamole-lite',
+          guacId: clientConnection.guacamoleConnectionId,
+          // How the sweeper finds this session's recording on disk. guacd
+          // named the file before this row existed, so the row has to carry
+          // the name rather than the other way round.
+          recordingId: s.recordingId ?? null,
+        },
       });
       rdpSessionByConn.set(clientConnection.connectionId, session.id);
       rdpConnBySession.set(session.id, clientConnection);

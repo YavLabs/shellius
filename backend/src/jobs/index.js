@@ -28,6 +28,10 @@ import { registerChatNotifyJob, startChatNotifyWorker } from './chatNotify.js';
 import { registerPostureEscalateJob, startPostureEscalateWorker } from './postureEscalate.js';
 import { registerPostureDigestJob, startPostureDigestWorker } from './postureDigest.js';
 import { registerCollectorRolloutJob, startCollectorRolloutWorker } from './collectorRollout.js';
+import {
+  registerRdpRecordingIngestJob,
+  startRdpRecordingIngestWorker,
+} from './rdpRecordingIngest.js';
 import { seedDefaultPolicies } from './seedDefaultPolicies.js';
 import {
   startServerOnboardingWorker,
@@ -85,6 +89,9 @@ export async function startAllJobs() {
 
   await registerCollectorRolloutJob();
   startCollectorRolloutWorker();
+
+  await registerRdpRecordingIngestJob();
+  startRdpRecordingIngestWorker();
 
   // Bulk-import server onboarding (parallel) + ephemeral-credential TTL reaper.
   startServerOnboardingWorker();

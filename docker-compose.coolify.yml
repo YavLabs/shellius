@@ -92,7 +92,12 @@ services:
       dockerfile: docker/Dockerfile.guacd
     image: shellius-guacd:h264
     restart: unless-stopped
-
+    # guacd writes RDP session recordings here and the backend reads them back
+    # out. It has to be a shared volume: the recording is produced by guacd's
+    # process on guacd's filesystem, so Node never sees those bytes until the
+    # file is finished and readable from both sides.
+    volumes:
+      - rdp_recordings:/var/lib/shellius/rdp-recordings
   minio:
     image: minio/minio:latest
     profiles: ["minio"]
@@ -130,6 +135,8 @@ services:
       SSH_TARGET_ALLOW_LOOPBACK: ${SSH_TARGET_ALLOW_LOOPBACK:-false}
       METRICS_TOKEN: ${METRICS_TOKEN}
       GUACD_HOST: guacd
+      RDP_RECORDINGS_DIR: /var/lib/shellius/rdp-recordings
+      GUACD_RDP_RECORDINGS_DIR: /var/lib/shellius/rdp-recordings
       GUACD_PORT: "4822"
       MINIO_ENDPOINT: ${MINIO_ENDPOINT:-minio}
       MINIO_PORT: ${MINIO_PORT:-9000}
@@ -161,7 +168,12 @@ services:
       timeout: 5s
       retries: 3
       start_period: 30s
-
+    # guacd writes RDP session recordings here and the backend reads them back
+    # out. It has to be a shared volume: the recording is produced by guacd's
+    # process on guacd's filesystem, so Node never sees those bytes until the
+    # file is finished and readable from both sides.
+    volumes:
+      - rdp_recordings:/var/lib/shellius/rdp-recordings
   frontend:
     image: yavadmin/shellius-frontend:${SHELLIUS_VERSION:-latest}
     restart: unless-stopped
@@ -173,6 +185,7 @@ services:
       start_period: 10s
 
 volumes:
+  rdp_recordings:
   postgres_data:
   redis_data:
   minio_data:

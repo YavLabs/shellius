@@ -23,6 +23,7 @@ import ConfirmDialog from '@/components/shared/ConfirmDialog';
 import FilteredEmptyState from '@/components/shared/FilteredEmptyState';
 import { appliedFilterCount, clearedFilterValues } from '@/lib/filters';
 import SessionPlayer from '@/components/sessions/SessionPlayer';
+import RdpSessionPlayer from '../components/sessions/RdpSessionPlayer.jsx';
 import PageHeader from '@/components/common/PageHeader';
 import ConnectModal from '@/components/servers/ConnectModal';
 import { listSessions, listActiveSessions, getSession, terminateSession, downloadRecording } from '@/services/sessionService';
@@ -431,11 +432,25 @@ function SessionDetailDrawer({ sessionId, open, onClose, currentUser, sessionCon
               onClick={() => downloadRecording(session.id)}
               className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground"
             >
-              <Download className="h-3.5 w-3.5" /> Download .cast
+              <Download className="h-3.5 w-3.5" />{' '}
+              {session.sessionType === 'RDP' ? 'Download .guac' : 'Download .cast'}
             </button>
           </div>
-          <SessionPlayer sessionId={session.id} onCast={setCastText} />
-          <SessionCommands castText={castText} />
+          {/*
+            Two different recordings behind one button. An RDP recording is a
+            Guacamole protocol dump replayed by Guacamole's own player; an SSH
+            one is an asciinema cast. The command list is derived by parsing
+            the cast's text, so it has no RDP equivalent — a desktop session
+            has no command stream to extract.
+          */}
+          {session.sessionType === 'RDP' ? (
+            <RdpSessionPlayer sessionId={session.id} />
+          ) : (
+            <>
+              <SessionPlayer sessionId={session.id} onCast={setCastText} />
+              <SessionCommands castText={castText} />
+            </>
+          )}
         </div>
       )}
       {!loading && session && !session.recordingKey && !session.recordingPath && (
@@ -443,7 +458,7 @@ function SessionDetailDrawer({ sessionId, open, onClose, currentUser, sessionCon
           {session.status === 'ACTIVE'
             ? 'Recording is in progress — available once the session ends.'
             : session.sessionType === 'RDP'
-              ? 'Replay is not available for RDP sessions.'
+              ? 'No recording was captured. RDP recording needs object storage configured and a guacd recordings volume — see docs/rdp-recording.md.'
               : 'No recording was captured for this session.'}
         </div>
       )}

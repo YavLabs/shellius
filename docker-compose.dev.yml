@@ -26,6 +26,16 @@ services:
       - "127.0.0.1:4822:4822"
     networks:
       - default
+    # RDP session recordings. In dev the backend runs on the HOST, not in a
+    # container, so this is a bind mount to a host path rather than the named
+    # volume the other compose files share between two containers — the
+    # backend has to be able to read the files guacd writes, and a named
+    # volume is not visible from outside Docker.
+    #
+    # The host side matches the backend's own default (RDP_RECORDINGS_DIR,
+    # ./data/rdp-recordings) so a dev instance needs no extra configuration.
+    volumes:
+      - ./data/rdp-recordings:/var/lib/shellius/rdp-recordings
 
   postgres:
     image: postgres:16-alpine

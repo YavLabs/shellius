@@ -52,6 +52,12 @@ services:
     restart: unless-stopped
     networks:
       - default
+    # guacd writes RDP session recordings here and the backend reads them
+    # back out. It has to be a shared volume: the recording is produced by
+    # guacd's process on guacd's filesystem, so nothing in Node ever sees
+    # those bytes until the file is finished and readable from both sides.
+    volumes:
+      - rdp_recordings:/var/lib/shellius/rdp-recordings
 
   minio:
     image: minio/minio:latest
@@ -90,6 +96,12 @@ services:
       REDIS_URL: ${REDIS_URL:-redis://redis:6379}
       GUACD_HOST: guacd
       GUACD_PORT: "4822"
+      RDP_RECORDINGS_DIR: /var/lib/shellius/rdp-recordings
+      GUACD_RDP_RECORDINGS_DIR: /var/lib/shellius/rdp-recordings
+    # The other half of the shared recordings volume — the backend encrypts
+    # each finished file into object storage and then deletes the plaintext.
+    volumes:
+      - rdp_recordings:/var/lib/shellius/rdp-recordings
     depends_on:
       postgres:
         condition: service_healthy
@@ -126,6 +138,7 @@ services:
       - frontend
 
 volumes:
+  rdp_recordings:
   postgres_data:
   redis_data:
   minio_data:

@@ -150,7 +150,8 @@ router.get(
 );
 
 // ---------------------------------------------------------------------------
-// GET /api/sessions/:id/recording — operator+; stream the .cast file
+// GET /api/sessions/:id/recording — operator+; stream the recording
+// (.cast for SSH, .guac for RDP; both decrypted on the way out)
 // ---------------------------------------------------------------------------
 
 router.get(
@@ -160,7 +161,11 @@ router.get(
   asyncHandler(async (req, res) => {
     const session = await sessionService.getById(req.orgId, req.params.id, req.scope, req.user.userId);
 
-    const filename = `session-${session.id}.cast`;
+    // An RDP recording is a Guacamole protocol dump, not an asciinema cast.
+    // The extension is what tells the player which one it is handling, and
+    // what a downloaded file can actually be opened with.
+    const ext = session.sessionType === 'RDP' ? 'guac' : 'cast';
+    const filename = `session-${session.id}.${ext}`;
     res.set('Content-Type', 'application/octet-stream');
     res.set('Content-Disposition', `attachment; filename="${filename}"`);
 
