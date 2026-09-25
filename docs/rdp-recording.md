@@ -110,6 +110,12 @@ development the backend is on the host, so it reads `./data/rdp-recordings`
 while guacd writes to `/var/lib/shellius/rdp-recordings` — the same directory
 through a bind mount.
 
+`GUACD_RDP_RECORDINGS_DIR` **must be absolute**, and recording refuses to start
+if it is not. guacd's working directory is `/`, so a relative path sends it
+looking for a directory it cannot create; it then records nothing and reports
+success, which is the worst possible outcome — a perfect session and no
+evidence. This was found by running a real session, not by reading the code.
+
 ## Playback
 
 `frontend/src/components/sessions/RdpSessionPlayer.jsx`, using

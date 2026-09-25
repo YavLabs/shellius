@@ -352,4 +352,21 @@ describe('isEnabled', () => {
   test('is true when storage is configured and the directory is writable', async () => {
     expect(await svc.isEnabled({ storage: fakeStorage(), dir })).toBe(true);
   });
+
+  // Found by running a real session against real guacd rather than by
+  // reasoning: guacd's working directory is `/`, so a relative recording-path
+  // makes it try to create a directory it cannot create. It then records
+  // nothing and reports success — the session is perfect and the recording
+  // simply never exists. Refusing here turns a silent absence of evidence
+  // into a line in the log.
+  test.each(['./data/rdp-recordings', 'data/rdp-recordings', '../recordings', ''])(
+    'is false when the guacd-side path is relative (%s)',
+    async (guacdDir) => {
+      expect(await svc.isEnabled({ storage: fakeStorage(), dir, guacdDir })).toBe(false);
+    }
+  );
+
+  test('the default guacd-side path is absolute, and is the one the compose files mount', () => {
+    expect(svc.GUACD_RECORDINGS_DIR.startsWith('/')).toBe(true);
+  });
 });

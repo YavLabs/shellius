@@ -50,7 +50,24 @@ import { createEncryptStream } from '../utils/recordingCrypto.js';
  * both, and a single setting is one fewer thing to get wrong.
  */
 export const RECORDINGS_DIR = process.env.RDP_RECORDINGS_DIR || './data/rdp-recordings';
-export const GUACD_RECORDINGS_DIR = process.env.GUACD_RDP_RECORDINGS_DIR || RECORDINGS_DIR;
+
+/**
+ * The same directory as guacd sees it.
+ *
+ * This does NOT default to `RECORDINGS_DIR`, and that is the whole point: the
+ * backend's default is a relative path, which is meaningful from wherever the
+ * backend was started and meaningless to guacd, whose working directory is
+ * `/`. Sending guacd a relative `recording-path` makes it try to create a
+ * directory it has no permission to create, record nothing, and report success
+ * — the session works perfectly and the recording simply never exists.
+ *
+ * So this defaults to the absolute path every compose file mounts the shared
+ * volume at, which is correct in development too: there the backend reads the
+ * host side of a bind mount while guacd writes the container side of the same
+ * directory.
+ */
+export const GUACD_RECORDINGS_DIR =
+  process.env.GUACD_RDP_RECORDINGS_DIR || '/var/lib/shellius/rdp-recordings';
 
 /**
  * How long a file must sit untouched before it is considered finished.
@@ -112,8 +129,23 @@ export function recordingParamsFor(recordingId) {
  * itself is fine and must not be blocked — RDP access is the feature, the
  * recording is evidence about it.
  */
-export async function isEnabled({ storage = storageService, dir = RECORDINGS_DIR } = {}) {
+export async function isEnabled({
+  storage = storageService,
+  dir = RECORDINGS_DIR,
+  guacdDir = GUACD_RECORDINGS_DIR,
+} = {}) {
   if (process.env.RDP_RECORDING_ENABLED === 'false') return false;
+
+  // A relative path is resolved by guacd against ITS working directory, which
+  // is `/`. It would try to create a directory it cannot create, record
+  // nothing, and never say so. Refusing here turns a silent absence of
+  // evidence into a line in the log.
+  if (!path.isAbsolute(guacdDir)) {
+    logger.warn('rdpRecording: GUACD_RDP_RECORDINGS_DIR must be an absolute path; recording disabled', {
+      guacdDir,
+    });
+    return false;
+  }
   try {
     if (!(await storage.isConfigured())) return false;
   } catch (err) {
