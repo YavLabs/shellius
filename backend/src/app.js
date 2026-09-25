@@ -50,6 +50,7 @@ import auditSinksRouter from './routes/auditSinks.js';
 import directorySyncRouter from './routes/directorySync.js';
 import chatDestinationsRouter from './routes/chatDestinations.js';
 import slackInteractionsRouter from './routes/slackInteractions.js';
+import samlAcsRouter from './routes/samlAcs.js';
 import chatIdentitiesRouter from './routes/chatIdentities.js';
 import vaultRouter from './routes/vault.js';
 import postureRouter from './routes/posture.js';
@@ -92,6 +93,14 @@ app.use(cors({ origin: config.corsOrigin, credentials: true }));
 // missing, so reordering this breaks the endpoint loudly rather than
 // silently disabling its only authentication.
 app.use('/api/chat/slack', slackInteractionsRouter);
+// The SAML ACS is mounted here for the same reason and with the same
+// constraint: the identity provider POSTs `application/x-www-form-urlencoded`
+// and a real assertion (encrypted, or carrying a long group list) can exceed
+// express's default 100kb, which the global parser would refuse with a 413
+// before any route saw it. The SAML router brings its own parser at 1MB,
+// scoped to /acs only. Mount order is load-bearing — moving this below the
+// global parsers silently caps assertion size at 100kb.
+app.use('/api/auth/sso/saml', samlAcsRouter);
 
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));

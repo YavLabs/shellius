@@ -4,6 +4,7 @@ import runtimeConfig from '../config/index.js';
 import ApiError from '../utils/ApiError.js';
 import { encrypt, decrypt } from '../utils/crypto.js';
 import logger from '../utils/logger.js';
+import * as samlService from './samlService.js';
 
 // ---------------------------------------------------------------------------
 // Per-preset env-var defaults (Task 16B; Revision 2 keeps only the Google
@@ -120,8 +121,18 @@ export { guardSsrf, isPrivateIp };
 
 function maskRow(row) {
   if (!row) return null;
-  const { clientSecretEncrypted, ...rest } = row;
-  return { ...rest, hasSecret: !!clientSecretEncrypted };
+  // Strip every stored secret. `samlIdpCertEncrypted` and
+  // `samlSpPrivateKeyEncrypted` are ciphertext, not plaintext, but a
+  // ciphertext an attacker can read is a ciphertext they can work on offline
+  // and a value they can copy into another install — neither belongs in an
+  // API response.
+  const { clientSecretEncrypted, samlIdpCertEncrypted, samlSpPrivateKeyEncrypted, ...rest } = row;
+  return {
+    ...rest,
+    hasSecret: !!clientSecretEncrypted,
+    hasIdpCertificate: !!samlIdpCertEncrypted,
+    hasSpKey: !!samlSpPrivateKeyEncrypted,
+  };
 }
 
 function safeDefaultRole(role) {
@@ -293,6 +304,55 @@ export async function test(orgId, body) {
 // Revision 2 — multiple SSO providers per org
 // ---------------------------------------------------------------------------
 
+/**
+ * The SAML half of the provider DTO.
+ *
+ * What it MUST NOT contain: the IdP certificate PEM, the SP private key, or
+ * either of their ciphertexts. What an admin actually needs in the UI is
+ * whether a certificate is configured, which one, and when it expires — so
+ * the certificates are summarised (subject, issuer, validity, SHA-256
+ * fingerprint) and the PEM stays in the database. The fingerprint is what an
+ * admin compares against their IdP console during a rotation, and it is a
+ * hash of public data.
+ *
+ * The SP certificate IS returned in full: it is ours, it is public, and it is
+ * already served verbatim from the unauthenticated metadata endpoint.
+ */
+function samlDTOFields(row) {
+  if (row.provider !== 'saml') return {};
+  let idpCertificates = [];
+  try {
+    idpCertificates = samlService
+      .decryptIdpCerts(row)
+      .map((pem) => samlService.certSummary(pem))
+      .filter(Boolean);
+  } catch (err) {
+    // A row encrypted under a key this process no longer has. Surface it as
+    // "no readable certificate" rather than failing the whole provider list.
+    logger.error('ssoConfigService: could not decrypt SAML IdP certificate', { providerId: row.id });
+  }
+  return {
+    samlIdpEntryPoint: row.samlIdpEntryPoint,
+    samlIdpEntityId: row.samlIdpEntityId,
+    samlSpEntityId: samlService.spEntityIdFor(row),
+    samlAcsUrl: samlService.acsUrlFor(row.id),
+    samlMetadataUrl: samlService.metadataUrlFor(row.id),
+    samlSpCertificate: row.samlSpCertificate || null,
+    samlSpCertificateSummary: row.samlSpCertificate ? samlService.certSummary(row.samlSpCertificate) : null,
+    hasSpKey: !!row.samlSpPrivateKeyEncrypted,
+    hasIdpCertificate: !!row.samlIdpCertEncrypted,
+    idpCertificates,
+    samlSignatureAlgorithm: row.samlSignatureAlgorithm || 'sha256',
+    samlWantAuthnResponseSigned: row.samlWantAuthnResponseSigned,
+    samlAllowIdpInitiated: row.samlAllowIdpInitiated,
+    samlClockSkewSec: row.samlClockSkewSec,
+    samlIdentifierFormat: row.samlIdentifierFormat,
+    samlForceAuthn: row.samlForceAuthn,
+    samlSignRequests: row.samlSignRequests,
+    samlAttributeMapping: row.samlAttributeMapping || null,
+  };
+}
+
 /** Build the public SsoProviderDTO for a DB row (never includes the secret). */
 export async function toProviderDTO(row) {
   const identities = await prisma.userIdentity.findMany({
@@ -308,7 +368,8 @@ export async function toProviderDTO(row) {
     clientId: row.clientId,
     hasClientSecret: !!row.clientSecretEncrypted || (row.presetId ? !!(ENV_DEFAULTS[row.presetId] || {}).clientSecret : false),
     issuerUrl: row.issuerUrl,
-    callbackUrl: callbackUrlFor(row.id),
+    callbackUrl: row.provider === 'saml' ? samlService.acsUrlFor(row.id) : callbackUrlFor(row.id),
+    ...samlDTOFields(row),
     scopes: row.scopes,
     defaultRole: row.defaultRole,
     defaultGroupId: row.defaultGroupId,
@@ -379,7 +440,96 @@ export async function getProviderRow(orgId, id) {
   return row;
 }
 
+/** Preset ids that mean "this row is SAML". */
+export const SAML_PRESET_IDS = ['saml', 'saml-entra', 'saml-okta', 'saml-adfs'];
+export const isSamlPreset = (presetId) => SAML_PRESET_IDS.includes(presetId);
+
+/** Shared create/update field handling for SAML-only columns. */
+function samlWriteFields(data, { existing = null } = {}) {
+  const out = {};
+  const set = (key, value) => {
+    if (value !== undefined) out[key] = value;
+  };
+  set('samlIdpEntryPoint', data.samlIdpEntryPoint);
+  set('samlIdpEntityId', data.samlIdpEntityId);
+  set('samlSpEntityId', data.samlSpEntityId === '' ? null : data.samlSpEntityId);
+  set('samlSignatureAlgorithm', data.samlSignatureAlgorithm);
+  set('samlWantAuthnResponseSigned', data.samlWantAuthnResponseSigned);
+  set('samlAllowIdpInitiated', data.samlAllowIdpInitiated);
+  set('samlClockSkewSec', data.samlClockSkewSec);
+  set('samlIdentifierFormat', data.samlIdentifierFormat === '' ? null : data.samlIdentifierFormat);
+  set('samlForceAuthn', data.samlForceAuthn);
+  set('samlSignRequests', data.samlSignRequests);
+  if (data.samlAttributeMapping !== undefined) {
+    out.samlAttributeMapping = data.samlAttributeMapping || null;
+  }
+  // A blank certificate on update keeps the stored one — the same rule the
+  // OIDC clientSecret already follows, so an admin editing "allowed domains"
+  // does not have to re-paste a certificate they cannot read back.
+  if (data.samlIdpCertificate) {
+    out.samlIdpCertEncrypted = samlService.encryptIdpCerts(data.samlIdpCertificate);
+  } else if (!existing?.samlIdpCertEncrypted && data.samlIdpCertificate !== undefined) {
+    throw new ApiError(400, 'An IdP signing certificate is required for a SAML provider');
+  }
+  return out;
+}
+
+async function createSamlProvider(orgId, data) {
+  const { name, presetId } = data;
+  if (!data.samlIdpEntryPoint) throw new ApiError(400, 'samlIdpEntryPoint is required for a SAML provider');
+  if (!data.samlIdpEntityId) throw new ApiError(400, 'samlIdpEntityId is required for a SAML provider');
+  if (!data.samlIdpCertificate) throw new ApiError(400, 'An IdP signing certificate is required for a SAML provider');
+
+  // Validate the certificate BEFORE writing anything, so a bad paste is a 400
+  // on save rather than a broken provider that only fails at sign-in.
+  const samlFields = samlWriteFields(data, { existing: null });
+
+  // The SP key pair is generated here, server-side, and never uploaded. It is
+  // returned to nobody: the private half is encrypted immediately, the public
+  // half goes into the SP metadata the admin hands to their IdP.
+  const sp = samlService.generateSpKeyPair({ commonName: `shellius-sp-${orgId}` });
+
+  const maxOrder = await prisma.ssoConfig.aggregate({ where: { orgId }, _max: { displayOrder: true } });
+  const displayOrder = (maxOrder._max.displayOrder ?? -1) + 1;
+
+  let created = await prisma.ssoConfig.create({
+    data: {
+      orgId,
+      provider: 'saml',
+      presetId: presetId || 'saml',
+      name: name || 'SAML 2.0',
+      displayOrder,
+      clientId: null,
+      clientSecretEncrypted: null,
+      issuerUrl: '', // OIDC-only column; SAML's issuer is samlIdpEntityId
+      redirectUri: 'pending', // replaced with the ACS URL once we know the id
+      scopes: '',
+      defaultRole: safeDefaultRole(data.defaultRole),
+      defaultGroupId: data.defaultGroupId || null,
+      autoProvision: data.autoProvision !== false,
+      allowedDomains: normalizeDomains(data.allowedDomains),
+      requireVerifiedEmail: data.requireVerifiedEmail !== false,
+      allowedOrgs: [],
+      isActive: data.isActive !== false,
+      samlSpPrivateKeyEncrypted: encrypt(sp.privateKeyPem),
+      samlSpCertificate: sp.certificatePem,
+      samlSignatureAlgorithm: data.samlSignatureAlgorithm || 'sha256',
+      samlClockSkewSec: data.samlClockSkewSec ?? 60,
+      ...samlFields,
+    },
+  });
+  created = await prisma.ssoConfig.update({
+    where: { id: created.id },
+    data: { redirectUri: samlService.acsUrlFor(created.id) },
+  });
+
+  logger.info('ssoConfigService.createProvider: SAML provider created', { orgId, providerId: created.id, presetId });
+  return toProviderDTO(created);
+}
+
 export async function createProvider(orgId, data) {
+  if (isSamlPreset(data.presetId)) return createSamlProvider(orgId, data);
+
   const {
     name, presetId, clientId, clientSecret, issuerUrl, scopes,
     defaultRole, defaultGroupId, autoProvision, allowedDomains, allowedOrgs,
@@ -439,6 +589,36 @@ export async function createProvider(orgId, data) {
 
 export async function updateProvider(orgId, id, data) {
   const existing = await getProviderRow(orgId, id);
+
+  if (existing.provider === 'saml') {
+    // A provider's protocol is immutable. Flipping oidc <-> saml on an
+    // existing row would leave every UserIdentity attached to it pointing at
+    // subjects issued by a different protocol under a different issuer, which
+    // is an account-takeover shaped hole, not a migration.
+    if (data.presetId !== undefined && !isSamlPreset(data.presetId)) {
+      throw new ApiError(400, 'A SAML provider cannot be changed to another protocol — create a new provider instead');
+    }
+    const updated = await prisma.ssoConfig.update({
+      where: { id: existing.id },
+      data: {
+        ...(data.name !== undefined && { name: data.name }),
+        ...(data.presetId !== undefined && { presetId: data.presetId }),
+        ...(data.defaultRole !== undefined && { defaultRole: safeDefaultRole(data.defaultRole) }),
+        ...(data.defaultGroupId !== undefined && { defaultGroupId: data.defaultGroupId || null }),
+        ...(data.autoProvision !== undefined && { autoProvision: data.autoProvision }),
+        ...(data.allowedDomains !== undefined && { allowedDomains: normalizeDomains(data.allowedDomains) }),
+        ...(data.requireVerifiedEmail !== undefined && { requireVerifiedEmail: data.requireVerifiedEmail }),
+        ...(data.isActive !== undefined && { isActive: data.isActive }),
+        ...samlWriteFields(data, { existing }),
+      },
+    });
+    logger.info('ssoConfigService.updateProvider: SAML provider updated', { orgId, id });
+    return toProviderDTO(updated);
+  }
+  if (isSamlPreset(data.presetId)) {
+    throw new ApiError(400, 'An OIDC provider cannot be changed to SAML — create a new provider instead');
+  }
+
   const {
     name, presetId, clientId, clientSecret, issuerUrl, scopes,
     defaultRole, defaultGroupId, autoProvision, allowedDomains, allowedOrgs,
@@ -529,10 +709,94 @@ export async function reorderProviders(orgId, ids) {
  * has one stored… but a draft has no row, so clientSecret is only needed
  * when the test actually needs to authenticate, which discovery does not).
  */
+/**
+ * Re-key the SP. The old private key is overwritten, so any AuthnRequest
+ * already in flight that the IdP has not yet answered will fail its signature
+ * check — acceptable, and far better than keeping a superseded key usable.
+ *
+ * The admin must re-upload the new SP metadata (or the new certificate) to
+ * their IdP; until they do, signed AuthnRequests are rejected by the IdP. The
+ * route audits this and the UI warns about it.
+ */
+export async function rotateSamlSpKey(orgId, id) {
+  const existing = await getProviderRow(orgId, id);
+  if (existing.provider !== 'saml') throw new ApiError(400, 'Not a SAML provider');
+  const sp = samlService.generateSpKeyPair({ commonName: `shellius-sp-${orgId}` });
+  const updated = await prisma.ssoConfig.update({
+    where: { id: existing.id },
+    data: {
+      samlSpPrivateKeyEncrypted: encrypt(sp.privateKeyPem),
+      samlSpCertificate: sp.certificatePem,
+    },
+  });
+  logger.info('ssoConfigService.rotateSamlSpKey: SP key rotated', { orgId, providerId: id });
+  return toProviderDTO(updated);
+}
+
+/**
+ * "Test" for SAML is a CONFIGURATION check, not a round trip.
+ *
+ * There is nothing to probe: SAML has no discovery document and no
+ * machine-callable endpoint. The IdP's SSO URL is a place we send a browser,
+ * and fetching it server-side would prove nothing about the trust
+ * relationship while handing the product a brand-new SSRF sink pointed at an
+ * admin-supplied URL. So this validates what can actually be validated
+ * locally — that the certificates parse and have not expired, that we hold an
+ * SP key, that the endpoints are well-formed — and says plainly that the real
+ * test is a sign-in.
+ */
+async function testSamlProvider(orgId, id) {
+  const row = await getProviderRow(orgId, id);
+  const problems = [];
+  const warnings = [];
+
+  let certs = [];
+  try {
+    certs = samlService.decryptIdpCerts(row);
+  } catch {
+    problems.push('The stored IdP certificate could not be decrypted with the current SERVER_ENCRYPTION_KEY.');
+  }
+  if (!certs.length) problems.push('No IdP signing certificate is configured.');
+
+  const summaries = certs.map((pem) => samlService.certSummary(pem)).filter(Boolean);
+  if (summaries.length !== certs.length) problems.push('An IdP certificate could not be parsed.');
+  const live = summaries.filter((c) => !c.expired);
+  if (summaries.length && live.length === 0) problems.push('Every configured IdP certificate has expired.');
+  else if (summaries.length !== live.length) warnings.push('One configured IdP certificate has expired and is being ignored.');
+  for (const c of live) {
+    const daysLeft = Math.floor((new Date(c.notAfter).getTime() - Date.now()) / 86400000);
+    if (daysLeft <= 30) warnings.push(`An IdP certificate expires in ${daysLeft} day(s).`);
+  }
+
+  if (!row.samlIdpEntryPoint) problems.push('No IdP sign-in URL is configured.');
+  if (!row.samlIdpEntityId) problems.push('No IdP EntityID is configured.');
+  if (!row.samlSpPrivateKeyEncrypted) problems.push('This provider has no SP key pair.');
+  if (row.samlAllowIdpInitiated) {
+    warnings.push(
+      'IdP-initiated sign-in is enabled. Responses arrive with no InResponseTo, so replay protection relies on assertion-ID tracking alone.'
+    );
+  }
+  if ((row.samlSignatureAlgorithm || 'sha256') === 'sha1') {
+    warnings.push('This provider accepts SHA-1 signatures, which are no longer considered collision-resistant.');
+  }
+
+  return {
+    ok: problems.length === 0,
+    message:
+      problems.length === 0
+        ? 'SAML configuration looks complete. SAML has no discovery endpoint, so the only real test is a sign-in.'
+        : problems.join(' '),
+    details: { problems, warnings, certificates: summaries, acsUrl: samlService.acsUrlFor(row.id), spEntityId: samlService.spEntityIdFor(row) },
+  };
+}
+
 export async function testProvider(orgId, { id, data } = {}) {
   let row;
   if (id) {
     row = await getProviderRow(orgId, id);
+    if (row.provider === 'saml') return testSamlProvider(orgId, id);
+  } else if (isSamlPreset(data?.presetId)) {
+    throw new ApiError(400, 'Save the SAML provider first — there is nothing to test until its certificate is stored');
   } else {
     row = {
       provider: data?.presetId === 'github' ? 'github' : 'oidc',

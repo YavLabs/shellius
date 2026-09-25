@@ -1,0 +1,15 @@
+{
+  "SP_ENTITY_ID": "https://shellius.test/api/auth/sso/saml/metadata/prov_aaa",
+  "ACS_URL": "https://shellius.test/api/auth/sso/saml/acs/prov_aaa",
+  "OTHER_ACS_URL": "https://shellius.test/api/auth/sso/saml/acs/prov_bbb",
+  "IDP_ENTITY_ID": "https://idp.test/entity",
+  "OTHER_IDP_ENTITY_ID": "https://evil-idp.test/entity",
+  "REQUEST_ID": "_00000000000000000000000000000000000000000a",
+  "ISSUE_INSTANT": "2026-01-01T00:00:00Z",
+  "NOT_BEFORE": "2026-01-01T00:00:00Z",
+  "NOT_ON_OR_AFTER": "2026-01-01T00:05:00Z",
+  "ASSERTION_ID": "_assertion0000000000000000000000000000001",
+  "RESPONSE_ID": "_response00000000000000000000000000000001",
+  "NAME_ID": "alice@example.com",
+  "NOW": "2026-01-01T00:01:00Z"
+}

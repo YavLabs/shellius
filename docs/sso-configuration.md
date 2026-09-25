@@ -113,6 +113,94 @@ For any OIDC-compliant IdP:
    scopes into the wizard. Most providers accept
    `openid email profile`.
 
+## SAML 2.0
+
+Until this release the API accepted `provider: 'saml'` and then did nothing
+with it: there was no SAML library, no ACS endpoint and no metadata endpoint,
+so a configuration saved that way was accepted and silently unusable. It now
+works.
+
+### What Shellius requires, and will not make configurable
+
+**The assertion itself must be signed.** This is hardcoded, not a setting. An
+unsigned assertion wrapped inside a signed `<Response>` is the canonical SAML
+bypass: the envelope's signature says nothing about the assertion's contents,
+so a library that accepts one can be fed any identity the attacker likes.
+Because the assertion signature is unconditional, requiring the response
+envelope to be signed as well is left as an option (`samlWantAuthnResponseSigned`,
+default off) — many IdPs sign only the assertion, and defaulting it on would
+make the feature unusable with them.
+
+**Signatures are checked against the certificate you configure, and nothing
+else.** A certificate carried in the document's own `KeyInfo` is never used as
+a trust anchor; a document that vouches for itself proves nothing.
+
+**Document type declarations are refused** before parsing, which is the
+entity-expansion defence. Comments are stripped first, so a `<!-- <!DOCTYPE -->`
+inside a legitimate document is not mistaken for one.
+
+**SHA-1 is refused** unless you explicitly configure it.
+
+**`Destination` is checked against the canonical ACS URL**, never against the
+request's `Host` header — which the caller controls.
+
+### Replay protection, and why sign-in fails during a Redis outage
+
+An assertion is a bearer credential. It is signed, so it cannot be forged, but
+anyone who obtains a copy — a proxy log, a browser history entry, a shared
+machine's back button — can post it again. Single use is the only thing
+between "that assertion was used" and "that assertion works until it expires".
+
+Two controls, both in Redis:
+
+- **`InResponseTo`**, bound to an AuthnRequest this server sent. SAML's
+  equivalent of the OAuth `state` parameter.
+- **An atomic single-use claim on the assertion ID**, taken the moment the
+  assertion validates. This is the authoritative control, and the only one
+  that exists at all for IdP-initiated sign-ins.
+
+Both **fail closed**: if Redis cannot answer, the sign-in is refused with a
+503. An SSO outage during a Redis outage is an inconvenience; accepting
+unbounded replays during one is a silent authentication bypass that would look
+completely normal in every log.
+
+Every Redis command here is also bounded by a timer, because `config/redis.js`
+sets `maxRetriesPerRequest: null` — with that setting ioredis does not reject a
+command when Redis is unreachable, it queues it and retries forever, so a bare
+`await` would hang the request rather than fail it.
+
+### IdP-initiated sign-in
+
+Off by default (`samlAllowIdpInitiated`). Without an `InResponseTo` there is no
+binding to a request this server started, so replay protection rests entirely
+on assertion-ID tracking. Turn it on only if your IdP's app launcher needs it.
+
+### Certificate rotation
+
+`samlIdpCertificate` holds an array of PEMs, so a rotation can be staged: add
+the new certificate alongside the old one, let the IdP cut over, then remove
+the old one. A single-value field would force a flag-day cutover that locks an
+org out of its own tenant if the timing slips.
+
+### What is stored, and what is never returned
+
+The IdP certificate and the SP private key are encrypted at rest with
+`utils/crypto.js`, like every other third-party secret. No API returns either:
+the DTO exposes `hasIdpCertificate` / `hasSpKey` booleans and a fingerprint.
+
+Assertion XML is never logged. It carries personal data and is itself a
+credential; node-saml's own error messages are mapped to stable codes rather
+than propagated, because they can embed document fragments.
+
+### Limits
+
+- Single logout (SLO) is not implemented. Signing out of Shellius does not sign
+  you out of the IdP.
+- SAML metadata is published for the SP; importing IdP metadata XML to
+  fill the form automatically is not implemented — the fields are entered by
+  hand.
+- Discovery (`/.well-known`) is OIDC-only, as `ssoConfigService` notes.
+
 ## Test connection
 
 After saving (or while typing) you can click **Test** in the wizard.

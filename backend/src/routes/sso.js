@@ -11,6 +11,7 @@ import * as ssoConfigService from '../services/ssoConfigService.js';
 import * as githubOAuth from '../services/githubOAuth.js';
 import * as authService from '../services/authService.js';
 import * as ssoLinkService from '../services/ssoLinkService.js';
+import * as samlService from '../services/samlService.js';
 import { log as auditLog, ACTIONS } from '../services/auditService.js';
 import logger from '../utils/logger.js';
 import redis from '../config/redis.js';
@@ -138,9 +139,16 @@ const ENTRA_TENANT_RE = /^[a-fA-F0-9]{8}-[a-fA-F0-9]{4}-[a-fA-F0-9]{4}-[a-fA-F0-
 const DNS_HOSTNAME_RE = /^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$/i;
 const DOMAIN_RE = /^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$/i;
 
+// NOTE: this legacy single-row endpoint is OIDC-only, and now says so.
+// It used to accept `provider: 'saml'` and `presetId: 'saml'`, which was a
+// lie in two directions: `ssoConfigService.upsert()` has no SAML branch, and
+// until this release nothing in the product could consume a SAML assertion at
+// all. A config saved that way was accepted with a 200 and then silently
+// unusable. SAML providers are created through POST /providers, which is the
+// only path that generates the SP key pair and the ACS URL a SAML row needs.
 const ssoConfigSchema = Joi.object({
-  provider: Joi.string().valid('oidc', 'saml').required(),
-  presetId: Joi.string().valid('google', 'entra', 'okta', 'auth0', 'generic-oidc', 'saml').optional(),
+  provider: Joi.string().valid('oidc').required(),
+  presetId: Joi.string().valid('google', 'entra', 'okta', 'auth0', 'generic-oidc').optional(),
   clientId: Joi.string().min(1).max(500).required(),
   clientSecret: Joi.string().min(1).max(2000),
   issuerUrl: Joi.string().uri().required(),
@@ -170,7 +178,9 @@ const ssoConfigSchema = Joi.object({
 });
 
 const ssoTestSchema = Joi.object({
-  provider: Joi.string().valid('oidc', 'saml'),
+  // Discovery is an OIDC concept. SAML has no equivalent probe — see
+  // ssoConfigService.testSamlProvider, reached via POST /providers/:id/test.
+  provider: Joi.string().valid('oidc'),
   issuerUrl: Joi.string().uri(),
 });
 
@@ -200,15 +210,65 @@ const connectStartSchema = Joi.object({
 // Joi schemas — Revision 2, multi-provider CRUD
 // ---------------------------------------------------------------------------
 
-const PRESET_IDS = ['google', 'entra', 'okta', 'auth0', 'generic', 'github'];
+const OAUTH_PRESET_IDS = ['google', 'entra', 'okta', 'auth0', 'generic', 'github'];
+const SAML_PRESET_IDS = ['saml', 'saml-entra', 'saml-okta', 'saml-adfs'];
+const PRESET_IDS = [...OAUTH_PRESET_IDS, ...SAML_PRESET_IDS];
+const isSaml = Joi.string().valid(...SAML_PRESET_IDS);
+
+// Attribute-mapping keys are fixed (config/samlAttributes.js). An open object
+// here would let an admin write arbitrary JSON into a column the mapper then
+// iterates.
+const samlAttributeMappingSchema = Joi.object({
+  email: Joi.string().max(300).allow(''),
+  name: Joi.string().max(300).allow(''),
+  firstName: Joi.string().max(300).allow(''),
+  lastName: Joi.string().max(300).allow(''),
+  groups: Joi.string().max(300).allow(''),
+  externalId: Joi.string().max(300).allow(''),
+}).allow(null);
+
+// SAML-only fields, shared by create and update. The IdP certificate is a
+// pasted PEM (or the bare base64 an IdP console shows); it is validated
+// properly in samlService.normalizeIdpCerts, which is what actually parses
+// it — this only bounds the size.
+const samlFields = {
+  samlIdpEntryPoint: Joi.string().uri({ scheme: ['http', 'https'] }).max(2000),
+  samlIdpEntityId: Joi.string().min(1).max(1024),
+  samlIdpCertificate: Joi.string().max(100000).allow(''),
+  samlSpEntityId: Joi.string().max(1024).allow(''),
+  samlSignatureAlgorithm: Joi.string().valid('sha1', 'sha256', 'sha512'),
+  samlWantAuthnResponseSigned: Joi.boolean(),
+  samlAllowIdpInitiated: Joi.boolean(),
+  samlClockSkewSec: Joi.number().integer().min(0).max(300),
+  samlIdentifierFormat: Joi.string().max(200).allow(''),
+  samlForceAuthn: Joi.boolean(),
+  samlSignRequests: Joi.boolean(),
+  samlAttributeMapping: samlAttributeMappingSchema,
+};
 
 const providerCreateSchema = Joi.object({
   name: Joi.string().min(1).max(120).required(),
   presetId: Joi.string().valid(...PRESET_IDS).required(),
-  clientId: Joi.string().min(1).max(500).required(),
+  // SAML has no client id / secret / issuer URL / scopes at all; OIDC and
+  // GitHub still require a client id, as before.
+  clientId: Joi.string().min(1).max(500).when('presetId', {
+    is: isSaml,
+    then: Joi.forbidden(),
+    otherwise: Joi.required(),
+  }),
   clientSecret: Joi.string().min(1).max(2000).allow(''),
   issuerUrl: Joi.string().uri(),
   scopes: Joi.string().max(500),
+  ...samlFields,
+  // A SAML provider is unusable without these three, so they are required at
+  // the edge rather than discovered on the first failed sign-in.
+  samlIdpEntryPoint: samlFields.samlIdpEntryPoint.when('presetId', { is: isSaml, then: Joi.required() }),
+  samlIdpEntityId: samlFields.samlIdpEntityId.when('presetId', { is: isSaml, then: Joi.required() }),
+  samlIdpCertificate: Joi.string().min(1).max(100000).when('presetId', {
+    is: isSaml,
+    then: Joi.required(),
+    otherwise: Joi.forbidden(),
+  }),
   defaultRole: Joi.string().max(100).required(),
   defaultGroupId: Joi.string().allow(null, ''),
   autoProvision: Joi.boolean().required(),
@@ -228,6 +288,7 @@ const checkDefaultRole = asyncHandler(async (req, res, next) => {
 });
 
 const providerUpdateSchema = Joi.object({
+  ...samlFields,
   name: Joi.string().min(1).max(120),
   presetId: Joi.string().valid(...PRESET_IDS),
   clientId: Joi.string().min(1).max(500),
@@ -366,6 +427,22 @@ router.post(
   asyncHandler(async (req, res) => {
     const result = await ssoConfigService.testProvider(req.orgId, { id: req.params.id });
     res.json({ success: true, data: result });
+  })
+);
+
+// POST /api/auth/sso/providers/:id/rotate-sp-key — new SP key pair for a SAML
+// provider. The old private key is destroyed, so the admin MUST re-upload the
+// SP metadata to their IdP afterwards or signed AuthnRequests will be
+// rejected. Audited; the new key is never returned, only its certificate.
+router.post(
+  '/providers/:id/rotate-sp-key',
+  authenticate,
+  tenant,
+  requirePermission('settings.sso'),
+  audit('sso.provider.rotate_sp_key', 'SsoConfig'),
+  asyncHandler(async (req, res) => {
+    const provider = await ssoConfigService.rotateSamlSpKey(req.orgId, req.params.id);
+    res.json({ success: true, data: { provider } });
   })
 );
 
@@ -802,6 +879,123 @@ async function runSsoCallback(req, res, { code, state, cookieState, orgHint = nu
   return runOidcCallback(req, res, { org, cfg, code, stateData });
 }
 
+// ---------------------------------------------------------------------------
+// SAML — the inbound half. Called by routes/samlAcs.js, which owns the
+// endpoint (it has to be mounted ahead of the global body parsers) but none of
+// the logic. Everything after validation is the SAME tail OIDC and GitHub
+// use: reconcileSsoUser, the pending-link branch, the audit entry, the
+// one-time exchange code the frontend trades for a session.
+// ---------------------------------------------------------------------------
+
+async function auditSamlFailure(req, { org, providerId, reason }) {
+  await auditLog({
+    orgId: org.id,
+    actorId: null,
+    action: ACTIONS.auth.sso_failed,
+    resourceType: 'User',
+    metadata: { reason, provider: 'saml', providerId },
+    ipAddress: req.ip,
+    userAgent: req.get('user-agent') || '',
+  });
+}
+
+/**
+ * Consume one SAMLResponse.
+ *
+ * Trust order matters here and is deliberate:
+ *
+ *   1. The provider row comes from the ACS URL's path, so the org, the
+ *      trusted certificate, the expected audience and the Redis namespace are
+ *      all fixed before a single byte of the assertion is examined. Nothing
+ *      inside the assertion can move the request to a different org.
+ *   2. The RelayState, if present, must be a state token WE issued, for THIS
+ *      provider, in THIS org. It is single-use (taken from Redis). A
+ *      RelayState we do not recognise is a refusal, not a fallback to
+ *      IdP-initiated — otherwise "IdP-initiated is off" would be bypassable
+ *      by sending garbage in RelayState.
+ *   3. Only then is the assertion validated, by samlService.
+ *
+ * Note what is NOT here: any decision about who the user is. That is
+ * ssoService.reconcileSsoUser, identical for every protocol, including its
+ * refusal to silently adopt an account that has a password or holds a
+ * privileged permission.
+ */
+export async function handleSamlAssertion(req, res, { row, samlResponse, relayState }) {
+  const org = await prisma.organization.findUnique({ where: { id: row.orgId } });
+  if (!org) {
+    logger.error('SAML assertion for a provider whose org is gone', { providerId: row.id });
+    return redirectError(res, 'sso_failed');
+  }
+
+  let cfg;
+  try {
+    cfg = samlService.decryptSamlProvider(row);
+  } catch {
+    // Wrong / rotated SERVER_ENCRYPTION_KEY. Never log the ciphertext or the
+    // decryption error, which can echo key material state.
+    logger.error('SAML provider secrets could not be decrypted', { providerId: row.id, orgId: row.orgId });
+    return redirectError(res, 'sso_not_configured');
+  }
+
+  let stateData = null;
+  if (relayState) {
+    stateData = await takeSsoState(relayState);
+    if (!stateData) {
+      logger.warn('SAML RelayState was unknown or already used', { providerId: row.id, orgId: row.orgId });
+      return redirectError(res, 'state_mismatch');
+    }
+    if (stateData.orgId !== row.orgId || stateData.providerId !== row.id) {
+      // A state token issued for a DIFFERENT provider (possibly in a
+      // different org) replayed against this ACS.
+      logger.warn('SAML RelayState did not match this provider', { providerId: row.id, orgId: row.orgId });
+      await auditSamlFailure(req, { org, providerId: row.id, reason: 'state_mismatch' });
+      return redirectError(res, 'state_mismatch');
+    }
+    res.locals.ssoState = stateData;
+  } else if (row.samlAllowIdpInitiated !== true) {
+    // Unsolicited assertion, and this provider has not opted in. Refused
+    // BEFORE validation: there is nothing to gain from examining it, and a
+    // refusal that depends on less code is a refusal that is easier to trust.
+    logger.warn('Unsolicited SAML assertion refused — IdP-initiated sign-in is disabled', {
+      providerId: row.id,
+      orgId: row.orgId,
+    });
+    await auditSamlFailure(req, { org, providerId: row.id, reason: 'saml_idp_initiated_disabled' });
+    return redirectError(res, 'saml_idp_initiated_disabled');
+  }
+
+  // A "connect from Profile" round-trip can only exist with state we issued
+  // (it carries `mode: 'connect'` and a userId), so an unsolicited assertion
+  // can never reach the connect path — there is no state to carry it.
+
+  let profile;
+  try {
+    profile = await samlService.consumeAssertion({
+      cfg,
+      samlResponse,
+      expectedInResponseTo: stateData?.samlRequestId || null,
+    });
+  } catch (err) {
+    const errorCode = err.errorCode || 'sso_failed';
+    await auditSamlFailure(req, { org, providerId: cfg.id, reason: errorCode });
+    // err.message is not logged: samlService already logged a classified
+    // reason, and node-saml messages can quote document fragments.
+    logger.warn('SAML sign-in rejected', { orgId: org.id, providerId: cfg.id, code: errorCode });
+    return redirectError(res, errorCode);
+  }
+
+  return finishSsoCallback(req, res, {
+    org,
+    cfg,
+    subject: profile.subject,
+    externalId: profile.externalId,
+    email: profile.email,
+    emailVerified: profile.emailVerified,
+    name: profile.name,
+    picture: null,
+  });
+}
+
 // No-orgSlug callback — the single redirect URI registered with the IdP. The
 // org is derived from the signed `state`. MUST be registered before /:orgSlug.
 router.get(
@@ -833,6 +1027,29 @@ router.get(
  */
 async function beginAuthorize(res, org, cfg, extra = {}) {
   const state = crypto.randomBytes(16).toString('hex');
+
+  if (cfg.provider === 'saml') {
+    // SAML has no PKCE and no nonce; its equivalents are the AuthnRequest ID
+    // (echoed back as InResponseTo) and the RelayState. `startLogin` writes
+    // the request id to Redis as a side effect and throws if it cannot, so a
+    // login never starts unbound.
+    const samlCfg = samlService.decryptSamlProvider(cfg);
+    const { url, requestId } = await samlService.startLogin(samlCfg, state);
+    await saveSsoState(state, {
+      orgId: org.id,
+      providerId: cfg.id,
+      protocol: 'saml',
+      samlRequestId: requestId,
+      createdAt: Date.now(),
+      ...extra,
+    });
+    // The state cookie is set for parity with the OIDC flow, but SAML does
+    // NOT depend on it: the assertion comes back as a cross-site form POST
+    // and a SameSite=Lax cookie is not sent on one. See routes/samlAcs.js.
+    setStateCookie(res, state);
+    return url;
+  }
+
   const { codeVerifier, codeChallenge } = generatePkce();
 
   if (cfg.provider === 'github') {

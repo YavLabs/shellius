@@ -501,17 +501,26 @@ model GroupCustomerScope {
 model SsoConfig {
   id                    String   @id @default(cuid())
   orgId                 String   @map("org_id")
-  // oidc | github (github = OAuth 2.0, not OIDC — fixed endpoints, /user/emails)
+  // oidc | github | saml
+  //   github = OAuth 2.0, not OIDC — fixed endpoints, /user/emails
+  //   saml   = SAML 2.0 Web Browser SSO. Uses the saml* columns below and
+  //            none of clientId / clientSecret / issuerUrl / scopes.
   provider              String
-  presetId              String?  @map("preset_id") // google | entra | okta | auth0 | generic | github
+  presetId              String?  @map("preset_id") // google | entra | okta | auth0 | generic | github | saml | saml-entra | saml-okta | saml-adfs
   // Button label on the login page, e.g. "Google" or "Acme Okta".
   name                  String   @default("Single Sign-On")
   displayOrder          Int      @default(0) @map("display_order")
-  clientId              String   @map("client_id")
+  // Nullable since the SAML provider: SAML has no client id at all. Still
+  // required by the API for every OIDC/GitHub row.
+  clientId              String?  @map("client_id")
   // Nullable: env-preset configs (e.g. SSO_GOOGLE_CLIENT_SECRET) supply the
   // secret, so a row can manage defaultRole/autoProvision without storing it.
   clientSecretEncrypted String?  @map("client_secret_encrypted") @db.Text
+  // OIDC only. Empty string on SAML rows (the IdP EntityID lives in
+  // samlIdpEntityId, which is an URN as often as it is a URL).
   issuerUrl             String   @map("issuer_url")
+  // OIDC/GitHub: the OAuth redirect URI. SAML: the ACS (Assertion Consumer
+  // Service) URL the IdP POSTs to. Both are derived from the row id.
   redirectUri           String   @map("redirect_uri")
   scopes                String   @default("openid profile email")
   // New-user provisioning policy for SSO sign-ins.
@@ -527,6 +536,52 @@ model SsoConfig {
   // (requires the read:org scope). Empty = any GitHub account.
   allowedOrgs           String[] @default([]) @map("allowed_orgs")
   isActive              Boolean  @default(true) @map("is_active")
+
+  // ---------------------------------------------------------------------
+  // SAML 2.0 (provider = 'saml'). All nullable so every existing OIDC /
+  // GitHub row is untouched. See docs/sso-configuration.md "SAML 2.0".
+  // ---------------------------------------------------------------------
+  /// IdP SSO endpoint (HTTP-Redirect binding) the AuthnRequest is sent to.
+  samlIdpEntryPoint         String?  @map("saml_idp_entry_point")
+  /// The IdP's EntityID. Every assertion's Issuer must equal this exactly.
+  samlIdpEntityId           String?  @map("saml_idp_entity_id")
+  /// The IdP's signing certificate(s), PEM, JSON-encoded string array,
+  /// ENCRYPTED at rest with utils/crypto.js like every other third-party
+  /// secret. An array so a certificate rotation can be staged (old + new
+  /// both accepted) without a sign-in outage. Signatures are validated
+  /// against THESE ONLY — never against a certificate carried in the
+  /// document.
+  samlIdpCertEncrypted      String?  @map("saml_idp_cert_encrypted") @db.Text
+  /// Our SP EntityID. Must equal the assertion's AudienceRestriction.
+  samlSpEntityId            String?  @map("saml_sp_entity_id")
+  /// The SP's own key pair: used to sign AuthnRequests and to decrypt
+  /// EncryptedAssertions. The private key is ENCRYPTED at rest and is never
+  /// returned by any API.
+  samlSpPrivateKeyEncrypted String?  @map("saml_sp_private_key_encrypted") @db.Text
+  /// The matching self-signed certificate (public — published in SP metadata).
+  samlSpCertificate         String?  @map("saml_sp_certificate") @db.Text
+  samlSignatureAlgorithm    String?  @map("saml_signature_algorithm") // sha256 | sha512
+  samlDigestAlgorithm       String?  @map("saml_digest_algorithm")
+  /// Require a signature on the <Response> element as well as the assertion.
+  /// The ASSERTION signature is always required regardless of this flag.
+  samlWantAuthnResponseSigned Boolean @default(false) @map("saml_want_authn_response_signed")
+  /// Accept unsolicited (IdP-initiated) assertions. OFF by default: with no
+  /// InResponseTo there is no request binding, so replay protection rests
+  /// entirely on assertion-ID tracking. See docs/sso-configuration.md.
+  samlAllowIdpInitiated     Boolean  @default(false) @map("saml_allow_idp_initiated")
+  /// Tolerated clock difference with the IdP, in seconds.
+  samlClockSkewSec          Int      @default(60) @map("saml_clock_skew_sec")
+  /// Expected NameID Format. Null = accept any persistent format.
+  samlIdentifierFormat      String?  @map("saml_identifier_format")
+  /// Ask the IdP to re-authenticate the user on every sign-in.
+  samlForceAuthn            Boolean  @default(false) @map("saml_force_authn")
+  /// Sign outbound AuthnRequests with the SP key.
+  samlSignRequests          Boolean  @default(true) @map("saml_sign_requests")
+  /// { email, name, firstName, lastName, groups, externalId } — each value is
+  /// an assertion attribute Name to read. Null = the built-in defaults for the
+  /// common IdPs (config/samlAttributes.js).
+  samlAttributeMapping      Json?    @map("saml_attribute_mapping")
+
   createdAt             DateTime @default(now()) @map("created_at")
   updatedAt             DateTime @updatedAt @map("updated_at")
 

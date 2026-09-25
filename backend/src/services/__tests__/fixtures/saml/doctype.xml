@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE samlp:Response><samlp:Response xmlns:samlp="urn:oasis:names:tc:SAML:2.0:protocol" xmlns:saml="urn:oasis:names:tc:SAML:2.0:assertion" ID="_response00000000000000000000000000000001" Version="2.0" IssueInstant="2026-01-01T00:00:00Z" Destination="https://shellius.test/api/auth/sso/saml/acs/prov_aaa" InResponseTo="_00000000000000000000000000000000000000000a">
+  <saml:Issuer>https://idp.test/entity</saml:Issuer>
+  <samlp:Status><samlp:StatusCode Value="urn:oasis:names:tc:SAML:2.0:status:Success"/></samlp:Status>
+  <saml:Assertion xmlns:saml="urn:oasis:names:tc:SAML:2.0:assertion" ID="_assertion0000000000000000000000000000001" Version="2.0" IssueInstant="2026-01-01T00:00:00Z">
+    <saml:Issuer>https://idp.test/entity</saml:Issuer><Signature xmlns="http://www.w3.org/2000/09/xmldsig#"><SignedInfo><CanonicalizationMethod Algorithm="http://www.w3.org/2001/10/xml-exc-c14n#"/><SignatureMethod Algorithm="http://www.w3.org/2001/04/xmldsig-more#rsa-sha256"/><Reference URI="#_assertion0000000000000000000000000000001"><Transforms><Transform Algorithm="http://www.w3.org/2000/09/xmldsig#enveloped-signature"/><Transform Algorithm="http://www.w3.org/2001/10/xml-exc-c14n#"/></Transforms><DigestMethod Algorithm="http://www.w3.org/2001/04/xmlenc#sha256"/><DigestValue>0627Arra8FuYyLm251a99THaVI7T9Q8q1rENmfRJUyQ=</DigestValue></Reference></SignedInfo><SignatureValue>qJbe0heOBv3fCPZPati2qSnh2H+C8SAOYFZ62oI/Rj9rNB9af+7OBYQXSr22T2zn03dB72x9OIyVDRZwP2fN5BklBUbzFYSVq96mQC5t+hFK9oyi/yYIJb4yEOOm9OdzfrjU2tpOUvEkiUbO8lgim7MTpYTfYuaTXoxY3oBj6VUIyGQ8CgK2R3wyZbEEaFaTwcI6NGpUjbGc5tbTMHeQPw1nKtQdSAmuDW2gm++mkGRvKj6DS1oo0XBmG7vsDi4lK2kyMKdSqlwFOH8om3B1oaVCKrPMcfFeh8xkQ+m6lX1hB4Q4w/ORHbMOwLYJVuGDkK1aDx0HM/fbei9AQUIuVA==</SignatureValue><KeyInfo><X509Data><X509Certificate>MIIDDjCCAfagAwIBAgIBATANBgkqhkiG9w0BAQsFADAcMRowGAYDVQQDExFzaGVsbGl1cy10ZXN0LWlkcDAgFw0yNjA5MjUwMTAzMzlaGA8yMTI2MDkwMTAxMDMzOVowHDEaMBgGA1UEAxMRc2hlbGxpdXMtdGVzdC1pZHAwggEiMA0GCSqGSIb3DQEBAQUAA4IBDwAwggEKAoIBAQC1ErLBnw+8HEHiDE8sLr1hvhEAxJm6DCeLzE4PaK64JbBSrfJk7GJ5YudXEgMDQqdEj+6wq+LApMqqObqe2EvgTSvCoMeuQpeWOvtEkp/oX5+ZFrKNTLYg1zHfBHA1vX6WfQT55riCf27XWcGnLfYlkczjpAiOHiPbxcJg7doXhUk8bAUKQPfG+vJ0fA7MFGmuufS9DccHat3jY16E0NUwXQa9WLhN/u2yHgGDgrzRRKohLsn6bqfuAU9B9iqgl0Hp+bSiWdIwvn/louAvZP6RyZUjFpTEGQGnhNJaDSvIOTNBlIXtRYMuw2J+ptEhr8VSHimMj/6UqisAAT7REL53AgMBAAGjWTBXMA8GA1UdEwEB/wQFMAMBAf8wDgYDVR0PAQH/BAQDAgGeMBYGA1UdJQEB/wQMMAoGCCsGAQUFBwMBMBwGA1UdEQQVMBOCEXNoZWxsaXVzLXRlc3QtaWRwMA0GCSqGSIb3DQEBCwUAA4IBAQAFwfB/hN8g6or/NQqg1FojdWBl6O8UFQIzGl5PqShnKce3poNWGEq/dE21S8EZqtvcOnGksG9ZBcSlAZ/fuGcWUE2Ew3MispqLwgiW7dqNeXugHVasDf+0cZU0lJcRrv0Q7Hpl94TRtQNJBcQdIq08pPZL2wAlVvF80pFmo5eY3v4jCsP17o8klPUkg6DSjAZvPOEFiqQBNrfsUuBQ4CQsRuIrav7G9xtPBBKRT3orP9dZETuMIE6dT+TVGsqLT9OgwwS/aeqmutWAaqBAGrmi+b1uZVr+EWzUpyyBlzdjNmoFTvyg1LuK42CkQne6AI99VdEWTNAZa2VAYNzGz6QA</X509Certificate></X509Data></KeyInfo></Signature>
+    <saml:Subject>
+      <saml:NameID Format="urn:oasis:names:tc:SAML:1.1:nameid-format:emailAddress">alice@example.com</saml:NameID>
+      <saml:SubjectConfirmation Method="urn:oasis:names:tc:SAML:2.0:cm:bearer">
+        <saml:SubjectConfirmationData InResponseTo="_00000000000000000000000000000000000000000a" Recipient="https://shellius.test/api/auth/sso/saml/acs/prov_aaa" NotOnOrAfter="2026-01-01T00:05:00Z"/>
+      </saml:SubjectConfirmation>
+    </saml:Subject>
+    <saml:Conditions NotBefore="2026-01-01T00:00:00Z" NotOnOrAfter="2026-01-01T00:05:00Z">
+      <saml:AudienceRestriction>
+        <saml:Audience>https://shellius.test/api/auth/sso/saml/metadata/prov_aaa</saml:Audience>
+      </saml:AudienceRestriction>
+    </saml:Conditions>
+    <saml:AuthnStatement AuthnInstant="2026-01-01T00:00:00Z" SessionIndex="_session0001">
+      <saml:AuthnContext>
+        <saml:AuthnContextClassRef>urn:oasis:names:tc:SAML:2.0:ac:classes:PasswordProtectedTransport</saml:AuthnContextClassRef>
+      </saml:AuthnContext>
+    </saml:AuthnStatement>
+    <saml:AttributeStatement>
+      <saml:Attribute Name="http://schemas.xmlsoap.org/ws/2005/05/identity/claims/emailaddress" NameFormat="urn:oasis:names:tc:SAML:2.0:attrname-format:unspecified">
+        <saml:AttributeValue>alice@example.com</saml:AttributeValue>
+      </saml:Attribute>
+      <saml:Attribute Name="displayName" NameFormat="urn:oasis:names:tc:SAML:2.0:attrname-format:unspecified">
+        <saml:AttributeValue>Alice Example</saml:AttributeValue>
+      </saml:Attribute>
+      <saml:Attribute Name="groups" NameFormat="urn:oasis:names:tc:SAML:2.0:attrname-format:unspecified">
+        <saml:AttributeValue>Engineering</saml:AttributeValue>
+        <saml:AttributeValue>Oncall</saml:AttributeValue>
+      </saml:Attribute>
+    </saml:AttributeStatement>
+  </saml:Assertion>
+</samlp:Response>
