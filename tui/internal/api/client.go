@@ -231,61 +231,131 @@ func (c *Client) do(method, path string, body interface{}, result interface{}) e
 	return nil
 }
 
-// serverListData is the shape returned by GET /api/servers.
-type serverListData struct {
-	Items []struct {
-		ID          string `json:"id"`
-		DisplayName string `json:"displayName"`
-		Hostname    string `json:"hostname"`
-		Port        int    `json:"port"`
-		Environment string `json:"environment"`
-		SshUser     string `json:"sshUser"`
-		IsActive    bool   `json:"isActive"`
-		Customer    struct {
-			ID   string `json:"id"`
-			Name string `json:"name"`
-		} `json:"customer"`
-	} `json:"items"`
+// The list endpoints cap a page at 100 rows and default to 25 when asked for
+// nothing — which is what this client used to do. Anyone with more than 25
+// servers could not see, or connect to, the rest of them from the CLI.
+//
+// The two endpoints do not agree on the parameter's name: /api/servers takes
+// `pageSize`, /api/access-requests takes `limit`. Each pager names its own.
+const apiPageSize = 100
+
+// A ceiling on how many pages one listing walks — 50,000 rows, far beyond any
+// real inventory. It is here so that a backend reporting a `total` it never
+// delivers makes the CLI slow rather than infinite.
+const maxListPages = 500
+
+// serverListItem is one row of GET /api/servers.
+type serverListItem struct {
+	ID          string `json:"id"`
+	DisplayName string `json:"displayName"`
+	Hostname    string `json:"hostname"`
+	Port        int    `json:"port"`
+	Environment string `json:"environment"`
+	SshUser     string `json:"sshUser"`
+	IsActive    bool   `json:"isActive"`
+	Customer    struct {
+		ID   string `json:"id"`
+		Name string `json:"name"`
+	} `json:"customer"`
 }
 
-// ListHosts retrieves all servers the user can see and annotates them with
-// access status. No dedicated /api/tui/hosts endpoint exists in the backend,
-// so we use GET /api/servers instead.
-func (c *Client) ListHosts() ([]Host, error) {
-	var data serverListData
-	if err := c.do("GET", "/api/servers", nil, &data); err != nil {
-		return nil, err
-	}
+// serverListData is the shape returned by GET /api/servers.
+type serverListData struct {
+	Items []serverListItem `json:"items"`
+	// The server echoes what it actually used, which is not necessarily what
+	// was asked for — it silently caps pageSize at 100.
+	Total    int `json:"total"`
+	Page     int `json:"page"`
+	PageSize int `json:"pageSize"`
+}
 
+// toHost converts one API row into the CLI's view of a host.
+func toHost(s serverListItem, skipsProdApproval bool) Host {
 	// Prod needs an approved request unless the role may skip it
 	// (access.prod_bypass — Admin by default, configurable per role).
+	accessStatus := "direct"
+	if s.Environment == "prod" && !skipsProdApproval {
+		accessStatus = "requires_approval"
+	}
+	port := s.Port
+	if port == 0 {
+		port = 22
+	}
+	return Host{
+		ID:           s.ID,
+		Name:         s.DisplayName,
+		Hostname:     s.Hostname,
+		Port:         port,
+		Environment:  s.Environment,
+		CustomerName: s.Customer.Name,
+		CustomerID:   s.Customer.ID,
+		Principal:    s.SshUser,
+		AccessStatus: accessStatus,
+	}
+}
+
+// ListHosts retrieves every server the user can see, a page at a time, and
+// annotates each with its access status. No dedicated /api/tui/hosts endpoint
+// exists in the backend, so this uses GET /api/servers.
+//
+// Inactive servers are dropped from the result but still counted towards the
+// server's `total`, so the loop's progress is tracked by rows SEEN rather than
+// by rows returned — otherwise an inventory whose tail is all deactivated
+// hosts would page until the cap.
+func (c *Client) ListHosts() ([]Host, error) {
 	skipsProdApproval := c.Config.Has("access.prod_bypass")
 
-	hosts := make([]Host, 0, len(data.Items))
-	for _, s := range data.Items {
-		if !s.IsActive {
-			continue
+	hosts := make([]Host, 0, apiPageSize)
+	seen := make(map[string]struct{})
+
+	for page := 1; page <= maxListPages; page++ {
+		var data serverListData
+		path := fmt.Sprintf("/api/servers?page=%d&pageSize=%d", page, apiPageSize)
+		if err := c.do("GET", path, nil, &data); err != nil {
+			return nil, err
 		}
-		accessStatus := "direct"
-		if s.Environment == "prod" && !skipsProdApproval {
-			accessStatus = "requires_approval"
+		if len(data.Items) == 0 {
+			break
 		}
-		port := s.Port
-		if port == 0 {
-			port = 22
+
+		fresh := 0
+		for _, s := range data.Items {
+			if s.ID != "" {
+				if _, dup := seen[s.ID]; dup {
+					continue
+				}
+				seen[s.ID] = struct{}{}
+			}
+			fresh++
+			if !s.IsActive {
+				continue
+			}
+			hosts = append(hosts, toHost(s, skipsProdApproval))
 		}
-		hosts = append(hosts, Host{
-			ID:           s.ID,
-			Name:         s.DisplayName,
-			Hostname:     s.Hostname,
-			Port:         port,
-			Environment:  s.Environment,
-			CustomerName: s.Customer.Name,
-			CustomerID:   s.Customer.ID,
-			Principal:    s.SshUser,
-			AccessStatus: accessStatus,
-		})
+
+		// Offset paging over a list ordered by creation date: a server added
+		// between two requests shifts every later row down one, so a page can
+		// repeat rows an earlier page already returned. Deduping absorbs that.
+		// A page that is ENTIRELY duplicates means no progress is being made,
+		// and continuing would fetch the same rows for ever.
+		if fresh == 0 {
+			break
+		}
+		if data.Total > 0 && len(seen) >= data.Total {
+			break
+		}
+		// Fallback for a backend that reports no total: a short page is the
+		// last page. Compare against the size the server says it used, never
+		// the size we asked for.
+		size := data.PageSize
+		if size <= 0 {
+			size = apiPageSize
+		}
+		if len(data.Items) < size {
+			break
+		}
 	}
+
 	return hosts, nil
 }
 
@@ -297,25 +367,85 @@ type accessRequestListData struct {
 	Total          int             `json:"total"`
 }
 
+// decodeRequestPage decodes one page of GET /api/access-requests.
+//
+// The endpoint has been seen to return both a bare array and an envelope with
+// `items` / `accessRequests`, and the difference decides whether paging is
+// possible at all: a bare array carries no total and no page size, so there is
+// nothing to page with. Asking such a response for page 2 would most likely
+// return the same rows again, so `paged == false` means "take this and stop".
+func decodeRequestPage(raw json.RawMessage) ([]AccessRequest, bool, int, error) {
+	var items []AccessRequest
+	if err := json.Unmarshal(raw, &items); err == nil {
+		return items, false, 0, nil
+	}
+	var data accessRequestListData
+	if err := json.Unmarshal(raw, &data); err != nil {
+		return nil, false, 0, fmt.Errorf("decode access requests: %w", err)
+	}
+	items = data.Items
+	if len(items) == 0 {
+		items = data.AccessRequests
+	}
+	return items, true, data.Total, nil
+}
+
+// listAccessRequests walks every page of GET /api/access-requests for one
+// query. `query` is the filter portion only ("tab=mine&status=APPROVED");
+// paging parameters are added here so no caller can forget them.
+func (c *Client) listAccessRequests(query string) ([]AccessRequest, error) {
+	var all []AccessRequest
+	seen := make(map[string]struct{})
+
+	for page := 1; page <= maxListPages; page++ {
+		var raw json.RawMessage
+		path := fmt.Sprintf("/api/access-requests?%s&page=%d&limit=%d", query, page, apiPageSize)
+		if err := c.do("GET", path, nil, &raw); err != nil {
+			return nil, err
+		}
+
+		items, paged, total, err := decodeRequestPage(raw)
+		if err != nil {
+			return nil, err
+		}
+		if len(items) == 0 {
+			break
+		}
+
+		fresh := 0
+		for _, r := range items {
+			// A row with no id cannot be deduped; keeping it is the lesser
+			// harm, since dropping it would hide a request from its owner.
+			if r.ID != "" {
+				if _, dup := seen[r.ID]; dup {
+					continue
+				}
+				seen[r.ID] = struct{}{}
+			}
+			all = append(all, r)
+			fresh++
+		}
+
+		if !paged || fresh == 0 {
+			break
+		}
+		if total > 0 && len(all) >= total {
+			break
+		}
+		if len(items) < apiPageSize {
+			break
+		}
+	}
+
+	return all, nil
+}
+
 // ListMyActiveAccessRequests fetches the caller's active (APPROVED, not expired)
 // access requests. Uses tab=mine&status=APPROVED per the API contract.
 func (c *Client) ListMyActiveAccessRequests() ([]AccessRequest, error) {
-	var raw json.RawMessage
-	if err := c.do("GET", "/api/access-requests?tab=mine&status=APPROVED", nil, &raw); err != nil {
+	requests, err := c.listAccessRequests("tab=mine&status=APPROVED")
+	if err != nil {
 		return nil, err
-	}
-
-	// Try array first, then object with items/accessRequests.
-	var requests []AccessRequest
-	if err := json.Unmarshal(raw, &requests); err != nil {
-		var data accessRequestListData
-		if err2 := json.Unmarshal(raw, &data); err2 != nil {
-			return nil, fmt.Errorf("decode access requests: %w", err2)
-		}
-		requests = data.Items
-		if len(requests) == 0 {
-			requests = data.AccessRequests
-		}
 	}
 
 	now := time.Now()
@@ -335,23 +465,7 @@ func (c *Client) ListMyActiveAccessRequests() ([]AccessRequest, error) {
 // ListMyAccessRequests fetches all access requests for the current user
 // across all statuses. Used by the /myrequests view.
 func (c *Client) ListMyAccessRequests() ([]AccessRequest, error) {
-	var raw json.RawMessage
-	if err := c.do("GET", "/api/access-requests?tab=mine&limit=50", nil, &raw); err != nil {
-		return nil, err
-	}
-
-	var requests []AccessRequest
-	if err := json.Unmarshal(raw, &requests); err != nil {
-		var data accessRequestListData
-		if err2 := json.Unmarshal(raw, &data); err2 != nil {
-			return nil, fmt.Errorf("decode access requests: %w", err2)
-		}
-		requests = data.Items
-		if len(requests) == 0 {
-			requests = data.AccessRequests
-		}
-	}
-	return requests, nil
+	return c.listAccessRequests("tab=mine")
 }
 
 // SubmitAccessRequest creates a new access request.
