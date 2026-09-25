@@ -9,6 +9,130 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 Tracked here as work lands on `main`; moved into a dated section on release
 (`node scripts/version.mjs bump <major|minor|patch>`).
 
+## [2.1.0] - 2026-09-25
+
+2.1 is about things that were quietly not happening. A recording that was never
+written, a digest with no scheduler behind it, a server list that stopped at 25,
+an SSO provider the API accepted and could never use. None of these failed
+loudly; most of them looked like "nothing to report". The release also adds
+SAML, keeps collectors up to date without anyone connecting to a host, and puts
+the three riskiest paths under tests that run against real systems.
+
+### Added
+
+- **SAML 2.0 single sign-on.** The API had accepted `provider: 'saml'` since
+  2.0 and nothing could consume it — no library, no ACS endpoint, no metadata —
+  so a configuration saved that way was accepted and silently unusable. It now
+  works, and is configurable from Administration → Single sign-on, including
+  the service-provider values to paste into the IdP (EntityID, ACS URL,
+  metadata URL, certificate fingerprint), labelled with the name each console
+  uses for them. Entra, Okta and AD FS presets carry attribute hints so a stock
+  app works without hand-written mapping.
+
+- **RDP session recording.** The Sessions page used to say replay was not
+  available for RDP, which is backwards: RDP is the higher-risk protocol,
+  because a desktop session is not limited to what a shell audit trail would
+  show. Recordings are encrypted with the same envelope as SSH casts.
+  **Keystrokes are deliberately not captured and there is no setting to enable
+  them** — that would record every password typed into the remote desktop.
+
+- **RDP in the Terminals workspace.** RDP was previously only reachable on a
+  standalone page. It is now a normal tab alongside SSH.
+
+- **Collector auto-update.** Signed, staged and self-healing: a canary
+  percentage first, widening only while hosts come back healthy, halting on
+  evidence rather than a timer. Off by default. It only ever replaces the
+  posture collector — never `check-principals`, sshd config or the CA key.
+
+- **Update awareness.** Admins are told when a newer Shellius exists, with a
+  fleet view of which collector version each host is running, and can request
+  an instance upgrade through a host-side helper (opt-in at install).
+
+- **Posture digests**, with a scheduler actually behind them, per recipient and
+  scoped to what that recipient may see.
+
+- **End-to-end test harnesses you can run yourself**: the RDP client and the
+  SSH terminal workspace in a real browser against real hosts, and SAML against
+  a real Keycloak. See `docs/` and `scripts/e2e-*`.
+
+- **TUI**: RDP access (it used to ask for SSH credentials after an RDP
+  approval), permissions refreshed from the server rather than read once at
+  sign-in, and accurate access labels.
+
+### Changed
+
+- The TUI's access labels now come from a real policy evaluation rather than
+  guessing from the environment, via a new batched endpoint that answers for
+  N servers in a fixed number of queries.
+- Administration → Policies no longer sits further in from the card edge than
+  the pages beside it.
+
+### Fixed
+
+- **The TUI showed only the first 25 servers.** It called `/api/servers` with
+  no paging parameters, so anyone with a larger inventory could not see — or
+  connect to — the rest. Not an error, just a shorter list than the web UI's.
+  Both access-request listings had the same bug.
+- **Recording retention was never enforced for object storage.** The cleanup
+  job only ever looked at the legacy on-disk path, while everything written
+  since the terminal hub rewrite uses object storage. Recordings accumulated
+  indefinitely while the product documented a 30-day window. **See "Migration
+  notes".**
+- **An RDP session could kick itself off Windows.** Two connections opened per
+  mount; Windows permits one interactive session per user, so the second
+  evicted the first and the tab died with "Disconnected by other connection".
+- **The audit email digest had no scheduler.** Nothing ever ran it.
+- **`mode: 'digest'` on a posture alert rule delivered nothing**, silently.
+- RDP pointed at port 22 on servers created through the API, because
+  `Server.port` defaults to 22 regardless of protocol.
+- guacd is built with H.264 enabled everywhere, not only in one compose file —
+  without it Windows 10/11 and Server 2016+ render a black desktop while the
+  cursor still moves.
+
+### Security
+
+- SAML refuses an unsigned assertion unconditionally: an unsigned assertion
+  wrapped in a signed response is the canonical bypass for this protocol.
+  Signatures are checked against the configured certificate only — a
+  certificate carried in the document's own `KeyInfo` is never a trust anchor.
+  Document type declarations are refused before parsing, SHA-1 is refused
+  unless explicitly configured, and `Destination` is validated against the
+  canonical ACS URL rather than the request's `Host` header.
+- SAML replay protection **fails closed**. If Redis cannot answer, sign-in is
+  refused. An SSO outage during a Redis outage is an inconvenience; accepting
+  unbounded assertion replays during one is a silent authentication bypass that
+  would look completely normal in every log.
+- The collector updater refuses any version not newer than the one installed,
+  defeating a replay of a validly signed older bundle, and refuses to install
+  anything at all without a release signing key present on the host.
+- RDP recordings are encrypted before they leave the machine that produced
+  them, and keystrokes are never recorded.
+
+### Migration notes
+
+- **Recording retention starts working on upgrade.** Because it has not been
+  enforced for object storage, your bucket may hold recordings older than
+  `RECORDING_RETENTION_DAYS` (default 30). The first cleanup run after upgrade
+  will delete them. If you need them, copy them out or raise the window
+  *before* upgrading.
+- **RDP recording needs configuration to do anything.** It requires object
+  storage and a recordings volume shared between guacd and the backend. The
+  bundled compose files add it; a hand-rolled deployment needs the volume and
+  `RDP_RECORDINGS_DIR` / `GUACD_RDP_RECORDINGS_DIR`. Without them RDP works
+  exactly as before and is simply not recorded. `GUACD_RDP_RECORDINGS_DIR`
+  must be an absolute path — guacd's working directory is `/`, and a relative
+  path makes it record nothing while reporting success.
+- **Collector auto-update is off by default** for every existing and new
+  organization. Hosts bootstrapped before this release have no release signing
+  key and will not update until re-bootstrapped; there is deliberately no way
+  to push a signing key to a host out of band.
+- One migration (`20261014000000_saml_sso`) adds nullable SAML columns and
+  drops `NOT NULL` from `sso_configs.client_id`, because SAML has no client id.
+  That is a widening change — every row satisfying the old constraint still
+  satisfies the new one — and the requirement moves to the API's validation,
+  where the per-protocol rules already live.
+
+
 ## [2.0.0] - 2026-09-22
 
 2.0 answers the three questions a buyer's security team asks that Shellius

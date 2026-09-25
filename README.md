@@ -9,7 +9,7 @@
 
 <p align="center">
   <a href="#license"><img src="https://img.shields.io/badge/license-AGPL--3.0-blue.svg" alt="License" /></a>
-  <img src="https://img.shields.io/badge/version-2.0.0-green.svg" alt="Version" />
+  <img src="https://img.shields.io/badge/version-2.1.0-green.svg" alt="Version" />
   <img src="https://img.shields.io/badge/docker-compose-blue.svg" alt="Docker" />
   <img src="https://img.shields.io/badge/go-1.22+-00ADD8.svg" alt="Go" />
   <img src="https://img.shields.io/badge/node-20+-339933.svg" alt="Node" />
