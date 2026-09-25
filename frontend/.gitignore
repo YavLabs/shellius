@@ -1,0 +1,7 @@
+# Playwright output. Screenshots and traces of a real RDP session show a real
+# desktop — they are evidence from a test run, not source, and a trace can
+# contain whatever was on screen at the time.
+test-results/
+playwright-report/
+blob-report/
+.playwright/

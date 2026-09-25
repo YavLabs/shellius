@@ -37,5 +37,10 @@ export default defineConfig({
     environment: 'jsdom',
     globals: true,
     setupFiles: ['./src/setupTests.js'],
+    // `e2e/` is Playwright, not vitest: it drives a real browser against a
+    // running instance. Vitest would otherwise collect those specs, fail to
+    // resolve @playwright/test, and report a failure that has nothing to do
+    // with the unit suite.
+    exclude: ['**/node_modules/**', '**/dist/**', 'e2e/**'],
   },
 });

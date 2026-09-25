@@ -1,0 +1,4 @@
+# Written by backend/scripts/e2e-browser-setup.mjs. Contains a throwaway
+# password for a throwaway account, regenerated on every run — but a password
+# is a password, and it has no business in the repository.
+.auth.json
