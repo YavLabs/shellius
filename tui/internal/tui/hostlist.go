@@ -445,10 +445,7 @@ func (m HostListModel) renderHostRow(h api.Host, selected bool, iw int) string {
 	if selected {
 		// Plain access label without per-status colors so the coral fill
 		// can read uniformly.
-		accessStr = h.AccessStatus
-		if accessStr == "" {
-			accessStr = "—"
-		}
+		accessStr = AccessStatusPlain(h.AccessStatus)
 	} else {
 		accessStr = AccessStatusStyle(h.AccessStatus)
 	}

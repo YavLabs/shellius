@@ -91,10 +91,37 @@ func AccessStatusStyle(status string) string {
 		return lipgloss.NewStyle().Foreground(lipgloss.Color(colorOK)).Render("available")
 	case "requires_approval":
 		return lipgloss.NewStyle().Foreground(lipgloss.Color(colorWarn)).Render("requires approval")
-	case "approved":
-		return lipgloss.NewStyle().Foreground(lipgloss.Color(colorOK)).Render("approved")
+	case "approved", "active":
+		return lipgloss.NewStyle().Foreground(lipgloss.Color(colorOK)).Render("active")
+	case "pending":
+		return lipgloss.NewStyle().Foreground(lipgloss.Color(colorWarn)).Render("pending")
+	case "no_access":
+		// Not a softer shade of "requires approval": there is no matching
+		// policy, or a DENY policy, so submitting a request will be refused.
+		return lipgloss.NewStyle().Foreground(lipgloss.Color(colorErr)).Render("no access")
 	default:
 		return lipgloss.NewStyle().Foreground(lipgloss.Color(colorMuted)).Render(status)
+	}
+}
+
+// AccessStatusPlain is the same label without colour, for use on a selected
+// row where the coral fill would otherwise fight the foreground colour.
+func AccessStatusPlain(status string) string {
+	switch status {
+	case "direct":
+		return "available"
+	case "requires_approval":
+		return "requires approval"
+	case "approved", "active":
+		return "active"
+	case "pending":
+		return "pending"
+	case "no_access":
+		return "no access"
+	case "":
+		return "\u2014"
+	default:
+		return status
 	}
 }
 

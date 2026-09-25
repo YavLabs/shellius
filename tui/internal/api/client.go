@@ -7,6 +7,9 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
+	"sort"
+	"strings"
 	"time"
 
 	"github.com/shellius/tui/internal/auth"
@@ -108,8 +111,14 @@ type SshCreds struct {
 }
 
 // ConnectResult is returned by POST /api/access-requests/:id/connect.
+//
+// URL is relative to the Shellius web app ("/terminal?requestId=…"), so it
+// must be joined onto ServerURL before being handed to a browser.
 type ConnectResult struct {
-	URL       string     `json:"url"`
+	URL string `json:"url"`
+	// Protocol is the REQUEST's protocol (SSH | RDP), not the server's: on a
+	// `both` server only the request says which of the two was asked for.
+	Protocol  string     `json:"protocol"`
 	ExpiresAt *time.Time `json:"expiresAt,omitempty"`
 }
 
@@ -269,13 +278,33 @@ type serverListData struct {
 	PageSize int `json:"pageSize"`
 }
 
+// Access status values used in Host.AccessStatus.
+const (
+	// AccessActive — an APPROVED, unexpired request exists: connect now.
+	AccessActive = "active"
+	// AccessPending — a request is awaiting a decision.
+	AccessPending = "pending"
+	// AccessDirect — policy allows access without approval.
+	AccessDirect = "direct"
+	// AccessRequiresApproval — policy allows it, but only after approval.
+	AccessRequiresApproval = "requires_approval"
+	// AccessNone — no matching policy, or a DENY policy: asking will fail.
+	AccessNone = "no_access"
+)
+
 // toHost converts one API row into the CLI's view of a host.
+//
+// This is the FALLBACK labelling, used only when the intents call could not
+// answer for this server. "prod means approval, everything else is direct" is
+// a guess: it is right about prod and wrong about every non-prod server with
+// no matching policy, a DENY policy, or a policy that sets requireApproval.
+// The real verdict comes from applyIntents below.
 func toHost(s serverListItem, skipsProdApproval bool) Host {
 	// Prod needs an approved request unless the role may skip it
 	// (access.prod_bypass — Admin by default, configurable per role).
-	accessStatus := "direct"
+	accessStatus := AccessDirect
 	if s.Environment == "prod" && !skipsProdApproval {
-		accessStatus = "requires_approval"
+		accessStatus = AccessRequiresApproval
 	}
 	port := s.Port
 	if port == 0 {
@@ -356,7 +385,73 @@ func (c *Client) ListHosts() ([]Host, error) {
 		}
 	}
 
+	applyIntents(c, hosts)
 	return hosts, nil
+}
+
+// applyIntents replaces the environment-based guess in Host.AccessStatus with
+// the server's own verdict, for every host the /intents endpoint answered for.
+//
+// Everything about this function is written to be non-fatal. The host list is
+// the CLI's main screen; losing it because a decorating call failed would be a
+// far worse bug than the inaccurate label it exists to fix. So:
+//   - a total failure leaves every row on the prod-only heuristic;
+//   - a partial failure (batch 3 of 5 errored) keeps the rows it did get;
+//   - a host missing from the response keeps the heuristic;
+//   - an older backend that answers without a policy verdict still gets the
+//     active/pending half of the answer, which it does return.
+func applyIntents(c *Client, hosts []Host) {
+	if len(hosts) == 0 {
+		return
+	}
+
+	ids := make([]string, 0, len(hosts))
+	for _, h := range hosts {
+		if h.ID != "" {
+			ids = append(ids, h.ID)
+		}
+	}
+	if len(ids) == 0 {
+		return
+	}
+
+	intents, err := c.GetAccessIntents(ids)
+	if err != nil {
+		logx.Warnf("api: access intents unavailable, falling back to the prod-only label (%d/%d servers answered): %v",
+			len(intents), len(ids), err)
+	}
+	if len(intents) == 0 {
+		return
+	}
+
+	for i := range hosts {
+		intent, ok := intents[hosts[i].ID]
+		if !ok {
+			// Deleted between the list call and this one, or an id the server
+			// chose not to answer for. The heuristic label stands.
+			continue
+		}
+
+		// Active access first: an approved request beats any policy verdict,
+		// because it is a grant that has already been made. Note the backend
+		// returns hasActiveAccess for admins on the same terms as anyone else
+		// — it reflects a real AccessRequest row, not a role.
+		switch {
+		case intent.HasActiveAccess:
+			hosts[i].AccessStatus = AccessActive
+			hosts[i].AccessExpiry = intent.ExpiresAt
+		case intent.HasPendingRequest:
+			hosts[i].AccessStatus = AccessPending
+		case !intent.HasPolicyVerdict:
+			// Older backend: keep the heuristic rather than invent a verdict.
+		case !intent.Allowed:
+			hosts[i].AccessStatus = AccessNone
+		case intent.RequiresApproval:
+			hosts[i].AccessStatus = AccessRequiresApproval
+		default:
+			hosts[i].AccessStatus = AccessDirect
+		}
+	}
 }
 
 // accessRequestListData is the shape returned by GET /api/access-requests.
@@ -542,4 +637,307 @@ func (c *Client) StartWebTerminal(id string) (ConnectResult, error) {
 		return ConnectResult{}, err
 	}
 	return result, nil
+}
+
+// ---------------------------------------------------------------------------
+// Profile — GET /api/auth/me
+// ---------------------------------------------------------------------------
+
+// Profile is the subset of GET /api/auth/me the CLI cares about. The backend
+// builds it in authService.getProfile(), which spreads accessOf(user); that is
+// where `permissions` and `roleInfo` come from. `role` is the base tier
+// (member|manager|admin|super_admin), kept for older policy-subject matching —
+// never gate a feature on it.
+type Profile struct {
+	ID          string   `json:"id"`
+	Email       string   `json:"email"`
+	Name        string   `json:"name"`
+	Role        string   `json:"role"`
+	Permissions []string `json:"permissions"`
+	OrgID       string   `json:"orgId"`
+	RoleInfo    *struct {
+		ID       string `json:"id"`
+		Key      string `json:"key"`
+		Name     string `json:"name"`
+		BaseRole string `json:"baseRole"`
+	} `json:"roleInfo"`
+	Organization *struct {
+		ID   string `json:"id"`
+		Slug string `json:"slug"`
+		Name string `json:"name"`
+	} `json:"organization"`
+}
+
+// GetProfile calls GET /api/auth/me.
+func (c *Client) GetProfile() (Profile, error) {
+	var data struct {
+		User Profile `json:"user"`
+	}
+	if err := c.do("GET", "/api/auth/me", nil, &data); err != nil {
+		return Profile{}, err
+	}
+	return data.User, nil
+}
+
+// RefreshPermissions re-reads the caller's role and permissions from the
+// server and writes them into the config (and to the credentials file, so a
+// restart does not resurrect the stale set).
+//
+// Permissions used to be captured once, at sign-in, and never revisited:
+// refreshing the access token does not return them. A user whose role was
+// changed — or revoked — kept seeing the menu entries and the "direct access"
+// labels of their old role until they signed out and back in. This is the
+// call that fixes that, and it runs at start-up and after any 403
+// PERMISSION_DENIED (the moment the local copy is provably wrong).
+//
+// It reports whether anything actually changed, so a caller can decide
+// whether to redraw or to tell the user their access changed underneath them.
+func (c *Client) RefreshPermissions() (changed bool, err error) {
+	profile, err := c.GetProfile()
+	if err != nil {
+		return false, err
+	}
+
+	before := permissionKey(c.Config.Permissions)
+	beforeRole := c.Config.Role + "\x00" + c.Config.RoleName
+
+	// A user with literally zero permissions is representable, so an empty
+	// slice must still replace the old list — but it has to be non-nil, or
+	// config.Has falls back to the legacy "admin tier implies prod_bypass"
+	// guess and silently re-grants what the server just took away.
+	perms := profile.Permissions
+	if perms == nil {
+		perms = []string{}
+	}
+	c.Config.Permissions = perms
+	if profile.Role != "" {
+		c.Config.Role = profile.Role
+	}
+	if profile.RoleInfo != nil {
+		c.Config.RoleName = profile.RoleInfo.Name
+	} else {
+		// No custom role assigned any more: drop a stale display name rather
+		// than keep showing a role the user no longer holds.
+		c.Config.RoleName = ""
+	}
+	if profile.Email != "" {
+		c.Config.Username = profile.Email
+	}
+	if profile.OrgID != "" {
+		c.Config.OrgID = profile.OrgID
+	}
+	if profile.Organization != nil && profile.Organization.Slug != "" {
+		c.Config.OrgSlug = profile.Organization.Slug
+	}
+
+	changed = before != permissionKey(c.Config.Permissions) ||
+		beforeRole != c.Config.Role+"\x00"+c.Config.RoleName
+
+	// Persisting is what makes the refresh survive a restart. A failure here
+	// is not fatal — the in-memory set is already correct for this session —
+	// but it must be reported, not swallowed.
+	if saveErr := c.Config.Save(); saveErr != nil {
+		logx.Warnf("api: refreshed permissions but could not save credentials: %v", saveErr)
+		return changed, fmt.Errorf("save refreshed permissions: %w", saveErr)
+	}
+	return changed, nil
+}
+
+// permissionKey builds an order-independent identity for a permission set so
+// "changed" does not fire merely because the server returned them in a
+// different order.
+func permissionKey(perms []string) string {
+	sorted := append([]string(nil), perms...)
+	sort.Strings(sorted)
+	return strings.Join(sorted, "\x00")
+}
+
+// IsPermissionDenied reports whether err is the API's own 403 refusal, as
+// opposed to any other 403 (key download disabled by policy, "only the
+// requester may…", and so on). Only this one warrants re-reading permissions.
+func IsPermissionDenied(err error) bool {
+	var httpErr *HTTPError
+	if !errors.As(err, &httpErr) {
+		return false
+	}
+	return httpErr.Status == http.StatusForbidden && httpErr.Code == "PERMISSION_DENIED"
+}
+
+// Message returns the API's own explanation of a failure when there is one,
+// falling back to the full error text. A 403 from Shellius says exactly which
+// permission is missing; showing "API error (HTTP 403, code PERMISSION_DENIED)"
+// instead of that sentence tells the user nothing they can act on.
+func Message(err error) string {
+	if err == nil {
+		return ""
+	}
+	var httpErr *HTTPError
+	if errors.As(err, &httpErr) && strings.TrimSpace(httpErr.Message) != "" {
+		return httpErr.Message
+	}
+	return err.Error()
+}
+
+// ---------------------------------------------------------------------------
+// Bulk access intents — GET /api/access-requests/intents
+// ---------------------------------------------------------------------------
+
+// intentsBatchSize is the number of server ids per /intents request.
+//
+// Not a guess and not from the docs: backend/src/routes/accessRequests.js
+// rejects the whole call with HTTP 400 at `serverIds.length > 50`, so 50 is
+// the largest batch that is ever answered.
+const intentsBatchSize = 50
+
+// BulkIntent is one entry of GET /api/access-requests/intents.
+type BulkIntent struct {
+	HasActiveAccess   bool
+	ActiveRequestID   string
+	HasPendingRequest bool
+	PendingRequestID  string
+	ExpiresAt         *time.Time
+
+	// Policy verdict. HasPolicyVerdict is false when the server did not send
+	// one — every Shellius before this change answered /intents with the
+	// access fields only. Reading a missing `allowed` as the Go zero value
+	// would mark an entire inventory "no access" against an older backend,
+	// which is worse than the prod-only guess it replaced.
+	HasPolicyVerdict bool
+	Allowed          bool
+	RequiresApproval bool
+	IsProduction     bool
+	Reason           string
+}
+
+// bulkIntentWire is the on-the-wire form. The policy fields are pointers
+// precisely so "absent" and "false" stay distinguishable.
+type bulkIntentWire struct {
+	HasActiveAccess   bool       `json:"hasActiveAccess"`
+	ActiveRequestID   string     `json:"activeRequestId"`
+	HasPendingRequest bool       `json:"hasPendingRequest"`
+	PendingRequestID  string     `json:"pendingRequestId"`
+	ExpiresAt         *time.Time `json:"expiresAt"`
+	Allowed           *bool      `json:"allowed"`
+	RequiresApproval  *bool      `json:"requiresApproval"`
+	IsProduction      *bool      `json:"isProduction"`
+	Reason            *string    `json:"reason"`
+}
+
+// GetAccessIntents fetches intents for many servers at once, in batches of
+// intentsBatchSize.
+//
+// It returns whatever it managed to collect ALONGSIDE any error: a caller
+// rendering a list would rather show most rows correctly and fall back on the
+// remainder than show nothing. Callers that need all-or-nothing must check the
+// error; callers that are decorating a list should use the map regardless.
+func (c *Client) GetAccessIntents(serverIDs []string) (map[string]BulkIntent, error) {
+	out := make(map[string]BulkIntent, len(serverIDs))
+
+	// Dedupe: the endpoint dedupes server-side anyway, but sending duplicates
+	// wastes room in a batch that is capped at 50.
+	ids := make([]string, 0, len(serverIDs))
+	seen := make(map[string]struct{}, len(serverIDs))
+	for _, id := range serverIDs {
+		if id == "" {
+			continue
+		}
+		if _, dup := seen[id]; dup {
+			continue
+		}
+		seen[id] = struct{}{}
+		ids = append(ids, id)
+	}
+	// An empty batch is a 400 from the API ("serverIds query parameter is
+	// required"), so an empty inventory must not produce a request at all.
+	if len(ids) == 0 {
+		return out, nil
+	}
+
+	for start := 0; start < len(ids); start += intentsBatchSize {
+		end := start + intentsBatchSize
+		if end > len(ids) {
+			end = len(ids)
+		}
+		batch := ids[start:end]
+
+		escaped := make([]string, len(batch))
+		for i, id := range batch {
+			escaped[i] = url.QueryEscape(id)
+		}
+		path := "/api/access-requests/intents?serverIds=" + strings.Join(escaped, ",")
+
+		var data struct {
+			Intents map[string]bulkIntentWire `json:"intents"`
+		}
+		if err := c.do("GET", path, nil, &data); err != nil {
+			// Partial failure: hand back the batches that did succeed so the
+			// caller can decorate those rows and degrade only the rest.
+			return out, err
+		}
+		for id, w := range data.Intents {
+			out[id] = w.toIntent()
+		}
+	}
+
+	return out, nil
+}
+
+func (w bulkIntentWire) toIntent() BulkIntent {
+	bi := BulkIntent{
+		HasActiveAccess:   w.HasActiveAccess,
+		ActiveRequestID:   w.ActiveRequestID,
+		HasPendingRequest: w.HasPendingRequest,
+		PendingRequestID:  w.PendingRequestID,
+		ExpiresAt:         w.ExpiresAt,
+	}
+	if w.Allowed != nil {
+		bi.HasPolicyVerdict = true
+		bi.Allowed = *w.Allowed
+		if w.RequiresApproval != nil {
+			bi.RequiresApproval = *w.RequiresApproval
+		}
+		if w.IsProduction != nil {
+			bi.IsProduction = *w.IsProduction
+		}
+		if w.Reason != nil {
+			bi.Reason = *w.Reason
+		}
+	}
+	return bi
+}
+
+// ---------------------------------------------------------------------------
+// RDP — POST /api/access-requests/:id/rdp-credentials
+// ---------------------------------------------------------------------------
+
+// RdpFile is what POST /api/access-requests/:id/rdp-credentials returns.
+//
+// Content is a Windows MSTSC-format .rdp profile and — this is the part that
+// decides the whole design — it holds NO credential. The backend
+// (accessRequestService.generateRdpFile) deliberately writes neither the
+// host's RDP password nor the Guacamole connection token, because that
+// token's plaintext contains the password. What the file carries is the
+// address, port, username and display/gateway settings.
+//
+// Consequences the CLI has to live with:
+//   - Nothing secret is written to disk, so the file is not a credential leak.
+//     It is still written 0600 in a private directory and deleted afterwards,
+//     because it discloses internal addressing and a valid username.
+//   - The file only connects where the user's own machine can already reach
+//     the host. Credential injection happens only in the browser session
+//     (WebSocket → guacd), so the web client stays the fallback that always
+//     works — and the only option on a headless box.
+type RdpFile struct {
+	Filename  string     `json:"filename"`
+	Content   string     `json:"content"`
+	ExpiresAt *time.Time `json:"expiresAt,omitempty"`
+}
+
+// GetRdpFile fetches the .rdp profile for an approved RDP access request.
+func (c *Client) GetRdpFile(id string) (RdpFile, error) {
+	var file RdpFile
+	if err := c.do("POST", "/api/access-requests/"+id+"/rdp-credentials", nil, &file); err != nil {
+		return RdpFile{}, err
+	}
+	return file, nil
 }

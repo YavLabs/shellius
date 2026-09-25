@@ -104,6 +104,13 @@ const INTENT_SHAPE = Joi.object({
   hasPendingRequest: Joi.boolean().required(),
   pendingRequestId: Joi.string().allow(null).required(),
   expiresAt: Joi.alternatives().try(Joi.string().isoDate(), Joi.date(), Joi.valid(null)).required(),
+  // Policy verdict (policyService.evaluateBulk). Added for the CLI, which
+  // cannot otherwise distinguish "connect directly" from "this opens an
+  // approval request" and used to guess from the environment alone.
+  allowed: Joi.boolean().required(),
+  requiresApproval: Joi.boolean().required(),
+  isProduction: Joi.boolean().required(),
+  reason: Joi.string().allow(null).required(),
 });
 
 const ENVELOPE = Joi.object({
@@ -119,9 +126,9 @@ describe('intents — response envelope shape', () => {
       success: true,
       data: {
         intents: {
-          server1: { hasActiveAccess: true, activeRequestId: 'ar1', hasPendingRequest: false, pendingRequestId: null, expiresAt: new Date().toISOString() },
-          server2: { hasActiveAccess: false, activeRequestId: null, hasPendingRequest: true, pendingRequestId: 'ar2', expiresAt: null },
-          server3: { hasActiveAccess: false, activeRequestId: null, hasPendingRequest: false, pendingRequestId: null, expiresAt: null },
+          server1: { hasActiveAccess: true, activeRequestId: 'ar1', hasPendingRequest: false, pendingRequestId: null, expiresAt: new Date().toISOString(), allowed: true, requiresApproval: false, isProduction: false, reason: 'Allowed by policy Dev' },
+          server2: { hasActiveAccess: false, activeRequestId: null, hasPendingRequest: true, pendingRequestId: 'ar2', expiresAt: null, allowed: true, requiresApproval: true, isProduction: true, reason: 'Allowed by policy Prod' },
+          server3: { hasActiveAccess: false, activeRequestId: null, hasPendingRequest: false, pendingRequestId: null, expiresAt: null, allowed: false, requiresApproval: false, isProduction: false, reason: 'No matching policy' },
         },
       },
     });

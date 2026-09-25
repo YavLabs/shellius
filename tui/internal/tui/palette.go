@@ -13,6 +13,20 @@ import (
 type Command struct {
 	Name string // e.g. "/servers"
 	Desc string // short description shown in palette
+	// Perm is the backend permission key the command's API calls need
+	// (backend/src/config/permissions.js). Empty means "always available" —
+	// help, profile, logout and the like, which call nothing that can be
+	// refused. The command is hidden when the signed-in user's role does not
+	// hold it.
+	//
+	// This gates on PERMISSIONS, never on role names: a custom role based on
+	// Member can be granted access.request, and a custom Admin role can have
+	// it taken away. `role == "admin"` would be wrong in both directions, and
+	// is a hard rule in CLAUDE.md besides.
+	//
+	// The API enforces the same thing regardless; hiding the command only
+	// stops the CLI from offering an action that can only end in a 403.
+	Perm string
 	Run  func(*AppModel) tea.Cmd
 }
 
@@ -29,6 +43,7 @@ var builtinCommands = []Command{
 	{
 		Name: "/servers",
 		Desc: "Browse all servers (not just active access)",
+		Perm: "servers.view",
 		Run: func(app *AppModel) tea.Cmd {
 			return func() tea.Msg { return openHostListMsg{} }
 		},
@@ -36,6 +51,7 @@ var builtinCommands = []Command{
 	{
 		Name: "/request",
 		Desc: "Submit a new access request for a server",
+		Perm: "access.request",
 		Run: func(app *AppModel) tea.Cmd {
 			return func() tea.Msg { return openRequestMsg{} }
 		},
@@ -101,22 +117,46 @@ type showProfileMsg struct{}
 type paletteModel struct {
 	input    textinput.Model
 	commands []Command // filtered subset
-	cursor   int
-	active   bool
-	width    int
+	// available is builtinCommands minus the ones this user's role cannot
+	// use. Recomputed whenever permissions are refreshed, so a role change
+	// takes effect on the next /api/auth/me without a restart.
+	available []Command
+	cursor    int
+	active    bool
+	width     int
 }
 
 // newPaletteModel creates an idle palette (not yet visible).
-func newPaletteModel() paletteModel {
+//
+// `has` is the permission predicate — config.Config.Has in production. A nil
+// predicate means "no permissions known", which shows only the commands that
+// need none. That is the safe direction: the CLI never offers an action whose
+// API call it has no evidence the user may make.
+func newPaletteModel(has func(string) bool) paletteModel {
 	ti := textinput.New()
 	ti.Placeholder = "command..."
 	ti.CharLimit = 64
 	ti.Width = 32
 	ti.Prompt = "/ "
 
-	return paletteModel{
-		input:    ti,
-		commands: builtinCommands,
+	p := paletteModel{input: ti}
+	p.setPermissions(has)
+	return p
+}
+
+// setPermissions recomputes which commands this role may run.
+func (p *paletteModel) setPermissions(has func(string) bool) {
+	avail := make([]Command, 0, len(builtinCommands))
+	for _, c := range builtinCommands {
+		if c.Perm != "" && (has == nil || !has(c.Perm)) {
+			continue
+		}
+		avail = append(avail, c)
+	}
+	p.available = avail
+	p.commands = avail
+	if p.cursor >= len(p.commands) {
+		p.cursor = max(0, len(p.commands)-1)
 	}
 }
 
@@ -137,7 +177,7 @@ func (p paletteModel) Close() paletteModel {
 	p.active = false
 	p.input.Blur()
 	p.input.SetValue("")
-	p.commands = builtinCommands
+	p.commands = p.available
 	p.cursor = 0
 	return p
 }
@@ -148,12 +188,14 @@ func (p paletteModel) Active() bool { return p.active }
 func (p *paletteModel) applyFilter() {
 	q := strings.ToLower(strings.TrimSpace(p.input.Value()))
 	if q == "" {
-		p.commands = builtinCommands
+		p.commands = p.available
 		return
 	}
 	// Match by prefix of the command name (after the /) first, then fuzzy.
+	// Searching p.available rather than builtinCommands is what stops a
+	// gated command from reappearing the moment the user types its name.
 	var out []Command
-	for _, c := range builtinCommands {
+	for _, c := range p.available {
 		nameBody := strings.TrimPrefix(strings.ToLower(c.Name), "/")
 		if strings.HasPrefix(nameBody, q) || strings.HasPrefix(strings.ToLower(c.Name), q) {
 			out = append(out, c)

@@ -51,7 +51,16 @@ type arErrMsg struct{ err error }
 
 // arApprovedMsg signals the request was approved — carry the request ID so
 // the parent can fetch credentials.
-type arApprovedMsg struct{ requestID string }
+//
+// Protocol travels with it because the parent has to choose between SSH
+// credentials and an RDP profile, and it has no other source for the answer
+// on this path. Without it every approval was treated as SSH, which is why an
+// approved RDP request ended with the CLI asking the API for an SSH key the
+// host has no use for.
+type arApprovedMsg struct {
+	requestID string
+	protocol  string
+}
 
 // arWebTerminalMsg signals that the web terminal URL should be opened.
 type arWebTerminalMsg struct{ url string }
@@ -196,7 +205,15 @@ func (m AccessRequestModel) Update(msg tea.Msg) (AccessRequestModel, tea.Cmd) {
 		if msg.intent.HasActiveAccess && msg.intent.ActiveAccessRequest != nil {
 			m.state = arStateApproved
 			arID := msg.intent.ActiveAccessRequest.ID
-			return m, func() tea.Msg { return arApprovedMsg{requestID: arID} }
+			// Prefer the protocol recorded on the request itself; the
+			// intent's top-level `protocol` is the server's normalised
+			// default and on a `both` server only the request says which of
+			// the two was actually granted.
+			proto := msg.intent.ActiveAccessRequest.Protocol
+			if proto == "" {
+				proto = msg.intent.Protocol
+			}
+			return m, func() tea.Msg { return arApprovedMsg{requestID: arID, protocol: proto} }
 		}
 
 		// If there's already a pending request, show the polling state.
@@ -245,7 +262,11 @@ func (m AccessRequestModel) Update(msg tea.Msg) (AccessRequestModel, tea.Cmd) {
 		switch msg.req.Status {
 		case "APPROVED":
 			m.state = arStateApproved
-			return m, func() tea.Msg { return arApprovedMsg{requestID: msg.req.ID} }
+			proto := msg.req.Protocol
+			if proto == "" && !m.protocolSSH {
+				proto = "RDP"
+			}
+			return m, func() tea.Msg { return arApprovedMsg{requestID: msg.req.ID, protocol: proto} }
 		case "DENIED", "REVOKED", "EXPIRED":
 			m.state = arStateDenied
 			return m, nil
@@ -619,8 +640,27 @@ func isKeyDownloadDisabled(err error) bool {
 		return false
 	}
 	var httpErr *api.HTTPError
-	if errors.As(err, &httpErr) && httpErr.Status == 403 {
-		return true
+	if errors.As(err, &httpErr) {
+		if httpErr.Status != 403 {
+			return false
+		}
+		// Not every 403 from this endpoint is a policy refusal. The rbac
+		// middleware returns PERMISSION_DENIED when the role itself lacks the
+		// permission, and treating that as "key download is disabled" sent
+		// the user to a web terminal that refuses them for the same reason —
+		// while hiding the API's own explanation of what they are missing.
+		if httpErr.Code == "PERMISSION_DENIED" {
+			return false
+		}
+		msg := strings.ToLower(httpErr.Message)
+		// The route's two policy refusals: a stored-identity server and a
+		// policy with no allowKeyDownload. Both name the web terminal.
+		if strings.Contains(msg, "key download") || strings.Contains(msg, "web terminal") {
+			return true
+		}
+		// An older backend sent a 403 with no useful message for exactly this
+		// case, so an unclassifiable 403 still falls back rather than dying.
+		return httpErr.Code == ""
 	}
 	// Fallback: check message substring for older server responses.
 	msg := strings.ToLower(err.Error())

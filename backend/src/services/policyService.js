@@ -389,6 +389,117 @@ export async function evaluate({ orgId, userId, serverId, requestedPrincipal, po
 }
 
 /**
+ * Batched sibling of `evaluate()` for N servers at once.
+ *
+ * Why this exists: every client that renders a LIST of servers needs to know,
+ * per row, whether connecting is direct or goes through approval. `evaluate()`
+ * answers that for one server but costs four round trips (server, subject,
+ * groups, policies) — and three of those four do not depend on the server at
+ * all. Calling it per row turned a 50-server list into 200 queries, so the
+ * only client that had a list (the CLI) just guessed "prod = approval,
+ * everything else = direct". That guess is wrong for any non-prod server with
+ * no matching policy, a DENY policy, or a policy with requireApproval set.
+ *
+ * This runs the subject/group/policy loads ONCE and then filters the same
+ * in-memory policy set per server, so the cost is 4 queries regardless of N.
+ *
+ * It deliberately mirrors `evaluate()`'s org-wide mode (Mode C) plus the
+ * `access.bypass_policies` short-circuit. It does NOT support policyId /
+ * draftPolicy — those are single-policy admin previews, not list rendering.
+ *
+ * Servers that do not exist (or are outside `orgId`) are simply absent from
+ * the returned map; the caller decides whether that is a 404 or a skipped row.
+ *
+ * @param {object} params
+ * @param {string} params.orgId
+ * @param {string} params.userId
+ * @param {string[]} params.serverIds
+ * @returns {Promise<Record<string, {allowed:boolean, requiresApproval:boolean, isProduction:boolean, reason:string, policyId:string|null}>>}
+ */
+export async function evaluateBulk({ orgId, userId, serverIds }) {
+  if (!orgId) throw new ApiError(400, 'orgId is required');
+  if (!userId) throw new ApiError(400, 'userId is required');
+
+  const ids = [...new Set(serverIds || [])].filter(Boolean);
+  const out = {};
+  if (ids.length === 0) return out;
+
+  const servers = await prisma.server.findMany({
+    where: { orgId, id: { in: ids } },
+    select: { id: true, environment: true, customerId: true, labels: true, authMode: true },
+  });
+  if (servers.length === 0) return out;
+
+  const subject = await loadSubject(userId, orgId);
+  const [userGroupIds, prodBypassAllowed] = await Promise.all([
+    resolveUserGroupIds(userId, orgId),
+    canBypassProdApproval(orgId, subject.permissions),
+  ]);
+  const rawPolicies = await loadMatchingPolicies(orgId, userId, userGroupIds, subject.roleKeys);
+  const bypassesPolicies = subject.permissions.has('access.bypass_policies');
+
+  for (const server of servers) {
+    const isProd = server.environment === 'prod';
+    // No requestedPrincipal here: a list row has not chosen one yet, and
+    // filterPolicies treats an absent principal as "no principal filter",
+    // which is the same thing the request form does before the user types.
+    const matching = filterPolicies(rawPolicies, server, server.id, undefined);
+    const deny = matching.find((p) => p.effect === 'DENY');
+
+    // A DENY wins before anything else, including `access.bypass_policies` —
+    // exactly as in evaluate(), where the bypass branch still looks for a
+    // DENY first. Getting this wrong would paint a row the API will refuse
+    // as connectable.
+    if (deny) {
+      out[server.id] = {
+        allowed: false,
+        requiresApproval: false,
+        isProduction: isProd,
+        reason: `Denied by policy ${deny.name}`,
+        policyId: deny.id,
+      };
+      continue;
+    }
+
+    if (bypassesPolicies && (!isProd || prodBypassAllowed)) {
+      out[server.id] = {
+        allowed: true,
+        requiresApproval: false,
+        isProduction: isProd,
+        reason: isProd ? 'policy bypass (prod)' : 'policy bypass',
+        policyId: null,
+      };
+      continue;
+    }
+
+    const allow = matching.filter((p) => p.effect === 'ALLOW').sort((a, b) => a.priority - b.priority);
+    const best = allow[0];
+    if (!best) {
+      out[server.id] = {
+        allowed: false,
+        requiresApproval: false,
+        isProduction: isProd,
+        reason: 'No matching policy',
+        policyId: null,
+      };
+      continue;
+    }
+
+    // Prod is the hard rule: the policy's own requireApproval/autoApprove
+    // flags cannot grant an unreviewed prod session (CLAUDE.md principle 2).
+    out[server.id] = {
+      allowed: true,
+      requiresApproval: isProd ? !prodBypassAllowed : !!best.requireApproval,
+      isProduction: isProd,
+      reason: `Allowed by policy ${best.name}`,
+      policyId: best.id,
+    };
+  }
+
+  return out;
+}
+
+/**
  * Find the best-matching ALLOW policy for a user+server purely to read its
  * approver routing (approverGroupId / approverRoles / approverUserIds).
  *

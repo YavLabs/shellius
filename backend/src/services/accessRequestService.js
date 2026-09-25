@@ -1893,7 +1893,14 @@ export async function getAccessIntent({ orgId, userId, permissions, serverId, sc
  * @param {string} params.userId
  * @param {string[]} params.serverIds - already deduped/capped by the caller (route enforces max 50)
  * @param {{mode: string, customerIds: string[]}} [params.scope=UNSCOPED]
- * @returns {Promise<Record<string, {hasActiveAccess:boolean, activeRequestId:string|null, hasPendingRequest:boolean, pendingRequestId:string|null, expiresAt:string|null}>>}
+ * Policy fields (`allowed` / `requiresApproval` / `isProduction` / `reason`)
+ * come from policyService.evaluateBulk and were added for the CLI, which had
+ * no other way to tell "connect directly" from "this will open an approval
+ * request". It previously guessed from the environment alone and so labelled
+ * every non-prod server "direct" — including ones with a DENY policy or no
+ * matching policy at all, where the connect attempt is refused outright.
+ *
+ * @returns {Promise<Record<string, {hasActiveAccess:boolean, activeRequestId:string|null, hasPendingRequest:boolean, pendingRequestId:string|null, expiresAt:string|null, allowed:boolean, requiresApproval:boolean, isProduction:boolean, reason:string|null}>>}
  */
 export async function getAccessIntentsBulk({ orgId, userId, serverIds, scope = UNSCOPED }) {
   const ids = [...new Set(serverIds)].filter(Boolean);
@@ -1905,6 +1912,12 @@ export async function getAccessIntentsBulk({ orgId, userId, serverIds, scope = U
       hasPendingRequest: false,
       pendingRequestId: null,
       expiresAt: null,
+      // Defaults for a server id that no longer resolves (deleted between the
+      // list call and this one): not allowed, and no claim about approval.
+      allowed: false,
+      requiresApproval: false,
+      isProduction: false,
+      reason: null,
     };
   }
   if (ids.length === 0) return intents;
@@ -1922,7 +1935,7 @@ export async function getAccessIntentsBulk({ orgId, userId, serverIds, scope = U
     }
   }
 
-  const [activeArs, pendingArs] = await Promise.all([
+  const [activeArs, pendingArs, policy] = await Promise.all([
     prisma.accessRequest.findMany({
       where: {
         orgId,
@@ -1944,7 +1957,17 @@ export async function getAccessIntentsBulk({ orgId, userId, serverIds, scope = U
       orderBy: { createdAt: 'desc' },
       select: { id: true, serverId: true },
     }),
+    policyService.evaluateBulk({ orgId, userId, serverIds: ids }),
   ]);
+
+  for (const [serverId, verdict] of Object.entries(policy)) {
+    const entry = intents[serverId];
+    if (!entry) continue;
+    entry.allowed = verdict.allowed;
+    entry.requiresApproval = verdict.requiresApproval;
+    entry.isProduction = verdict.isProduction;
+    entry.reason = verdict.reason;
+  }
 
   // Most-recent-first ordering above means the first hit per serverId wins,
   // matching getAccessIntent's orderBy: { approvedAt: 'desc' }.

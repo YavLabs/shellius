@@ -4,17 +4,19 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/http"
 	"os"
 	"os/exec"
-	"runtime"
 	"strings"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/shellius/tui/internal/api"
+	"github.com/shellius/tui/internal/auth"
 	"github.com/shellius/tui/internal/config"
 	"github.com/shellius/tui/internal/logx"
+	"github.com/shellius/tui/internal/rdp"
 	"github.com/shellius/tui/internal/sessions"
 	sshpkg "github.com/shellius/tui/internal/ssh"
 )
@@ -64,7 +66,7 @@ type AppModel struct {
 func NewApp(cfg *config.Config) AppModel {
 	m := AppModel{
 		cfg:     cfg,
-		palette: newPaletteModel(),
+		palette: newPaletteModel(cfg.Has),
 	}
 
 	// Decide the initial view.
@@ -92,13 +94,86 @@ func (m AppModel) Init() tea.Cmd {
 	case viewLogin:
 		return m.loginModel.Init()
 	case viewActiveAccess:
-		return m.activeAccess.Init()
+		// Permissions are re-read from the server at every start. The copy in
+		// the credentials file was written at sign-in and a token refresh
+		// does not return a new one, so after a role change it can be weeks
+		// stale — the CLI would keep offering menu entries the role lost and
+		// keep labelling prod servers "direct" for a role that no longer
+		// holds access.prod_bypass.
+		return tea.Batch(m.activeAccess.Init(), m.refreshPermissions())
 	}
 	return nil
 }
 
+// permissionsRefreshedMsg reports the outcome of a /api/auth/me call.
+type permissionsRefreshedMsg struct {
+	changed bool
+	err     error
+}
+
+// refreshPermissions re-reads the caller's role and permissions from
+// GET /api/auth/me and persists them.
+//
+// It never produces an error view. A CLI that refuses to start because a
+// decorating call failed would be a worse bug than the stale labels it is
+// here to prevent; on failure the stored set simply remains in use.
+func (m AppModel) refreshPermissions() tea.Cmd {
+	client := m.client
+	if client == nil {
+		return nil
+	}
+	return func() tea.Msg {
+		changed, err := client.RefreshPermissions()
+		return permissionsRefreshedMsg{changed: changed, err: err}
+	}
+}
+
 // Update is the central message dispatcher.
+//
+// It wraps the real dispatcher so that a 403 PERMISSION_DENIED anywhere in
+// the app also triggers a permission re-read. That refusal is proof that the
+// locally stored permission set disagrees with the server's — usually because
+// the role was edited while the CLI was open — and it is the one moment we
+// know for certain the local copy is wrong.
 func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	recheck := m.permissionRecheckCmd(msg)
+	model, cmd := m.updateInner(msg)
+	if recheck == nil {
+		return model, cmd
+	}
+	return model, tea.Batch(cmd, recheck)
+}
+
+// permissionRecheckCmd returns a refresh command when msg carries an API
+// permission refusal, and nil otherwise.
+//
+// The message types listed here are every one in the app that carries an
+// error from an API call. A type that is added later and forgotten degrades
+// to today's behaviour (a stale set until the next start), not to a crash.
+func (m AppModel) permissionRecheckCmd(msg tea.Msg) tea.Cmd {
+	var err error
+	switch t := msg.(type) {
+	case appErrMsg:
+		err = t.err
+	case hostsErrMsg:
+		err = t.err
+	case arErrMsg:
+		err = t.err
+	case arIntentErrMsg:
+		err = t.err
+	case activeAccessErrMsg:
+		err = t.err
+	default:
+		return nil
+	}
+	if !api.IsPermissionDenied(err) {
+		return nil
+	}
+	logx.Warnf("app: API refused an action with PERMISSION_DENIED; re-reading permissions")
+	return m.refreshPermissions()
+}
+
+func (m AppModel) updateInner(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 
 	case tea.WindowSizeMsg:
@@ -161,6 +236,24 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			logx.Warnf("app: token refresh failed, showing toast: %v", msg.err)
 			m.toastMsg = "Warning: token refresh failed — showing cached data. Check your network."
 		}
+
+	case permissionsRefreshedMsg:
+		if msg.err != nil {
+			// Deliberately quiet unless it is a session problem, which is
+			// already routed elsewhere: the user has not asked for anything
+			// yet and cannot act on "could not re-read your permissions".
+			logx.Warnf("app: permission refresh failed, keeping the stored set: %v", msg.err)
+			if errors.Is(msg.err, api.ErrSessionExpired) {
+				return m, func() tea.Msg { return appErrMsg{err: msg.err} }
+			}
+			return m, nil
+		}
+		m.palette.setPermissions(m.cfg.Has)
+		if msg.changed {
+			logx.Infof("app: permissions changed since sign-in; menus updated")
+			m.toastMsg = "Your role changed — available actions have been updated."
+		}
+		return m, nil
 	}
 
 	// Command messages from palette Run functions.
@@ -272,11 +365,24 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.prevView = m.currentView
 		m.currentView = viewError
-		m.errMsg = msg.err.Error()
+		m.errMsg = errorText(msg.err)
 		return m, nil
 
 	case openWebTerminalMsg:
 		return m, m.openWebTerminal(msg.url, msg.requestID)
+
+	case rdpLaunchedMsg:
+		// The native client owns its own window; there is nothing for the TUI
+		// to render, so go back to the home screen and say what happened.
+		m.currentView = viewActiveAccess
+		m.toastMsg = fmt.Sprintf("Opened %s for %s. The connection profile has been removed from disk.",
+			msg.client, msg.host)
+		if m.client != nil {
+			m.activeAccess = NewActiveAccessModel(m.client)
+			m.activeAccess, _ = m.activeAccess.Update(tea.WindowSizeMsg{Width: m.width, Height: m.height})
+			return m, m.activeAccess.Init()
+		}
+		return m, nil
 	}
 
 	// Route to active view.
@@ -406,16 +512,15 @@ func (m AppModel) updateAccessRequest(msg tea.Msg) (tea.Model, tea.Cmd) {
 		reqID := msg.requestID
 		client := m.client
 		host := m.selectedHost
+		if strings.EqualFold(msg.protocol, "RDP") {
+			return m, m.connectRDP(reqID, serverDisplayName(host))
+		}
 		return m, func() tea.Msg {
 			creds, err := client.GetSshCredentials(reqID)
 			if err != nil {
 				// If key download is disabled by policy, fall back to web terminal.
 				if isKeyDownloadDisabled(err) {
-					result, connectErr := client.StartWebTerminal(reqID)
-					if connectErr != nil {
-						return appErrMsg{err: fmt.Errorf("start web terminal: %w", connectErr)}
-					}
-					return openWebTerminalMsg{url: result.URL, requestID: reqID}
+					return webTerminalFallback(client, reqID, err)
 				}
 				return appErrMsg{err: fmt.Errorf("get SSH credentials: %w", err)}
 			}
@@ -427,7 +532,7 @@ func (m AppModel) updateAccessRequest(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case appErrMsg:
 		m.currentView = viewError
-		m.errMsg = msg.err.Error()
+		m.errMsg = errorText(msg.err)
 		return m, nil
 	}
 
@@ -487,25 +592,48 @@ type openWebTerminalMsg struct {
 
 // openWebTerminal opens the web terminal URL in the system browser and updates
 // the access-request sub-model so it renders the confirmation screen.
-func (m AppModel) openWebTerminal(url, requestID string) tea.Cmd {
+func (m AppModel) openWebTerminal(rawURL, requestID string) tea.Cmd {
 	_ = requestID // reserved for future use (e.g. logging)
-	logx.Infof("app: opening web terminal URL: %s", url)
+	full := m.absoluteURL(rawURL)
+	logx.Infof("app: opening web terminal URL: %s", full)
 
-	// Launch browser — fire-and-forget; errors are non-fatal since we still
-	// show the URL to the user.
-	switch runtime.GOOS {
-	case "darwin":
-		_ = exec.Command("open", url).Start()
-	case "windows":
-		_ = exec.Command("rundll32", "url.dll,FileProtocolHandler", url).Start()
-	default: // linux and others
-		_ = exec.Command("xdg-open", url).Start()
-	}
+	// Fire-and-forget: errors are non-fatal because the URL is printed on the
+	// confirmation screen for the user to open by hand. This is the same
+	// browser launcher the device-auth flow uses — one implementation, so a
+	// platform fixed in one place is fixed in both.
+	auth.OpenBrowser(full)
 
 	// Update the access-request sub-model to show the confirmation screen.
 	return func() tea.Msg {
-		return arWebTerminalMsg{url: url}
+		return arWebTerminalMsg{url: full}
 	}
+}
+
+// absoluteURL turns the API's relative web-app path into something a browser
+// can open.
+//
+// POST /api/access-requests/:id/connect answers with "/terminal?requestId=…"
+// — a path, not a URL. Handing that straight to xdg-open opens nothing (or,
+// worse, a local file called "terminal"), which is why the web-terminal
+// fallback appeared to do nothing at all.
+func (m AppModel) absoluteURL(raw string) string {
+	if raw == "" {
+		return ""
+	}
+	if strings.HasPrefix(raw, "http://") || strings.HasPrefix(raw, "https://") {
+		return raw
+	}
+	base := ""
+	if m.cfg != nil {
+		base = strings.TrimRight(m.cfg.ServerURL, "/")
+	}
+	if base == "" {
+		return raw
+	}
+	if !strings.HasPrefix(raw, "/") {
+		raw = "/" + raw
+	}
+	return base + raw
 }
 
 // connectFromAR fetches credentials for an approved access request and launches SSH.
@@ -513,34 +641,113 @@ func (m AppModel) openWebTerminal(url, requestID string) tea.Cmd {
 // web terminal URL in the system browser.
 func (m AppModel) connectFromAR(req api.AccessRequest) tea.Cmd {
 	client := m.client
+
+	// An RDP grant cannot be used with an SSH key: the host has no sshd, and
+	// /ssh-credentials refuses the request outright. The CLI used to ask for
+	// SSH credentials for every approval regardless of protocol, which is why
+	// RDP access could not be used from the terminal at all.
+	if strings.EqualFold(req.Protocol, "RDP") {
+		host := hostFromRequest(req)
+		return m.connectRDP(req.ID, serverDisplayName(host))
+	}
+
 	return func() tea.Msg {
 		creds, err := client.GetSshCredentials(req.ID)
 		if err != nil {
 			// Key download disabled — fall back to web terminal.
 			if isKeyDownloadDisabled(err) {
-				result, connectErr := client.StartWebTerminal(req.ID)
-				if connectErr != nil {
-					return appErrMsg{err: fmt.Errorf("start web terminal: %w", connectErr)}
-				}
-				return openWebTerminalMsg{url: result.URL, requestID: req.ID}
+				return webTerminalFallback(client, req.ID, err)
 			}
 			return appErrMsg{err: fmt.Errorf("get SSH credentials: %w", err)}
 		}
-		// Build a synthetic Host from the inlined server info.
-		host := api.Host{ID: req.ServerID}
-		if req.Server != nil {
-			host.Name = req.Server.DisplayName
-			host.Hostname = req.Server.Hostname
-			host.Port = req.Server.Port
-			host.Environment = req.Server.Environment
-			host.Principal = req.Server.SshUser
-			host.CustomerName = req.Server.Customer.Name
-		}
-		if req.RequestedPrincipal != "" {
-			host.Principal = req.RequestedPrincipal
-		}
-		return sshConnectMsg{creds: creds, host: host}
+		return sshConnectMsg{creds: creds, host: hostFromRequest(req)}
 	}
+}
+
+// hostFromRequest builds a synthetic Host from the server info inlined into
+// an access request, for the paths that never went through the host list.
+func hostFromRequest(req api.AccessRequest) api.Host {
+	host := api.Host{ID: req.ServerID}
+	if req.Server != nil {
+		host.Name = req.Server.DisplayName
+		host.Hostname = req.Server.Hostname
+		host.Port = req.Server.Port
+		host.Environment = req.Server.Environment
+		host.Principal = req.Server.SshUser
+		host.CustomerName = req.Server.Customer.Name
+	}
+	if req.RequestedPrincipal != "" {
+		host.Principal = req.RequestedPrincipal
+	}
+	return host
+}
+
+// rdpLaunchedMsg reports that a native RDP client was started.
+type rdpLaunchedMsg struct {
+	client string
+	host   string
+}
+
+// connectRDP opens an approved RDP session.
+//
+// What the API gives us decides the shape of this. POST
+// /api/access-requests/:id/rdp-credentials returns a Windows .rdp profile
+// that carries the address, port and username and NO credential — not the
+// host password, and deliberately not the Guacamole connection token either,
+// because that token's plaintext contains the password
+// (accessRequestService.generateRdpFile says so in as many words).
+//
+// So there are two honest options and this tries them in order:
+//
+//  1. The native client, which needs the user's own machine to be able to
+//     reach the host, since nothing injects a credential for it. Fastest and
+//     best when it works.
+//  2. The web client, where the browser's WebSocket session goes through
+//     guacd and guacd is what supplies the password. This works from
+//     anywhere, so it is the fallback for every failure above: no client
+//     installed, an unwritable temp directory, a client that will not start,
+//     or an API that does not know the endpoint.
+//
+// On a headless box option 1 is meaningless and option 2 is at least a URL
+// the user can copy elsewhere, which is why neither failure is fatal.
+func (m AppModel) connectRDP(requestID, hostLabel string) tea.Cmd {
+	client := m.client
+	return func() tea.Msg {
+		file, err := client.GetRdpFile(requestID)
+		if err != nil {
+			logx.Warnf("app: could not fetch the RDP profile for %s: %v", requestID, err)
+			return webTerminalFallback(client, requestID, err)
+		}
+
+		result, launchErr := rdp.Launch(file.Filename, file.Content)
+		if launchErr != nil {
+			if errors.Is(launchErr, rdp.ErrNoClient) {
+				logx.Infof("app: no native RDP client on this machine; using the web client")
+			} else {
+				logx.Warnf("app: could not launch a native RDP client: %v", launchErr)
+			}
+			return webTerminalFallback(client, requestID, launchErr)
+		}
+		return rdpLaunchedMsg{client: result.Client, host: hostLabel}
+	}
+}
+
+// webTerminalFallback asks the API for the web-client URL, reporting the
+// original failure if that call fails too.
+//
+// Reporting both matters: "start web terminal: …" on its own would hide the
+// reason the CLI stopped trying to do it natively, and the user would have no
+// idea whether to install a client or to fix their access.
+func webTerminalFallback(client *api.Client, requestID string, cause error) tea.Msg {
+	result, connectErr := client.StartWebTerminal(requestID)
+	if connectErr != nil {
+		if cause != nil {
+			return appErrMsg{err: fmt.Errorf("%s (falling back from: %s)",
+				errorText(connectErr), errorText(cause))}
+		}
+		return appErrMsg{err: fmt.Errorf("start web terminal: %w", connectErr)}
+	}
+	return openWebTerminalMsg{url: result.URL, requestID: requestID}
 }
 
 // sshConnectMsg carries credentials and the target host for the SSH connection.
@@ -551,6 +758,30 @@ type sshConnectMsg struct {
 
 // appErrMsg carries a top-level application error.
 type appErrMsg struct{ err error }
+
+// errorText renders an error for a human.
+//
+// For a 403 it shows the API's own sentence — "You don’t have permission to
+// do this", "Only the requester may download credentials for this request",
+// "Key download is disabled by policy. Use the web terminal instead…" — each
+// of which tells the user what to do next. The wrapped Go text it replaces
+// ("get SSH credentials: API error (HTTP 403, code PERMISSION_DENIED): …")
+// buried that sentence behind two layers of plumbing.
+//
+// Only 403 is unwrapped. On a 500 the Go wrapper is the only thing that says
+// which operation failed, and the server's message is usually generic.
+func errorText(err error) string {
+	if err == nil {
+		return ""
+	}
+	var httpErr *api.HTTPError
+	if errors.As(err, &httpErr) &&
+		httpErr.Status == http.StatusForbidden &&
+		strings.TrimSpace(httpErr.Message) != "" {
+		return httpErr.Message
+	}
+	return err.Error()
+}
 
 // execSSH writes temp credentials and uses tea.ExecProcess to hand off the
 // terminal to an SSH subprocess. It records a sessions state file while the
@@ -814,11 +1045,20 @@ func (m AppModel) renderHeader() string {
 // renderFooter returns bullet-separated dim key hints for the current view.
 func (m AppModel) renderFooter() string {
 	var hints string
+	// Key hints are gated on permissions for the same reason the palette is:
+	// advertising "enter request" to a role without access.request promises
+	// something the API will refuse. Gating is on the permission key, never on
+	// the role name.
+	canRequest := m.cfg != nil && m.cfg.Has("access.request")
 	switch m.currentView {
 	case viewActiveAccess:
 		hints = "↑↓ navigate · enter connect · / palette · ? help · q quit"
 	case viewHostList:
-		hints = "↑↓ navigate · enter request · esc back · r refresh · / palette"
+		if canRequest {
+			hints = "↑↓ navigate · enter request · esc back · r refresh · / palette"
+		} else {
+			hints = "↑↓ navigate · esc back · r refresh · / palette"
+		}
 	case viewAccessRequest:
 		hints = "Tab/Shift+Tab navigate · Enter submit · Esc back"
 	case viewMyRequests:
