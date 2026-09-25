@@ -52,7 +52,27 @@ function RdpTerminal({ requestId, onClose }) {
   const [status, setStatus] = useState(STATUS.CONNECTING);
   const [error, setError] = useState('');
 
+  /**
+   * Which connect attempt is the live one.
+   *
+   * `connect` is async — it awaits a gateway token before it has a client to
+   * tear down — so `cleanup` alone cannot stop an attempt that is mid-flight.
+   * Without this counter, React 18 StrictMode's double mount in development
+   * produced TWO tunnels: the first attempt resumed after cleanup had already
+   * run and opened its connection anyway, alongside the second. Both logged
+   * into Windows as the same user, Windows allows one interactive session per
+   * user, and the second kicked the first — the user saw "Disconnected by
+   * other connection" on a session that had just connected.
+   *
+   * It is not only a StrictMode artifact: double-clicking Reconnect, or any
+   * re-render that changes requestId mid-connect, races the same way in
+   * production.
+   */
+  const runIdRef = useRef(0);
+
   const cleanup = useCallback(() => {
+    // Anything still awaiting is now stale and must not connect.
+    runIdRef.current += 1;
     if (keyboardRef.current) {
       keyboardRef.current.onkeydown = null;
       keyboardRef.current.onkeyup = null;
@@ -87,6 +107,10 @@ function RdpTerminal({ requestId, onClose }) {
     if (!requestId || !containerRef.current) return;
 
     cleanup();
+    // Claim this attempt. Any later cleanup bumps the counter and everything
+    // below bails out rather than opening a second tunnel.
+    const runId = runIdRef.current;
+    const superseded = () => runId !== runIdRef.current;
 
     setStatus(STATUS.CONNECTING);
     setError('');
@@ -96,6 +120,7 @@ function RdpTerminal({ requestId, onClose }) {
       const resp = await getRdpGatewayToken(requestId);
       tokenData = resp.data || resp;
     } catch (err) {
+      if (superseded()) return;
       const msg =
         err.response?.data?.error?.message ||
         err.message ||
@@ -104,6 +129,9 @@ function RdpTerminal({ requestId, onClose }) {
       setStatus(STATUS.DISCONNECTED);
       return;
     }
+
+    // The await above is exactly where a second mount overtakes the first.
+    if (superseded() || !containerRef.current) return;
 
     const jwt = tokenData.token;
     const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
@@ -167,6 +195,18 @@ function RdpTerminal({ requestId, onClose }) {
     client.connect(
       `token=${encodeURIComponent(jwt)}&width=${containerWidth}&height=${containerHeight}&dpi=96`
     );
+
+    // Last check. If this attempt was superseded while connecting, hang up
+    // now — leaving it open is what kicks the surviving session off Windows.
+    if (superseded()) {
+      try {
+        client.disconnect();
+      } catch {
+        // already gone
+      }
+      if (clientRef.current === client) clientRef.current = null;
+      return;
+    }
 
     // Wire up mouse events
     const mouse = new Guacamole.Mouse(displayEl);
