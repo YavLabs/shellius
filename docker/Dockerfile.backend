@@ -35,7 +35,15 @@ LABEL org.opencontainers.image.title="shellius-backend" \
 RUN apk upgrade --no-cache && \
     apk add --no-cache openssh-keygen openssh-client && \
     addgroup -g 1001 -S appgroup && \
-    adduser -S appuser -u 1001 -G appgroup
+    adduser -S appuser -u 1001 -G appgroup && \
+    # Shared with guacd so RDP recordings can cross between the two
+    # containers — see the matching block in Dockerfile.guacd for why a
+    # group rather than an owner.
+    addgroup -g 1500 shellius-rec && \
+    adduser appuser shellius-rec && \
+    mkdir -p /var/lib/shellius/rdp-recordings && \
+    chown root:shellius-rec /var/lib/shellius/rdp-recordings && \
+    chmod 2770 /var/lib/shellius/rdp-recordings
 
 WORKDIR /app
 

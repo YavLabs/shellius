@@ -181,6 +181,26 @@ ARG GID=1000
 RUN groupadd --gid $GID guacd
 RUN useradd --system --create-home --shell /sbin/nologin --uid $UID --gid $GID guacd
 
+# Session recordings.
+#
+# guacd writes them and the backend reads them back out, through a volume
+# shared by the two containers. They run as DIFFERENT users (guacd 1000,
+# the backend's appuser 1001), so neither owning the directory works: a
+# Docker named volume takes its ownership from whichever image declares the
+# path, and the other container would then be unable to write — or, worse,
+# unable to delete the plaintext after uploading it.
+#
+# So both images declare the same directory owned by a shared group, setgid
+# so files created by guacd inherit it, and group-writable so the backend can
+# unlink them. Deleting a file needs write permission on the DIRECTORY, not
+# on the file, which is why this works across two uids without either being
+# root and without the sticky bit (which would defeat it).
+RUN addgroup -g 1500 shellius-rec && \
+    adduser guacd shellius-rec && \
+    mkdir -p /var/lib/shellius/rdp-recordings && \
+    chown root:shellius-rec /var/lib/shellius/rdp-recordings && \
+    chmod 2770 /var/lib/shellius/rdp-recordings
+
 USER guacd
 EXPOSE 4822
 
