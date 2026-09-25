@@ -64,3 +64,6 @@ recordings/
 *.cast
 tui/bin/
 .env.prod
+
+# Public key handed to the throwaway e2e SSH containers (scripts/e2e-ssh-targets.sh)
+data/e2e-ssh/

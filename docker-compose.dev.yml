@@ -98,6 +98,65 @@ services:
     ports:
       - "127.0.0.1:8081:8081"
 
+  # ── SSH targets for the Playwright terminal suite ────────────────────────
+  #
+  # Three throwaway Debian boxes running sshd, for
+  # frontend/e2e/terminal.spec.js. Behind the `e2e` profile for the same
+  # reason Keycloak is: nothing in normal development talks to them, and a
+  # developer who never runs the browser suite should not be running three
+  # extra containers. Start them with the wrapper, which also creates the
+  # bind-mounted key directory before Docker does (as root):
+  #
+  #   ./scripts/e2e-ssh-targets.sh up
+  #   (cd backend && node scripts/e2e-ssh-setup.mjs)
+  #   ./scripts/e2e-browser.sh terminal.spec.js
+  #
+  # Distinct hostnames on purpose: the shell prompt is `e2e@ssh-alpha:~$`,
+  # so a test with two tabs open can prove a keystroke went to the tab it
+  # was aimed at and not the other one.
+  #
+  # NO published ports. The dev backend runs on the host and dials the
+  # container's address on this Docker network directly (a private 172.x
+  # address, which sshConnect.resolveTarget allows); nothing outside the
+  # host needs to reach these, and an sshd on 0.0.0.0 is not something to
+  # leave lying around. The setup script resolves the addresses with
+  # `docker inspect`.
+  #
+  # TESTING ONLY: key-only auth, host keys regenerated on every recreate,
+  # no data worth keeping. See docker/Dockerfile.e2e-ssh.
+  ssh-alpha:
+    profiles: ["e2e"]
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.e2e-ssh
+    image: shellius-e2e-ssh:latest
+    hostname: ssh-alpha
+    restart: "no"
+    volumes:
+      - ./data/e2e-ssh:/etc/ssh/e2e-keys:ro
+
+  ssh-bravo:
+    profiles: ["e2e"]
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.e2e-ssh
+    image: shellius-e2e-ssh:latest
+    hostname: ssh-bravo
+    restart: "no"
+    volumes:
+      - ./data/e2e-ssh:/etc/ssh/e2e-keys:ro
+
+  ssh-charlie:
+    profiles: ["e2e"]
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.e2e-ssh
+    image: shellius-e2e-ssh:latest
+    hostname: ssh-charlie
+    restart: "no"
+    volumes:
+      - ./data/e2e-ssh:/etc/ssh/e2e-keys:ro
+
 volumes:
   postgres_dev_data:
   redis_dev_data:

@@ -1,0 +1,83 @@
+# Throwaway SSH target for the Playwright terminal suite
+# (frontend/e2e/terminal.spec.js). TESTING ONLY — never deploy this image.
+#
+# It is a plain Debian box with sshd and the interactive tools the suite
+# drives: a full vim (not vim-tiny — the tests type into it and save),
+# nano, less, tmux and btop, plus procps for top/kill. The point of the
+# suite is that xterm.js and a real PTY agree about full-screen programs,
+# so the programs have to be real ones.
+#
+# Authentication is key-only. The public half is written into the
+# bind-mounted /etc/ssh/e2e-keys by backend/scripts/e2e-ssh-setup.mjs, which
+# keeps the private half in the Keystore, encrypted, exactly as a real
+# credential-mode server's identity is stored. No password is set on the
+# account at all (it is locked), so there is no password to leak or hardcode.
+#
+# StrictModes is off because that authorized_keys file comes from a host bind
+# mount and is therefore owned by the developer's uid rather than by `e2e`;
+# UsePAM is off because nothing here has a PAM stack worth consulting. Both
+# are safe in a throwaway container on a private Docker network with no
+# published ports, and neither would be acceptable anywhere else.
+FROM debian:bookworm-slim
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends \
+      openssh-server \
+      vim \
+      nano \
+      less \
+      tmux \
+      btop \
+      procps \
+      ncurses-term \
+ && rm -rf /var/lib/apt/lists/*
+
+# The account the tests log in as. Its password field is `*` — no password
+# will ever authenticate, but the account is not *locked* (`!`), which sshd
+# without PAM refuses outright, pubkey or not ("account is locked").
+#
+# The host keys the openssh-server package generated during the build are
+# deleted here: otherwise all three containers ship with the SAME host key,
+# and three hosts with one identity is not a thing Shellius should ever be
+# asked to believe. Each container makes its own on first boot instead.
+RUN useradd --create-home --shell /bin/bash e2e \
+ && usermod --password '*' e2e \
+ && rm -f /etc/ssh/ssh_host_* \
+ && mkdir -p /etc/ssh/e2e-keys /run/sshd
+
+RUN printf '%s\n' \
+      'AuthorizedKeysFile /etc/ssh/e2e-keys/authorized_keys' \
+      'PasswordAuthentication no' \
+      'PermitRootLogin no' \
+      'AllowUsers e2e' \
+      'StrictModes no' \
+      'UsePAM no' \
+      'PrintMotd no' \
+      'PrintLastLog no' \
+    > /etc/ssh/sshd_config.d/e2e.conf
+
+# A deterministic prompt: `e2e@ssh-alpha:~$`. The tests wait for it to know
+# the shell is really up, and read the hostname out of it to know WHICH host
+# a given tab is talking to — which is the whole point of having three.
+RUN printf '%s\n' \
+      'export LANG=C.UTF-8' \
+      'export PS1="\u@\h:\w\$ "' \
+    > /home/e2e/.bashrc \
+ && printf '%s\n' '. "$HOME/.bashrc"' > /home/e2e/.bash_profile \
+ && chown e2e:e2e /home/e2e/.bashrc /home/e2e/.bash_profile
+
+# Host keys are generated on first boot, so recreating a container changes
+# them. That is why e2e-ssh-setup.mjs clears the server's pinned host key
+# every run — otherwise Shellius (correctly) refuses with HOST_KEY_MISMATCH.
+RUN printf '%s\n' \
+      '#!/bin/sh' \
+      'set -e' \
+      'ssh-keygen -A' \
+      'exec /usr/sbin/sshd -D -e' \
+    > /usr/local/bin/entrypoint.sh \
+ && chmod +x /usr/local/bin/entrypoint.sh
+
+EXPOSE 22
+CMD ["/usr/local/bin/entrypoint.sh"]
