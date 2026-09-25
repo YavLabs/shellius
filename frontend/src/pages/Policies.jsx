@@ -397,8 +397,14 @@ function Policies() {
       : []),
   ];
 
+  // No `p-6` on the root element. Policies only ever renders inside the
+  // Administration shell — `/policies` is a redirect into it — and
+  // SECTION_VIEWS wraps it in a card that already provides the padding.
+  // Its own `p-6` was applied on top of the card's, insetting this one
+  // page further than Users, Roles and Groups sitting beside it. Those
+  // three carry no padding of their own and are the reference.
   return (
-    <div className="space-y-6 p-6">
+    <div className="space-y-6">
       <PageHeader
         icon={Shield}
         title="Policies"
