@@ -364,9 +364,16 @@ async function attachRecording(settings) {
 
   let enabled = false;
   await Promise.race([
-    rdpRecordingService.isEnabled().then((v) => {
-      enabled = v;
-    }),
+    rdpRecordingService
+      .isEnabled()
+      .then((v) => {
+        enabled = v;
+      })
+      // isEnabled() is written not to throw, but this promise is no longer
+      // awaited once the timer below wins the race — so a rejection it ever
+      // acquired would surface as an unhandled rejection rather than a
+      // missing recording.
+      .catch(() => {}),
     new Promise((resolve) => setTimeout(resolve, 3000).unref?.()),
   ]);
   if (!enabled) return;
