@@ -1,0 +1,6 @@
+# guacd writes RDP session recordings here in development. They are recordings
+# of somebody's desktop; the directory is tracked so Docker does not create it
+# root-owned, its contents never are.
+*
+!.gitkeep
+!.gitignore

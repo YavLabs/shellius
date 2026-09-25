@@ -192,6 +192,49 @@ Assertion XML is never logged. It carries personal data and is itself a
 credential; node-saml's own error messages are mapped to stable codes rather
 than propagated, because they can embed document fragments.
 
+### Proving it works: an end-to-end run against a real IdP
+
+The refusal paths are covered by a committed fixture corpus, but fixtures are
+documents our own code produced. `backend/scripts/e2e-saml.mjs` runs the whole
+round trip against **Keycloak** — a real IdP doing real XML signing, publishing
+real metadata, issuing real assertions on its own clock. No browser is needed:
+Keycloak's login page is an ordinary HTML form and its response is an
+auto-submitting form, so plain HTTP plus a cookie jar is enough.
+
+```bash
+docker compose -f docker-compose.dev.yml --profile saml up -d keycloak
+cd backend && npm run test:e2e:saml
+```
+
+Keycloak is behind the `saml` compose profile, so it never starts for normal
+development. It runs in `start-dev` mode with a throwaway in-memory database
+and the trivial admin credentials in the compose file: **testing only**.
+
+The script needs the dev API running (default `http://127.0.0.1:3001`,
+override with `BASE_URL`) and a Shellius super admin without MFA — it falls
+back to `SEED_ADMIN_EMAIL` / `SEED_ADMIN_PASSWORD` from `backend/.env`.
+
+It creates the Keycloak realm, user and SAML clients, and the Shellius SAML
+provider, in that order — the SP EntityID and ACS URL are derived from the
+provider's id, so the provider has to exist before Keycloak's client can be
+configured, and the IdP's entry point, EntityID and **signing certificate** are
+read from Keycloak's published realm descriptor rather than hardcoded. It is
+idempotent (the realm and the provider are recreated on every run) and it
+cleans up the Shellius provider and the JIT-provisioned user afterwards
+(`E2E_SAML_KEEP=1` to keep them). Any failed assertion exits non-zero.
+
+What it asserts, against real assertions rather than fixtures: an SP-initiated
+sign-in succeeds and JIT-provisions the user; replaying that POST is refused;
+an assertion altered after signing is refused; a byte changed in the
+assertion's `SignatureValue` is refused; corrupting the certificate in the
+assertion's own `KeyInfo` changes nothing (it is not a trust anchor); an
+expired assertion is refused; an assertion minted for a different SP by the
+same honest IdP is refused on audience; an unsolicited POST is refused while
+`samlAllowIdpInitiated` is off; and — with IdP-initiated turned on, so that
+neither RelayState nor `InResponseTo` can be what refuses it — replaying a
+valid response is refused with `saml_replay`, which isolates the single-use
+claim on the assertion ID.
+
 ### Limits
 
 - Single logout (SLO) is not implemented. Signing out of Shellius does not sign

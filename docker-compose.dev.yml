@@ -65,6 +65,39 @@ services:
       timeout: 5s
       retries: 5
 
+  # Keycloak — a REAL SAML identity provider for backend/scripts/e2e-saml.mjs.
+  #
+  # WHY IT IS BEHIND A PROFILE: nothing in normal development talks to it. It
+  # exists so the SAML happy path can be proven against an IdP that does its
+  # own XML signing, publishes its own metadata and runs on its own clock,
+  # instead of against fixtures our own code produced. Profiled services are
+  # not started by a bare `docker compose up`, so a developer who never runs
+  # the SAML e2e never pays for a JVM. Start it explicitly:
+  #
+  #   docker compose -f docker-compose.dev.yml --profile saml up -d keycloak
+  #   cd backend && npm run test:e2e:saml
+  #
+  # TESTING ONLY. `start-dev` means dev mode: an in-memory H2 database that is
+  # thrown away with the container, HTTP with no TLS, and no production
+  # hardening. Never use this service, this mode or these credentials for
+  # anything real.
+  #
+  # The admin credentials below are deliberately in the file and deliberately
+  # trivial. This is a throwaway local IdP bound to 127.0.0.1 with no data in
+  # it beyond what the e2e script creates; there is no secret here to leak,
+  # and the script needs them with no extra setup step.
+  keycloak:
+    profiles: ["saml"]
+    image: quay.io/keycloak/keycloak:26.7.4
+    command: ["start-dev", "--http-port=8081"]
+    environment:
+      KC_BOOTSTRAP_ADMIN_USERNAME: ${KEYCLOAK_ADMIN:-admin}
+      KC_BOOTSTRAP_ADMIN_PASSWORD: ${KEYCLOAK_ADMIN_PASSWORD:-admin}
+    # Loopback only — same rule as guacd above. The e2e script drives it from
+    # the host; nothing in a container needs to reach it.
+    ports:
+      - "127.0.0.1:8081:8081"
+
 volumes:
   postgres_dev_data:
   redis_dev_data:

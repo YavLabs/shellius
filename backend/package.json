@@ -17,6 +17,7 @@
     "db:verify-migrations": "bash scripts/verify-migrations.sh",
     "test:e2e:ssh": "bash scripts/e2e-ssh.sh",
     "test:e2e:terminal": "node scripts/e2e-terminal-hub.mjs",
+    "test:e2e:saml": "node scripts/e2e-saml.mjs",
     "crypto:reencrypt": "node scripts/reencrypt.mjs"
   },
   "prisma": {
